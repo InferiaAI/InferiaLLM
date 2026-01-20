@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package orchestration.v1;
+
+import "google/protobuf/empty.proto";
+
+service AdapterEngine {
+  rpc DiscoverProviderResources(DiscoverRequest) returns (google.protobuf.Empty);
+  rpc ProvisionNode(ProvisionNodeRequest) returns (ProvisionNodeResponse);
+}
+
+message DiscoverRequest {
+  string provider = 1;
+}
+
+message ProvisionNodeRequest {
+  string provider = 1;
+  string provider_resource_id = 2;
+  string pool_id = 3;
+  string region = 4;
+  bool use_spot = 5;
+  map<string, string> metadata = 6;
+}
+
+message ProvisionNodeResponse {
+  string node_id = 1;
+}
+
+message EmptyMessage {}

@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package orchestration.v1;
+
+import "google/protobuf/empty.proto";
+
+service Scheduler {
+  rpc Allocate(AllocateRequest) returns (AllocateResponse);
+  rpc Release(ReleaseRequest) returns (google.protobuf.Empty);
+  rpc AllocateGang(AllocateGangRequest) returns (AllocateGangResponse);
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc ListJobAllocations(ListJobAllocationsRequest) returns (ListJobAllocationsResponse);
+}
+
+message AllocateRequest {
+  string allocation_id = 1; // idempotency key (UUID)
+  string node_id = 2;
+  int32 gpu = 3;
+  int32 vcpu = 4;
+  int32 ram_gb = 5;
+  int32 priority = 6;
+  string owner_id = 7;
+  string owner_type = 8; // "user" or "org"
+}
+
+message AllocateResponse {
+  bool success = 1;
+  string reason = 2;
+}
+
+message ReleaseRequest {
+  string allocation_id = 1;
+}
+
+message ReleaseResponse {
+  bool success = 1;
+}
+
+message AllocateGangRequest {
+  string job_id = 1;
+  repeated string node_ids = 2;
+  uint32 gpu = 3;
+  uint32 vcpu = 4;
+  uint32 ram_gb = 5;
+  uint32 priority = 6;
+  string owner_type = 7;
+  string owner_id = 8;
+}
+
+message AllocateGangResponse {
+  bool success = 1;
+  string reason = 2;
+}
+
+
+message GetJobRequest {
+  string job_id = 1;
+}
+
+message Job {
+  string job_id = 1;
+  string owner_type = 2;
+  string owner_id = 3;
+  uint32 gang_size = 4;
+  string state = 5;
+  string created_at = 6;
+}
+
+message GetJobResponse {
+  Job job = 1;
+}
+
+message ListJobsRequest {
+  string owner_type = 1;
+  string owner_id = 2;
+}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  bool success = 1;
+}
+
+message ListJobAllocationsRequest {
+  string job_id = 1;
+}
+
+message Allocation {
+  string allocation_id = 1;
+  string node_id = 2;
+  uint32 gpu = 3;
+  uint32 vcpu = 4;
+  uint32 ram_gb = 5;
+  uint32 priority = 6;
+}
+
+message ListJobAllocationsResponse {
+  repeated Allocation allocations = 1;
+}
+
+
+
+message SchedulerEmpty {}

@@ -1,0 +1,42 @@
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inferia-orchestrator
+    volumes:
+      - ./:/app2/orchestration
+      - ~/.sky:/root/.sky           # SkyPilot state
+      - ~/.ssh:/root/.ssh           # SSH keys
+    environment:
+      POSTGRES_DSN: postgresql://inferia:inferia@inferia-postgres:5432/inferia
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+      - "50051:50051"
+    tty: true
+
+  postgres:
+    image: postgres:15
+    container_name: inferia-postgres
+    environment:
+      POSTGRES_USER: inferia
+      POSTGRES_PASSWORD: inferia
+      POSTGRES_DB: inferia
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docs:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    container_name: inferia-redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:

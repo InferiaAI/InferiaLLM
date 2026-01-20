@@ -1,0 +1,43 @@
+"""
+Database configuration and session management.
+Using SQLAlchemy with asyncpg.
+"""
+
+from config import settings
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# Provided Connection String
+# Note: Using 'postgresql+asyncpg' scheme for async driver
+DATABASE_URL = settings.database_url
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,  # Set to True for SQL logging
+    future=True,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+    # Production Tuning: Increase pool size to handle higher concurrency
+    pool_size=20,
+    max_overflow=40,
+)
+
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
+
+Base = declarative_base()
+
+
+async def get_db():
+    """Dependency for getting async DB session."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
