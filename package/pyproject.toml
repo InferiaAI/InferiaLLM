@@ -1,6 +1,6 @@
 [project]
-name = "inferia"
-version = "0.1.0"
+name = "inferiallm"
+version = "1.0.0"
 description = "Inferia: distributed inference, filtration, and compute orchestration platform"
 readme = "README.md"
 requires-python = ">=3.10"
