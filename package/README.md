@@ -24,16 +24,7 @@ npm --version
 
 ---
 
-## 2. Clone the repositories
-
-```bash
-git clone https://github.com/InferiaAI/InferiaLLM.git
-cd inferia
-```
-
----
-
-## 3. Create Python virtual environment
+## 2. Create Python virtual environment
 
 > Create and activate a virtual environment
 
@@ -51,7 +42,12 @@ pip install --upgrade pip
 > Install Inferia in editable mode:
 
 ```bash
-pip install -e .
+pip install inferiallm
+```
+
+> Verify installation
+```bash
+inferia --help
 ```
 
 ----

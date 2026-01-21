@@ -1,0 +1,6 @@
+recursive-include src/inferia *.sql
+recursive-include src/inferia *.md
+recursive-include src/inferia *.txt
+recursive-include src/inferia *.json
+recursive-include src/inferia *.yaml
+recursive-include src/inferia *.yml
