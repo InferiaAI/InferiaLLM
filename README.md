@@ -225,8 +225,6 @@ InferiaLLM is explicitly split into two planes:
 
 ![System Architecture](assets/system_arch.png)
 
-No inference request consumes compute without passing through the control plane.
-
 ---
 
 ## Component Overview
