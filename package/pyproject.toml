@@ -69,6 +69,11 @@ dependencies = [
   "python-multipart",
   "skypilot",
   "kubernetes==33.1.0",
+
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "greenlet",
+  "jinja2",
 ]
 
 # ---------------------------------
@@ -82,7 +87,7 @@ aws = [
 # ---------------------------------
 # Optional: ML / Inference
 # ---------------------------------
-ml = [
+inference = [
   "numpy",
   "transformers>=4.40",
   "tokenizers>=0.21",
@@ -94,16 +99,6 @@ ml = [
   "python-docx",
   "requests",
   "groq",
-]
-
-# ---------------------------------
-# Optional: Database migrations / ORM
-# ---------------------------------
-db = [
-  "sqlalchemy>=2.0",
-  "alembic>=1.13",
-  "greenlet",
-  "jinja2",
 ]
 
 # ---------------------------------

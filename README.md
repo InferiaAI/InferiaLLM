@@ -395,3 +395,12 @@ It provides:
 * auditable operation
 
 **From raw LLMs to real users - without building a platform from scratch.**
+
+## License
+
+inferiaLLM is source-available under the Business Source License 1.1 (BSL).
+
+- Free for non-commercial, research, and evaluation use
+- Commercial use requires a separate license
+
+See [LICENSE](LICENSE) and [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for details.

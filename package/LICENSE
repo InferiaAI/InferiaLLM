@@ -1,0 +1,61 @@
+                        Business Source License 1.1
+
+Licensor: InferiaAI, Hooman Digital LLP, Meet Sonawane, Chandra K Rajwal
+
+Licensed Work: inferiaLLM
+
+Additional Use Grant: None
+
+Change Date: None
+
+Change License: Apache License, Version 2.0
+
+-----------------------------------------------------------------------
+
+Terms
+
+The Licensed Work is provided under the terms of the Business Source
+License 1.1 (the "License"). The text of this License is available at:
+
+https://mariadb.com/bsl11/
+
+The Licensor hereby grants you the right to copy, modify, create
+derivative works, redistribute, and make non-commercial use of the
+Licensed Work.
+
+You may not use the Licensed Work for a Commercial Purpose.
+
+"Commercial Purpose" means any use of the Licensed Work in connection
+with a product or service that is offered for a fee, subscription,
+revenue share, or other commercial consideration, including but not
+limited to:
+
+- Software-as-a-Service (SaaS) offerings
+- Hosted or managed services
+- Paid APIs or inference endpoints
+- Enterprise internal deployments
+- Commercial research or consulting services
+- Products or services that compete with the Licensed Work
+
+If you would like to use the Licensed Work for a Commercial Purpose,
+you must obtain a separate commercial license from the Licensor.
+
+-----------------------------------------------------------------------
+
+Change Date
+
+On the Change Date specified above, the Licensed Work will automatically
+be made available under the Change License specified above.
+
+-----------------------------------------------------------------------
+
+Disclaimer
+
+THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE LICENSED WORK OR THE
+USE OR OTHER DEALINGS IN THE LICENSED WORK.
