@@ -37,7 +37,7 @@ def run_filtration_gateway(queue):
         queue.put(ServiceStarting("Filtration Gateway API"))
         from inferia.gateways.filtration_gateway.main import start_api
         start_api()
-        queue.put(ServiceStarted("Filtration Gateway API", detail="Listening on port 8081"))
+        queue.put(ServiceStarted("Filtration Gateway API", detail="Listening on port 8000"))
     except Exception as e:
         queue.put(ServiceFailed("Filtration Gateway API", error=str(e)))
 
@@ -48,7 +48,7 @@ def run_inference_gateway(queue):
         queue.put(ServiceStarting("Inference Gateway API"))
         from inferia.gateways.inference_gateway.main import start_api
         start_api()
-        queue.put(ServiceStarted("Inference Gateway API", detail="Listening on port 8082"))
+        queue.put(ServiceStarted("Inference Gateway API", detail="Listening on port 8001"))
     except Exception as e:
         queue.put(ServiceFailed("Inference Gateway API", error=str(e)))
 
@@ -223,10 +223,12 @@ def run_orchestration_stack():
     """
     Runs the full orchestration stack: API, Worker, and DePIN Sidecar.
     """
+    # Create a dummy queue for the processes that expect it
+    queue = multiprocessing.Queue()
     processes = [
-        multiprocessing.Process(target=run_orchestration_gateway, name="orchestration-api"),
-        multiprocessing.Process(target=run_worker, name="orchestration-worker"),
-        multiprocessing.Process(target=run_depin_sidecar, name="depin-sidecar"),
+        multiprocessing.Process(target=run_orchestration_gateway, name="orchestration-api", args=(queue,)),
+        multiprocessing.Process(target=run_worker, name="orchestration-worker", args=(queue,)),
+        multiprocessing.Process(target=run_nosana_sidecar, name="nosana-sidecar", args=(queue,)),
     ]
 
     print("[CLI] Starting Orchestration Stack (API, Worker, DePIN Sidecar)...")

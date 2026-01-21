@@ -1,5 +1,5 @@
 import { useState } from "react";
-import api from "@/lib/api";
+import { managementApi, computeApi } from "@/lib/api";
 import { toast } from "sonner";
 import { Plus, RefreshCw, Settings, Search, Play, Square, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -31,7 +31,7 @@ export default function Deployments() {
     queryFn: async () => {
       const targetOrgId = user?.org_id || organizations?.[0]?.id;
 
-      const res = await api.get("http://localhost:8080/deployment/deployments", {
+      const res = await computeApi.get("/deployment/deployments", {
         params: { org_id: targetOrgId }
       });
 
@@ -52,7 +52,7 @@ export default function Deployments() {
   // Stop/Terminate Mutation (for running deployments)
   const stopMutation = useMutation({
     mutationFn: async ({ id }: { id: string }) => {
-      await api.post("http://localhost:8080/deployment/terminate", {
+      await computeApi.post("/deployment/terminate", {
         deployment_id: id,
       });
     },
@@ -76,9 +76,9 @@ export default function Deployments() {
     mutationFn: async ({ id, provider }: { id: string; provider: string }) => {
       if (provider === "compute" || provider === "vllm") {
         // Use the new hard delete endpoint
-        await api.delete(`http://localhost:8080/deployment/delete/${id}`);
+        await computeApi.delete(`/deployment/delete/${id}`);
       } else {
-        await api.delete(`/management/deployments/${id}`);
+        await managementApi.delete(`/management/deployments/${id}`);
       }
     },
     onSuccess: () => {
@@ -103,7 +103,7 @@ export default function Deployments() {
   // Start Mutation
   const startMutation = useMutation({
     mutationFn: async ({ id }: { id: string }) => {
-      await api.post("http://localhost:8080/deployment/start", {
+      await computeApi.post("/deployment/start", {
         deployment_id: id,
       });
     },

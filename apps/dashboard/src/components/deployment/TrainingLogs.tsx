@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import api from "@/lib/api"
+import { computeApi } from "@/lib/api"
 import { Monitor, RefreshCcw, ScrollText } from "lucide-react"
 
 interface TrainingLogsProps {
@@ -17,7 +17,7 @@ export default function TrainingLogs({ deploymentId }: TrainingLogsProps) {
             // Hit the orchestration endpoint we just created
             // Using absolute URL if needed or proxy
             // Assuming api.get handles the base URL or we use full url
-            const { data } = await api.get(`http://localhost:8080/deployment/logs/${deploymentId}`)
+            const { data } = await computeApi.get(`/deployment/logs/${deploymentId}`)
             if (data?.opStates && Array.isArray(data.opStates)) {
                 // Handle Nosana nested log format
                 const allLogs: string[] = []

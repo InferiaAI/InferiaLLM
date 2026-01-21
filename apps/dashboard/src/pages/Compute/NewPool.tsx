@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/context/AuthContext"
+import { computeApi } from "@/lib/api"
 
 // Mock Providers (could be fetched or static)
 const providers = [
@@ -46,10 +47,8 @@ export default function NewPool() {
     const fetchResources = async (provider: string) => {
         setLoadingResources(true)
         try {
-            const res = await fetch(`/deployment/provider/resources?provider=${provider}`)
-            if (!res.ok) throw new Error("Failed to fetch resources")
-            const data = await res.json()
-            setAvailableResources(data.resources || [])
+            const res = await computeApi.get(`/deployment/provider/resources?provider=${provider}`)
+            setAvailableResources(res.data.resources || [])
         } catch (error) {
             toast.error("Failed to load compute resources")
             console.error(error)
@@ -94,21 +93,12 @@ export default function NewPool() {
                 scheduling_policy_json: JSON.stringify({ strategy: "best_fit" })
             }
 
-            const res = await fetch("/deployment/createpool", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            })
-
-            if (!res.ok) {
-                const err = await res.json()
-                throw new Error(err.detail || "Failed to create pool")
-            }
+            const res = await computeApi.post("/deployment/createpool", payload)
 
             toast.success("Compute Pool created successfully!")
             navigate("/dashboard/compute/pools") // Go back to pools list
         } catch (error: any) {
-            toast.error(error.message)
+            toast.error(error.response?.data?.detail || error.message)
         } finally {
             setIsCreating(false)
         }

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { computeApi } from "@/lib/api";
 
 export default function InstanceDetail() {
   const { id } = useParams();
@@ -31,9 +32,8 @@ export default function InstanceDetail() {
   const fetchInventory = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/deployment/list/pool/${id}/inventory`);
-      if (!res.ok) throw new Error("Failed to load pool inventory");
-      const data = await res.json();
+      const res = await computeApi.get(`/deployment/list/pool/${id}/inventory`);
+      const data = res.data;
       setNodes(data.nodes || []);
       setPoolId(data.pool_id);
     } catch (error) {
@@ -62,10 +62,7 @@ export default function InstanceDetail() {
     // I should check if I can import api.
 
     try {
-      const res = await fetch(`/deployment/deletepool/${id}`, {
-        method: "POST",
-      });
-      if (!res.ok) throw new Error("Failed to delete pool");
+      await computeApi.post(`/deployment/deletepool/${id}`);
 
       toast.success("Pool deleted successfully");
       navigate("/dashboard/compute/pools");

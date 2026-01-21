@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
-import api from "@/lib/api"
+import { managementApi, computeApi } from "@/lib/api"
 import { Activity, Gauge, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import InferenceLogs from "@/components/InferenceLogs"
@@ -33,7 +33,7 @@ export default function DeploymentDetail() {
         try {
             // 1. Try fetching from Compute Orchestrator directly
             try {
-                const { data } = await api.get(`http://localhost:8080/deployment/status/${id}`)
+                const { data } = await computeApi.get(`/deployment/status/${id}`)
                 if (data && data.deployment_id) {
                     setDeployment({
                         ...data,
@@ -59,7 +59,7 @@ export default function DeploymentDetail() {
             // 2. Fallback to Management API (External Deployments)
             // In a real app we'd have a single GET /management/deployments/:id endpoint
             // For now we just find it in the list or assume it exists if we navigated here
-            const { data } = await api.get("/management/deployments")
+            const { data } = await managementApi.get("/management/deployments")
             const found = data.find((d: any) => d.id === id)
             setDeployment(found)
         } catch (e) {
@@ -89,15 +89,15 @@ export default function DeploymentDetail() {
             if (isCompute) {
                 if (isStopped) {
                     // Permanently delete from database
-                    await api.delete(`http://localhost:8080/deployment/delete/${id}`)
+                    await computeApi.delete(`/deployment/delete/${id}`)
                 } else {
                     // Stop the deployment first
-                    await api.post("http://localhost:8080/deployment/terminate", {
+                    await computeApi.post("/deployment/terminate", {
                         deployment_id: id,
                     })
                 }
             } else {
-                await api.delete(`/management/deployments/${id}`)
+                await managementApi.delete(`/management/deployments/${id}`)
             }
 
             toast.success(isStopped ? "Deployment deleted successfully" : "Deployment stopped successfully")

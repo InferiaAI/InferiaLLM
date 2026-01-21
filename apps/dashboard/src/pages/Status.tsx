@@ -12,29 +12,34 @@ interface ServiceStatus {
     description: string
 }
 
+const MANAGEMENT_BASE = import.meta.env.VITE_MANAGEMENT_URL || "http://localhost:8000"
+const COMPUTE_BASE = import.meta.env.VITE_COMPUTE_URL || "http://localhost:8080"
+const INFERENCE_BASE = import.meta.env.VITE_INFERENCE_URL || "http://localhost:8001"
+const SIDECAR_BASE = import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000"
+
 const SERVICES = [
     {
         name: "Filtration Gateway",
-        url: "http://localhost:8000/health",
+        url: `${MANAGEMENT_BASE}/health`,
         icon: Activity,
         description: "Policy enforcement, guardrails, and request routing"
     },
     {
         name: "Inference Gateway",
-        url: "http://localhost:8001/v1/chat/completions",
+        url: `${INFERENCE_BASE}/v1/chat/completions`,
         icon: Zap,
         description: "OpenAI-compatible API endpoint",
         method: "OPTIONS" // Just check if endpoint responds
     },
     {
         name: "Orchestration API",
-        url: "http://localhost:8080/deployment/listPools/health-check",
+        url: `${COMPUTE_BASE}/deployment/listPools/health-check`,
         icon: Server,
         description: "Deployment management and compute orchestration"
     },
     {
         name: "Nosana Sidecar",
-        url: "http://localhost:3000/health",
+        url: `${SIDECAR_BASE}/health`,
         icon: Cloud,
         description: "Nosana DePIN job management"
     }
