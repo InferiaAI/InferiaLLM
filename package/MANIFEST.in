@@ -1,0 +1,6 @@
+recursive-exclude src **/node_modules *
+recursive-exclude src **/dist *
+recursive-exclude src **/build *
+global-exclude .env
+global-exclude *.pyc
+global-exclude __pycache__
