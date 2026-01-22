@@ -395,3 +395,10 @@ It provides:
 * auditable operation
 
 **From raw LLMs to real users - without building a platform from scratch.**
+
+---
+
+InferiaLLM  
+Copyright © 2026 Inferia AI
+
+InferiaLLM is an open-source LLM execution and control plane licensed under the Apache License, Version 2.0.

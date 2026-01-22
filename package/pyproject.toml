@@ -1,20 +1,14 @@
 [project]
-name = "inferia"
-version = "0.1.0"
-description = "Inferia: distributed inference, filtration, and compute orchestration platform"
+name = "inferiallm"
+version = "1.0.1"
+description = "InferiaLLM: distributed inference, filtration, and compute orchestration platform"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 
 authors = [
-    { name = "Hooman Digital LLP" },
-    { name = "Meet Sonawane" },
-    { name = "Chandra K Rajwal" }
+    { name = "Inferia AI" },
 ]
-
-[project.urls]
-Repository = "https://github.com/InferiaAI/InferiaLLM"
-Documentation = "https://inferiallm.ai/docs"
 
 # -------------------------
 # Core runtime dependencies
@@ -71,6 +65,10 @@ dependencies = [
   "kubernetes==33.1.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/InferiaAI/InferiaLLM"
+Documentation = "https://inferiallm.ai/docs"
+
 # ---------------------------------
 # Optional: Cloud / Orchestration
 # ---------------------------------
@@ -78,10 +76,6 @@ dependencies = [
 aws = [
   "boto3==1.42.10",
 ]
-
-# ---------------------------------
-# Optional: ML / Inference
-# ---------------------------------
 ml = [
   "numpy",
   "transformers>=4.40",
@@ -95,20 +89,12 @@ ml = [
   "requests",
   "groq",
 ]
-
-# ---------------------------------
-# Optional: Database migrations / ORM
-# ---------------------------------
 db = [
   "sqlalchemy>=2.0",
   "alembic>=1.13",
   "greenlet",
   "jinja2",
 ]
-
-# ---------------------------------
-# Optional: Testing
-# ---------------------------------
 dev = [
   "pytest>=8.0",
   "pytest-cov",
@@ -119,12 +105,32 @@ dev = [
   "pytest-tornasync",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["**/node_modules", "**/dist", "**/build"]
+
 [tool.setuptools.package-data]
 inferia = [
   "dashboard/**/*",
   "infra/schema/*.sql",
-  "services/orchestration/app/services/depin-sidecar/**/*"
+  "services/orchestration/app/services/depin-sidecar/package.json",
+  "services/orchestration/app/services/depin-sidecar/tsconfig.json",
+  "services/orchestration/app/services/depin-sidecar/src/**/*"
 ]
+
+[tool.setuptools.exclude-package-data]
+inferia = [
+    "**/node_modules/**/*",
+    "**/dist/**/*",
+    "**/.env",
+    "**/*.pyc",
+    "**/__pycache__/**/*"
+]
+
 # -------------------------
 # CLI entrypoint
 # -------------------------
