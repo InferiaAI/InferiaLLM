@@ -7,7 +7,7 @@ import secrets
 from db.database import get_db
 from db.models import Organization as DBOrganization, Invitation as DBInvitation, User as DBUser
 from schemas.management import (
-    OrganizationCreate, OrganizationResponse,
+    OrganizationCreate, OrganizationResponse, OrganizationUpdate,
     InviteRequest, InviteResponse, InvitationListResponse
 )
 from management.dependencies import get_current_user_context
@@ -28,7 +28,8 @@ async def create_organization(
     
     new_org = DBOrganization(
         name=org_data.name,
-        api_key=api_key
+        api_key=api_key,
+        log_payloads=org_data.log_payloads
     )
     db.add(new_org)
     await db.commit()
@@ -51,6 +52,33 @@ async def get_my_organization(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
         
+    return org
+
+@router.patch("/organizations/me", response_model=OrganizationResponse)
+async def update_my_organization(
+    org_data: OrganizationUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+    
+    if not user_ctx.org_id:
+         raise HTTPException(status_code=400, detail="No active organization context")
+        
+    org_result = await db.execute(select(DBOrganization).where(DBOrganization.id == user_ctx.org_id))
+    org = org_result.scalars().first()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+        
+    if org_data.name is not None:
+        org.name = org_data.name
+    if org_data.log_payloads is not None:
+        org.log_payloads = org_data.log_payloads
+        
+    await db.commit()
+    await db.refresh(org)
     return org
 
 # --- Invitations (Grouped with Org Management) ---

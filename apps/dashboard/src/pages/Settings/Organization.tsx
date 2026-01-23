@@ -1,12 +1,18 @@
 import { useState, useEffect } from "react"
 import api from "@/lib/api"
 import { toast } from "sonner"
-import { Scale, Save, Activity } from "lucide-react"
+import { Scale, Save, Activity, Shield, RefreshCw } from "lucide-react"
 import { LoadingScreen } from "@/components/ui/LoadingScreen"
 
 interface ConfigResponse {
     policy_type: string
     config_json: any
+}
+
+interface OrganizationData {
+    id: string
+    name: string
+    log_payloads: boolean
 }
 
 interface UsageStat {
@@ -21,6 +27,16 @@ export default function Organization() {
     const [isSaving, setIsSaving] = useState(false)
     const [jsonInput, setJsonInput] = useState("{}")
     const [usageStats, setUsageStats] = useState<UsageStat[]>([])
+    const [orgData, setOrgData] = useState<OrganizationData | null>(null)
+
+    const fetchOrgData = async () => {
+        try {
+            const { data } = await api.get<OrganizationData>("/management/organizations/me")
+            setOrgData(data)
+        } catch (error) {
+            console.error("Failed to fetch organization data:", error)
+        }
+    }
 
     const fetchUsageStats = async () => {
         try {
@@ -48,6 +64,24 @@ export default function Organization() {
         }
     }
 
+    const handleUpdateLogPayloads = async (enabled: boolean) => {
+        if (!orgData) return
+        try {
+            // Optimistic update
+            setOrgData({ ...orgData, log_payloads: enabled })
+            
+            await api.patch("/management/organizations/me", {
+                log_payloads: enabled
+            })
+            toast.success(`Inference payload logging ${enabled ? "enabled" : "disabled"}`)
+        } catch (error) {
+            console.error(error)
+            toast.error("Failed to update logging preference")
+            // Rollback
+            fetchOrgData()
+        }
+    }
+
     const handleSave = async () => {
         try {
             const parsed = JSON.parse(jsonInput)
@@ -71,7 +105,7 @@ export default function Organization() {
         // Initial load
         const init = async () => {
             setIsLoading(true)
-            await Promise.all([fetchConfig(), fetchUsageStats()])
+            await Promise.all([fetchConfig(), fetchUsageStats(), fetchOrgData()])
             setIsLoading(false)
         }
         init()
@@ -146,6 +180,38 @@ export default function Organization() {
                             />
                             <p className="text-xs text-muted-foreground">Maximum total tokens (prompt + completion) per day.</p>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-card rounded-lg border shadow-sm p-6">
+                <div className="flex items-center gap-2 mb-6">
+                    <h3 className="font-mono text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                        <Shield className="w-4 h-4" /> Privacy & Data
+                    </h3>
+                </div>
+
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between p-4 bg-muted/30 border rounded-lg">
+                        <div className="space-y-0.5">
+                            <div className="text-sm font-medium">Log Inference Payloads</div>
+                            <div className="text-xs text-muted-foreground">
+                                If enabled, full prompt and response content will be stored in the inference logs.
+                                Disable this to only record metadata and performance metrics.
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => handleUpdateLogPayloads(!orgData?.log_payloads)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                                orgData?.log_payloads ? "bg-primary" : "bg-muted"
+                            }`}
+                        >
+                            <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                    orgData?.log_payloads ? "translate-x-6" : "translate-x-1"
+                                }`}
+                            />
+                        </button>
                     </div>
                 </div>
             </div>

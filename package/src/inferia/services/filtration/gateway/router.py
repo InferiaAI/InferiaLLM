@@ -97,6 +97,7 @@ async def create_inference_log(
         status_code=log_data.status_code,
         error_message=log_data.error_message,
         is_streaming=log_data.is_streaming,
+        applied_policies=log_data.applied_policies,
     )
     db.add(log)
     await db.commit()
@@ -247,9 +248,9 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
     
     mock_models = [
         ModelInfo(
-            id=d.model_name,
-            created=int(d.created_at.timestamp()) if d.created_at else 0,
-            owned_by=d.org_id or "system",
+            id=str(d.model_name),
+            created=int(d.created_at.timestamp()) if d.created_at is not None else 0,
+            owned_by=str(d.org_id) if d.org_id is not None else "system",
             description=f"Model deployment for {d.model_name} ({d.engine})"
         )
         for d in deployments
@@ -284,6 +285,7 @@ class ResolveContextResponse(BaseModel):
     rate_limit_config: Optional[Dict] = None
     user_id_context: Optional[str] = None
     org_id: Optional[str] = None
+    log_payloads: bool = True
 
 
 @router.post("/context/resolve", response_model=ResolveContextResponse)
@@ -320,6 +322,7 @@ async def resolve_inference_context(
         rate_limit_config=config.get("rate_limit"),
         user_id_context=user_id_context,
         org_id=deployment["org_id"],
+        log_payloads=result.get("log_payloads", True),
     )
 
 

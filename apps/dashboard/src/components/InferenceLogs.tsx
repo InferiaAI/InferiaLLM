@@ -19,6 +19,7 @@ interface InferenceLog {
     status_code: number
     error_message: string | null
     is_streaming: boolean
+    applied_policies: string[] | null
     created_at: string
 }
 
@@ -193,6 +194,25 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                                 </div>
                             </div>
 
+                            {/* Applied Policies */}
+                            {log.applied_policies && log.applied_policies.length > 0 && (
+                                <div>
+                                    <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                                        <Zap className="w-3 h-3 text-yellow-500" /> Applied Policies
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {log.applied_policies.map((policy) => (
+                                            <span 
+                                                key={policy}
+                                                className="px-2 py-0.5 text-[10px] font-mono bg-primary/10 text-primary border border-primary/20 rounded uppercase"
+                                            >
+                                                {policy.replace('_', ' ')}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Error Message */}
                             {log.error_message && (
                                 <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-md">
@@ -202,14 +222,18 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                             )}
 
                             {/* Request Payload */}
-                            {log.request_payload && (
-                                <div>
-                                    <div className="text-xs text-muted-foreground mb-2">Request Payload</div>
+                            <div>
+                                <div className="text-xs text-muted-foreground mb-2">Request Payload</div>
+                                {log.request_payload ? (
                                     <pre className="p-3 bg-muted rounded-md text-xs overflow-x-auto max-h-64 overflow-y-auto">
                                         {JSON.stringify(log.request_payload, null, 2)}
                                     </pre>
-                                </div>
-                            )}
+                                ) : (
+                                    <div className="p-3 bg-muted/50 rounded-md text-xs italic text-muted-foreground">
+                                        Payload logging is disabled for this organization.
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>

@@ -21,6 +21,7 @@ from typing import Any
 from db.models import ApiKey as DBApiKey
 from db.models import Deployment as DBDeployment
 from db.models import Policy as DBPolicy
+from db.models import Organization as DBOrganization
 from rbac.auth import auth_service
 
 
@@ -31,8 +32,9 @@ from config import settings
 class PolicyEngine:
     def __init__(self):
         # Cache for resolve_context: Key=(api_key, model), Value=ResultDict
-        # TTL=60 seconds to ensure reasonably fresh configs/keys while offloading DB
-        self.context_cache = cachetools.TTLCache(maxsize=2000, ttl=60)
+        # TTL=10 seconds to ensure reasonably fresh configs/keys while offloading DB
+        # Reduced from 60s to handle real-time setting changes better
+        self.context_cache = cachetools.TTLCache(maxsize=2000, ttl=10)
         
         # Redis Client for Quotas
         self.redis = redis.from_url(settings.redis_url, decode_responses=True)
@@ -63,31 +65,34 @@ class PolicyEngine:
         if not auth_key_record:
             return {"valid": False, "error": "Invalid API Key"}
 
-        # 2. Resolve Deployment
-        deployment = None
+        # 2. Resolve Deployment and Organization
+        stmt = (
+            select(DBDeployment, DBOrganization)
+            .join(DBOrganization, DBDeployment.org_id == DBOrganization.id)
+        )
+        
         if auth_key_record.deployment_id:
-            stmt = select(DBDeployment).where(
-                DBDeployment.id == auth_key_record.deployment_id
-            )
-            result = await db.execute(stmt)
-            deployment = result.scalars().first()
+            stmt = stmt.where(DBDeployment.id == auth_key_record.deployment_id)
         else:
             # Org scoped lookup
-            stmt = select(DBDeployment).where(
+            stmt = stmt.where(
                 (DBDeployment.org_id == auth_key_record.org_id)
                 & (
                     (DBDeployment.model_name == model)
                     | (DBDeployment.llmd_resource_name == model)
                 )
             )
-            result = await db.execute(stmt)
-            deployment = result.scalars().first()
-
-        if not deployment:
+            
+        result = await db.execute(stmt)
+        row = result.first()
+        
+        if not row:
             return {
                 "valid": False,
-                "error": "Deployment not found for model/key combination",
+                "error": "Deployment or Organization not found for model/key combination",
             }
+            
+        deployment, organization = row
 
         # Convert deployment to dict for caching and session independence
         deployment_dict = {
@@ -177,6 +182,7 @@ class PolicyEngine:
             "deployment": deployment_dict,
             "config": config,
             "user_id_context": f"apikey:{auth_key_record.id}",
+            "log_payloads": bool(organization.log_payloads) if hasattr(organization, "log_payloads") else True,
         }
 
         # Update Cache

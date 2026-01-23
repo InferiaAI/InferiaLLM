@@ -11,6 +11,7 @@ CREATE TABLE organizations (
     id VARCHAR NOT NULL, 
     name VARCHAR NOT NULL, 
     api_key VARCHAR, 
+    log_payloads BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     updated_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id)
@@ -478,6 +479,7 @@ CREATE TABLE inference_logs (
     status_code INTEGER, 
     error_message VARCHAR, 
     is_streaming BOOLEAN, 
+    applied_policies JSON,
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id), 
     FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id)
