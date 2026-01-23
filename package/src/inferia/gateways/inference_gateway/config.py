@@ -2,6 +2,7 @@
 Configuration for Inference Gateway.
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,9 +22,10 @@ class Settings(BaseSettings):
     
     # Filtration Gateway Settings
     filtration_gateway_url: str = "http://localhost:8000"
-    from pydantic import Field
     filtration_internal_key: str = Field(
-        "dev-internal-key-change-in-prod", alias="INTERNAL_API_KEY"
+        default="dev-internal-key-change-in-prod", 
+        alias="INTERNAL_API_KEY",
+        validation_alias="INTERNAL_API_KEY"
     )
     
     # Nosana Authentication
