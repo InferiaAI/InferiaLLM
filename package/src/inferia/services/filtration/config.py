@@ -46,26 +46,26 @@ class Settings(BaseSettings):
     use_redis_rate_limit: bool = False
 
     # Database Settings
-    database_url: str = "postgresql+asyncpg://inferia:inferia@localhost:5432/inferia"
-
-    # ChromaDB Configuration
-    chroma_api_key: Optional[str] = None
-    chroma_tenant: Optional[str] = None
-    chroma_database: str = "Inferia"
-
-    # Mock Data Settings
-    use_mock_orchestration: bool = True
-    mock_response_delay_ms: int = 100
-
-    # LLM Settings
-    openai_api_key: Optional[str] = None
+    database_url: str = Field(
+        default="postgresql+asyncpg://inferia:inferia@localhost:5432/inferia",
+        validation_alias="DATABASE_URL"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
     @property
+    def sqlalchemy_database_url(self) -> str:
+        """Ensure the URL has the asyncpg driver prefix."""
+        url = self.database_url
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+    @property
     def is_production(self) -> bool:
+
         """Check if running in production environment."""
         return self.environment == "production"
 

@@ -3,8 +3,9 @@ import re
 import asyncio
 import asyncpg
 from pathlib import Path
-import subprocess   # NEW
+import subprocess
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 
 load_dotenv()
@@ -13,6 +14,8 @@ _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 def _safe_ident(name: str) -> str:
+    if not name:
+        return ""
     if not _IDENTIFIER_RE.match(name):
         raise ValueError(f"Unsafe SQL identifier: {name}")
     return name
@@ -21,6 +24,19 @@ def _safe_ident(name: str) -> str:
 def _require_env(name: str, allow_empty: bool = False) -> str:
     value = os.getenv(name)
     if not value and not allow_empty:
+        # Special case: try to derive from DATABASE_URL if it's an app-level var
+        db_url = os.getenv("DATABASE_URL")
+        if db_url and name in ["INFERIA_DB_USER", "INFERIA_DB_PASSWORD", "INFERIA_DB", "PG_HOST", "PG_PORT"]:
+            try:
+                parsed = urlparse(db_url)
+                if name == "INFERIA_DB_USER": return parsed.username or ""
+                if name == "INFERIA_DB_PASSWORD": return parsed.password or ""
+                if name == "INFERIA_DB": return parsed.path.lstrip('/')
+                if name == "PG_HOST": return parsed.hostname or "localhost"
+                if name == "PG_PORT": return str(parsed.port or 5432)
+            except Exception:
+                pass
+        
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value or ""
 
@@ -120,15 +136,15 @@ async def _init():
     pg_host = _require_env("PG_HOST")
     pg_port = _require_env("PG_PORT")
 
-    orchestration_db = _safe_ident(_require_env("ORCHESTRATION_DB"))
-    filtration_db = _safe_ident(_require_env("FILTRATION_DB"))
+    # Use _require_env to allow derivation from DATABASE_URL
+    inferia_db = _safe_ident(_require_env("INFERIA_DB", allow_empty=True) or "inferia")
 
     admin_dsn = (
         f"postgresql://{admin_user}:{admin_password}"
         f"@{pg_host}:{pg_port}/template1"
     )
 
-    print("[inferia:init] Connecting as admin")
+    print(f"[inferia:init] Connecting as admin to bootstrap {inferia_db}")
     conn = await asyncpg.connect(admin_dsn)
 
     try:
@@ -153,23 +169,20 @@ async def _init():
             print(f"[inferia:init] Role exists: {inferia_user}")
 
         # --------------------------------------------------
-        # Create databases
+        # Create database
         # --------------------------------------------------
-        existing_dbs = {
-            r["datname"]
-            for r in await conn.fetch(
-                "SELECT datname FROM pg_database WHERE datistemplate = false"
-            )
-        }
+        db_exists = await conn.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1",
+            inferia_db,
+        )
 
-        for db in (orchestration_db,):
-            if db not in existing_dbs:
-                print(f"[inferia:init] Creating database: {db}")
-                await conn.execute(
-                    f'CREATE DATABASE "{db}" OWNER {inferia_user}'
-                )
-            else:
-                print(f"[inferia:init] Database exists: {db}")
+        if not db_exists:
+            print(f"[inferia:init] Creating database: {inferia_db}")
+            await conn.execute(
+                f'CREATE DATABASE "{inferia_db}" OWNER {inferia_user}'
+            )
+        else:
+            print(f"[inferia:init] Database exists: {inferia_db}")
 
     finally:
         await conn.close()
@@ -177,56 +190,53 @@ async def _init():
     # --------------------------------------------------
     # Fix schema ownership + privileges
     # --------------------------------------------------
-    for db in (orchestration_db, filtration_db):
-        print(f"[inferia:init] Repairing privileges on {db}")
-        db_dsn = (
-            f"postgresql://{admin_user}:{admin_password}"
-            f"@{pg_host}:{pg_port}/{db}"
+    print(f"[inferia:init] Repairing privileges on {inferia_db}")
+    db_dsn = (
+        f"postgresql://{admin_user}:{admin_password}"
+        f"@{pg_host}:{pg_port}/{inferia_db}"
+    )
+
+    conn = await asyncpg.connect(db_dsn)
+    try:
+        await conn.execute(
+            f"""
+            ALTER SCHEMA public OWNER TO {inferia_user};
+            GRANT ALL ON SCHEMA public TO {inferia_user};
+            GRANT ALL ON ALL TABLES IN SCHEMA public TO {inferia_user};
+            GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {inferia_user};
+
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT ALL ON TABLES TO {inferia_user};
+
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT ALL ON SEQUENCES TO {inferia_user};
+            """
         )
-
-        conn = await asyncpg.connect(db_dsn)
-        try:
-            await conn.execute(
-                f"""
-                ALTER SCHEMA public OWNER TO {inferia_user};
-                GRANT ALL ON SCHEMA public TO {inferia_user};
-                GRANT ALL ON ALL TABLES IN SCHEMA public TO {inferia_user};
-                GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {inferia_user};
-
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public
-                GRANT ALL ON TABLES TO {inferia_user};
-
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public
-                GRANT ALL ON SEQUENCES TO {inferia_user};
-                """
-            )
-        finally:
-            await conn.close()
+    finally:
+        await conn.close()
 
     # --------------------------------------------------
     # Apply schemas as inferia
     # --------------------------------------------------
-    inferia_dsn_tpl = (
+    inferia_dsn = (
         f"postgresql://{inferia_user}:{inferia_password}"
-        f"@{pg_host}:{pg_port}/{{db}}"
+        f"@{pg_host}:{pg_port}/{inferia_db}"
     )
 
     await _execute_schema(
-        inferia_dsn_tpl.format(db=orchestration_db),
+        inferia_dsn,
         SCHEMA_DIR / "global_schema.sql",
         "global_schema",
     )
-
 
     # --------------------------------------------------
     # Application-level bootstrap (filtration only)
     # --------------------------------------------------
     
-    # Construct DSN for SQLAlchemy (needs async driver scheme usually, or relies on config)
-    # create_async_engine handles 'postgresql+asyncpg://' best.
+    # Construct DSN for SQLAlchemy
     filtration_dsn_alchemy = (
         f"postgresql+asyncpg://{inferia_user}:{inferia_password}"
-        f"@{pg_host}:{pg_port}/{filtration_db}"
+        f"@{pg_host}:{pg_port}/{inferia_db}"
     )
     
     _bootstrap_filtration(filtration_dsn_alchemy)

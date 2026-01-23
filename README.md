@@ -82,10 +82,10 @@ curl -o .env https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sa
 nano .env
 
 # 3. Initialize database
-inferia init
+inferiallm init
 
 # 4. Start all services
-inferia api-start
+inferiallm api-start
 ```
 
 ### 2. Build from Source (Recommended for development)
@@ -108,10 +108,10 @@ pip install -e .
 cp .env.sample .env
 
 # Initialize databases
-inferia init
+inferiallm init
 
 # Start API services
-inferia api-start
+inferiallm api-start
 ```
 
 ### 3. Run via Docker (Recommended for reliable deployment)
@@ -153,6 +153,116 @@ Then start the API:
 
 ```bash
 make start
+```
+
+ ---
+
+## Configuration
+
+InferiaLLM requires several environment variables to be configured in a `.env` file. You can find a template in `.env.sample`.
+
+### 1. Database Setup (Required for `init`)
+These variables are used by `inferiallm init` to bootstrap your database.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `PG_ADMIN_USER` | PostgreSQL admin username | `postgres` |
+| `PG_ADMIN_PASSWORD` | PostgreSQL admin password | - |
+| `DATABASE_URL` | Application database connection string | `postgresql://inferia:inferia@localhost:5432/inferia` |
+| `INFERIA_DB` | (Optional) Override database name | `inferia` |
+
+> [!TIP]
+> `inferiallm init` will automatically extract the app-level database user, password, host, and port from your `DATABASE_URL`.
+
+
+### 2. Security & Authentication
+Essential for protecting your gateways and dashboard.
+
+| Variable | Description |
+| --- | --- |
+| `JWT_SECRET_KEY` | Secret key for signing access tokens (use a long random string) |
+| `INTERNAL_API_KEY` | Secret key for service-to-service communication |
+| `SUPERADMIN_EMAIL` | Initial admin user email |
+| `SUPERADMIN_PASSWORD` | Initial admin user password |
+
+### 3. Service Connectivity
+URLs and credentials for core infrastructure.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
+| `DATABASE_URL` | Primary database URL (Postgres format) | `postgresql://inferia:inferia@localhost:5432/inferia` |
+
+### 4. Provider Specific (Optional)
+Required if using specific compute providers or external models.
+
+| Variable | Description |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI key (if using OpenAI models) |
+| `NOSANA_INTERNAL_API_KEY` | Secret for Nosana sidecar authentication |
+| `NOSANA_SIDECAR_URL` | URL for the Nosana sidecar service |
+
+ ---
+
+## CLI Reference
+
+InferiaLLM provides a unified CLI to manage the platform.
+
+### 1. `inferiallm init`
+Initialize the control-plane databases, roles, and schemas.
+
+**Expected Output:**
+```text
+[inferia:init] Connecting as admin
+[inferia:init] Creating role: inferia_user
+[inferia:init] Creating database: inferia
+[inferia:init] Repairing privileges on inferia
+[inferia:init] Applying schema: global_schema
+[inferia:init] Bootstrapping filtration database (tables, default org, super admin)
+...
+[inferia:init] Bootstrap complete
+```
+
+### 2. `inferiallm api-start`
+Start all gateways (Orchestration, Inference, Filtration) and the Admin Dashboard in a single process.
+
+**Expected Output:**
+```text
+[CLI] Starting All Services...
+[Orchestration Gateway API] Listening on port 8080
+[Inference Gateway API] Listening on port 8001
+[Filtration Gateway API] Listening on port 8000
+[Dashboard] Serving at http://localhost:3001/
+...
+```
+
+### 3. `inferiallm orchestration-gateway`
+Start the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecars).
+
+**Expected Output:**
+```text
+[CLI] Starting Orchestration Stack (API, Worker, DePIN Sidecar)...
+[Orchestration Gateway API] Listening on port 8080
+[Orchestration Worker] Connected to message broker
+[DePIN] Launching sidecar...
+```
+
+### 4. `inferiallm inference-gateway`
+Start the Inference Gateway standalone.
+
+**Expected Output:**
+```text
+[Inference Gateway API] Listening on port 8001
+...
+```
+
+### 5. `inferiallm filtration-gateway`
+Start the Filtration Gateway standalone.
+
+**Expected Output:**
+```text
+[Filtration Gateway API] Listening on port 8000
+...
 ```
 
  ---

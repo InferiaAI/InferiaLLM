@@ -24,9 +24,17 @@ class Settings:
     
     # Database
     postgres_dsn: str = os.getenv(
-        "POSTGRES_DSN",
-        "postgresql://inferia:inferia@localhost:5432/inferia"
+        "DATABASE_URL",
+        os.getenv(
+            "POSTGRES_DSN",
+            "postgresql://inferia:inferia@localhost:5432/inferia"
+        )
     )
+    
+    # Cleanup DSN to ensure it's standard postgresql://
+    def __post_init__(self):
+        if self.postgres_dsn.startswith("postgresql+asyncpg://"):
+            self.postgres_dsn = self.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
     
     # Redis
     redis_host: str = os.getenv("REDIS_HOST", "localhost")

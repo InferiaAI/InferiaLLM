@@ -9,8 +9,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # Provided Connection String
-# Note: Using 'postgresql+asyncpg' scheme for async driver
+# Note: Ensure we use the sqlalchemy-compatible URL from settings
 DATABASE_URL = settings.database_url
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(
     DATABASE_URL,
