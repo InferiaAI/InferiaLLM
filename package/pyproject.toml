@@ -135,4 +135,4 @@ inferia = [
 # CLI entrypoint
 # -------------------------
 [project.scripts]
-inferia = "inferia.cli:main"
+inferiallm = "inferia.cli:main"
