@@ -56,7 +56,7 @@ These are **operating system responsibilities**.
 InferiaLLM provides these primitives as a single, cohesive system.
 <div align="center">
   <img src="https://github.com/user-attachments/assets/3ad89406-a12b-4b70-b548-b45a9594dded" width="100%" alt="InferiaLLM Banner" />
-  
+</div>
  ---
 
 ## Quick Start
