@@ -1,264 +1,408 @@
-# Inferia - Package installation & setup guide
 
-This guide walks through local installation, database bootstrapping, and service startup.
+<div align="center">
 
-## 1. Prerequisites
+# InferiaLLM
 
-Before installing Inferia, ensure the following are available on your system:
+### The Operating System for LLMs in Production
 
-> ### System Requirements
+  [![License](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](https://github.com/InferiaAI/InferiaLLM/blob/main/LICENSE)[![Python](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)[![Status](https://img.shields.io/badge/status-beta-orange?style=flat-square)]()[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)[![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)[![Kubernetes](https://img.shields.io/badge/kubernetes-%23326ce5.svg?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 
-- [Python 3.12+](https://www.python.org/downloads/release/python-31212/)
-- [PostgreSQL: 14+](https://www.postgresql.org/download/)
-- [Node.js: 18+](https://nodejs.org/en/download)
-- npm: Comes with Node.js
+</div>
 
-> ### Verify installation with this command
+  <br/>
+  
+  ```bash
+  pip install inferiallm
+  ```
 
-```bash
-python3 --version
-psql --version
-node --version
-npm --version
-```
+  <br/>
+
+  <img src="https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/assets/inferia-cli.gif" width="100%" alt="Inferia CLI Demo" />
+
+  <p>
+    <a href="https://github.com/InferiaAI/InferiaLLM/blob/main/docs/README.md"><img src="https://img.shields.io/badge/Documentation-0078D4?style=for-the-badge&logoColor=white" height="30" alt="Documentation"></a>
+    &nbsp;
+    <a href="https://github.com/InferiaAI/InferiaLLM/issues"><img src="https://img.shields.io/badge/Issues-D73502?style=for-the-badge&logoColor=white" height="30" alt="Issues"></a>
+    &nbsp;
+    <a href="https://github.com/InferiaAI/InferiaLLM/releases"><img src="https://img.shields.io/badge/Releases-6f42c1?style=for-the-badge&logoColor=white" height="30" alt="Releases"></a>
+  </p>
+
+</div>
+
+> [!IMPORTANT]  
+> **Active Development**: InferiaLLM is currently in beta. While it is usable, APIs may change as we finalize the control plane features.
+> Your feedback is invaluable! Open [an issue](https://github.com/InferiaAI/InferiaLLM/issues) to report bugs or request features.
+
+InferiaLLM acts as the **authoritative execution layer** between your applications and your AI infrastructure. It governs how LLMs are accessed, secured, routed, and run on compute.
 
 ---
 
-## 2. Create Python virtual environment
+## What “LLM Operating System” Means
 
-> Create and activate a virtual environment
+LLMs, inference engines, and GPUs exist - but **they are not usable by organizations on their own**.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
+To operate LLMs in production, teams must build platform - level primitives:
 
-> Upgrade pip
+* execution entry points
+* access control and permissions
+* safety enforcement
+* resource limits and cost controls
+* scheduling and routing
+* compute lifecycle management
+* auditing and observability
 
-```bash
-pip install --upgrade pip
-```
+These are **operating system responsibilities**.
 
-> Install Inferia in editable mode:
+InferiaLLM provides these primitives as a single, cohesive system.
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/3ad89406-a12b-4b70-b548-b45a9594dded" width="100%" alt="InferiaLLM Banner" />
+</div>
+---
+
+## Quick Start
+
+### 1. Manual Installation via Package
+
+The easiest way to get started is to run Inferia as a comprehensive Python package.
 
 ```bash
 pip install inferiallm
 ```
 
-> Verify installation
+**Setup & Configuration:**
+
+> [!NOTE]
+> Inferia looks for a `.env` configuration file in your current working directory. You must create one to configure databases and secrets.
 
 ```bash
-inferia --help
+# 1. Download sample environment
+curl -o .env https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sample
+
+# 2. Configure your credentials (DB, Redis, Secrets)
+nano .env
+
+# 3. Initialize database
+inferiallm init
+
+# 4. Start all services
+inferiallm api-start
 ```
 
-----
+### 2. Build from Source (Recommended for development)
 
-## 4. Environment configuration
-
-Inferia relies on environment variables for configuration.
-
-> Create a .env file at the repository root:
-
-```env
-# AWS Configuration
-AWS_ACCESS_KEY_ID=
-AWS_REGION="ap-south-1"
-AWS_SECRET_ACCESS_KEY=
-
-# ChromaDB Configuration
-CHROMA_API_KEY=
-CHROMA_TENANT=
-
-# Database Configuration (Common)
-DATABASE_URL='postgresql+asyncpg://inferia:inferia@localhost:5432/inferia'
-POSTGRES_DSN='postgresql://inferia:inferia@localhost:5432/inferia'
-
-
-# Database Configuration (Postgres Specifics)
-FILTRATION_DB='inferia'
-INFERIA_DB_PASSWORD='inferia'
-INFERIA_DB_USER='inferia'
-ORCHESTRATION_DB='inferia'
-PG_ADMIN_PASSWORD='inferia'
-PG_ADMIN_USER='inferia'
-PG_DB='inferia'
-PG_HOST='localhost'
-PG_PASSWORD='inferia'
-PG_PORT='5432'
-PG_USER='inferia'
-
-# Groq Configuration
-GROQ_API_KEY=
-GROQ_MODEL=llama-guard-4-12b
-
-# Guardrails Configuration
-GUARDRAIL_ENABLE_BIAS=false
-GUARDRAIL_ENABLE_CODE_SCANNING=false
-# GUARDRAIL_ENABLE_LLM_GUARD_STARTUP=false # DEPRECATED
-GUARDRAIL_ENABLE_NO_REFUSAL=false
-GUARDRAIL_ENABLE_PROMPT_INJECTION=false
-GUARDRAIL_ENABLE_RELEVANCE=false
-GUARDRAIL_ENABLE_SECRETS=false
-GUARDRAIL_ENABLE_SENSITIVE_INFO=false
-GUARDRAIL_ENABLE_TOXICITY=false
-GUARDRAIL_GROQ_API_KEY=
-GUARDRAIL_LAKERA_API_KEY=
-GUARDRAIL_PII_DETECTION_ENABLED=true
-
-# Nosana Configuration
-NOSANA_WALLET_PRIVATE_KEY=
-SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-
-# Redis Configuration
-REDIS_DB="0"
-REDIS_HOST=
-REDIS_PASSWORD=
-REDIS_PORT=6379
-REDIS_USERNAME="default"
-
-# Filtration Service Secrets
-SUPERADMIN_PASSWORD="admin123"
-INTERNAL_API_KEY="dev-internal-key-change-in-prod"
-JWT_SECRET_KEY="dev-secret-key-change-in-production"
-```
-
-> ## Note
->
-> `PG_ADMIN_*` is required only for `inferia init`
-> Runtime services never use admin credentials.
----
-
-## 5. Database initialization
-
-Inferia provides a built-in bootstrap command that:
-
-- Creates the inferia PostgreSQL role (if missing)
-- Creates required databases
-- Fixes schema ownership and privileges
-- Applies SQL schemas
-- Optionally resets filtration roles & members
-
-Run:
+If you want to contribute or modify the core logic:
 
 ```bash
-inferia init
+# Clone repo
+git clone https://github.com/InferiaAI/InferiaLLM.git
+cd inferiaLLM
+
+# Setup virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install in editable mode
+pip install -e .
+
+# Configure environment
+cp .env.sample .env
+
+# Initialize databases
+inferiallm init
+
+# Start API services
+inferiallm api-start
 ```
 
-Expected output (example):
+### 3. Run via Docker (Recommended for reliable deployment)
+
+We provide a production-ready `docker-compose` setup that orchestrates all gateways, databases, and queues.
 
 ```bash
-[inferia:init] Connecting as admin
-[inferia:init] Role exists: inferia
-[inferia:init] Database exists: inferia
-[inferia:init] Database exists: filtration_gateway
-[inferia:init] Repairing privileges on inferia
-[inferia:init] Repairing privileges on filtration_gateway
-[inferia:init] Applying schema: orchestration
-[inferia:init] Bootstrap complete
+# Clone the repository
+git clone https://github.com/InferiaAI/InferiaLLM.git
+cd inferiaLLM/deploy
+
+# Configure environment
+cp ../.env.sample .env
+# Edit .env to set your secrets
+
+# Start the stack
+docker compose up -d
 ```
 
-> ## Idempotency gaurantee
->
-> - Running `inferia init` multiple times is safe
-> - Existing tables, enums, roles, and databases are skipped automatically
->
----
+This will spin up:
 
-## 6. Nosana sidecar setup (Node.js)
+* **Orchestration Gateway** (Port 8080)
+* **Filtration Gateway** (Port 8000)
+* **Inference Gateway** (Port 8001)
+* **Postgres & Redis**
 
-Inferia includes a Node.js sidecar for ***Nosana integration***.
+### 4. Automated Setup
 
-### Location
-
-```text
-inferia/services/orchestration/app/services/nosana-sidecar
-```
-
-On first run, dependencies are installed automatically.
-You may also install them manually:
+Run the automated setup script to configure your environment, generate secrets, and install dependencies:
 
 ```bash
-cd inferia/services/orchestration/app/services/nosana-sidecar
-npm install
+# Mac/Linux
+make setup
+# OR directly:
+./setup_project.sh
 ```
 
-Ensure `package.json` exists in directory
-
----
-
-## 7. Running Services
-
-Inferia services can be started individually or together.
-
-### 7.1 Run Individual Services
-
-Filtration Gateway
+Then start the API:
 
 ```bash
-inferia filtration-gateway
+make start
 ```
 
-Inference Gateway
+ ---
 
-```bash
-inferia inference-gateway
-```
+## Core Capabilities
 
-Orchestration Stack (API + Worker + Nosana Sidecar)
+InferiaLLM provides a **single control plane** for:
 
-```bash
-inferia orchestration-gateway
-```
+* LLM inference and deployment
+* LLM access and proxying
+* authentication, RBAC, and policy enforcement
+* safety guardrails and request filtering
+* usage, quota, and cost control
+* inference routing and failover
+* compute orchestration across heterogeneous infrastructure
 
-### 7.2 Run Everything (Recommended for Local Dev)
+ ---
 
-Start all services concurrently:
+## The Problem
 
-```bash
-inferia api-start
-```
+Current LLM tooling focuses on:
 
-This launches:
+* model training
+* inference optimization
+* GPU utilization
 
-- Orchestration API
-- Orchestration Worker
-- Nosana Sidecar (Node.js)
-- Inference Gateway
-- Filtration Gateway
-- Admin Dashboard (<http://localhost:3001>)
+It does **not** address the operational reality of running LLMs for real users.
 
-All services run in parallel using Python multiprocessing.
+To deploy LLMs internally or in products, teams must independently build:
+
+* API gateways
+* authentication and RBAC
+* safety and guardrails
+* quota and budget enforcement
+* usage and cost tracking
+* inference routing logic
+* GPU provisioning and scaling
+* audit logging
+
+These systems are usually:
+
+* spread across many tools
+* inconsistently implemented
+* difficult to enforce centrally
+* expensive to maintain
+
+InferiaLLM consolidates this entire layer into **one operating system**.
+
+ ---
+
+## Scope and Responsibility
+
+InferiaLLM is responsible for:
+
+* LLM deployment and inference execution
+* LLM proxying and access control
+* authentication, authorization, and policy enforcement
+* safety and request filtering
+* backend selection and routing
+* compute provisioning and lifecycle management
+* usage, cost, and audit recording
+
+InferiaLLM is **not** a model, runtime, or training system.
+It governs how those systems are used.
+
+ ---
+
+## System Architecture
+
+InferiaLLM is explicitly split into two planes:
+
+* **Data Plane** – Handles inference traffic (North-South via REST/HTTP).
+* **Control Plane** – Decides execution policy and routing (East-West via gRPC).
+
+![System Architecture](https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/assets/system_arch.png)
 
 ---
 
-## 8. Development Notes
+## Component Overview
 
-- `inferia init` is safe to re-run
+### Applications (Entry Points)
 
-- Sidecar runs as a child process (not embedded)
-- No Docker required for local development
-- Works cleanly inside `site-packages`
+These are the **only externally reachable services**.
 
-## 9. Production Recommendations
-
-- Pre-build the Nosana sidecar (`tsc → dist/`)
-
-- Replace `npx tsx` with `node dist/server.js`
-- Use a process supervisor (systemd / PM2 / Kubernetes)
-- Separate `.env` per service
+| Service                   | Responsibility                                                                | Documentation                                    |
+| ------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
+| **Admin Dashboard**       | Administrative control surface for policies, compute pools, usage, and audits | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/apps/dashboard/README.md)             |
+| **Filtration Gateway**    | Authentication, RBAC, policy enforcement, and guardrails                      | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/apps/filtration-gateway/README.md)    |
+| **Inference Gateway**     | Data-plane ingress for all LLM inference traffic                              | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/apps/inference-gateway/README.md)     |
+| **Orchestration Gateway** | Compute control authority and execution routing                               | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/apps/orchestration-gateway/README.md) |
 
 ---
 
-> ## Summary
->
-> ```bash
-> git clone <repo>
-> cd inferia
-> python3 -m venv .venv
-> source .venv/bin/activate
-> pip install -e .
-> cp .env.example .env
-> inferia init
-> inferia api-start
->  ```
+## Technology Stack
 
+InferiaLLM is built on a modern, high-performance foundation designed for scale and reliability.
+
+### Core Runtime
+
+* **Language**: Python 3.10+
+* **API Framework**: FastAPI (Asynchronous, High-performance)
+* **Inter-Service Communication**: gRPC (Protobuf)
+* **Task Queue**: Redis Streams & Pub/Sub
+
+### Data & State
+
+* **Primary Database**: PostgreSQL 15 (Relational Data, JSONB for Audit Logs)
+* **Cache & Broker**: Redis 7 (Rate Limiting, Hot State)
+* **Vector Query**: Compatible with pgvector / ChromaDB (Sidecar support)
+
+### Security
+
+* **Authentication**: Stateless JWT (RS256)
+* **Encryption**: Fernet (Symmetric encryption for secrets)
+* **Policy Engine**: Custom RBAC with hierarchical permissions
+
+---
+
+### Inference Gateway (Data Plane)
+
+* Entry point for all LLM requests
+* Normalizes request formats
+* Forwards requests for mandatory policy evaluation
+* Routes approved requests to execution backends
+
+Does **not** make policy or compute decisions.
+
+#### Request Flow
+
+![Request Flow](https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/assets/request_flow.png)
+
+ ---
+
+### Filtration Gateway (Policy Authority)
+
+* Validates identity and permissions
+* Enforces quotas, rate limits, and budgets
+* Applies guardrails (PII, toxicity, prompt injection)
+* Records structured audit data
+
+Requests failing policy are rejected **before inference**.
+
+ ---
+
+### Orchestration Gateway (Compute Authority)
+
+* Abstracts compute providers
+* Manages compute pools
+* Provisions and deprovisions resources
+* Routes execution based on policy and availability
+
+Supports:
+
+* Kubernetes GPU clusters
+* VPS infrastructure
+* DePIN compute (e.g. Nosana)
+
+### Admin Dashboard
+
+* Manage organizations, users, and roles
+* Define policies, budgets, and limits
+* Register and manage compute providers
+* Inspect usage, cost, and audit logs
+
+ ---
+
+## Core Services (Control Plane Internals)
+
+| Component        | Responsibility                            | Documentation                                       |
+|  ----------------  |  -----------------------------------------  |  ---------------------------------------------------  |
+| **Orchestrator** | Compute lifecycle and workload management | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/src/inferia/services/orchestration/README.md)        |
+| **Guardrails**   | Safety enforcement and content filtering  | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/src/inferia/services/filtration/guardrail/README.md) |
+| **RBAC**         | Identity and access boundaries            | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/src/inferia/services/filtration/rbac/README.md)      |
+| **Gateway**      | Secure internal service routing           | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/src/inferia/services/filtration/gateway/README.md)   |
+| **Audit**        | Immutable execution and policy logs       | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/src/inferia/services/filtration/audit/README.md)     |
+| **Policy**       | Quota, rate, and budget enforcement       | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/src/inferia/services/filtration/policy/README.md)    |
+| **Prompt**       | Prompt templates and versioning           | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/src/inferia/services/filtration/prompt/README.md)    |
+| **Packages**     | Installation, versioning, and initialization | [README](https://github.com/InferiaAI/InferiaLLM/blob/main/package/README.md)                    |
+
+ ---
+
+## Compute Control Model
+
+InferiaLLM treats compute as a **first - class, governed resource**.
+
+* Providers are registered centrally
+* Execution is scheduled through policy
+* Usage is tracked per request
+* Environments are isolated
+
+Compute decisions are made by the control plane - not application code.
+
+ ---
+
+## Audit and Observability
+
+InferiaLLM records:
+
+* request metadata
+* policy decisions
+* execution backend
+* resource usage
+* failure modes
+
+This supports:
+
+* cost attribution
+* security review
+* compliance
+* incident investigation
+
+### Metrics & Tracing
+
+InferiaLLM exports **Prometheus-compatible metrics** from all gateways, providing visibility into:
+
+* Request latency (p50, p95, p99)
+* Token throughput per provider
+* Error rates by model and tenant
+* Active compute slot utilization
+
+ ---
+
+## Deployment Model
+
+InferiaLLM is:
+
+* **Self-Hosted**: Docker Compose standard stack (Postgres, Redis, Gateways).
+* **Cloud-Agnostic**: Deploys to AWS, GCP, Azure, or bare metal without modification.
+* **Provider-Neutral**: Supports any OpenAI-compatible inference backend (vLLM, TGI, Triton).
+
+It integrates with existing infrastructure and avoids proprietary lock-in.
+
+---
+
+## Summary
+
+InferiaLLM is the **operating system for LLMs in production**.
+
+It provides:
+
+* a single execution boundary
+* enforced policy and security
+* governed compute
+* auditable operation
+
+**From raw LLMs to real users - without building a platform from scratch.**
+
+---
+
+InferiaLLM  
+Copyright © 2026 Inferia AI
+
+InferiaLLM is an open-source LLM execution and control plane licensed under the Apache License, Version 2.0.
