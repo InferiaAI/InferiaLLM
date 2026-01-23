@@ -331,29 +331,6 @@ class PolicyEngine:
              # But this is inside track_usage which is fire-and-forget from router usually.
             print(f"DB Usage Persist Failed: {e}")
 
-        # Audit Log: Transaction
-        try:
-            cost = (prompt_incr + compl_incr) * 0.0001
-            await audit_service.log_event(
-                db,
-                AuditLogCreate(
-                    user_id=user_id,
-                    action="TRANSACTION",
-                    resource_type="model_usage",
-                    resource_id=model,
-                    details={
-                        "prompt_tokens": prompt_incr,
-                        "completion_tokens": compl_incr,
-                        "total_tokens": total_incr,
-                        "cost": cost,
-                        "currency": "USD"
-                    },
-                    status="success"
-                )
-            )
-        except Exception as e:
-            print(f"Failed to audit transaction: {e}")
-
     async def get_quotas(self, db: AsyncSession, user_id: str) -> dict:
         """
         Get usage quotas for a user for today (from Redis if available).
