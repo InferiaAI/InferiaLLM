@@ -23,6 +23,8 @@ CREATE TABLE users (
     id VARCHAR NOT NULL, 
     email VARCHAR NOT NULL, 
     password_hash VARCHAR NOT NULL, 
+    totp_secret VARCHAR,
+    totp_enabled BOOLEAN DEFAULT FALSE,
     default_org_id VARCHAR, 
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     updated_at TIMESTAMP WITHOUT TIME ZONE, 
@@ -328,6 +330,7 @@ CREATE TABLE IF NOT EXISTS public.model_deployments
     owner_id text, -- Organization/User ID owning this deployment
     org_id text, -- Organization ID
     policies jsonb, -- Filtration policies
+    inference_model text, -- Backend model slug (e.g. 'meta-llama/...')
 
     pool_id uuid NOT NULL,
     replicas integer NOT NULL,
