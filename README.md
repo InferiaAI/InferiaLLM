@@ -182,6 +182,7 @@ Essential for protecting your gateways and dashboard.
 | --- | --- |
 | `JWT_SECRET_KEY` | Secret key for signing access tokens (use a long random string) |
 | `INTERNAL_API_KEY` | Secret key for service-to-service communication |
+| `SECRET_ENCRYPTION_KEY` | 32-byte base64 key for encrypting provider credentials |
 | `SUPERADMIN_EMAIL` | Initial admin user email |
 | `SUPERADMIN_PASSWORD` | Initial admin user password |
 

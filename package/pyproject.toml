@@ -67,7 +67,7 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/InferiaAI/InferiaLLM"
-Documentation = "https://inferiallm.ai/docs"
+Documentation = "https://docs.inferia.ai/docs"
 
 # ---------------------------------
 # Optional: Cloud / Orchestration

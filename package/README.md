@@ -53,6 +53,7 @@ The CLI manages configuration through environment variables. The most critical s
 | `PG_ADMIN_PASSWORD` | Postgres admin password (required for `init`) | - |
 | `JWT_SECRET_KEY` | Secret for signing access tokens | - |
 | `INTERNAL_API_KEY` | Secret for service-to-service auth | - |
+| `SECRET_ENCRYPTION_KEY` | 32-byte base64 key for encrypting credentials | - |
 
 ### 2. Provider Specifics (Optional)
 Required for provisioning compute from external providers:

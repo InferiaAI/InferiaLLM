@@ -109,7 +109,7 @@ def show_inferia():
     print("    inferia/README.md\n")
 
     print(f"  {Colors.BOLD}Online Docs:{Colors.ENDC}")
-    print("    https://inferiaLLM.ai/docs\n")
+    print("    https://docs.inferia.ai/docs\n")
 
     print(f"  {Colors.BOLD}GitHub Repo:{Colors.ENDC}")
     print("    https://github.com/InferiaAI/InferiaLLM")
@@ -148,7 +148,7 @@ Docs:
     inferia/gateways/orchestration_gateway/README.md
           
 Online Docs:
-    https://inferiaLLM.ai/docs/gateways/orchestration_gateway/orchestration
+   https://docs.inferia.ai/docs/gateways/orchestration_gateway/orchestration
 
 GitHub Repos:
     https://github.com/InferiaAI/InferiaLLM/apps/orchestration-gateway
@@ -185,7 +185,7 @@ Docs:
     inferia/gateways/inference_gateway/README.md
           
 Online Docs:
-    https://inferiaLLM.ai/docs/gateways/inference_gateway/inference
+    https://docs.inferia.ai/docs/gateways/inference_gateway/inference
 
 GitHub Repo:
     https://github.com/InferiaAI/InferiaLLM/apps/inference-gateway
@@ -221,7 +221,7 @@ Docs:
   inferia/gateways/filtration_gateway/README.md
           
 Online Docs:
-  https://inferiaLLM.ai/docs/gateways/filtration_gateway/filtration
+  https://docs.inferia.ai/docs/gateways/filtration_gateway/filtration
         
 GitHub Repo:
   https://github.com/InferiaAI/InferiaLLM/services/filtration
