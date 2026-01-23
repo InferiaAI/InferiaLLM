@@ -59,7 +59,6 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Rate limiting: {'enabled' if settings.rate_limit_enabled else 'disabled'}")
-    logger.info(f"Mock orchestration: {'enabled' if settings.use_mock_orchestration else 'disabled'}")
 
     # Initialize Default Org & Superadmin
     from db.database import AsyncSessionLocal
@@ -156,7 +155,6 @@ async def health_check():
         components={
             "rbac": "healthy",
             "rate_limiter": "healthy",
-            "mock_orchestration": "healthy" if settings.use_mock_orchestration else "disabled"
         }
     )
     return JSONResponse(content=jsonable_encoder(response))

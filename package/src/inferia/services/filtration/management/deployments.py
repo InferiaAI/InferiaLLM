@@ -10,8 +10,7 @@ from schemas.logging import InferenceLogResponse
 from schemas.auth import PermissionEnum
 from management.dependencies import get_current_user_context
 from rbac.authorization import authz_service
-from gateway.mock_orchestration import mock_orchestration
-from schemas.inference import ModelsListResponse
+from schemas.inference import ModelInfo, ModelsListResponse
 
 router = APIRouter(tags=["Deployments"])
 
@@ -192,4 +191,22 @@ async def list_models(
 ):
     user_ctx = get_current_user_context(request)
     authz_service.require_permission(user_ctx, PermissionEnum.MODEL_ACCESS)
-    return mock_orchestration.get_available_models()
+    
+    # Get available models from database (real deployments for this org)
+    if not user_ctx.org_id:
+        return ModelsListResponse(data=[])
+        
+    result = await db.execute(select(DBDeployment).where(DBDeployment.org_id == user_ctx.org_id))
+    deployments = result.scalars().all()
+    
+    models = [
+        ModelInfo(
+            id=d.model_name,
+            created=int(d.created_at.timestamp()) if d.created_at else 0,
+            owned_by=d.org_id,
+            description=f"Active deployment: {d.name}"
+        )
+        for d in deployments
+    ]
+    
+    return ModelsListResponse(data=models)

@@ -10,11 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from guardrail.api_models import GuardrailScanRequest, ScanType
 from guardrail.engine import guardrail_engine
 from guardrail.pii_service import pii_service
-from models import InferenceRequest, InferenceResponse, ModelsListResponse
+from models import InferenceRequest, InferenceResponse, ModelInfo, ModelsListResponse
 from rbac import router as auth_router
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from db.models import Deployment
 
-from gateway.mock_orchestration import mock_orchestration
 from gateway.rate_limiter import rate_limiter
 
 import logging
@@ -143,7 +144,7 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
     # 1. Prepare PII Scan
     async def run_pii():
         if pii_enabled:
-            return await pii_service.anonymize(request_body.text, request_body.pii_entities)
+            return await pii_service.anonymize(request_body.text, request_body.pii_entities or [])
         return request_body.text, []
 
     scan_coros.append(run_pii())
@@ -156,9 +157,9 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
              return await guardrail_engine.scan_input(
                 prompt=text_to_scan,
                 user_id=user_id,
-                custom_keywords=request_body.custom_banned_keywords,
-                pii_entities=request_body.pii_entities,
-                config=request_body.config,
+                custom_keywords=request_body.custom_banned_keywords or [],
+                pii_entities=request_body.pii_entities or [],
+                config=request_body.config or {},
             )
         else:
              # Output scan requires context
@@ -167,13 +168,14 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
                 prompt=context,
                 output=text_to_scan,
                 user_id=user_id,
-                custom_keywords=request_body.custom_banned_keywords,
-                config=request_body.config,
+                custom_keywords=request_body.custom_banned_keywords or [],
+                config=request_body.config or {},
             )
 
     # We launch PII and Guardrail simultaneously. 
     # Guardrail sees the raw input (request_body.text).
     scan_coros.append(run_guardrail(request_body.text))
+
 
     # Execute
     results = await asyncio.gather(*scan_coros)
@@ -232,17 +234,28 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
 
 
 @router.get("/models", response_model=ModelsListResponse)
-async def list_models(request: Request):
+async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
     """
     List available models.
     """
     # Check rate limit
     await rate_limiter.check_rate_limit(request)
 
-    # Get available models from orchestration layer (mocked)
-    models = mock_orchestration.get_available_models()
-
-    return models
+    # Get available models from database (real deployments)
+    result = await db.execute(select(Deployment))
+    deployments = result.scalars().all()
+    
+    mock_models = [
+        ModelInfo(
+            id=d.model_name,
+            created=int(d.created_at.timestamp()) if d.created_at else 0,
+            owned_by=d.org_id or "system",
+            description=f"Model deployment for {d.model_name} ({d.engine})"
+        )
+        for d in deployments
+    ]
+    
+    return ModelsListResponse(data=mock_models)
 
 
 # NEW: Context Resolution for Inference Gateway
@@ -382,7 +395,7 @@ async def process_prompt(
                 top_k = config.get("top_k", 3)
                 # Fetch RAG context for this variable
                 rag_val = await prompt_engine.assemble_context(
-                    processed_query, collection, org_id, top_k
+                    processed_query, collection, org_id or "default", top_k
                 )
                 if rag_val:
                     variables[var_name] = rag_val
@@ -409,7 +422,7 @@ async def process_prompt(
                 collection = request.rag_config.get("default_collection") or "default"
                 top_k = request.rag_config.get("top_k", 3)
                 rag_ctx = await prompt_engine.assemble_context(
-                    processed_query, collection, org_id, top_k
+                    processed_query, collection, org_id or "default", top_k
                 )
                 if rag_ctx:
                     variables["context"] = rag_ctx
@@ -436,7 +449,7 @@ async def process_prompt(
         collection = request.rag_config.get("default_collection") or "default"
         top_k = request.rag_config.get("top_k", 3)
         rag_context = await prompt_engine.assemble_context(
-            processed_query, collection, org_id, top_k
+            processed_query, collection, org_id or "default", top_k
         )
 
         if rag_context:

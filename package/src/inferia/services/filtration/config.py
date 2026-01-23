@@ -56,10 +56,6 @@ class Settings(BaseSettings):
     chroma_tenant: Optional[str] = None
     chroma_database: str = "Inferia"
 
-    # Mock Data Settings
-    use_mock_orchestration: bool = True
-    mock_response_delay_ms: int = 100
-
     # LLM Settings
     openai_api_key: Optional[str] = None
 
