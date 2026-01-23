@@ -299,11 +299,11 @@ def main(argv=None):
     
 
     parser = argparse.ArgumentParser(
-        prog="inferia",
-        description="Inferia CLI – distributed inference & orchestration platform",
+        prog="inferiallm",
+        description="InferiaLLM CLI – distributed inference & orchestration platform",
         add_help=False,
     )
-    parser.add_argument("command", nargs="?", help="Inferia command")
+    parser.add_argument("command", nargs="?", help="InferiaLLM command")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="Initialize Inferia databases")
@@ -322,7 +322,7 @@ def main(argv=None):
 
     if cmd not in KNOWN_COMMANDS:
         print(f"Unknown command: {cmd}")
-        print("Use 'inferia --help' to see available commands.")
+        print("Use 'inferiallm --help' to see available commands.")
         sys.exit(1)
 
     try:
