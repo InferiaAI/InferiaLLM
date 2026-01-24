@@ -114,29 +114,46 @@ inferiallm init
 inferiallm api-start
 ```
 
-### 3. Run via Docker (Recommended for reliable deployment)
+### 3. Run via Docker (Recommended for Production)
 
-We provide a production-ready `docker-compose` setup that orchestrates all gateways, databases, and queues.
+We provide a unified, production-ready Docker image that contains the entire control plane. You can either use the official image from Docker Hub or build it locally.
+
+#### Option A: Use Docker Hub (Fastest)
+The official unified image is available on [Docker Hub](https://hub.docker.com/r/inferiaai/inferiallm).
 
 ```bash
-# Clone the repository
-git clone https://github.com/InferiaAI/InferiaLLM.git
-cd inferiaLLM/deploy
+# 1. Download the unified docker-compose and sample env
+curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/deploy/unified/docker-compose.yml -o docker-compose.yml
+curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sample -o .env
 
-# Configure environment
-cp ../.env.sample .env
-# Edit .env to set your secrets
+# 2. Configure your credentials in .env
+nano .env
 
-# Start the stack
+# 3. Start the stack
 docker compose up -d
 ```
 
-This will spin up:
 
-* **Orchestration Gateway** (Port 8080)
-* **Filtration Gateway** (Port 8000)
-* **Inference Gateway** (Port 8001)
-* **Postgres & Redis**
+#### Option B: Build from Source
+```bash
+# 1. Clone the repository
+git clone https://github.com/InferiaAI/InferiaLLM.git
+cd inferiaLLM
+
+# 2. Configure environment
+cp .env.sample deploy/unified/.env
+# Edit .env to set your secrets
+
+# 3. Build and start
+cd deploy/unified
+docker compose up -d --build
+```
+
+**Services will be available at:**
+* **Dashboard:** `http://localhost:3001` (Default: admin@example.com / admin123)
+* **Orchestration API:** `http://localhost:8080`
+* **Filtration Gateway:** `http://localhost:8000`
+* **Inference Gateway:** `http://localhost:8001`
 
 ### 4. Automated Setup
 

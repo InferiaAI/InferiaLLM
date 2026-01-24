@@ -23,7 +23,13 @@ clean:
 
 # Docker helpers
 docker-up:
-	cd deploy && docker compose up -d
+	cd deploy/non-unified && docker compose up -d
 
 docker-down:
-	cd deploy && docker compose down
+	cd deploy/non-unified && docker compose down
+
+docker-unified-up:
+	cd deploy/unified && docker compose up -d
+
+docker-unified-down:
+	cd deploy/unified && docker compose down

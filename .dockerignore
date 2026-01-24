@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Python bloat
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node/Web bloat
+node_modules/
+**/node_modules/
+.next/
+.turbo/
+apps/docs/
+package-lock.json
+pnpm-lock.yaml
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Local configuration
+.env
+.env.*
+!.env.sample
+
+# Large assets/Logs
+*.log
+assets/
+docs/
+tests/
+**/tests/

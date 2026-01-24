@@ -10,7 +10,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../package/src/inferia/services/orchestration/docs:/docker-entrypoint-initdb.d
+      - ../../package/src/inferia/services/orchestration/docs:/docker-entrypoint-initdb.d
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     networks:
@@ -27,12 +27,12 @@ services:
   # --- Gateways ---
   orchestrator:
     build:
-      context: ..
-      dockerfile: deploy/orchestrator.Dockerfile
+      context: ../..
+      dockerfile: deploy/non-unified/orchestrator.Dockerfile
     container_name: inferia-orchestrator
     volumes:
-      - ../package/src/inferia/services/orchestration:/app/package/src/inferia/services/orchestration
-      - ../apps/orchestration-gateway:/app/apps/orchestration-gateway
+      - ../../package/src/inferia/services/orchestration:/app/package/src/inferia/services/orchestration
+      - ../../apps/orchestration-gateway:/app/apps/orchestration-gateway
       - ~/.sky:/root/.sky
       - ~/.ssh:/root/.ssh
     env_file: .env
@@ -60,12 +60,12 @@ services:
 
   filtration:
     build:
-      context: ..
-      dockerfile: deploy/filtration.Dockerfile
+      context: ../..
+      dockerfile: deploy/non-unified/filtration.Dockerfile
     container_name: inferia-filtration
     volumes:
-      - ../package/src/inferia/services/filtration:/app/package/src/inferia/services/filtration
-      - ../apps/filtration-gateway:/app/apps/filtration-gateway
+      - ../../package/src/inferia/services/filtration:/app/package/src/inferia/services/filtration
+      - ../../apps/filtration-gateway:/app/apps/filtration-gateway
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -82,11 +82,11 @@ services:
 
   inference:
     build:
-      context: ..
-      dockerfile: deploy/inference.Dockerfile
+      context: ../..
+      dockerfile: deploy/non-unified/inference.Dockerfile
     container_name: inferia-inference
     volumes:
-      - ../apps/inference-gateway:/app/apps/inference-gateway
+      - ../../apps/inference-gateway:/app/apps/inference-gateway
     env_file: .env
     environment:
       # Use internal docker hostname
@@ -104,7 +104,7 @@ services:
     container_name: inferia-dashboard
     working_dir: /app
     volumes:
-      - ../package/src/inferia/dashboard:/app/dashboard
+      - ../../package/src/inferia/dashboard:/app/dashboard
     command: python -m http.server 3001 --directory /app/dashboard
     ports:
       - "3001:3001"

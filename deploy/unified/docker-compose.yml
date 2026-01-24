@@ -1,0 +1,85 @@
+services:
+  # --- Infrastucture ---
+  postgres:
+    image: postgres:15
+    container_name: inferia-postgres
+    env_file: ../.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../package/src/inferia/services/orchestration/docs:/docker-entrypoint-initdb.d
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - inferia-net
+
+  redis:
+    image: redis:7
+    container_name: inferia-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - inferia-net
+
+  # --- Unified Services ---
+  inferia-services:
+    image: inferiaai/inferiallm:latest
+    build:
+      context: ../..
+      dockerfile: deploy/unified/Dockerfile
+    container_name: inferia-all-in-one
+    volumes:
+      - ~/.sky:/root/.sky
+      - ~/.ssh:/root/.ssh
+    env_file: ../.env
+    environment:
+      POSTGRES_DSN: postgresql://inferia:inferia@postgres:5432/inferia
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      DATABASE_URL: postgresql+asyncpg://inferia:inferia@postgres:5432/inferia
+      REDIS_URL: redis://redis:6379/0
+      ORCHESTRATOR_URL: http://localhost:8080
+      FILTRATION_GATEWAY_URL: http://localhost:8000
+      PG_ADMIN_USER: inferia
+      PG_ADMIN_PASSWORD: ${POSTGRES_PASSWORD}
+      PG_HOST: postgres
+      PG_PORT: 5432
+      INFERIA_DB_USER: inferia
+      INFERIA_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      INFERIA_DB: inferia
+      SUPERADMIN_EMAIL: admin@example.com
+      SUPERADMIN_PASSWORD: admin123
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8080:8080"
+      - "${ORCHESTRATOR_GRPC_PORT:-50051}:${ORCHESTRATOR_GRPC_PORT:-50051}"
+      - "8000:8000"
+      - "8001:8001"
+      - "3000:3000"
+    networks:
+      - inferia-net
+    tty: true
+
+  dashboard:
+    image: python:3.12-slim
+    container_name: inferia-dashboard
+    working_dir: /app
+    volumes:
+      - ../../package/src/inferia/dashboard:/app/dashboard
+    command: python -m http.server 3001 --directory /app/dashboard
+    ports:
+      - "3001:3001"
+    networks:
+      - inferia-net
+
+volumes:
+  pgdata:
+
+networks:
+  inferia-net:
