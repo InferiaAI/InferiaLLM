@@ -93,7 +93,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                     <span className="px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-mono border border-green-200">Active</span>
                                 )}
                             </div>
-                            <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-lg border font-mono text-sm flex justify-between items-center">
+                            <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center">
                                 <div className="flex flex-col gap-1">
                                     <span className="text-muted-foreground text-xs uppercase">TensorBoard URL</span>
                                     {deployment.endpoint_url ? (
@@ -127,13 +127,13 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                             <div className="mt-6 grid md:grid-cols-2 gap-6">
                                 <div>
                                     <div className="text-xs text-muted-foreground font-mono mb-1 uppercase">Git Repository</div>
-                                    <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded border text-sm font-mono break-all">
+                                    <div className="p-3 bg-muted rounded border text-sm font-mono break-all">
                                         {deployment.git_repo || "N/A"}
                                     </div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground font-mono mb-1 uppercase">Training Command</div>
-                                    <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded border text-sm font-mono break-all overflow-x-auto whitespace-pre-wrap">
+                                    <div className="p-3 bg-muted rounded border text-sm font-mono break-all overflow-x-auto whitespace-pre-wrap">
                                         {deployment.training_script || "N/A"}
                                     </div>
                                 </div>
@@ -147,7 +147,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                     <p className="text-sm text-muted-foreground">The direct URL to the inference service (hidden by default).</p>
                                 </div>
                             </div>
-                            <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden mb-6">
+                            <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden mb-6">
                                 <div className="flex flex-col gap-1 w-full">
                                     {deployment.endpoint_url ? (
                                         <div className="flex items-center gap-2">
@@ -196,7 +196,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                     <span className="px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-mono border border-green-200">Active</span>
                                 )}
                             </div>
-                            <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden">
+                            <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden">
                                 <div className="flex flex-col gap-1 w-full">
                                     <span className="text-primary break-all">
                                         http://localhost:8001/v1/chat/completion

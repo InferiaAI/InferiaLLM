@@ -124,16 +124,6 @@ export default function DeploymentDetail() {
 
     return (
         <div className="space-y-6">
-            {/* Breadcrumb-ish Header */}
-            <div className="flex items-center text-sm text-muted-foreground mb-2">
-                <Link to="/management/deployments" className="hover:text-foreground">Deployments</Link>
-                <span className="mx-2">/</span>
-                <span className="text-foreground font-medium">{deployment?.provider || "..."}</span>
-                <span className="mx-2">/</span>
-                <span>{deployment?.model_name || id}</span>
-            </div>
-
-            {/* Title & Actions */}
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight mb-2">{deployment?.model_name || "Deployment"}</h1>
@@ -148,9 +138,6 @@ export default function DeploymentDetail() {
                         className="px-3 py-1.5 bg-background border rounded-md text-sm font-medium hover:bg-muted flex items-center gap-2 transition-colors"
                     >
                         <Activity className="w-4 h-4" /> Refresh
-                    </button>
-                    <button className="px-3 py-1.5 bg-background border rounded-md text-sm font-medium hover:bg-muted flex items-center gap-2 transition-colors">
-                        <Gauge className="w-4 h-4" /> Metrics
                     </button>
                     <button
                         onClick={handleDelete}
@@ -193,37 +180,49 @@ export default function DeploymentDetail() {
                 ))}
             </div>
 
-            {activeTab === "overview" && deployment && (
-                <DeploymentOverview deployment={deployment} />
-            )}
+            {
+                activeTab === "overview" && deployment && (
+                    <DeploymentOverview deployment={deployment} />
+                )
+            }
 
-            {activeTab === "logs" && id && (
-                <div className="bg-card rounded-xl border shadow-sm p-6">
-                    <h3 className="text-lg font-medium mb-6">{deployment?.workload_type === 'training' ? 'Training Logs' : 'Inference Logs'}</h3>
-                    {deployment?.workload_type === 'training' ? (
-                        <TrainingLogs deploymentId={id} />
-                    ) : (
-                        <InferenceLogs deploymentId={id} />
-                    )}
-                </div>
-            )}
+            {
+                activeTab === "logs" && id && (
+                    <div className="bg-card rounded-xl border shadow-sm p-6">
+                        <h3 className="text-lg font-medium mb-6">{deployment?.workload_type === 'training' ? 'Training Logs' : 'Inference Logs'}</h3>
+                        {deployment?.workload_type === 'training' ? (
+                            <TrainingLogs deploymentId={id} />
+                        ) : (
+                            <InferenceLogs deploymentId={id} />
+                        )}
+                    </div>
+                )
+            }
 
-            {activeTab === "guardrail" && id && (
-                <DeploymentGuardrails deploymentId={id} />
-            )}
+            {
+                activeTab === "guardrail" && id && (
+                    <DeploymentGuardrails deploymentId={id} />
+                )
+            }
 
-            {activeTab === "rag" && id && (
-                <DeploymentRag deploymentId={id} />
-            )}
+            {
+                activeTab === "rag" && id && (
+                    <DeploymentRag deploymentId={id} />
+                )
+            }
 
-            {activeTab === "prompt_template" && id && (
-                <DeploymentPromptTemplate deploymentId={id} />
-            )}
+            {
+                activeTab === "prompt_template" && id && (
+                    <DeploymentPromptTemplate deploymentId={id} />
+                )
+            }
 
-            {activeTab === "rate_limit" && id && (
-                <DeploymentRateLimit deploymentId={id} />
-            )}
-        </div>
+            {
+                activeTab === "rate_limit" && id && (
+                    <DeploymentRateLimit deploymentId={id} />
+                )
+            }
+        </div >
     )
 }
 
