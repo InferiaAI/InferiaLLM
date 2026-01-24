@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Cpu, Server, Check, Zap, Globe, AlertCircle, ArrowRight, Search } from "lucide-react"
+import { Cpu, Server, Check, Zap, Globe, AlertCircle, ArrowRight, Search, Filter } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
@@ -52,6 +52,8 @@ export default function NewPool() {
     const [availableResources, setAvailableResources] = useState<any[]>([])
     const [loadingResources, setLoadingResources] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
+    const [minVram, setMinVram] = useState<number>(0)
+    const [sortBy, setSortBy] = useState<"price_asc" | "price_desc" | "memory">("price_asc")
 
     // Check Configuration
     const { data: config, isLoading: loadingConfig } = useQuery({
@@ -243,22 +245,55 @@ export default function NewPool() {
                         </div>
                     ) : (
                         <div className="space-y-4">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                                <input
-                                    placeholder="Search GPUs (v100, t4, a100...)"
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-sm"
-                                />
+                            <div className="flex flex-col md:flex-row gap-3">
+                                <div className="relative flex-1">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                    <input
+                                        placeholder="Search GPUs (v100, t4, a100...)"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-sm"
+                                    />
+                                </div>
+
+                                <select
+                                    value={minVram}
+                                    onChange={(e) => setMinVram(Number(e.target.value))}
+                                    className="px-3 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+                                >
+                                    <option value={0}>All Memory</option>
+                                    <option value={8}>8GB+ VRAM</option>
+                                    <option value={16}>16GB+ VRAM</option>
+                                    <option value={24}>24GB+ VRAM</option>
+                                    <option value={40}>40GB+ VRAM</option>
+                                    <option value={80}>80GB+ VRAM</option>
+                                </select>
+
+                                <select
+                                    value={sortBy}
+                                    onChange={(e) => setSortBy(e.target.value as any)}
+                                    className="px-3 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+                                >
+                                    <option value="price_asc">Price: Low to High</option>
+                                    <option value="price_desc">Price: High to Low</option>
+                                    <option value="memory">Memory: High to Low</option>
+                                </select>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {availableResources
-                                    .filter(res =>
-                                        res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase())
-                                    )
+                                    .filter(res => {
+                                        const matchesSearch = res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase());
+                                        const matchesVram = res.gpu_memory_gb >= minVram;
+                                        return matchesSearch && matchesVram;
+                                    })
+                                    .sort((a, b) => {
+                                        if (sortBy === "price_asc") return a.price_per_hour - b.price_per_hour;
+                                        if (sortBy === "price_desc") return b.price_per_hour - a.price_per_hour;
+                                        if (sortBy === "memory") return b.gpu_memory_gb - a.gpu_memory_gb;
+                                        return 0;
+                                    })
                                     .map((res: any) => (
                                         <div
                                             key={res.provider_resource_id}
