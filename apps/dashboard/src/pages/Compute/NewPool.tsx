@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Cpu, Server, Check, Zap, Globe, AlertCircle, ArrowRight } from "lucide-react"
+import { Cpu, Server, Check, Zap, Globe, AlertCircle, ArrowRight, Search } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
@@ -51,6 +51,7 @@ export default function NewPool() {
     const [isCreating, setIsCreating] = useState(false)
     const [availableResources, setAvailableResources] = useState<any[]>([])
     const [loadingResources, setLoadingResources] = useState(false)
+    const [searchQuery, setSearchQuery] = useState("")
 
     // Check Configuration
     const { data: config, isLoading: loadingConfig } = useQuery({
@@ -240,42 +241,55 @@ export default function NewPool() {
                         <div className="text-center py-12 text-slate-500">
                             Loading available resources...
                         </div>
-                    ) : availableResources.length === 0 ? (
-                        <div className="text-center py-12 text-slate-500">
-                            No resources found for this provider.
-                        </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {availableResources.map((res: any) => (
-                                <div
-                                    key={res.provider_resource_id}
-                                    onClick={() => handleResourceSelect(res)}
-                                    className={cn(
-                                        "cursor-pointer p-4 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 transition-all relative",
-                                        selectedResource?.provider_resource_id === res.provider_resource_id
-                                            ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-sm"
-                                            : "hover:border-blue-400/30 dark:hover:border-blue-600/30"
-                                    )}
-                                >
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div className="p-2 bg-slate-100 dark:bg-zinc-800 rounded-md">
-                                            <Cpu className="w-5 h-5 text-slate-700 dark:text-zinc-200" />
-                                        </div>
-                                        <span className="font-bold text-green-600 dark:text-green-400">${res.price_per_hour}/hr</span>
-                                    </div>
-                                    <h4 className="font-bold">{res.provider_resource_id}</h4>
-                                    <p className="text-sm text-slate-500 dark:text-zinc-400">{res.gpu_type} ({res.gpu_memory_gb}GB VRAM)</p>
-                                    <div className="mt-2 flex gap-2 text-xs text-slate-400 dark:text-zinc-500">
-                                        <span>{res.vcpu} vCPU</span> • <span>{res.ram_gb}GB RAM</span>
-                                    </div>
+                        <div className="space-y-4">
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <input
+                                    placeholder="Search GPUs (v100, t4, a100...)"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-sm"
+                                />
+                            </div>
 
-                                    {selectedResource?.provider_resource_id === res.provider_resource_id && (
-                                        <div className="absolute top-4 right-4 w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center">
-                                            <Check className="w-3 h-3" />
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {availableResources
+                                    .filter(res =>
+                                        res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase())
+                                    )
+                                    .map((res: any) => (
+                                        <div
+                                            key={res.provider_resource_id}
+                                            onClick={() => handleResourceSelect(res)}
+                                            className={cn(
+                                                "cursor-pointer p-4 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 transition-all relative",
+                                                selectedResource?.provider_resource_id === res.provider_resource_id
+                                                    ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-sm"
+                                                    : "hover:border-blue-400/30 dark:hover:border-blue-600/30"
+                                            )}
+                                        >
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div className="p-2 bg-slate-100 dark:bg-zinc-800 rounded-md">
+                                                    <Cpu className="w-5 h-5 text-slate-700 dark:text-zinc-200" />
+                                                </div>
+                                                <span className="font-bold text-green-600 dark:text-green-400">${res.price_per_hour}/hr</span>
+                                            </div>
+                                            <h4 className="font-bold">{res.provider_resource_id}</h4>
+                                            <p className="text-sm text-slate-500 dark:text-zinc-400">{res.gpu_type} ({res.gpu_memory_gb}GB VRAM)</p>
+                                            <div className="mt-2 flex gap-2 text-xs text-slate-400 dark:text-zinc-500">
+                                                <span>{res.vcpu} vCPU</span> • <span>{res.ram_gb}GB RAM</span>
+                                            </div>
+
+                                            {selectedResource?.provider_resource_id === res.provider_resource_id && (
+                                                <div className="absolute top-4 right-4 w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center">
+                                                    <Check className="w-3 h-3" />
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
-                            ))}
+                                    ))}
+                            </div>
                         </div>
                     )}
 

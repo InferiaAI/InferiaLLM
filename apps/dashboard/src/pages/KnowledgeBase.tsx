@@ -115,7 +115,7 @@ export default function KnowledgeBase() {
                 </div>
                 <h2 className="text-2xl font-bold mb-2">Vector Database Not Configured</h2>
                 <p className="text-muted-foreground max-w-md mb-8">
-                    Knowledge Base requires a connected Vector Database (ChromaDB) to store and retrieve document embeddings.
+                    Knowledge Base requires a connected Vector Database to store and retrieve document embeddings.
                 </p>
                 <Link
                     to="/dashboard/settings/providers/vectordb/chroma"

@@ -136,7 +136,7 @@ export default function DeploymentRag({ deploymentId }: DeploymentRagProps) {
                             <div>
                                 <h4 className="font-bold">Vector Database Not Configured</h4>
                                 <p className="text-sm text-muted-foreground max-w-sm">
-                                    RAG requires a connected Vector Database (ChromaDB) to retrieve document context.
+                                    RAG requires a connected Vector Database to retrieve document context.
                                 </p>
                             </div>
                             <Link

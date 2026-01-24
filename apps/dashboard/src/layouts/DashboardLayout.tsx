@@ -167,25 +167,18 @@ export default function DashboardLayout() {
           isCollapsed ? "justify-center px-0" : "px-4 justify-between"
         )}>
           <div className="flex items-center gap-2 overflow-hidden">
-            <img src="/logo.svg" alt="InferiaLLM" className="h-15 w-auto shrink-0 object-contain" />
-            {!isCollapsed && (
-              <div className="flex items-center gap-2 animate-in fade-in duration-300">
+            <img src="/logo.svg" alt="InferiaLLM" className="h-12.5 w-auto shrink-0 object-contain" />
 
-                <span className="text-[10px] bg-red-100 dark:bg-pink-900/30 text-red-600 dark:text-pink-400 px-1 py-0.5 rounded font-mono">
-                  NEW
-                </span>
-              </div>
-            )}
           </div>
         </div>
 
 
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden py-2 px-3 space-y-6 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-zinc-800">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-7 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-zinc-800">
           <div>
             {!isCollapsed && (
               <div className="px-3 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider animate-in fade-in">
-                Pinned
+                Core
               </div>
             )}
             <nav className="space-y-0.5">
@@ -222,18 +215,43 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-        <div className="p-3 border-t border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900">
-          <button
-            onClick={handleLogout}
-            className={cn(
-              "flex items-center gap-2 px-2 py-1.5 w-full text-xs font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-md transition-colors",
-              isCollapsed && "justify-center"
+        <div className="p-3 border-t border-slate-200 dark:border-zinc-800 bg-slate-100/50 dark:bg-zinc-900/50">
+          <div className={cn(
+            "flex items-center gap-3 px-2 py-2 rounded-lg transition-colors",
+            isCollapsed ? "justify-center" : "bg-white/50 dark:bg-black/20 border border-slate-200/50 dark:border-zinc-800/50 shadow-sm"
+          )}>
+            <div className="h-8 w-8 rounded-md bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm">
+              {user?.email?.charAt(0).toUpperCase()}
+            </div>
+            {!isCollapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-slate-900 dark:text-zinc-100 truncate">
+                  {user?.email?.split('@')[0]}
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-zinc-500 truncate uppercase tracking-tighter">
+                  Administrator
+                </p>
+              </div>
             )}
-            title={isCollapsed ? "Sign Out" : undefined}
-          >
-            <LogOut className="w-3.5 h-3.5 shrink-0" />
-            {!isCollapsed && <span>Sign Out</span>}
-          </button>
+            {!isCollapsed && (
+              <button
+                onClick={handleLogout}
+                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-md transition-all group"
+                title="Sign Out"
+              >
+                <LogOut className="w-4 h-4 group-hover:scale-110 transition-transform" />
+              </button>
+            )}
+          </div>
+          {isCollapsed && (
+            <button
+              onClick={handleLogout}
+              className="mt-2 flex items-center justify-center w-full p-2 text-slate-400 hover:text-red-500 rounded-md transition-colors"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </aside>
 
