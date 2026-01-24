@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 class DataEngine:
     def __init__(self):
         self.client = None
-        self.initialize_client()
+        # Lazy initialization will occur when needed.
 
     def initialize_client(self):
         """Initialize or refresh the ChromaDB client."""
+        import traceback
+        logger.info(f"initialize_client called from:\n{''.join(traceback.format_stack())}")
         try:
             # Check if we should use local/HttpClient or CloudClient
             if settings.chroma_is_local:
@@ -67,6 +69,9 @@ class DataEngine:
         """
         List all available collections for the given organization.
         """
+        if not self.client:
+            self.initialize_client()
+            
         if not self.client:
             return []
         try:
