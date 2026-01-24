@@ -112,30 +112,30 @@ export default function AuditLogs() {
                                 onClick={() => toggleExpand(log.id)}
                             >
                                 <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-center gap-6 min-w-0">
-                                        <div className="text-xs text-muted-foreground whitespace-nowrap flex items-center gap-1.5">
+                                    <div className="flex items-center gap-6 min-w-0 flex-1">
+                                        <div className="text-xs text-muted-foreground whitespace-nowrap flex items-center gap-1.5 shrink-0">
                                             <Clock className="w-3.5 h-3.5" />
                                             {formatDate(log.timestamp)}
                                         </div>
 
-                                        <div className="flex items-center gap-3">
-                                            <span className="font-medium text-sm">{log.action}</span>
-                                            <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <span className="font-semibold text-sm truncate">{log.action}</span>
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium uppercase tracking-tight shrink-0">
                                                 {log.resource_type}
                                             </span>
                                             {log.status === "failure" || log.status === "error" ? (
-                                                <span className="text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive flex items-center gap-1">
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-destructive/10 text-destructive flex items-center gap-1 font-medium uppercase tracking-tight shrink-0">
                                                     <AlertCircle className="w-3 h-3" /> {log.status}
                                                 </span>
                                             ) : (
-                                                <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600">
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 font-medium uppercase tracking-tight shrink-0">
                                                     {log.status}
                                                 </span>
                                             )}
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center gap-4 text-sm">
+                                    <div className="flex items-center gap-4 text-sm shrink-0 ml-auto">
                                         <div className="flex items-center gap-1.5 text-muted-foreground" title="User">
                                             <User className="w-3.5 h-3.5" />
                                             <span className="font-mono text-xs">{log.user_id || "System"}</span>
@@ -155,13 +155,13 @@ export default function AuditLogs() {
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                                         <div>
                                             <div className="text-xs text-muted-foreground mb-1">Resource ID</div>
-                                            <div className="font-mono text-xs bg-background p-2 rounded border">
+                                            <div className="font-mono text-[10px] bg-background p-2 rounded border truncate" title={log.resource_id || ""}>
                                                 {log.resource_id || "-"}
                                             </div>
                                         </div>
                                         <div>
                                             <div className="text-xs text-muted-foreground mb-1">IP Address</div>
-                                            <div className="font-mono text-xs bg-background p-2 rounded border">
+                                            <div className="font-mono text-[10px] bg-background p-2 rounded border">
                                                 {log.ip_address || "-"}
                                             </div>
                                         </div>
@@ -169,8 +169,8 @@ export default function AuditLogs() {
 
                                     {log.details && (
                                         <div>
-                                            <div className="text-xs text-muted-foreground mb-2">Event Details</div>
-                                            <pre className="p-3 bg-muted rounded-md text-xs overflow-x-auto font-mono">
+                                            <div className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-tight">Event Details</div>
+                                            <pre className="p-3 bg-slate-950 text-slate-300 rounded-md text-[11px] overflow-x-auto font-mono whitespace-pre-wrap break-all max-h-96 overflow-y-auto">
                                                 {JSON.stringify(log.details, null, 2)}
                                             </pre>
                                         </div>

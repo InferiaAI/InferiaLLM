@@ -108,19 +108,19 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                     >
                         <div className="flex items-center justify-between gap-4">
                             {/* Left: Time & Model */}
-                            <div className="flex items-center gap-4 min-w-0">
+                            <div className="flex items-center gap-4 min-w-0 flex-1">
                                 <div className="text-xs text-muted-foreground whitespace-nowrap">
                                     {formatDate(log.created_at)}
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="font-medium text-sm truncate">{log.model}</span>
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <span className="font-medium text-sm truncate max-w-[200px] md:max-w-none">{log.model}</span>
                                     {log.is_streaming && (
-                                        <span className="px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-500 rounded">
+                                        <span className="px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-500 rounded shrink-0">
                                             STREAM
                                         </span>
                                     )}
                                     {log.status_code >= 400 && (
-                                        <span className="px-1.5 py-0.5 text-[10px] bg-destructive/20 text-destructive rounded flex items-center gap-1">
+                                        <span className="px-1.5 py-0.5 text-[10px] bg-destructive/20 text-destructive rounded flex items-center gap-1 shrink-0">
                                             <AlertCircle className="w-3 h-3" /> {log.status_code}
                                         </span>
                                     )}
@@ -128,7 +128,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                             </div>
 
                             {/* Right: Stats */}
-                            <div className="flex items-center gap-6 text-sm">
+                            <div className="flex items-center gap-6 text-sm shrink-0 ml-auto">
                                 {/* Latency */}
                                 <div className="flex items-center gap-1.5 text-muted-foreground" title="Latency">
                                     <Clock className="w-3.5 h-3.5" />
@@ -202,7 +202,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                                     </div>
                                     <div className="flex flex-wrap gap-2">
                                         {log.applied_policies.map((policy) => (
-                                            <span 
+                                            <span
                                                 key={policy}
                                                 className="px-2 py-0.5 text-[10px] font-mono bg-primary/10 text-primary border border-primary/20 rounded uppercase"
                                             >
@@ -222,14 +222,14 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                             )}
 
                             {/* Request Payload */}
-                            <div>
-                                <div className="text-xs text-muted-foreground mb-2">Request Payload</div>
+                            <div className="min-w-0 flex-1">
+                                <div className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-tight">Request Payload</div>
                                 {log.request_payload ? (
-                                    <pre className="p-3 bg-muted rounded-md text-xs overflow-x-auto max-h-64 overflow-y-auto">
+                                    <pre className="p-3 bg-slate-950 text-slate-300 rounded-md text-xs overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap break-all scrollbar-thin scrollbar-thumb-slate-700">
                                         {JSON.stringify(log.request_payload, null, 2)}
                                     </pre>
                                 ) : (
-                                    <div className="p-3 bg-muted/50 rounded-md text-xs italic text-muted-foreground">
+                                    <div className="p-3 bg-muted/50 rounded-md text-xs italic text-muted-foreground border border-dashed text-center">
                                         Payload logging is disabled for this organization.
                                     </div>
                                 )}
