@@ -1,7 +1,7 @@
 
 <div align="center">
 
-# InferiaLLM CLI
+# InferiaLLM
 
 ### The Operating System for LLMs in Production
 
@@ -9,7 +9,9 @@
 
 </div>
 
-InferiaLLM provides a unified CLI to manage the platform's control plane, initialize infrastructure, and orchestrate gateways (Orchestration, Inference, and Filtration).
+InferiaLLM acts as the authoritative execution layer between your applications and your AI infrastructure. It governs how LLMs are accessed, secured, routed, and run on compute.
+
+
 
 ---
 
