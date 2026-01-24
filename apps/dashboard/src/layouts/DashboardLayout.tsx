@@ -87,6 +87,11 @@ export default function DashboardLayout() {
       icon: Clock,
     },
     {
+      href: "/dashboard/settings/providers",
+      label: "Providers",
+      icon: Database,
+    },
+    {
       href: "/dashboard/settings/security",
       label: "Security",
       icon: Shield,

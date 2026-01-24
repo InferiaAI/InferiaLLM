@@ -1,6 +1,9 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { AkashService } from './modules/akash/akash_service';
 import { NosanaService } from './modules/nosana/nosana_service';
 
@@ -16,26 +19,69 @@ app.use(cors());
 const akashService = new AkashService();
 let nosanaService: NosanaService | null = null;
 
-// Akash Init
-akashService.init().catch(err => console.error("Failed to init Akash:", err));
-
-// Nosana Init
-const nosanaKey = process.env.NOSANA_WALLET_PRIVATE_KEY;
-const nosanaRpc = process.env.SOLANA_RPC_URL;
-
-if (nosanaKey) {
-    try {
-        nosanaService = new NosanaService(nosanaKey, nosanaRpc);
-        nosanaService.init().then(async () => {
-            console.log("Nosana Service Wallet Initialized");
-            await nosanaService!.recoverJobs();
-        }).catch(err => console.error("Failed to init Nosana Wallet:", err));
-    } catch (e) {
-        console.error("Failed to create NosanaService:", e);
+// Helper to initialize/refresh Nosana
+const initNosana = async (key: string | undefined, rpc?: string) => {
+    if (!key) {
+        console.warn("[Sidecar] Nosana key missing. Nosana module disabled.");
+        nosanaService = null;
+        return;
     }
-} else {
-    console.warn("NOSANA_WALLET_PRIVATE_KEY missing. Nosana module disabled.");
+    try {
+        console.log("[Sidecar] Initializing Nosana Service...");
+        nosanaService = new NosanaService(key, rpc);
+        await nosanaService.init();
+        console.log("[Sidecar] Nosana Service Wallet Initialized");
+        await nosanaService.recoverJobs();
+    } catch (e) {
+        console.error("[Sidecar] Failed to init Nosana Service:", e);
+        nosanaService = null;
+    }
+};
+
+// Initial Load
+akashService.init().catch(err => console.error("Failed to init Akash:", err));
+initNosana(process.env.NOSANA_WALLET_PRIVATE_KEY, process.env.SOLANA_RPC_URL);
+
+// --- Hot Reload Logic (Watch config.json) ---
+const configPath = path.join(os.homedir(), '.inferia', 'config.json');
+
+const loadConfig = () => {
+    if (!fs.existsSync(configPath)) return;
+    try {
+        console.log("[Sidecar] Shared config change detected. Refreshing credentials...");
+        const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const providers = data.providers || {};
+        const depin = providers.depin || {};
+
+        // Refresh Nosana if key changed
+        const newNosanaKey = depin.nosana?.wallet_private_key;
+        if (newNosanaKey && newNosanaKey !== process.env.NOSANA_WALLET_PRIVATE_KEY) {
+            process.env.NOSANA_WALLET_PRIVATE_KEY = newNosanaKey;
+            initNosana(newNosanaKey, process.env.SOLANA_RPC_URL);
+        }
+
+        // Refresh Akash if mnemonic changed
+        const newAkashMnemonic = depin.akash?.mnemonic;
+        if (newAkashMnemonic && newAkashMnemonic !== process.env.AKASH_MNEMONIC) {
+            process.env.AKASH_MNEMONIC = newAkashMnemonic;
+            console.log("[Sidecar] Akash Mnemonic updated. Re-initializing Akash SDK...");
+            akashService.init(newAkashMnemonic);
+        }
+    } catch (e) {
+        console.error("[Sidecar] Error reloading config:", e);
+    }
+};
+
+// Start watching the config file
+if (fs.existsSync(configPath)) {
+    fs.watch(configPath, (event) => {
+        if (event === 'change') {
+            // Debounce or just load
+            loadConfig();
+        }
+    });
 }
+
 
 // --- AKASH ROUTES ---
 const akashRouter = express.Router();
@@ -159,7 +205,8 @@ app.get('/health', (req, res) => {
         modules: {
             akash: "loaded",
             nosana: nosanaService ? "active" : "disabled"
-        }
+        },
+        config_watch: fs.existsSync(configPath) ? "active" : "failed"
     });
 });
 

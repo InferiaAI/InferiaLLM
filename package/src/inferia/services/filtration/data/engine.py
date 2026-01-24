@@ -12,13 +12,39 @@ logger = logging.getLogger(__name__)
 
 class DataEngine:
     def __init__(self):
+        self.client = None
+        self.initialize_client()
+
+    def initialize_client(self):
+        """Initialize or refresh the ChromaDB client."""
         try:
-            self.client = chromadb.CloudClient(
-                api_key=settings.chroma_api_key,
-                tenant=settings.chroma_tenant,
-                database=settings.chroma_database
-            )
-            logger.info("Connected to ChromaDB Cloud")
+            # Check if we should use local/HttpClient or CloudClient
+            if settings.chroma_is_local:
+                # Local or Self-Hosted via URL
+                from chromadb.config import Settings as ChromaSettings
+                
+                url = settings.chroma_url or "http://localhost:8000"
+                # Strip trailing slash for consistency
+                url = url.rstrip('/')
+                
+                logger.info(f"Connecting to Local ChromaDB at {url}...")
+                self.client = chromadb.HttpClient(
+                    host=url.split('://')[-1].split(':')[0],
+                    port=int(url.split(':')[-1]) if ':' in url.split('://')[-1] else 8000,
+                    ssl='https' in url,
+                    tenant=settings.chroma_tenant or "default_tenant",
+                    database=settings.chroma_database or "default_database",
+                    # If we need Auth for local, we add it here
+                )
+            else:
+                # Chroma Cloud
+                logger.info("Connecting to ChromaDB Cloud...")
+                self.client = chromadb.CloudClient(
+                    api_key=settings.chroma_api_key,
+                    tenant=settings.chroma_tenant,
+                    database=settings.chroma_database
+                )
+            logger.info("ChromaDB client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to connect to ChromaDB: {e}")
             self.client = None
@@ -94,7 +120,11 @@ class DataEngine:
 
     def _get_collection(self, collection_name: str):
         if not self.client:
-            logger.error("ChromaDB client is NOT initialized.")
+            logger.info("ChromaDB client not initialized. Attempting initialization...")
+            self.initialize_client()
+            
+        if not self.client:
+            logger.error("ChromaDB client is STILL NOT initialized.")
             return None
         try:
             return self.client.get_or_create_collection(name=collection_name)

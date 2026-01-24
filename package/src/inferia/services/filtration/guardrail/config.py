@@ -3,7 +3,7 @@ Guardrail configuration.
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
+from typing import List, Optional, Any
 from pathlib import Path
 
 
@@ -49,6 +49,21 @@ class GuardrailSettings(BaseSettings):
         case_sensitive=False,
         env_prefix="GUARDRAIL_"
     )
+    
+    def model_post_init(self, __context: Any) -> None:
+        """Hydrate keys from main application config if missing."""
+        # Avoid circular import at module level
+        try:
+            from inferia.services.filtration.config import settings
+            
+            if not self.groq_api_key:
+                self.groq_api_key = settings.providers.guardrails.groq.api_key
+                
+            if not self.lakera_api_key:
+                self.lakera_api_key = settings.providers.guardrails.lakera.api_key
+        except ImportError:
+            # Might happen during testing or standalone imports
+            pass
     
     def get_banned_substrings_list(self) -> List[str]:
         """Parse banned substrings from comma-separated string."""

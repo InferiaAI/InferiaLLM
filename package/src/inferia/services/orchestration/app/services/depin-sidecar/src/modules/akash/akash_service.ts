@@ -7,13 +7,7 @@ import { MsgCreateLease } from "@akashnetwork/akashjs/build/protobuf/akash/marke
 import axios from 'axios';
 import { getAkashTypeRegistry } from "@akashnetwork/akashjs/build/stargate";
 
-// --- CONFIG ---
 const RPC_ENDPOINT = process.env.AKASH_NODE || "https://rpc.akash.forbole.com:443";
-const MNEMONIC = process.env.AKASH_MNEMONIC;
-
-if (!MNEMONIC) {
-    console.warn("AKASH_MNEMONIC env var is missing! Akash module will not function correctly.");
-}
 
 export class AkashService {
     private wallet: DirectSecp256k1HdWallet | null = null;
@@ -22,12 +16,16 @@ export class AkashService {
 
     constructor() { }
 
-    async init() {
+    async init(mnemonicOverride?: string) {
         console.log("Initializing Akash Service (SDK)...");
-        if (!MNEMONIC) return;
+        const mnemonic = mnemonicOverride || process.env.AKASH_MNEMONIC;
+        if (!mnemonic) {
+            console.warn("Akash Mnemonic missing.");
+            return;
+        }
 
         try {
-            this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(MNEMONIC, { prefix: "akash" });
+            this.wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix: "akash" });
             const [account] = await this.wallet.getAccounts();
             this.address = account.address;
             console.log(`Akash Wallet loaded: ${this.address}`);

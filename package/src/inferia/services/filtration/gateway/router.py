@@ -17,11 +17,25 @@ from sqlalchemy.future import select
 from db.models import Deployment
 
 from gateway.rate_limiter import rate_limiter
+from security.encryption import LogEncryption
+from config import settings
+ 
 
 import logging
 
+encryption_service = None
+try:
+    if settings.log_encryption_key:
+        encryption_service = LogEncryption(settings.log_encryption_key)
+except Exception as e:
+    # Fail fast if key is invalid
+    print(f"Failed to initialize log encryption: {e}")
+
+
 router = APIRouter(prefix="/internal", tags=["Internal Inference"])
 router.include_router(auth_router.router)
+
+
 
 logger = logging.getLogger(__name__)
 logger.info("Loaded Internal Gateway Router")
@@ -87,7 +101,11 @@ async def create_inference_log(
         deployment_id=log_data.deployment_id,
         user_id=log_data.user_id,
         model=log_data.model,
-        request_payload=log_data.request_payload,
+        request_payload=(
+            {"encrypted": True, "ciphertext": encryption_service.encrypt(log_data.request_payload)}
+            if encryption_service and log_data.request_payload
+            else log_data.request_payload
+        ),
         latency_ms=log_data.latency_ms,
         ttft_ms=log_data.ttft_ms,
         tokens_per_second=log_data.tokens_per_second,

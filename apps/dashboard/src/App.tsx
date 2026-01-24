@@ -24,6 +24,9 @@ import Users from "@/pages/Settings/Users";
 import Organization from "@/pages/Settings/Organization";
 import AuditLogs from "@/pages/Settings/AuditLogs";
 import Security from "@/pages/Settings/Security";
+import ProviderCategories from "@/pages/Settings/Providers/ProviderCategories";
+import ProviderList from "@/pages/Settings/Providers/ProviderList";
+import ProviderConfigPage from "@/pages/Settings/Providers/ProviderConfig";
 import Status from "@/pages/Status";
 import Instances from "@/pages/Compute/Instances";
 import InstanceDetail from "@/pages/Compute/InstanceDetail";
@@ -141,6 +144,18 @@ const router = createBrowserRouter([
           {
             path: "settings/security",
             element: <Security />,
+          },
+          {
+            path: "settings/providers",
+            element: <ProviderCategories />,
+          },
+          {
+            path: "settings/providers/:category",
+            element: <ProviderList />,
+          },
+          {
+            path: "settings/providers/:category/:providerId",
+            element: <ProviderConfigPage />,
           },
           {
             path: "status",
