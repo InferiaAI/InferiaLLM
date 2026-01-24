@@ -189,8 +189,73 @@ export default function DeploymentGuardrails({ deploymentId }: DeploymentGuardra
                     )}
                 </div>
 
+                {/* PII Redaction (Independent Service) - Always visible because it's independent */}
+                <div className="space-y-4 pt-6 border-t">
+                    <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                            <Shield className="w-4 h-4" /> PII Redaction
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted-foreground">
+                                {config.pii_enabled ? "Enabled" : "Disabled"}
+                            </span>
+                            <input
+                                type="checkbox"
+                                className="w-5 h-5 accent-primary"
+                                checked={config.pii_enabled === true}
+                                onChange={(e) => updateConfig({ ...config, pii_enabled: e.target.checked })}
+                            />
+                        </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                        Redact sensitive information before it reaches the model or guardrails.
+                        Works independently of the selected Guardrail Engine.
+                    </p>
+
+                    {config.pii_enabled && (
+                        <div className="space-y-3 p-4 bg-muted/30 rounded-lg">
+                            <label className="text-sm font-medium">PII Entities to Redact</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                {[
+                                    { key: "EMAIL_ADDRESS", label: "Email Address" },
+                                    { key: "PHONE_NUMBER", label: "Phone Number" },
+                                    { key: "CREDIT_CARD", label: "Credit Card" },
+                                    { key: "US_SSN", label: "SSN" },
+                                    { key: "IP_ADDRESS", label: "IP Address" },
+                                    { key: "PERSON", label: "Person Name" },
+                                    { key: "LOCATION", label: "Location" },
+                                    { key: "DATE_TIME", label: "Date/Time" },
+                                    { key: "URL", label: "URLs" },
+                                    { key: "PASSWORD", label: "Passwords" },
+                                ].map(entity => (
+                                    <label key={entity.key} className="flex items-center gap-2 p-2 border rounded-md hover:bg-muted/50 cursor-pointer transition-colors text-sm">
+                                        <input
+                                            type="checkbox"
+                                            className="w-4 h-4 accent-primary"
+                                            checked={
+                                                (() => {
+                                                    const entities = config.pii_entities || ["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "IP_ADDRESS", "PERSON", "LOCATION"]
+                                                    return entities.includes(entity.key)
+                                                })()
+                                            }
+                                            onChange={(e) => {
+                                                const defaultEntities = ["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "IP_ADDRESS", "PERSON", "LOCATION"]
+                                                const entities = new Set(config.pii_entities || defaultEntities)
+                                                if (e.target.checked) entities.add(entity.key)
+                                                else entities.delete(entity.key)
+                                                updateConfig({ ...config, pii_entities: Array.from(entities) })
+                                            }}
+                                        />
+                                        <span>{entity.label}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 {isEngineConfigured(config.guardrail_engine) && (
-                    <>
+                    <div className="pt-4 space-y-6">
                         {config.guardrail_engine === "llm-guard" && (
                             <div className="space-y-6 mt-6 border-t pt-6">
                                 <div className="space-y-4">
@@ -323,73 +388,7 @@ export default function DeploymentGuardrails({ deploymentId }: DeploymentGuardra
                                 </div>
                             </div>
                         )}
-
-                        {/* PII Redaction (Independent Service) */}
-                        <div className="space-y-4 pt-2 border-t">
-                            <div className="flex items-center justify-between">
-                                <label className="text-sm font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-                                    <Shield className="w-4 h-4" /> PII Redaction
-                                </label>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm text-muted-foreground">
-                                        {config.pii_enabled ? "Enabled" : "Disabled"}
-                                    </span>
-                                    <input
-                                        type="checkbox"
-                                        className="w-5 h-5 accent-primary"
-                                        checked={config.pii_enabled === true}
-                                        onChange={(e) => updateConfig({ ...config, pii_enabled: e.target.checked })}
-                                    />
-                                </div>
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                                Redact sensitive information before it reaches the model or guardrails.
-                                Works with both LLM Guard and Llama Guard.
-                            </p>
-
-                            {config.pii_enabled && (
-                                <div className="space-y-3 p-4 bg-muted/30 rounded-lg">
-                                    <label className="text-sm font-medium">PII Entities to Redact</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {[
-                                            { key: "EMAIL_ADDRESS", label: "Email Address" },
-                                            { key: "PHONE_NUMBER", label: "Phone Number" },
-                                            { key: "CREDIT_CARD", label: "Credit Card" },
-                                            { key: "US_SSN", label: "SSN" },
-                                            { key: "IP_ADDRESS", label: "IP Address" },
-                                            { key: "PERSON", label: "Person Name" },
-                                            { key: "LOCATION", label: "Location" },
-                                            { key: "DATE_TIME", label: "Date/Time" },
-                                            { key: "URL", label: "URLs" },
-                                            { key: "PASSWORD", label: "Passwords" },
-                                        ].map(entity => (
-                                            <label key={entity.key} className="flex items-center gap-2 p-2 border rounded-md hover:bg-muted/50 cursor-pointer transition-colors text-sm">
-                                                <input
-                                                    type="checkbox"
-                                                    className="w-4 h-4 accent-primary"
-                                                    checked={
-                                                        (() => {
-                                                            const entities = config.pii_entities || ["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "IP_ADDRESS", "PERSON", "LOCATION"]
-                                                            return entities.includes(entity.key)
-                                                        })()
-                                                    }
-                                                    onChange={(e) => {
-                                                        const defaultEntities = ["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "IP_ADDRESS", "PERSON", "LOCATION"]
-                                                        const entities = new Set(config.pii_entities || defaultEntities)
-                                                        if (e.target.checked) entities.add(entity.key)
-                                                        else entities.delete(entity.key)
-                                                        updateConfig({ ...config, pii_entities: Array.from(entities) })
-                                                    }}
-                                                />
-                                                <span>{entity.label}</span>
-                                            </label>
-                                        ))}
-                                    </div>
-                                </div>
-                            )
-                            }
-                        </div>
-                    </>
+                    </div>
                 )}
             </div>
         </div>

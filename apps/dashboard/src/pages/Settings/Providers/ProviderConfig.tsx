@@ -240,6 +240,18 @@ export default function ProviderConfigPage() {
                         />
                     </div>
                 )
+            case "pii":
+                return (
+                    <div className="p-4 bg-muted/30 border rounded-lg space-y-2">
+                        <div className="font-medium flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-green-600" />
+                            Local Service Active
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                            PII Redaction is a built-in local service using LLM-Guard. It does not require external API keys and is always available for use in your deployments.
+                        </p>
+                    </div>
+                );
             default:
                 return <div>Unknown Provider</div>;
         }

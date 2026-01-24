@@ -16,6 +16,7 @@ const PROVIDERS_MAP: Record<string, any[]> = {
         { id: "pinecone", name: "Pinecone", description: "Coming Soon", disabled: true },
     ],
     guardrails: [
+        { id: "pii", name: "Built-in PII Redaction", description: "Local sensitive information masking" },
         { id: "groq", name: "Llama Guard via Groq", description: "Fast inference for safety" },
         { id: "lakera", name: "Lakera Guard", description: "Prompt injection protection" },
     ],
@@ -54,6 +55,7 @@ export default function ProviderList() {
             case "lakera": return !!activeConfig.guardrails?.lakera?.api_key;
             case "nosana": return !!activeConfig.depin?.nosana?.wallet_private_key;
             case "akash": return !!activeConfig.depin?.akash?.mnemonic;
+            case "pii": return true; // Always connected/local
             default: return false;
         }
     };
