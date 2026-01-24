@@ -120,6 +120,7 @@ inferiallm api-start
 We provide a unified, production-ready Docker image that contains the entire control plane. You can either use the official image from Docker Hub or build it locally.
 
 #### Option A: Use Docker Hub (Fastest)
+
 The official unified image is available on [Docker Hub](https://hub.docker.com/r/inferiaai/inferiallm).
 
 ```bash
@@ -134,15 +135,15 @@ nano .env
 docker compose up -d
 ```
 
-
 #### Option B: Build from Source
+
 ```bash
 # 1. Clone the repository
 git clone https://github.com/InferiaAI/InferiaLLM.git
 cd inferiaLLM
 
 # 2. Configure environment
-cp .env.sample deploy/unified/.env
+cp .env.sample .env
 # Edit .env to set your secrets
 
 # 3. Build and start
@@ -151,7 +152,8 @@ docker compose up -d --build
 ```
 
 **Services will be available at:**
-* **Dashboard:** `http://localhost:3001` (Default: admin@example.com / admin123)
+
+* **Dashboard:** `http://localhost:3001` (Default: <admin@example.com> / admin123)
 * **Orchestration API:** `http://localhost:8080`
 * **Filtration Gateway:** `http://localhost:8000`
 * **Inference Gateway:** `http://localhost:8001`
@@ -180,6 +182,7 @@ make start
 InferiaLLM requires several environment variables to be configured in a `.env` file. You can find a template in `.env.sample`.
 
 ### 1. Database Setup (Required for `init`)
+
 These variables are used by `inferiallm init` to bootstrap your database.
 
 | Variable | Description | Default |
@@ -192,8 +195,8 @@ These variables are used by `inferiallm init` to bootstrap your database.
 > [!TIP]
 > `inferiallm init` will automatically extract the app-level database user, password, host, and port from your `DATABASE_URL`.
 
-
 ### 2. Security & Authentication
+
 Essential for protecting your gateways and dashboard.
 
 | Variable | Description |
@@ -205,6 +208,7 @@ Essential for protecting your gateways and dashboard.
 | `SUPERADMIN_PASSWORD` | Initial admin user password |
 
 ### 3. Service Connectivity
+
 URLs and credentials for core infrastructure.
 
 | Variable | Description | Default |
@@ -213,6 +217,7 @@ URLs and credentials for core infrastructure.
 | `DATABASE_URL` | Primary database URL (Postgres format) | `postgresql://inferia:inferia@localhost:5432/inferia` |
 
 ### 4. Provider Specific (Optional)
+
 Required if using specific compute providers or external models.
 
 | Variable | Description |
@@ -232,9 +237,11 @@ Required if using specific compute providers or external models.
 InferiaLLM provides a unified CLI to manage the platform.
 
 ### 1. `inferiallm init`
+
 Initialize the control-plane databases, roles, and schemas.
 
 **Expected Output:**
+
 ```text
 [inferia:init] Connecting as admin
 [inferia:init] Creating role: inferia_user
@@ -247,9 +254,11 @@ Initialize the control-plane databases, roles, and schemas.
 ```
 
 ### 2. `inferiallm api-start`
+
 Start all gateways (Orchestration, Inference, Filtration) and the Admin Dashboard in a single process.
 
 **Expected Output:**
+
 ```text
 [CLI] Starting All Services...
 [Orchestration Gateway API] Listening on port 8080
@@ -260,9 +269,11 @@ Start all gateways (Orchestration, Inference, Filtration) and the Admin Dashboar
 ```
 
 ### 3. `inferiallm orchestration-gateway`
+
 Start the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecars).
 
 **Expected Output:**
+
 ```text
 [CLI] Starting Orchestration Stack (API, Worker, DePIN Sidecar)...
 [Orchestration Gateway API] Listening on port 8080
@@ -271,18 +282,22 @@ Start the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecar
 ```
 
 ### 4. `inferiallm inference-gateway`
+
 Start the Inference Gateway standalone.
 
 **Expected Output:**
+
 ```text
 [Inference Gateway API] Listening on port 8001
 ...
 ```
 
 ### 5. `inferiallm filtration-gateway`
+
 Start the Filtration Gateway standalone.
 
 **Expected Output:**
+
 ```text
 [Filtration Gateway API] Listening on port 8000
 ...

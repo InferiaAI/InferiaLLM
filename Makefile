@@ -10,7 +10,7 @@ setup:
 # Start the API services using the installed CLI
 start:
 	@echo "Starting InferiaLLM API..."
-	inferia api-start
+	inferiallm api-start
 
 # Run tests
 test:
