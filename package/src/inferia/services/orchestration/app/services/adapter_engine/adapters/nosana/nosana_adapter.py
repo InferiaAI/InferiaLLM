@@ -32,6 +32,11 @@ class NosanaAdapter(ProviderAdapter):
     """
 
     ADAPTER_TYPE = "depin"
+    
+    # Simple in-memory cache
+    _resources_cache: List[Dict] = []
+    _last_discovery_time: float = 0
+    CACHE_DURATION: int = 300  # 5 minutes
 
     # -------------------------------------------------
     # DISCOVER
@@ -55,6 +60,10 @@ class NosanaAdapter(ProviderAdapter):
         #             "metadata": {"mode": "simulation"},
         #         }
         #     ]
+
+        import time
+        if self._resources_cache and (time.time() - self._last_discovery_time) < self.CACHE_DURATION:
+            return self._resources_cache
 
         url = "https://dashboard.k8s.prd.nos.ci/api/markets"
 
@@ -95,6 +104,9 @@ class NosanaAdapter(ProviderAdapter):
                             }
                         )
 
+                    
+                    self._resources_cache = resources
+                    self._last_discovery_time = time.time()
                     return resources
 
         except Exception:

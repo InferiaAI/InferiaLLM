@@ -70,44 +70,51 @@ export default function DeploymentDetail() {
         }
     }
 
-    const handleDelete = async () => {
-        if (!id) return
+    const [processing, setProcessing] = useState(false)
 
-        const isStopped = ["STOPPED", "TERMINATED", "FAILED"].includes(deployment?.state || deployment?.status || "")
-        const confirmMsg = isStopped
-            ? "Are you sure you want to permanently delete this deployment? This action cannot be undone."
-            : "Are you sure you want to stop this deployment?"
+    const isStopped = ["STOPPED", "TERMINATED", "FAILED", "unknown"].includes(deployment?.state || deployment?.status || "")
+    const isRunning = !isStopped
 
-        if (!confirm(confirmMsg)) {
-            return
+    const handleStop = async () => {
+        if (!id || !confirm("Are you sure you want to stop this deployment?")) return
+        setProcessing(true)
+        try {
+            await computeApi.post("/deployment/terminate", { deployment_id: id })
+            toast.success("Deployment stopping...")
+            fetchDeployment()
+        } catch (err: any) {
+            toast.error(err.response?.data?.detail || "Failed to stop deployment")
+        } finally {
+            setProcessing(false)
         }
+    }
 
+    const handleStart = async () => {
+        if (!id) return
+        setProcessing(true)
+        try {
+            await computeApi.post("/deployment/start", { deployment_id: id })
+            toast.success("Deployment starting...")
+            fetchDeployment()
+        } catch (err: any) {
+            toast.error(err.response?.data?.detail || "Failed to start deployment")
+        } finally {
+            setProcessing(false)
+        }
+    }
+
+    const handleDelete = async () => {
+        if (!id || !confirm("Are you sure you want to permanently delete this deployment?")) return
         setDeleting(true)
         try {
-            // Determine provider type for appropriate API call
             const isCompute = deployment?.provider?.includes("Compute") || deployment?.engine === "vllm"
-
             if (isCompute) {
-                if (isStopped) {
-                    // Permanently delete from database
-                    await computeApi.delete(`/deployment/delete/${id}`)
-                } else {
-                    // Stop the deployment first
-                    await computeApi.post("/deployment/terminate", {
-                        deployment_id: id,
-                    })
-                }
+                await computeApi.delete(`/deployment/delete/${id}`)
             } else {
                 await managementApi.delete(`/management/deployments/${id}`)
             }
-
-            toast.success(isStopped ? "Deployment deleted successfully" : "Deployment stopped successfully")
-            if (isStopped) {
-                navigate("/dashboard/deployments")
-            } else {
-                // Refresh to show updated state
-                fetchDeployment()
-            }
+            toast.success("Deployment deleted successfully")
+            navigate("/dashboard/deployments")
         } catch (err: any) {
             toast.error(err.response?.data?.detail || "Failed to delete deployment")
         } finally {
@@ -131,6 +138,13 @@ export default function DeploymentDetail() {
                     <div className="flex items-center gap-2">
                         <span className="text-muted-foreground text-sm">Provider:</span>
                         <span className="px-2 py-0.5 rounded-md bg-muted text-xs font-medium uppercase tracking-wider">{deployment?.provider || "Unknown"}</span>
+                        <div className={cn(
+                            "flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium uppercase tracking-wider border",
+                            isRunning ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-red-500/10 text-red-500 border-red-500/20"
+                        )}>
+                            <div className={cn("w-1.5 h-1.5 rounded-full", isRunning ? "bg-green-500 animate-pulse" : "bg-red-500")} />
+                            {deployment?.state || "Unknown"}
+                        </div>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -140,13 +154,33 @@ export default function DeploymentDetail() {
                     >
                         <Activity className="w-4 h-4" /> Refresh
                     </button>
-                    <button
-                        onClick={handleDelete}
-                        disabled={deleting}
-                        className="px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded-md text-sm font-medium hover:bg-red-100 dark:hover:bg-red-900/40 flex items-center gap-2 transition-colors disabled:opacity-50"
-                    >
-                        <Trash2 className="w-4 h-4" /> {deleting ? "Deleting..." : "Delete"}
-                    </button>
+
+                    {isRunning ? (
+                        <button
+                            onClick={handleStop}
+                            disabled={processing}
+                            className="px-3 py-1.5 bg-orange-500/10 text-orange-500 border border-orange-500/20 rounded-md text-sm font-medium hover:bg-orange-500/20 flex items-center gap-2 transition-colors disabled:opacity-50"
+                        >
+                            <Trash2 className="w-4 h-4" /> {processing ? "Stopping..." : "Stop"}
+                        </button>
+                    ) : (
+                        <>
+                            <button
+                                onClick={handleStart}
+                                disabled={processing}
+                                className="px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 rounded-md text-sm font-medium hover:bg-primary/20 flex items-center gap-2 transition-colors disabled:opacity-50"
+                            >
+                                <Activity className="w-4 h-4" /> {processing ? "Starting..." : "Start"}
+                            </button>
+                            <button
+                                onClick={handleDelete}
+                                disabled={deleting}
+                                className="px-3 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-md text-sm font-medium hover:bg-red-500/20 flex items-center gap-2 transition-colors disabled:opacity-50"
+                            >
+                                <Trash2 className="w-4 h-4" /> {deleting ? "Deleting..." : "Delete"}
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 

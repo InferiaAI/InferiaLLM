@@ -10,7 +10,7 @@ interface TerminalLogsProps {
 
 export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
     const [lines, setLines] = useState<any[]>([])
-    const [progressBars, setProgressBars] = useState<Record<string, any>>({})
+    // const [progressBars, setProgressBars] = useState<Record<string, any>>({}) // Removed
     const [status, setStatus] = useState<"connecting" | "connected" | "disconnected" | "error">("connecting")
     const [error, setError] = useState<string | null>(null)
     const [autoScroll, setAutoScroll] = useState(true)
@@ -59,8 +59,9 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
         // Handle objects
         if (typeof data === 'object') {
             // Check for progress updates
+            // Check for progress updates - allow them to render raw
             if (data.method === 'MultiProgressBarReporter.update' || data.type === 'multi-process-bar-update') {
-                return null;
+                // Fallthrough to standard object handling to render as text
             }
 
             // Extract content
@@ -113,29 +114,6 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                     if (message.type === 'log') {
                         const rawData = message.data;
 
-                        // Check if it's a progress update before formatting
-                        let tryParse = null;
-                        if (typeof rawData === 'string' && rawData.startsWith('{')) {
-                            try { tryParse = JSON.parse(rawData); } catch (e) { }
-                        } else if (typeof rawData === 'object') {
-                            tryParse = rawData;
-                        }
-
-                        if (tryParse && (tryParse.method === 'MultiProgressBarReporter.update' || tryParse.type === 'multi-process-bar-update')) {
-                            const eventData = tryParse.payload?.event;
-                            if (eventData && eventData.id) {
-                                setProgressBars(prev => ({
-                                    ...prev,
-                                    [eventData.id]: {
-                                        status: eventData.status,
-                                        progress: eventData.progress,
-                                        id: eventData.id,
-                                        timestamp: Date.now()
-                                    }
-                                }));
-                                return;
-                            }
-                        }
 
                         const formatted = formatLog(rawData);
                         if (formatted) {
@@ -184,11 +162,10 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
         if (autoScroll && scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight
         }
-    }, [lines, progressBars, autoScroll])
+    }, [lines, autoScroll])
 
     const clearLogs = () => {
         setLines([])
-        setProgressBars({})
     }
 
     const downloadLogs = () => {
@@ -286,25 +263,6 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                         </div>
                     ))}
 
-                    {/* Active Progress Bars */}
-                    {Object.values(progressBars).length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-zinc-800/50 space-y-2">
-                            {Object.values(progressBars).map((pb: any) => (
-                                <div key={pb.id} className="flex flex-col gap-1 p-2 bg-white/5 rounded border border-white/5">
-                                    <div className="flex justify-between items-center px-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[10px] px-1.5 py-0.5 bg-primary/20 text-primary rounded font-bold">{pb.id.slice(0, 8)}</span>
-                                            <span className="text-[11px] font-bold text-zinc-300">{pb.status}</span>
-                                        </div>
-                                    </div>
-                                    <div className="font-mono text-[11px] text-primary/80 px-1 truncate">
-                                        {pb.progress}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
                     {status === "connected" && (
                         <div className="flex gap-3 text-zinc-300 leading-relaxed h-6 items-center">
                             <span className="text-zinc-600 select-none shrink-0 w-8">{lines.length + 1}</span>
@@ -312,7 +270,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                         </div>
                     )}
 
-                    {lines.length === 0 && Object.keys(progressBars).length === 0 && (
+                    {lines.length === 0 && (
                         <div className="h-full flex flex-col items-center justify-center text-zinc-600 space-y-4 py-20 uppercase tracking-widest opacity-50">
                             {status === "connecting" ? (
                                 <>
