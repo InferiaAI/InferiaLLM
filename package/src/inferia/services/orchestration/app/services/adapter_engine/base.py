@@ -60,3 +60,10 @@ class ProviderAdapter(ABC):
         Returns a dict containing 'logs': List[str] or List[Dict] usually.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+        """
+        Returns connection details for WebSocket log streaming.
+        """
+        raise NotImplementedError

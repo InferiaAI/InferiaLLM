@@ -10,9 +10,10 @@ import DeploymentGuardrails from "@/components/deployment/DeploymentGuardrails"
 import DeploymentRag from "@/components/deployment/DeploymentRag"
 import DeploymentPromptTemplate from "@/components/deployment/DeploymentPromptTemplate"
 import DeploymentRateLimit from "@/components/deployment/DeploymentRateLimit"
+import TerminalLogs from "@/components/deployment/TerminalLogs"
 import { toast } from "sonner"
 
-type TabType = "overview" | "logs" | "guardrail" | "rag" | "prompt_template" | "rate_limit"
+type TabType = "overview" | "logs" | "terminal" | "guardrail" | "rag" | "prompt_template" | "rate_limit"
 
 import { LoadingScreen } from "@/components/ui/LoadingScreen"
 
@@ -155,13 +156,22 @@ export default function DeploymentDetail() {
                     { id: "overview", label: "Overview" },
                     { id: "guardrail", label: "Guardrails" },
                     { id: "rag", label: "RAG & Data" },
-                    { id: "logs", label: "Logs" },
+                    { id: "logs", label: "Inference Logs" },
+                    { id: "terminal", label: "Terminal Logs" },
                     { id: "prompt_template", label: "Template" },
                     { id: "rate_limit", label: "Rate Limits" },
                 ].filter(tab => {
+                    const isCompute = deployment?.provider?.toLowerCase().includes("compute") ||
+                        deployment?.engine === "vllm" ||
+                        deployment?.provider?.toLowerCase().includes("nosana") ||
+                        deployment?.provider?.toLowerCase().includes("akash");
+
+                    // Hide terminal for non-compute/external deployments
+                    if (tab.id === "terminal" && !isCompute) return false;
+
                     // specific filtering
                     if (deployment?.workload_type === 'training') {
-                        return ["overview", "logs"].includes(tab.id)
+                        return ["overview", "logs", "terminal"].includes(tab.id)
                     }
                     return true
                 }).map((tab) => (
@@ -195,6 +205,14 @@ export default function DeploymentDetail() {
                         ) : (
                             <InferenceLogs deploymentId={id} />
                         )}
+                    </div>
+                )
+            }
+
+            {
+                activeTab === "terminal" && id && (
+                    <div className="space-y-4">
+                        <TerminalLogs deploymentId={id} />
                     </div>
                 )
             }

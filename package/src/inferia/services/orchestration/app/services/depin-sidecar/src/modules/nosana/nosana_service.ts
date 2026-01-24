@@ -2,6 +2,7 @@ import { createNosanaClient, NosanaClient, NosanaNetwork, getJobExposedServices,
 import { address, createKeyPairSignerFromBytes } from '@solana/kit';
 import bs58 from 'bs58';
 import type { JobDefinition } from '@nosana/types';
+import { LogStreamer } from './nosana_logs';
 
 // Job timing constants (in milliseconds)
 const JOB_TIMEOUT_MS = 30 * 60 * 1000;
@@ -210,7 +211,10 @@ export class NosanaService {
         }
     }
 
-    // ... (keep getJob, getJobLogs, getBalance, recoverJobs as is) ...
+    async getLogStreamer() {
+        if (!this.client.wallet) throw new Error("Wallet not initialized");
+        return new LogStreamer(this.client.wallet);
+    }
 
     async getJob(jobAddress: string) {
         // ... (existing implementation) ...

@@ -511,6 +511,62 @@ async def get_deployment_logs(deployment_id: str):
     finally:
         await conn.close()
 
+@router.get("/logs/{deployment_id}/stream")
+async def get_deployment_log_stream_info(deployment_id: str):
+    """
+    Get WebSocket connection details for log streaming.
+    """
+    from uuid import UUID
+    import asyncpg
+    
+    try:
+        dep_uuid = UUID(deployment_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID")
+
+    conn = await asyncpg.connect(POSTGRES_DSN)
+    try:
+        # 1. Get deployment and provider
+        dep = await conn.fetchrow(
+            """
+            SELECT p.provider, d.node_ids 
+            FROM model_deployments d
+            JOIN compute_pools p ON d.pool_id = p.id
+            WHERE d.deployment_id = $1
+            """,
+            dep_uuid
+        )
+        
+        if not dep:
+             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
+        
+        provider = dep["provider"]
+        if not dep["node_ids"]:
+             return {"error": "No nodes assigned to this deployment yet."}
+             
+        node_id = dep["node_ids"][0]
+        
+        node = await conn.fetchrow(
+             "SELECT provider_instance_id FROM compute_inventory WHERE id = $1",
+             node_id
+        )
+        
+        if not node:
+             return {"error": "Node record not found"}
+
+        provider_instance_id = node["provider_instance_id"]
+        
+        # 2. Call Adapter for streaming info
+        try:
+            adapter = get_adapter(provider)
+            stream_info = await adapter.get_log_streaming_info(provider_instance_id=provider_instance_id)
+            return stream_info
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=f"Adapter error: {str(e)}")
+
+    finally:
+        await conn.close()
+
 @router.get("/deployments")
 async def list_all_deployments(org_id: str | None = None):
     """

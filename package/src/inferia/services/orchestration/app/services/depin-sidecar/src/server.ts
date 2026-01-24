@@ -1,4 +1,6 @@
 import express from 'express';
+import http from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import fs from 'fs';
@@ -10,6 +12,8 @@ import { NosanaService } from './modules/nosana/nosana_service';
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 const PORT: number = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
@@ -124,6 +128,12 @@ app.use('/akash', akashRouter);
 // --- NOSANA ROUTES ---
 const nosanaRouter = express.Router();
 
+// Job state helper matches Watchdog logic
+const isJobTerminated = (state: any): boolean => {
+    // 2=COMPLETED, 3=STOPPED, 4=QUIT/FAILED in some versions
+    return state === 2 || state === 3 || state === 4 || state === 'COMPLETED' || state === 'STOPPED';
+};
+
 // Middleware to check initialization
 nosanaRouter.use((req, res, next) => {
     if (!nosanaService) return res.status(503).json({ error: "Nosana Service not initialized" });
@@ -210,6 +220,106 @@ app.get('/health', (req, res) => {
     });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`DePIN Sidecar running on port ${PORT}`);
+// --- WEBSOCKET LOG STREAMING ---
+wss.on('connection', (ws: WebSocket) => {
+    console.log("[WS] New client connected");
+    let streamer: any = null;
+
+    ws.on('message', async (message: string) => {
+        try {
+            const data = JSON.parse(message);
+
+            if (data.type === 'subscribe_logs') {
+                const { provider, jobId, nodeAddress } = data;
+
+                if (provider === 'nosana') {
+                    if (!nosanaService) {
+                        ws.send(JSON.stringify({ type: 'error', message: 'Nosana Service not initialized' }));
+                        return;
+                    }
+
+                    try {
+                        // 1. Check job state first
+                        const job = await nosanaService.getJob(jobId);
+
+                        if (isJobTerminated(job.jobState)) {
+                            console.log(`[WS] Job ${jobId} is finished (State: ${job.jobState}). Fetching IPFS logs...`);
+                            ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] Job has finished. Retrieving historical logs from IPFS..." }));
+
+                            const logsData = await nosanaService.getJobLogs(jobId);
+                            if (logsData.status === 'completed') {
+                                const result = logsData.result;
+
+                                // Helper to process and send logs
+                                const sendLogs = (logs: any) => {
+                                    if (Array.isArray(logs)) {
+                                        logs.forEach(l => {
+                                            const line = typeof l === 'string' ? l : (l.log || l.message || (l.logs ? null : JSON.stringify(l)));
+                                            if (line) {
+                                                ws.send(JSON.stringify({ type: 'log', data: line }));
+                                            } else if (l.logs) {
+                                                sendLogs(l.logs);
+                                            }
+                                        });
+                                    }
+                                };
+
+                                if (result && typeof result === 'object') {
+                                    if (result.opStates && Array.isArray(result.opStates)) {
+                                        result.opStates.forEach((op: any) => {
+                                            if (op.logs) sendLogs(op.logs);
+                                        });
+                                    } else {
+                                        sendLogs(result);
+                                    }
+                                }
+
+                                ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] --- END OF HISTORICAL LOGS ---" }));
+                            } else {
+                                ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] Historical logs are still being processed or not available." }));
+                            }
+                            return;
+                        }
+
+                        // 2. If running, use streamer
+                        streamer = await nosanaService.getLogStreamer();
+
+                        streamer.on('log', (log: any) => {
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'log', data: log }));
+                            }
+                        });
+
+                        streamer.on('error', (err: Error) => {
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'error', message: err.message }));
+                            }
+                        });
+
+                        console.log(`[WS] Subscribed to Nosana live logs: ${jobId} on node ${nodeAddress}`);
+                        await streamer.connect(nodeAddress, jobId);
+                    } catch (e: any) {
+                        ws.send(JSON.stringify({ type: 'error', message: `Failed to initialize logs: ${e.message}` }));
+                    }
+                } else if (provider === 'akash') {
+                    // Akash Log Streaming (Standardized placeholder)
+                    ws.send(JSON.stringify({ type: 'log', data: { raw: 'Streaming logs for Akash is not yet supported via WebSocket.' } }));
+                }
+            }
+        } catch (e) {
+            console.error("[WS] Error handling message:", e);
+        }
+    });
+
+    ws.on('close', () => {
+        console.log("[WS] Client disconnected");
+        if (streamer) {
+            streamer.close();
+            streamer = null;
+        }
+    });
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`DePIN Sidecar (HTTP + WS) running on port ${PORT}`);
 });
