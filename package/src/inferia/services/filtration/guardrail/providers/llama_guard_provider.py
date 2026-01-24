@@ -74,8 +74,18 @@ class LlamaGuardProvider(GuardrailProvider):
         self.initialize_client()
         
         if not self.groq_client:
-            logger.error("Llama Guard requested but Groq client is not initialized.")
-            return GuardrailResult(is_valid=True, sanitized_text=text, scan_time_ms=0)
+            logger.error("Llama Guard requested but Groq client is not initialized (missing API key).")
+            return GuardrailResult(
+                is_valid=False, 
+                sanitized_text=text, 
+                scan_time_ms=0,
+                violations=[Violation(
+                    scanner="LlamaGuard",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details="Guardrail engine 'llama-guard' failed to initialize: Missing Groq API Key."
+                )]
+            )
 
         # Llama Guard prompt template for INPUT is just the prompt itself usually for basic guardrails,
         # but the chat template handles it. We just send it as a user message.
@@ -106,8 +116,18 @@ class LlamaGuardProvider(GuardrailProvider):
         self.initialize_client()
         
         if not self.groq_client:
-            logger.error("Llama Guard requested but Groq client is not initialized.")
-            return GuardrailResult(is_valid=True, sanitized_text=output, scan_time_ms=0)
+            logger.error("Llama Guard requested but Groq client is not initialized (missing API key).")
+            return GuardrailResult(
+                is_valid=False, 
+                sanitized_text=output, 
+                scan_time_ms=0,
+                violations=[Violation(
+                    scanner="LlamaGuard",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details="Guardrail engine 'llama-guard' failed to initialize: Missing Groq API Key."
+                )]
+            )
 
         # For output scanning, we typically send user prompt + agent response
         messages = [

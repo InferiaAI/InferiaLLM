@@ -19,6 +19,7 @@ class ViolationType(str, Enum):
     SENSITIVE_DATA = "sensitive_data"
     IRRELEVANT = "irrelevant"
     BANNED_CONTENT = "banned_content"
+    EXTERNAL_SERVICE_ERROR = "external_service_error"
     
     # Llama Guard Specific
     VIOLENT_CRIMES = "violent_crimes"

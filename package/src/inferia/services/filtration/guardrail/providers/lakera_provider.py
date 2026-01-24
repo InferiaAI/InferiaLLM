@@ -48,7 +48,16 @@ class LakeraProvider(GuardrailProvider):
         self.refresh_config()
         if not self.api_key:
              logger.error("Lakera API Key missing.")
-             return GuardrailResult(is_valid=True, sanitized_text=text) # Fail open or closed? Usually fail closed for security but let's adhere to others.
+             return GuardrailResult(
+                is_valid=False, 
+                sanitized_text=text,
+                violations=[Violation(
+                    scanner="Lakera",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details="Guardrail engine 'lakera-guard' failed: Missing Lakera API Key."
+                )]
+            )
 
         start_time = time.time()
         
