@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate, useLocation, Navigate } from "react-router-dom";
+import { Outlet, NavLink, useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard,
@@ -266,23 +266,29 @@ export default function DashboardLayout() {
             <div className="flex items-center">
               <div className="h-6 w-px bg-slate-200 dark:bg-zinc-800 mx-2 hidden lg:block" />
               <nav className="flex items-center text-sm font-medium">
-                {pathSegments.map((segment, index) => (
-                  <div key={index} className="flex items-center">
-                    {index > 0 && (
-                      <ChevronRight className="w-4 h-4 text-slate-400 mx-1" />
-                    )}
-                    <span
-                      className={cn(
-                        "capitalize hover:text-slate-900 dark:hover:text-zinc-100 transition-colors cursor-pointer",
-                        index === pathSegments.length - 1
-                          ? "text-slate-900 dark:text-zinc-100"
-                          : "text-slate-500 dark:text-zinc-500",
+                {pathSegments.map((segment, index) => {
+                  const path = `/${pathSegments.slice(0, index + 1).join("/")}`;
+                  const isLast = index === pathSegments.length - 1;
+
+                  return (
+                    <div key={index} className="flex items-center">
+                      {index > 0 && (
+                        <ChevronRight className="w-4 h-4 text-slate-400 mx-1" />
                       )}
-                    >
-                      {segment.replace(/-/g, " ")}
-                    </span>
-                  </div>
-                ))}
+                      <Link
+                        to={path}
+                        className={cn(
+                          "capitalize transition-colors",
+                          isLast
+                            ? "text-slate-900 dark:text-zinc-100 font-medium pointer-events-none"
+                            : "text-slate-500 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-zinc-100 cursor-pointer"
+                        )}
+                      >
+                        {segment.replace(/-/g, " ")}
+                      </Link>
+                    </div>
+                  );
+                })}
               </nav>
             </div>
           </div>

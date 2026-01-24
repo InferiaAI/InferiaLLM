@@ -158,6 +158,14 @@ const router = createBrowserRouter([
             element: <ProviderConfigPage />,
           },
           {
+            path: "compute",
+            element: <Navigate to="instances" replace />,
+          },
+          {
+            path: "settings",
+            element: <Navigate to="organization" replace />,
+          },
+          {
             path: "status",
             element: <Status />,
           },

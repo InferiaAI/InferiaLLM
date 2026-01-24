@@ -62,13 +62,7 @@ export default function ProviderList() {
 
     return (
         <div className="max-w-4xl mx-auto space-y-6">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-                <button onClick={() => navigate("/dashboard/settings/providers")} className="hover:text-foreground">
-                    Providers
-                </button>
-                <ChevronRight className="w-4 h-4" />
-                <span className="text-foreground font-medium capitalize">{categoryTitle}</span>
-            </div>
+
 
             <div>
                 <h1 className="text-2xl font-bold tracking-tight mb-1">{categoryTitle}</h1>
