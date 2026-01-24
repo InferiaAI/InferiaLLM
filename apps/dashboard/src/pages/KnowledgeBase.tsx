@@ -1,9 +1,11 @@
 import { useState } from "react"
 import api from "@/lib/api"
 import { toast } from "sonner"
-import { Database, Plus, Upload, Loader2, FileText, Trash2, FolderOpen } from "lucide-react"
+import { Database, Plus, Upload, Loader2, FileText, Trash2, FolderOpen, AlertCircle, ArrowRight } from "lucide-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
+import { ConfigService } from "@/services/configService"
+import { Link } from "react-router-dom"
 
 interface KBFile {
     filename: string
@@ -17,13 +19,27 @@ export default function KnowledgeBase() {
     const [selectedCollection, setSelectedCollection] = useState<string | null>(null)
     const [showUpload, setShowUpload] = useState(false)
 
+    // Check Configuration
+    const { data: config, isLoading: loadingConfig } = useQuery({
+        queryKey: ["providerConfig"],
+        queryFn: () => ConfigService.getProviderConfig()
+    })
+
+    const isVectorDbConfigured = config ? (
+        config.vectordb.chroma.is_local
+            ? !!config.vectordb.chroma.url
+            : !!config.vectordb.chroma.api_key
+    ) : false
+
     // Collections Query
-    const { data: collections, isLoading: loadingCollections } = useQuery<string[]>({
+    const { data: collections, isLoading: loadingCollections, error: collectionError } = useQuery<string[]>({
         queryKey: ["collections"],
         queryFn: async () => {
             const { data } = await api.get("/management/data/collections")
             return data
-        }
+        },
+        enabled: !!config && isVectorDbConfigured,
+        retry: false
     })
 
     // Files Query (Dependent)
@@ -34,7 +50,7 @@ export default function KnowledgeBase() {
             const { data } = await api.get(`/management/data/collections/${selectedCollection}/files`)
             return data
         },
-        enabled: !!selectedCollection
+        enabled: !!selectedCollection && isVectorDbConfigured
     })
 
     // Upload Mutation
@@ -47,12 +63,8 @@ export default function KnowledgeBase() {
         onSuccess: () => {
             toast.success("Document uploaded successfully")
             setShowUpload(false)
-            // Invalidate both collections (if new) and files
             queryClient.invalidateQueries({ queryKey: ["collections"] })
             queryClient.invalidateQueries({ queryKey: ["files", selectedCollection] })
-
-            // If we created a new collection, select it? 
-            // Hard to know name if dynamic, but usually user selects it.
         },
         onError: (err: any) => {
             toast.error(err.response?.data?.detail || "Upload failed")
@@ -81,9 +93,39 @@ export default function KnowledgeBase() {
         uploadMutation.mutate(formData)
     }
 
-    // Auto-select first collection if none selected and loaded
+    // Auto-select first collection
     if (!selectedCollection && collections && collections.length > 0) {
         setSelectedCollection(collections[0])
+    }
+
+    if (loadingConfig) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full gap-4">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                <p className="text-muted-foreground animate-pulse">Checking configuration...</p>
+            </div>
+        )
+    }
+
+    if (!isVectorDbConfigured || collectionError) {
+        return (
+            <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] text-center p-6">
+                <div className="w-20 h-20 bg-orange-500/10 text-orange-500 rounded-full flex items-center justify-center mb-6">
+                    <AlertCircle className="w-10 h-10" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2">Vector Database Not Configured</h2>
+                <p className="text-muted-foreground max-w-md mb-8">
+                    Knowledge Base requires a connected Vector Database (ChromaDB) to store and retrieve document embeddings.
+                </p>
+                <Link
+                    to="/dashboard/settings/providers/vectordb/chroma"
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-all group"
+                >
+                    Configure ChromaDB
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                </Link>
+            </div>
+        )
     }
 
     return (
@@ -96,7 +138,6 @@ export default function KnowledgeBase() {
                 <button
                     onClick={() => {
                         setShowUpload(true)
-                        // Default to current selection if exists
                         setIsNew(false)
                         setNewCollectionName("")
                     }}
@@ -157,9 +198,6 @@ export default function KnowledgeBase() {
                                         </p>
                                     </div>
                                 </div>
-                                <div className="flex gap-2">
-                                    {/* Actions like Clear Collection could go here */}
-                                </div>
                             </div>
 
                             <div className="flex-1 overflow-y-auto p-6">
@@ -198,9 +236,6 @@ export default function KnowledgeBase() {
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    {/* Info or Delete buttons */}
-                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -216,7 +251,6 @@ export default function KnowledgeBase() {
                 </div>
             </div>
 
-            {/* Upload Modal Overlay */}
             {showUpload && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
                     <div className="bg-card w-full max-w-lg rounded-xl border shadow-lg animate-in fade-in zoom-in-95 p-6">
@@ -288,9 +322,6 @@ export default function KnowledgeBase() {
                                         "Click to upload or drag and drop"
                                     )}
                                 </div>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    {file ? `${(file.size / 1024).toFixed(1)} KB` : "Supports PDF, DOCX, TXT"}
-                                </p>
                             </div>
 
                             <div className="flex justify-end gap-3 pt-4">

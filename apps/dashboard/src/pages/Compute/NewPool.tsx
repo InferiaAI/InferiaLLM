@@ -1,20 +1,33 @@
 import { useState, useEffect } from "react"
-import { Cpu, Server, Check, Zap, Globe } from "lucide-react"
+import { Cpu, Server, Check, Zap, Globe, AlertCircle, ArrowRight } from "lucide-react"
 import { toast } from "sonner"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/context/AuthContext"
 import { computeApi } from "@/lib/api"
+import { useQuery } from "@tanstack/react-query"
+import { ConfigService } from "@/services/configService"
 
-// Mock Providers (could be fetched or static)
-const providers = [
+// Mock Providers
+const providerMeta = [
     {
         id: "nosana",
         name: "Nosana Network",
         description: "Decentralized GPU Compute grid. Cheapest and fastest for inference.",
         icon: Globe,
         color: "text-green-500 bg-green-500/10",
-        recommended: true
+        recommended: true,
+        category: "depin",
+        configPath: "/dashboard/settings/providers/depin/nosana"
+    },
+    {
+        id: "akash",
+        name: "Akash Network",
+        description: "Decentralized cloud compute. Open-source marketplace for GPUs.",
+        icon: Cpu,
+        color: "text-purple-500 bg-purple-500/10",
+        category: "depin",
+        configPath: "/dashboard/settings/providers/depin/akash"
     },
     {
         id: "aws",
@@ -22,7 +35,9 @@ const providers = [
         description: "Managed EC2 instances. High reliability, higher cost. (Coming Soon)",
         icon: Server,
         color: "text-blue-500 bg-blue-500/10",
-        disabled: true
+        disabled: true,
+        category: "cloud",
+        configPath: "/dashboard/settings/providers/cloud/aws"
     }
 ]
 
@@ -37,7 +52,33 @@ export default function NewPool() {
     const [availableResources, setAvailableResources] = useState<any[]>([])
     const [loadingResources, setLoadingResources] = useState(false)
 
-    // Fetch resources for provider
+    // Check Configuration
+    const { data: config, isLoading: loadingConfig } = useQuery({
+        queryKey: ["providerConfig"],
+        queryFn: () => ConfigService.getProviderConfig()
+    })
+
+    const isProviderConfigured = (pid: string) => {
+        if (!config) return false;
+        const depin = config.depin || {};
+        const cloud = config.cloud || {};
+
+        switch (pid) {
+            case "nosana":
+                return !!depin.nosana?.wallet_private_key;
+            case "akash":
+                return !!depin.akash?.mnemonic;
+            case "aws":
+                return !!cloud.aws?.access_key_id;
+            default: return false;
+        }
+    };
+
+    const providers = providerMeta.map(p => ({
+        ...p,
+        isConfigured: isProviderConfigured(p.id)
+    }));
+
     useEffect(() => {
         if (selectedProvider && step === 2) {
             fetchResources(selectedProvider)
@@ -84,24 +125,33 @@ export default function NewPool() {
             const payload = {
                 pool_name: poolName,
                 owner_type: "user",
-                owner_id: targetOrgId, // Using resolved org_id
+                owner_id: targetOrgId,
                 provider: selectedProvider,
                 allowed_gpu_types: [selectedResource.gpu_type],
                 max_cost_per_hour: selectedResource.price_per_hour,
                 is_dedicated: false,
-                provider_pool_id: selectedResource.metadata?.market_address || selectedResource.provider_resource_id, // Use real address if available
+                provider_pool_id: selectedResource.metadata?.market_address || selectedResource.provider_resource_id,
                 scheduling_policy_json: JSON.stringify({ strategy: "best_fit" })
             }
 
-            const res = await computeApi.post("/deployment/createpool", payload)
+            await computeApi.post("/deployment/createpool", payload)
 
             toast.success("Compute Pool created successfully!")
-            navigate("/dashboard/compute/pools") // Go back to pools list
+            navigate("/dashboard/compute/pools")
         } catch (error: any) {
             toast.error(error.response?.data?.detail || error.message)
         } finally {
             setIsCreating(false)
         }
+    }
+
+    if (loadingConfig) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[400px]">
+                <Cpu className="w-12 h-12 text-primary/20 animate-pulse mb-4" />
+                <p className="text-muted-foreground animate-pulse">Checking providers...</p>
+            </div>
+        )
     }
 
     return (
@@ -134,28 +184,52 @@ export default function NewPool() {
             {/* Step 1: Provider Selection */}
             {step === 1 && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {providers.map((p) => (
-                        <button
-                            key={p.id}
-                            disabled={p.disabled}
-                            onClick={() => handleProviderSelect(p.id)}
-                            className={cn(
-                                "text-left group relative p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-blue-500/50 dark:hover:border-blue-500/50 transition-all hover:shadow-md flex flex-col gap-4",
-                                p.disabled && "opacity-50 cursor-not-allowed hover:border-slate-200 dark:hover:border-zinc-800 hover:shadow-none bg-slate-50 dark:bg-zinc-900/50"
-                            )}
-                        >
-                            <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center transition-colors", p.color)}>
-                                <p.icon className="w-6 h-6" />
-                            </div>
-                            <div>
-                                <h3 className="font-bold text-lg mb-1 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{p.name}</h3>
-                                <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{p.description}</p>
-                            </div>
-                            {p.recommended && (
-                                <span className="absolute top-4 right-4 text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 px-2 py-1 rounded">Recommended</span>
-                            )}
-                        </button>
-                    ))}
+                    {providers.map((p) => {
+                        if (p.isConfigured || p.disabled) {
+                            return (
+                                <button
+                                    key={p.id}
+                                    disabled={p.disabled}
+                                    onClick={() => handleProviderSelect(p.id)}
+                                    className={cn(
+                                        "text-left group relative p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-blue-500/50 dark:hover:border-blue-500/50 transition-all hover:shadow-md flex flex-col gap-4",
+                                        p.disabled && "opacity-50 cursor-not-allowed hover:border-slate-200 dark:hover:border-zinc-800 hover:shadow-none bg-slate-50 dark:bg-zinc-900/50"
+                                    )}
+                                >
+                                    <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center transition-colors", p.color)}>
+                                        <p.icon className="w-6 h-6" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg mb-1 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors uppercase tracing-tight text-xs">{p.name}</h3>
+                                        <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{p.description}</p>
+                                    </div>
+                                    {p.recommended && (
+                                        <span className="absolute top-4 right-4 text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 px-2 py-1 rounded">Recommended</span>
+                                    )}
+                                </button>
+                            );
+                        } else {
+                            // Unconfigured Card
+                            return (
+                                <Link
+                                    key={p.id}
+                                    to={p.configPath}
+                                    className="text-left group relative p-6 rounded-xl border border-dashed border-slate-300 dark:border-zinc-800 bg-slate-50/30 dark:bg-zinc-900/20 hover:border-slate-400 dark:hover:border-zinc-700 transition-all flex flex-col gap-4"
+                                >
+                                    <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center opacity-40grayscale", p.color)}>
+                                        <p.icon className="w-6 h-6" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg mb-1 text-slate-400 dark:text-zinc-500">{p.name}</h3>
+                                        <p className="text-xs text-slate-400 dark:text-zinc-600">Configuration required to create pools on this network.</p>
+                                    </div>
+                                    <div className="mt-auto flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-xs font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
+                                        Connect Provider <ArrowRight className="w-3 h-3" />
+                                    </div>
+                                </Link>
+                            );
+                        }
+                    })}
                 </div>
             )}
 
