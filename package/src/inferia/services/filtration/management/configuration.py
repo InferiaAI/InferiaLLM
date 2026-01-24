@@ -163,7 +163,12 @@ async def update_provider_config(
         print(f"[DEBUG] Writing config to {config_path}")
         with open(config_path, "w") as f:
             json.dump(current_config, f, indent=2)
-        print(f"[DEBUG] Wrote content: {json.dumps(current_config)[:100]}...")
+        
+        # Log update status for guardrails
+        if "guardrails" in new_data:
+            groq_new = new_data["guardrails"].get("groq", {}).get("api_key")
+            if groq_new:
+                print(f"[DEBUG] Config Update: New Groq API Key received: {groq_new[:6]}...")
     except Exception as e:
         print(f"[DEBUG] Failed to write config: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save config: {e}")
@@ -176,6 +181,13 @@ async def update_provider_config(
         except Exception as e:
              print(f"[DEBUG] Failed to refresh data engine: {e}")
              
+    if wrapper.providers.guardrails:
+        try:
+            from guardrail.config import guardrail_settings
+            guardrail_settings.refresh_from_main_settings()
+        except Exception as e:
+            print(f"[DEBUG] Failed to refresh guardrail settings: {e}")
+
     return {"status": "ok", "message": "Configuration saved locally"}
 
 @router.post("/config", status_code=200)

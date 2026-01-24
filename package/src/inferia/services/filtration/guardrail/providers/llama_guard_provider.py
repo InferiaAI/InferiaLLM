@@ -23,18 +23,47 @@ class LlamaGuardProvider(GuardrailProvider):
     def __init__(self):
         self.settings = guardrail_settings
         self.groq_client = None
+        self._last_key = None
+        self.initialize_client()
+
+    def initialize_client(self):
+        """Initialize or refresh the Groq client if the API key has changed."""
+        # Ensure latest main settings are pulled in
+        if hasattr(self.settings, 'refresh_from_main_settings'):
+            self.settings.refresh_from_main_settings()
+            
+        current_key = self.settings.groq_api_key
         
-        if self.settings.groq_api_key:
-            if Groq:
-                try:
-                    self.groq_client = Groq(api_key=self.settings.groq_api_key)
-                    logger.info("[LlamaGuardProvider] Groq client initialized")
-                except Exception as e:
-                    logger.error(f"[LlamaGuardProvider] Failed to initialize Groq client: {e}")
-            else:
-                logger.warning("[LlamaGuardProvider] Groq library not installed.")
+        # If key is missing but exists in main settings, attempt to hydrate
+        if not current_key:
+            try:
+                from config import settings
+                current_key = settings.providers.guardrails.groq.api_key
+                if current_key:
+                    logger.info(f"[LlamaGuardProvider] Hydrated key from main settings: {current_key[:6]}...")
+            except ImportError:
+                logger.error("[LlamaGuardProvider] Could not import config.settings for hydration")
+                pass
+
+        if not current_key:
+             if self.groq_client:
+                 logger.warning("[LlamaGuardProvider] Groq API key removed/missing. Client invalidated.")
+                 self.groq_client = None
+                 self._last_key = None
+             return
+
+        if self.groq_client and current_key == self._last_key:
+            return
+
+        if Groq:
+            try:
+                self.groq_client = Groq(api_key=current_key)
+                self._last_key = current_key
+                logger.info("[LlamaGuardProvider] Groq client initialized/updated with key starting with " + current_key[:6])
+            except Exception as e:
+                logger.error(f"[LlamaGuardProvider] Failed to initialize Groq client: {e}")
         else:
-             logger.warning("[LlamaGuardProvider] GUARDRAIL_GROQ_API_KEY missing.")
+            logger.error("[LlamaGuardProvider] Groq library not installed. Cannot initialize client.")
 
     @property
     def name(self) -> str:
@@ -42,6 +71,7 @@ class LlamaGuardProvider(GuardrailProvider):
 
     async def scan_input(self, text: str, user_id: str, config: Dict[str, Any], metadata: Dict[str, Any] = None) -> GuardrailResult:
         start_time = time.time()
+        self.initialize_client()
         
         if not self.groq_client:
             logger.error("Llama Guard requested but Groq client is not initialized.")
@@ -73,6 +103,7 @@ class LlamaGuardProvider(GuardrailProvider):
 
     async def scan_output(self, text: str, output: str, user_id: str, config: Dict[str, Any], metadata: Dict[str, Any] = None) -> GuardrailResult:
         start_time = time.time()
+        self.initialize_client()
         
         if not self.groq_client:
             logger.error("Llama Guard requested but Groq client is not initialized.")

@@ -17,9 +17,26 @@ class LakeraProvider(GuardrailProvider):
 
     def __init__(self):
         self.settings = guardrail_settings
-        self.api_key = self.settings.lakera_api_key
+        self.api_key = None
         self.base_url = "https://api.lakera.ai"
+        self.refresh_config()
+
+    def refresh_config(self):
+        """Refresh configuration from settings."""
+        if hasattr(self.settings, 'refresh_from_main_settings'):
+            self.settings.refresh_from_main_settings()
+            
+        current_key = self.settings.lakera_api_key
         
+        # If key is missing but exists in main settings, attempt to hydrate
+        if not current_key:
+            try:
+                from config import settings
+                current_key = settings.providers.guardrails.lakera.api_key
+            except ImportError:
+                pass
+        
+        self.api_key = current_key
         if not self.api_key:
             logger.warning("LAKERA_API_KEY not set. Lakera Guard will fail if used.")
 
@@ -28,6 +45,7 @@ class LakeraProvider(GuardrailProvider):
         return "lakera-guard"
 
     async def scan_input(self, text: str, user_id: str, config: Dict[str, Any], metadata: Dict[str, Any] = None) -> GuardrailResult:
+        self.refresh_config()
         if not self.api_key:
              logger.error("Lakera API Key missing.")
              return GuardrailResult(is_valid=True, sanitized_text=text) # Fail open or closed? Usually fail closed for security but let's adhere to others.

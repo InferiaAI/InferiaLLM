@@ -17,8 +17,6 @@ class DataEngine:
 
     def initialize_client(self):
         """Initialize or refresh the ChromaDB client."""
-        import traceback
-        logger.info(f"initialize_client called from:\n{''.join(traceback.format_stack())}")
         try:
             # Check if we should use local/HttpClient or CloudClient
             if settings.chroma_is_local:
