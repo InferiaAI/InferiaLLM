@@ -17,9 +17,9 @@ class AWSConfig(BaseModel):
 class ChromaConfig(BaseModel):
     api_key: Optional[str] = None
     tenant: Optional[str] = None
-    url: Optional[str] = "http://localhost:8000"
+    url: Optional[str] = None
     is_local: bool = True
-    database: str = "Inferia"
+    database: Optional[str] = None
 
 class GroqConfig(BaseModel):
     api_key: Optional[str] = None
@@ -142,43 +142,12 @@ class Settings(BaseSettings):
     )
 
     def model_post_init(self, __context: Any) -> None:
-        """Load local configuration override if exists."""
-        import json
-        import os
-        from pathlib import Path
+        """
+        Initialization logic. 
+        Note: DB config loading is handled by ConfigManager asynchronously.
+        """
+        pass
 
-        config_path = Path.home() / ".inferia" / "config.json"
-        
-        # Helper to recursively update Pydantic models from dict
-        def update_model(model: BaseModel, data: Dict[str, Any]):
-            for key, value in data.items():
-                if isinstance(value, dict) and hasattr(model, key):
-                     sub_model = getattr(model, key)
-                     if isinstance(sub_model, BaseModel):
-                         update_model(sub_model, value)
-                     else:
-                         setattr(model, key, value)
-                elif hasattr(model, key):
-                    setattr(model, key, value)
-
-        if config_path.exists():
-            try:
-                with open(config_path, "r") as f:
-                    local_config = json.load(f)
-                
-                # Check if it's the new nested structure or old flat structure
-                # We will migrate old usage via mapping locally if needed, but for now assuming new structure support
-                # If "providers" key exists, use it.
-                if "providers" in local_config:
-                     update_model(self.providers, local_config["providers"])
-                else: 
-                     # Legacy flat config fallback - map to new structure
-                     # We can implement a simple mapping here if desired, or just force re-auth.
-                     # User gave permission to invalidate, so we will prioritize new structure.
-                     pass 
-
-            except Exception as e:
-                print(f"Failed to load local config: {e}")
 
 
     @property

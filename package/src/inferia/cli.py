@@ -119,22 +119,12 @@ def run_nosana_sidecar(queue):
             print("[DePIN] Installing dependencies...")
             subprocess.run(["npm", "install"], cwd=sidecar_dir, check=True)
 
-        # Load config.json to inject keys if missing
         env = os.environ.copy()
-        try:
-            import json
-            from pathlib import Path
-            cfg_path = Path.home() / ".inferia" / "config.json"
-            if cfg_path.exists():
-                with open(cfg_path, "r") as f:
-                    data = json.load(f)
-                val = data.get("providers", {}).get("depin", {}).get("nosana", {}).get("wallet_private_key")
-                if val and not env.get("NOSANA_WALLET_PRIVATE_KEY"):
-                    env["NOSANA_WALLET_PRIVATE_KEY"] = val
-                    print("[DePIN] Loaded wallet key from config.json")
-        except Exception:
-            pass
-
+        
+        # Pass FILTRATION_URL for the sidecar
+        if not env.get("FILTRATION_URL"):
+            env["FILTRATION_URL"] = "http://localhost:8000"
+            
         print("[DePIN] Launching sidecar...")
         subprocess.Popen(["npx", "tsx", "src/server.ts"], cwd=sidecar_dir, stdout=sys.stdout,
             stderr=sys.stderr, env=env)

@@ -485,3 +485,13 @@ async def process_prompt(
         rewritten=rewritten,
         rag_context_used=rag_used,
     )
+
+
+@router.get("/config/provider")
+async def get_provider_config_internal(request: Request):
+    """
+    Internal endpoint for sidecars to fetch UNMASKED provider config.
+    Protected by Internal API Key (via middleware).
+    """
+    # Return the full unmasked config from memory (decrypted by Pydantic/DB load)
+    return {"providers": settings.providers.model_dump()}

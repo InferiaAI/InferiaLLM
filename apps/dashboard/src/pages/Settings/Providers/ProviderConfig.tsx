@@ -188,6 +188,17 @@ export default function ProviderConfigPage() {
                                 </div>
                             </div>
                         )}
+                        
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Database Name</label>
+                            <input
+                                value={config.vectordb.chroma.database || ""}
+                                onChange={(e) => updateField(['vectordb', 'chroma', 'database'], e.target.value)}
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                placeholder="default_database"
+                            />
+                            <p className="text-xs text-muted-foreground">Required for organization isolation.</p>
+                        </div>
                     </div>
                 );
             case "groq":

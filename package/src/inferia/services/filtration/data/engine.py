@@ -23,19 +23,31 @@ class DataEngine:
                 # Local or Self-Hosted via URL
                 from chromadb.config import Settings as ChromaSettings
                 
-                url = settings.chroma_url or "http://localhost:8000"
-                # Strip trailing slash for consistency
-                url = url.rstrip('/')
+                url = settings.chroma_url 
                 
-                logger.info(f"Connecting to Local ChromaDB at {url}...")
-                self.client = chromadb.HttpClient(
-                    host=url.split('://')[-1].split(':')[0],
-                    port=int(url.split(':')[-1]) if ':' in url.split('://')[-1] else 8000,
-                    ssl='https' in url,
-                    tenant=settings.chroma_tenant or "default_tenant",
-                    database=settings.chroma_database or "default_database",
-                    # If we need Auth for local, we add it here
-                )
+                # Check if URL is provided and doesn't conflict
+                if url and "localhost:8000" not in url and "127.0.0.1:8000" not in url:
+                    # Strip trailing slash for consistency
+                    url = url.rstrip('/')
+                    
+                    logger.info(f"Connecting to Local ChromaDB at {url}...")
+                    self.client = chromadb.HttpClient(
+                        host=url.split('://')[-1].split(':')[0],
+                        port=int(url.split(':')[-1]) if ':' in url.split('://')[-1] else 8000,
+                        ssl='https' in url,
+                        tenant=settings.chroma_tenant or "default_tenant",
+                        database=settings.chroma_database or "default_database",
+                    )
+                else:
+                    if url:
+                        logger.warning("[DataEngine] Chroma URL matches API port (8000) or self. Assuming embedded mode.")
+                    else:
+                        logger.info("[DataEngine] No Chroma URL provided. Using Embedded/Persistent mode.")
+                        
+                    # Fallback to persistent client
+                    persist_path = "./chroma_db"
+                    logger.info(f"Using PersistentClient at {persist_path}")
+                    self.client = chromadb.PersistentClient(path=persist_path)
             else:
                 # Chroma Cloud
                 logger.info("Connecting to ChromaDB Cloud...")

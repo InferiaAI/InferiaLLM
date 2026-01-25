@@ -535,3 +535,10 @@ CREATE TABLE audit_logs (
 );
 CREATE INDEX ix_audit_logs_user_id ON audit_logs (user_id);
 CREATE INDEX ix_audit_logs_action ON audit_logs (action);
+CREATE TABLE system_settings (
+    key VARCHAR NOT NULL, 
+    value JSON NOT NULL, 
+    updated_at TIMESTAMP WITHOUT TIME ZONE, 
+    PRIMARY KEY (key)
+);
+CREATE INDEX ix_system_settings_key ON system_settings (key);

@@ -62,7 +62,7 @@ export interface ProviderConfigResponse {
 // Initial state helper
 export const initialProviderConfig: ProvidersConfig = {
     cloud: { aws: {} },
-    vectordb: { chroma: { is_local: true, url: "http://localhost:8000" } },
+    vectordb: { chroma: { is_local: true } },
     guardrails: { groq: {}, lakera: {} },
     depin: { nosana: {}, akash: {} }
 };

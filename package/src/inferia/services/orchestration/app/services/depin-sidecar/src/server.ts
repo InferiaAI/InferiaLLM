@@ -3,9 +3,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
 import cors from 'cors';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import axios from 'axios';
 import { AkashService } from './modules/akash/akash_service';
 import { NosanaService } from './modules/nosana/nosana_service';
 
@@ -19,6 +17,12 @@ const PORT: number = Number(process.env.PORT) || 3000;
 app.use(express.json());
 app.use(cors());
 
+// --- Configuration Constants ---
+const FILTRATION_URL = process.env.FILTRATION_URL || "http://localhost:8000";
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || "dev-internal-key-change-in-prod";
+
+console.log(`[Sidecar] Configured to fetch settings from: ${FILTRATION_URL}`);
+
 // --- Initialize Services ---
 const akashService = new AkashService();
 let nosanaService: NosanaService | null = null;
@@ -30,6 +34,11 @@ const initNosana = async (key: string | undefined, rpc?: string) => {
         nosanaService = null;
         return;
     }
+    // Avoid re-init if key hasn't changed (assumes NosanaService stores it)
+    if (nosanaService && (nosanaService as any).privateKey === key) {
+        return; 
+    }
+
     try {
         console.log("[Sidecar] Initializing Nosana Service...");
         nosanaService = new NosanaService(key, rpc);
@@ -42,24 +51,32 @@ const initNosana = async (key: string | undefined, rpc?: string) => {
     }
 };
 
-// Initial Load
+// Initial Load (will be updated by poll immediately)
 akashService.init().catch(err => console.error("Failed to init Akash:", err));
 initNosana(process.env.NOSANA_WALLET_PRIVATE_KEY, process.env.SOLANA_RPC_URL);
 
-// --- Hot Reload Logic (Watch config.json) ---
-const configPath = path.join(os.homedir(), '.inferia', 'config.json');
 
-const loadConfig = () => {
-    if (!fs.existsSync(configPath)) return;
+// --- Polling Logic (Fetch from Gateway) ---
+const fetchConfigFromGateway = async () => {
     try {
-        console.log("[Sidecar] Shared config change detected. Refreshing credentials...");
-        const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        const providers = data.providers || {};
+        const url = `${FILTRATION_URL}/internal/config/provider`;
+        const response = await axios.get(url, {
+            headers: {
+                "X-Internal-Key": INTERNAL_API_KEY
+            },
+            timeout: 5000
+        });
+
+        const data = response.data;
+        if (!data || !data.providers) return;
+
+        const providers = data.providers;
         const depin = providers.depin || {};
 
         // Refresh Nosana if key changed
         const newNosanaKey = depin.nosana?.wallet_private_key;
         if (newNosanaKey && newNosanaKey !== process.env.NOSANA_WALLET_PRIVATE_KEY) {
+            console.log("[Sidecar] Nosana key received from Gateway.");
             process.env.NOSANA_WALLET_PRIVATE_KEY = newNosanaKey;
             initNosana(newNosanaKey, process.env.SOLANA_RPC_URL);
         }
@@ -67,24 +84,24 @@ const loadConfig = () => {
         // Refresh Akash if mnemonic changed
         const newAkashMnemonic = depin.akash?.mnemonic;
         if (newAkashMnemonic && newAkashMnemonic !== process.env.AKASH_MNEMONIC) {
+            console.log("[Sidecar] Akash Mnemonic received from Gateway.");
             process.env.AKASH_MNEMONIC = newAkashMnemonic;
-            console.log("[Sidecar] Akash Mnemonic updated. Re-initializing Akash SDK...");
             akashService.init(newAkashMnemonic);
         }
-    } catch (e) {
-        console.error("[Sidecar] Error reloading config:", e);
+
+    } catch (e: any) {
+        if (e.code === 'ECONNREFUSED') {
+             console.warn("[Sidecar] Gateway unavailable. Retrying...");
+        } else {
+             console.error(`[Sidecar] Error fetching config: ${e.message}`);
+        }
     }
 };
 
-// Start watching the config file
-if (fs.existsSync(configPath)) {
-    fs.watch(configPath, (event) => {
-        if (event === 'change') {
-            // Debounce or just load
-            loadConfig();
-        }
-    });
-}
+// Start Polling
+console.log("[Sidecar] Starting Config Polling (Interval: 10s)");
+setInterval(fetchConfigFromGateway, 10000);
+fetchConfigFromGateway(); // Initial run
 
 
 // --- AKASH ROUTES ---
@@ -216,7 +233,7 @@ app.get('/health', (req, res) => {
             akash: "loaded",
             nosana: nosanaService ? "active" : "disabled"
         },
-        config_watch: fs.existsSync(configPath) ? "active" : "failed"
+        config_source: "gateway-api"
     });
 });
 

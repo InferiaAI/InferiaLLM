@@ -92,77 +92,16 @@ async def update_provider_config(
     if not "admin" in user_ctx.roles:
          raise HTTPException(status_code=403, detail="Only admins can update provider config")
 
-    config_dir = Path.home() / ".inferia"
-    config_path = config_dir / "config.json"
+    # 1. Update DB and Local Cache
+    from management.config_manager import config_manager
     
-    # 1. Ensure directory exists
-    config_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 2. Read existing to merge (Recursive Merge)
-    current_config = {}
-    if config_path.exists():
-        try:
-            with open(config_path, "r") as f:
-                current_config = json.load(f)
-        except Exception:
-            pass 
-            
-    # 3. Update fields (Deep Merge Logic)
     new_data = wrapper.providers.model_dump(exclude_unset=True)
     
-    # Helper to check if a value is a security mask
-    def is_masked(val: Any) -> bool:
-        if not isinstance(val, str):
-            return False
-        # Case 1: Pure star mask
-        if val == "********":
-            return True
-        # Case 2: Visual pattern mask (4 chars + 3 dots + 4 chars = 11 chars)
-        if len(val) == 11 and val[4:7] == "...":
-            return True
-        return False
-
-    # Helper for deep merge
-    def deep_merge(target: Dict, source: Dict, path: str = "providers"):
-        for key, value in source.items():
-            current_path = f"{path}.{key}"
-            if isinstance(value, dict):
-                target.setdefault(key, {})
-                deep_merge(target[key], value, current_path)
-            elif value is not None:
-                 # CRITICAL: Prevent overwriting actual secrets with masks
-                 if is_masked(value):
-                     print(f"[DEBUG] Skipping masked value for {current_path}")
-                     continue
-                 target[key] = value
-
-    if "providers" not in current_config:
-        current_config["providers"] = {}
-        
-    deep_merge(current_config["providers"], new_data)
-
-    # Update runtime settings
-    def update_pydantic_model(model: BaseModel, data: Dict, path: str = "settings"):
-        for key, value in data.items():
-             current_path = f"{path}.{key}"
-             if isinstance(value, dict) and hasattr(model, key):
-                 sub_model = getattr(model, key)
-                 if isinstance(sub_model, BaseModel):
-                     update_pydantic_model(sub_model, value, current_path)
-             elif value is not None and hasattr(model, key):
-                 # CRITICAL: Prevent overwriting actual secrets with masks
-                 if is_masked(value):
-                     continue
-                 setattr(model, key, value)
-                 
-    update_pydantic_model(settings.providers, new_data)
-
-
-    # 4. Write back
+    # Structure for DB storage
+    db_config = {"providers": new_data}
+    
     try:
-        print(f"[DEBUG] Writing config to {config_path}")
-        with open(config_path, "w") as f:
-            json.dump(current_config, f, indent=2)
+        await config_manager.save_config(db, db_config)
         
         # Log update status for guardrails
         if "guardrails" in new_data:
@@ -176,19 +115,41 @@ async def update_provider_config(
     # Refresh data engine client if vectordb config was updated
     if wrapper.providers.vectordb:
         try:
+             # Run potentially blocking initialization in a separate thread
+             import asyncio
              from data.engine import data_engine
-             data_engine.initialize_client()
+             from fastapi import BackgroundTasks
+             
+             # If we have BackgroundTasks in context, use them (not available here in endpoint signature)
+             # So we use asyncio.create_task with to_thread to make it non-blocking
+             # But we need to ensure it doesn't fail silently.
+             
+             async def refresh_chroma():
+                 try:
+                     await asyncio.to_thread(data_engine.initialize_client)
+                 except Exception as e:
+                     print(f"[DEBUG] Background Chroma refresh failed: {e}")
+
+             asyncio.create_task(refresh_chroma())
+             
         except Exception as e:
-             print(f"[DEBUG] Failed to refresh data engine: {e}")
+             print(f"[DEBUG] Failed to trigger data engine refresh: {e}")
              
     if wrapper.providers.guardrails:
         try:
+            # Also wrap guardrail refresh
             from guardrail.config import guardrail_settings
-            guardrail_settings.refresh_from_main_settings()
+            async def refresh_guardrails():
+                try:
+                    await asyncio.to_thread(guardrail_settings.refresh_from_main_settings)
+                except Exception as e:
+                    print(f"[DEBUG] Background Guardrail refresh failed: {e}")
+                    
+            asyncio.create_task(refresh_guardrails())
         except Exception as e:
-            print(f"[DEBUG] Failed to refresh guardrail settings: {e}")
+            print(f"[DEBUG] Failed to trigger guardrail refresh: {e}")
 
-    return {"status": "ok", "message": "Configuration saved locally"}
+    return {"status": "ok", "message": "Configuration saved to database"}
 
 @router.post("/config", status_code=200)
 async def update_config(

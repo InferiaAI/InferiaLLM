@@ -125,3 +125,5 @@ developerScript.sh
 *.service_pids
 sync_package.sh
 apps/docs
+
+*.bin
