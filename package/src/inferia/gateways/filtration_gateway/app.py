@@ -64,16 +64,17 @@ async def lifespan(app: FastAPI):
     from db.database import AsyncSessionLocal
     from rbac.initialization import initialize_default_org
     
-    # Initialize Default Org & Superadmin
-    from db.database import AsyncSessionLocal
-    from rbac.initialization import initialize_default_org
-    
     async with AsyncSessionLocal() as session:
         await initialize_default_org(session)
 
     # Start Config Polling
     from management.config_manager import config_manager
     await config_manager.initialize()
+    
+    # Sync dependent services
+    from guardrail.config import guardrail_settings
+    guardrail_settings.refresh_from_main_settings()
+    
     config_manager.start_polling()
     
     yield

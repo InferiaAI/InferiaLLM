@@ -62,6 +62,11 @@ async def lifespan(app: FastAPI):
     # Start Config Polling
     from management.config_manager import config_manager
     await config_manager.initialize()
+    
+    # Sync dependent services
+    from guardrail.config import guardrail_settings
+    guardrail_settings.refresh_from_main_settings()
+    
     config_manager.start_polling()
     
     yield
