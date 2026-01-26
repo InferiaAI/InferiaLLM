@@ -427,7 +427,6 @@ async def list_deployments(pool_id: str | None = None):
                 "engine": d.engine,
                 "endpoint": d.endpoint,
                 "org_id": d.org_id,
-                "configuration": json.loads(d.configuration) if d.configuration and d.configuration != "None" else {},
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
@@ -579,7 +578,7 @@ async def list_all_deployments(org_id: str | None = None):
     logger = logging.getLogger("deployment-server")
     logger.info(f"list_all_deployments called for org_id: {org_id}")
     
-    async with grpc.aio.insecure_channel("127.0.0.1:50051") as channel:
+    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
         try:
             logger.info("Calling gRPC ListDeployments...")
@@ -610,7 +609,6 @@ async def list_all_deployments(org_id: str | None = None):
                 "engine": d.engine,
                 "endpoint": d.endpoint,
                 "org_id": d.org_id,
-                "configuration": json.loads(d.configuration) if d.configuration and d.configuration != "None" else {},
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
