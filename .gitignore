@@ -127,3 +127,4 @@ sync_package.sh
 apps/docs
 
 *.bin
+package/chroma_db
