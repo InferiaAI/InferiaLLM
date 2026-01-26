@@ -184,12 +184,6 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
             {/* Terminal Header */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
                 <div className="flex items-center gap-3">
-                    <div className="flex gap-1.5 backdrop-blur-sm">
-                        <div className="w-3 h-3 rounded-full bg-red-500/80 shadow-[0_0_8px_rgba(239,68,68,0.4)]" />
-                        <div className="w-3 h-3 rounded-full bg-yellow-500/80 shadow-[0_0_8px_rgba(234,179,8,0.4)]" />
-                        <div className="w-3 h-3 rounded-full bg-green-500/80 shadow-[0_0_8px_rgba(34,197,94,0.4)]" />
-                    </div>
-                    <div className="h-4 w-px bg-zinc-700 mx-1" />
                     <div className="flex items-center gap-2">
                         <Terminal className="w-4 h-4 text-zinc-400" />
                         <span className="text-xs font-mono font-medium text-zinc-400">node@nosana-runtime:~</span>

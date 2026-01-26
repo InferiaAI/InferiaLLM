@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
 import { managementApi, computeApi } from "@/lib/api"
-import { Activity, Gauge, Trash2 } from "lucide-react"
+import { Activity, Gauge, Trash2, Play, Square, RefreshCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import InferenceLogs from "@/components/InferenceLogs"
 import TrainingLogs from "@/components/deployment/TrainingLogs"
@@ -29,8 +29,9 @@ export default function DeploymentDetail() {
     // Deployment Info
     const [deployment, setDeployment] = useState<any>(null)
 
-    const fetchDeployment = async () => {
-        setLoading(true)
+    const fetchDeployment = async (showOverlay = false) => {
+        if (showOverlay) setLoading(true)
+        setProcessing(true)
         try {
             // 1. Try fetching from Compute Orchestrator directly
             try {
@@ -67,6 +68,7 @@ export default function DeploymentDetail() {
             console.error(e)
         } finally {
             setLoading(false)
+            setProcessing(false)
         }
     }
 
@@ -123,7 +125,7 @@ export default function DeploymentDetail() {
     }
 
     useEffect(() => {
-        if (id) fetchDeployment()
+        if (id) fetchDeployment(true)
     }, [id])
 
 
@@ -149,33 +151,34 @@ export default function DeploymentDetail() {
                 </div>
                 <div className="flex items-center gap-2">
                     <button
-                        onClick={fetchDeployment}
-                        className="px-3 py-1.5 bg-background border rounded-md text-sm font-medium hover:bg-muted flex items-center gap-2 transition-colors"
+                        onClick={() => fetchDeployment(false)}
+                        disabled={processing}
+                        className="px-4 py-1.5 bg-zinc-900 border border-zinc-700 text-zinc-300 rounded-md text-sm font-medium hover:bg-zinc-800 hover:text-zinc-100 hover:border-zinc-600 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
                     >
-                        <Activity className="w-4 h-4" /> Refresh
+                        <RefreshCcw className={cn("w-4 h-4", processing && "animate-spin")} /> {processing ? "Refreshing..." : "Refresh"}
                     </button>
 
                     {isRunning ? (
                         <button
                             onClick={handleStop}
                             disabled={processing}
-                            className="px-3 py-1.5 bg-orange-500/10 text-orange-500 border border-orange-500/20 rounded-md text-sm font-medium hover:bg-orange-500/20 flex items-center gap-2 transition-colors disabled:opacity-50"
+                            className="px-4 py-1.5 bg-zinc-900 border border-amber-500/20 text-amber-500 rounded-md text-sm font-medium hover:bg-amber-500/10 hover:border-amber-500/40 flex items-center gap-2 transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(245,158,11,0.05)]"
                         >
-                            <Trash2 className="w-4 h-4" /> {processing ? "Stopping..." : "Stop"}
+                            <Square className="w-4 h-4" /> {processing ? "Stopping..." : "Stop"}
                         </button>
                     ) : (
                         <>
                             <button
                                 onClick={handleStart}
                                 disabled={processing}
-                                className="px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 rounded-md text-sm font-medium hover:bg-primary/20 flex items-center gap-2 transition-colors disabled:opacity-50"
+                                className="px-5 py-1.5 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-500 active:scale-95 flex items-center gap-2 transition-all disabled:opacity-50 shadow-[0_0_20px_rgba(37,99,235,0.2)]"
                             >
-                                <Activity className="w-4 h-4" /> {processing ? "Starting..." : "Start"}
+                                <Play className="w-4 h-4 fill-current" /> {processing ? "Starting..." : "Start"}
                             </button>
                             <button
                                 onClick={handleDelete}
                                 disabled={deleting}
-                                className="px-3 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-md text-sm font-medium hover:bg-red-500/20 flex items-center gap-2 transition-colors disabled:opacity-50"
+                                className="px-4 py-1.5 bg-zinc-900 border border-red-500/20 text-red-400 rounded-md text-sm font-medium hover:bg-red-500/10 hover:border-red-500/40 flex items-center gap-2 transition-all disabled:opacity-50"
                             >
                                 <Trash2 className="w-4 h-4" /> {deleting ? "Deleting..." : "Delete"}
                             </button>
