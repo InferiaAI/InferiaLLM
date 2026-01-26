@@ -283,6 +283,44 @@ class NosanaAdapter(ProviderAdapter):
             logger.exception("Nosana provision error")
             raise
 
+    async def wait_for_ready(self, *, provider_instance_id: str, timeout: int = 300) -> str:
+        """
+        Polls Nosana sidecar until the job is RUNNING and has a service URL.
+        """
+        import asyncio
+        start = asyncio.get_event_loop().time()
+        poll_interval = 20
+
+        while True:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}") as resp:
+                        if resp.status != 200:
+                            logger.error(f"Failed to fetch Nosana job status: {resp.status}")
+                        else:
+                            job = await resp.json()
+                            
+                            # 1 = CREATED/RUNNING in Nosana
+                            if job.get("jobState") == 1:
+                                url = job.get("serviceUrl")
+                                if url:
+                                    return url
+                                # For training jobs or legacy jobs without explicit serviceUrl in the main object
+                                if "training" in str(job.get("jobDefinition", {})):
+                                    return "training-job-running"
+
+                            # Also check success status
+                            if job.get("status") == "success" and job.get("serviceUrl"):
+                                return job.get("serviceUrl")
+
+            except Exception as e:
+                logger.warning(f"Error polling Nosana readiness: {e}")
+
+            if asyncio.get_event_loop().time() - start > timeout:
+                raise RuntimeError(f"Nosana job {provider_instance_id} timed out waiting for readiness")
+
+            await asyncio.sleep(poll_interval)
+
     # -------------------------------------------------
     # DEPROVISION
     # -------------------------------------------------
