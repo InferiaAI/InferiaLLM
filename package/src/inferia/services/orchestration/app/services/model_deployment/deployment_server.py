@@ -19,7 +19,7 @@ from services.adapter_engine.registry import get_adapter
 import os
 
 POSTGRES_DSN = os.getenv("POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia")
-GRPC_ADDR = "localhost:50051"
+GRPC_ADDR = "127.0.0.1:50051"
 
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
 
@@ -425,7 +425,9 @@ async def list_deployments(pool_id: str | None = None):
                 "replicas": d.replicas,
                 "pool_id": d.pool_id,
                 "engine": d.engine,
-                "configuration": json.loads(d.configuration) if d.configuration else {},
+                "endpoint": d.endpoint,
+                "org_id": d.org_id,
+                "configuration": json.loads(d.configuration) if d.configuration and d.configuration != "None" else {},
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
@@ -573,16 +575,23 @@ async def list_all_deployments(org_id: str | None = None):
     List ALL deployments across all pools.
     Optionally filter by org_id.
     """
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    import logging
+    logger = logging.getLogger("deployment-server")
+    logger.info(f"list_all_deployments called for org_id: {org_id}")
+    
+    async with grpc.aio.insecure_channel("127.0.0.1:50051") as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
         try:
+            logger.info("Calling gRPC ListDeployments...")
             resp = await stub.ListDeployments(
                 model_deployment_pb2.ListDeploymentsRequest(
                     pool_id="",
                     org_id=org_id or ""
                 )
             )
+            logger.info(f"gRPC ListDeployments returned {len(resp.deployments)} items")
         except grpc.RpcError as e:
+            logger.error(f"gRPC ListDeployments failed: {e.code()} - {e.details()}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to list all deployments: {e.details()}",
@@ -599,7 +608,9 @@ async def list_all_deployments(org_id: str | None = None):
                 "pool_id": d.pool_id,
                 "created_at": None, # or fetch if available
                 "engine": d.engine,
-                "configuration": json.loads(d.configuration) if d.configuration else {},
+                "endpoint": d.endpoint,
+                "org_id": d.org_id,
+                "configuration": json.loads(d.configuration) if d.configuration and d.configuration != "None" else {},
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
