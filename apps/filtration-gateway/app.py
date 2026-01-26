@@ -61,6 +61,7 @@ async def lifespan(app: FastAPI):
     
     # Start Config Polling
     from management.config_manager import config_manager
+    await config_manager.initialize()
     config_manager.start_polling()
     
     yield

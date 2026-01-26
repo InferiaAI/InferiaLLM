@@ -64,12 +64,22 @@ async def lifespan(app: FastAPI):
     from db.database import AsyncSessionLocal
     from rbac.initialization import initialize_default_org
     
+    # Initialize Default Org & Superadmin
+    from db.database import AsyncSessionLocal
+    from rbac.initialization import initialize_default_org
+    
     async with AsyncSessionLocal() as session:
         await initialize_default_org(session)
+
+    # Start Config Polling
+    from management.config_manager import config_manager
+    await config_manager.initialize()
+    config_manager.start_polling()
     
     yield
     # Shutdown
     logger.info(f"Shutting down {settings.app_name}")
+    config_manager.stop_polling()
 
 
 # Create FastAPI app

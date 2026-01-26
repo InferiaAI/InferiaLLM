@@ -104,6 +104,7 @@ class Settings(BaseSettings):
 
     # Security / Encryption
     log_encryption_key: Optional[str] = Field(default=None, description="32-byte hex key for log encryption")
+    secret_encryption_key: Optional[str] = Field(default=None, validation_alias="SECRET_ENCRYPTION_KEY")
 
     # Infrastructure / Provider Keys (Loaded from ~/.inferia/config.json)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
