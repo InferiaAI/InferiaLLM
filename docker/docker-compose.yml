@@ -35,12 +35,15 @@ services:
   # Unified Profile
   # ==========================================
   inferia-unified:
+    image: inferiaai/inferiallm:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
       target: unified
     container_name: inferia-unified
     profiles: ["unified"]
+    env_file:
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
@@ -63,12 +66,15 @@ services:
   # Split Profile (Microservices)
   # ==========================================
   filtration:
+    image: inferiaai/inferia-filtration:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
       target: filtration
     container_name: inferia-filtration
     profiles: ["split"]
+    env_file:
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
@@ -84,12 +90,15 @@ services:
       - inferia-net
 
   inference:
+    image: inferiaai/inferia-inference:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
       target: inference
     container_name: inferia-inference
     profiles: ["split"]
+    env_file:
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
@@ -103,12 +112,15 @@ services:
       - inferia-net
 
   orchestration:
+    image: inferiaai/inferia-orchestration:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
       target: orchestration
     container_name: inferia-orchestration
     profiles: ["split"]
+    env_file:
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
