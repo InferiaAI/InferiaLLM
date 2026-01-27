@@ -9,7 +9,7 @@ setup:
 # Start the API services using the installed CLI
 start:
 	@echo "Starting InferiaLLM API..."
-	inferiallm api-start
+	inferiallm start
 
 # Run tests
 test:

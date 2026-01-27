@@ -86,7 +86,7 @@ nano .env
 inferiallm init
 
 # 4. Start all services
-inferiallm api-start
+inferiallm start
 ```
 
 ### 2. Build from Source (Recommended for development)
@@ -112,7 +112,7 @@ cp .env.sample .env
 inferiallm init
 
 # Start API services
-inferiallm api-start
+inferiallm start
 ```
 
 ### 3. Run via Docker (Recommended for Production)
@@ -124,8 +124,8 @@ We provide a unified, production-ready Docker image that contains the entire con
 The official unified image is available on [Docker Hub](https://hub.docker.com/r/inferiaai/inferiallm).
 
 ```bash
-# 1. Download the unified docker-compose and sample env
-curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/deploy/unified/docker-compose.yml -o docker-compose.yml
+# 1. Download the docker-compose and sample env
+curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/deploy/docker-compose.yml -o docker-compose.yml
 curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sample -o .env
 
 # 2. Configure your credentials in .env
@@ -146,9 +146,21 @@ cd inferiaLLM
 cp .env.sample .env
 # Edit .env to set your secrets
 
-# 3. Build and start
-cd deploy/unified
+# 3. Build and start (Production Profile)
+cd deploy
 docker compose up -d --build
+```
+
+#### Option C: Development with Docker
+
+For local development with source code mounting and profiles (unified or split):
+
+```bash
+# Unified Profile (Monolithic)
+docker compose -f docker/docker-compose.yml --profile unified up --build
+
+# Split Profile (Microservices)
+docker compose -f docker/docker-compose.yml --profile split up --build
 ```
 
 **Services will be available at:**
@@ -253,11 +265,32 @@ Initialize the control-plane databases, roles, and schemas.
 [inferia:init] Bootstrap complete
 ```
 
-### 2. `inferiallm api-start`
+### 2. `inferiallm start`
 
-Start all gateways (Orchestration, Inference, Filtration) and the Admin Dashboard in a single process.
+Start Inferia services. You can start all services at once or specific components.
 
-**Expected Output:**
+**Usage:**
+```bash
+inferiallm start [service]
+```
+
+**Arguments:**
+* `all`: Start all services (default)
+* `orchestration`: Start Orchestration Gateway stack
+* `inference`: Start Inference Gateway
+* `filtration`: Start Filtration Gateway
+
+**Examples:**
+
+```bash
+# Start everything
+inferiallm start
+
+# Start only Orchestration
+inferiallm start orchestration
+```
+
+**Expected Output (Unified):**
 
 ```text
 [CLI] Starting All Services...
@@ -268,40 +301,21 @@ Start all gateways (Orchestration, Inference, Filtration) and the Admin Dashboar
 ...
 ```
 
-### 3. `inferiallm orchestration-gateway`
+### 3. Service Specific Commands
+
+Instead of running everything, you can run individual gateways:
+
+#### `inferiallm start orchestration`
 
 Start the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecars).
 
-**Expected Output:**
-
-```text
-[CLI] Starting Orchestration Stack (API, Worker, DePIN Sidecar)...
-[Orchestration Gateway API] Listening on port 8080
-[Orchestration Worker] Connected to message broker
-[DePIN] Launching sidecar...
-```
-
-### 4. `inferiallm inference-gateway`
+#### `inferiallm start inference`
 
 Start the Inference Gateway standalone.
 
-**Expected Output:**
-
-```text
-[Inference Gateway API] Listening on port 8001
-...
-```
-
-### 5. `inferiallm filtration-gateway`
+#### `inferiallm start filtration`
 
 Start the Filtration Gateway standalone.
-
-**Expected Output:**
-
-```text
-[Filtration Gateway API] Listening on port 8000
-...
-```
 
  ---
 
@@ -388,9 +402,9 @@ These are the **only externally reachable services**.
 | Service                   | Responsibility                                                                | Documentation                                    |
 | ------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
 | **Admin Dashboard**       | Administrative control surface for policies, compute pools, usage, and audits | [README](./apps/dashboard/README.md)             |
-| **Filtration Gateway**    | Authentication, RBAC, policy enforcement, and guardrails                      | [README](./apps/filtration-gateway/README.md)    |
-| **Inference Gateway**     | Data-plane ingress for all LLM inference traffic                              | [README](./apps/inference-gateway/README.md)     |
-| **Orchestration Gateway** | Compute control authority and execution routing                               | [README](./apps/orchestration-gateway/README.md) |
+| **Filtration Gateway**    | Authentication, RBAC, policy enforcement, and guardrails                      | [README](./package/src/inferia/services/filtration/README.md)    |
+| **Inference Gateway**     | Data-plane ingress for all LLM inference traffic                              | [README](./package/src/inferia/gateways/inference_gateway/README.md)     |
+| **Orchestration Gateway** | Compute control authority and execution routing                               | [README](./package/src/inferia/gateways/orchestration_gateway/README.md) |
 
 ---
 
