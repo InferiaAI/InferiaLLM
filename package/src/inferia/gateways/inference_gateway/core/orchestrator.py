@@ -328,30 +328,30 @@ class OrchestrationService:
         if not log_payloads:
             logger.debug(f"Payload logging disabled for request to {model}")
 
-        # Log to Filtration
-        await filtration_client.log_inference(
-            deployment_id=deployment_id,
-            user_id=user_id,
-            model=model,
-            request_payload=final_payload,
-            latency_ms=latency_ms,
-            ttft_ms=ttft_ms,
-            tokens_per_second=tokens_per_second,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            status_code=200,
-            is_streaming=is_streaming,
-            applied_policies=applied_policies,
-        )
-
-        # Track Usage
-        await filtration_client.track_usage(
-            user_id,
-            model,
-            {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            },
+        # Log to Filtration and Track Usage in parallel
+        await asyncio.gather(
+            filtration_client.log_inference(
+                deployment_id=deployment_id,
+                user_id=user_id,
+                model=model,
+                request_payload=final_payload,
+                latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
+                tokens_per_second=tokens_per_second,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                status_code=200,
+                is_streaming=is_streaming,
+                applied_policies=applied_policies,
+            ),
+            filtration_client.track_usage(
+                user_id,
+                model,
+                {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+            )
         )

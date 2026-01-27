@@ -3,10 +3,58 @@ Configuration management for the Filtration Layer.
 Uses Pydantic Settings for environment-based configuration.
 """
 
-from typing import Literal, Optional
-from pydantic import Field
+from typing import Literal, Optional, Any, Dict
+from pydantic import Field, BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# --- Nested Configuration Models ---
+
+class AWSConfig(BaseModel):
+    access_key_id: Optional[str] = None
+    secret_access_key: Optional[str] = None
+    region: str = "ap-south-1"
+
+class ChromaConfig(BaseModel):
+    api_key: Optional[str] = None
+    tenant: Optional[str] = None
+    url: Optional[str] = None
+    is_local: bool = True
+    database: Optional[str] = None
+
+class GroqConfig(BaseModel):
+    api_key: Optional[str] = None
+
+class LakeraConfig(BaseModel):
+    api_key: Optional[str] = None
+
+class NosanaConfig(BaseModel):
+    wallet_private_key: Optional[str] = None
+
+class AkashConfig(BaseModel):
+    mnemonic: Optional[str] = None
+
+class CloudConfig(BaseModel):
+    aws: AWSConfig = Field(default_factory=AWSConfig)
+
+class VectorDBConfig(BaseModel):
+    chroma: ChromaConfig = Field(default_factory=ChromaConfig)
+
+class GuardrailsConfig(BaseModel):
+    groq: GroqConfig = Field(default_factory=GroqConfig)
+    lakera: LakeraConfig = Field(default_factory=LakeraConfig)
+
+class DePINConfig(BaseModel):
+    nosana: NosanaConfig = Field(default_factory=NosanaConfig)
+    akash: AkashConfig = Field(default_factory=AkashConfig)
+
+class ProvidersConfig(BaseModel):
+    cloud: CloudConfig = Field(default_factory=CloudConfig)
+    vectordb: VectorDBConfig = Field(default_factory=VectorDBConfig)
+    guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
+    depin: DePINConfig = Field(default_factory=DePINConfig)
+
+
+# --- Main Settings ---
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -51,17 +99,57 @@ class Settings(BaseSettings):
         validation_alias="DATABASE_URL"
     )
 
-    # ChromaDB Configuration
-    chroma_api_key: Optional[str] = None
-    chroma_tenant: Optional[str] = None
-    chroma_database: str = "Inferia"
-
     # LLM Settings
     openai_api_key: Optional[str] = None
+
+    # Security / Encryption
+    log_encryption_key: Optional[str] = Field(default=None, description="32-byte hex key for log encryption")
+    secret_encryption_key: Optional[str] = Field(default=None, validation_alias="SECRET_ENCRYPTION_KEY")
+
+    # Infrastructure / Provider Keys (Loaded from ~/.inferia/config.json)
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    
+    # Backward compatibility mappings (properties that map to nested config)
+    @property
+    def aws_access_key_id(self) -> Optional[str]: return self.providers.cloud.aws.access_key_id
+    @property
+    def aws_secret_access_key(self) -> Optional[str]: return self.providers.cloud.aws.secret_access_key
+    @property
+    def aws_region(self) -> str: return self.providers.cloud.aws.region
+    
+    @property
+    def guardrail_groq_api_key(self) -> Optional[str]: return self.providers.guardrails.groq.api_key
+    @property
+    def guardrail_lakera_api_key(self) -> Optional[str]: return self.providers.guardrails.lakera.api_key
+    
+    @property
+    def chroma_api_key(self) -> Optional[str]: return self.providers.vectordb.chroma.api_key
+    @property
+    def chroma_tenant(self) -> Optional[str]: return self.providers.vectordb.chroma.tenant
+    @property
+    def chroma_url(self) -> Optional[str]: return self.providers.vectordb.chroma.url
+    @property
+    def chroma_is_local(self) -> bool: return self.providers.vectordb.chroma.is_local
+    @property
+    def chroma_database(self) -> str: return self.providers.vectordb.chroma.database
+    
+    @property
+    def nosana_wallet_private_key(self) -> Optional[str]: return self.providers.depin.nosana.wallet_private_key
+    @property
+    def akash_mnemonic(self) -> Optional[str]: return self.providers.depin.akash.mnemonic
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
+
+    def model_post_init(self, __context: Any) -> None:
+        """
+        Initialization logic. 
+        Note: DB config loading is handled by ConfigManager asynchronously.
+        """
+        pass
+
+
 
     @property
     def sqlalchemy_database_url(self) -> str:
@@ -70,7 +158,7 @@ class Settings(BaseSettings):
         if url.startswith("postgresql://"):
             return url.replace("postgresql://", "postgresql+asyncpg://", 1)
         return url
-
+        
     @property
     def is_production(self) -> bool:
 

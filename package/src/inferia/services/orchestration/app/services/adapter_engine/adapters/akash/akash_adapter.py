@@ -151,6 +151,15 @@ class AkashAdapter(ProviderAdapter):
             logger.exception("Akash provision error")
             raise e
 
+    async def wait_for_ready(self, *, provider_instance_id: str, timeout: int = 300) -> str:
+        """
+        For Akash, the provision_node call usually waits for the lease.
+        If it didn't, we'd poll the host here. For now, we return a success indicator.
+        """
+        # In a real implementation, we would poll the Akash sidecar for /deployments/status/{id}
+        # to ensure the manifest is applied and the URL is reachable.
+        return "akash-ready"
+
     async def deprovision_node(
         self,
         *,

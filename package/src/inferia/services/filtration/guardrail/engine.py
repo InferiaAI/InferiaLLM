@@ -121,7 +121,16 @@ class GuardrailEngine:
             
         except Exception as e:
             logger.error(f"Error executing scan_input on provider {provider.name}: {e}", exc_info=True)
-            return GuardrailResult(is_valid=True, sanitized_text=prompt)
+            return GuardrailResult(
+                is_valid=False, 
+                sanitized_text=prompt,
+                violations=[Violation(
+                    scanner="Engine",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details=f"Guardrail engine error: {str(e)}"
+                )]
+            )
 
     async def scan_output(
         self, 
@@ -165,7 +174,16 @@ class GuardrailEngine:
             return await provider.scan_output(prompt, output, user_id, config, metadata)
         except Exception as e:
             logger.error(f"Error executing scan_output on provider {provider.name}: {e}", exc_info=True)
-            return GuardrailResult(is_valid=True, sanitized_text=output)
+            return GuardrailResult(
+                is_valid=False, 
+                sanitized_text=output,
+                violations=[Violation(
+                    scanner="Engine",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details=f"Guardrail engine error: {str(e)}"
+                )]
+            )
 
 
 guardrail_engine = GuardrailEngine()

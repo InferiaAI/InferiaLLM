@@ -32,6 +32,11 @@ class NosanaAdapter(ProviderAdapter):
     """
 
     ADAPTER_TYPE = "depin"
+    
+    # Simple in-memory cache
+    _resources_cache: List[Dict] = []
+    _last_discovery_time: float = 0
+    CACHE_DURATION: int = 300  # 5 minutes
 
     # -------------------------------------------------
     # DISCOVER
@@ -55,6 +60,10 @@ class NosanaAdapter(ProviderAdapter):
         #             "metadata": {"mode": "simulation"},
         #         }
         #     ]
+
+        import time
+        if self._resources_cache and (time.time() - self._last_discovery_time) < self.CACHE_DURATION:
+            return self._resources_cache
 
         url = "https://dashboard.k8s.prd.nos.ci/api/markets"
 
@@ -95,6 +104,9 @@ class NosanaAdapter(ProviderAdapter):
                             }
                         )
 
+                    
+                    self._resources_cache = resources
+                    self._last_discovery_time = time.time()
                     return resources
 
         except Exception:
@@ -271,6 +283,44 @@ class NosanaAdapter(ProviderAdapter):
             logger.exception("Nosana provision error")
             raise
 
+    async def wait_for_ready(self, *, provider_instance_id: str, timeout: int = 300) -> str:
+        """
+        Polls Nosana sidecar until the job is RUNNING and has a service URL.
+        """
+        import asyncio
+        start = asyncio.get_event_loop().time()
+        poll_interval = 20
+
+        while True:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}") as resp:
+                        if resp.status != 200:
+                            logger.error(f"Failed to fetch Nosana job status: {resp.status}")
+                        else:
+                            job = await resp.json()
+                            
+                            # 1 = CREATED/RUNNING in Nosana
+                            if job.get("jobState") == 1:
+                                url = job.get("serviceUrl")
+                                if url:
+                                    return url
+                                # For training jobs or legacy jobs without explicit serviceUrl in the main object
+                                if "training" in str(job.get("jobDefinition", {})):
+                                    return "training-job-running"
+
+                            # Also check success status
+                            if job.get("status") == "success" and job.get("serviceUrl"):
+                                return job.get("serviceUrl")
+
+            except Exception as e:
+                logger.warning(f"Error polling Nosana readiness: {e}")
+
+            if asyncio.get_event_loop().time() - start > timeout:
+                raise RuntimeError(f"Nosana job {provider_instance_id} timed out waiting for readiness")
+
+            await asyncio.sleep(poll_interval)
+
     # -------------------------------------------------
     # DEPROVISION
     # -------------------------------------------------
@@ -327,6 +377,45 @@ class NosanaAdapter(ProviderAdapter):
         except Exception as e:
             logger.exception("Nosana get_logs error")
             return {"logs": [f"Internal error fetching logs: {str(e)}"]}
+
+    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+        """
+        Returns WebSocket connection details for Nosana log streaming.
+        """
+        try:
+            # 1. Get job details from sidecar to get the node address
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}") as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(f"Failed to fetch job details: {await resp.text()}")
+                    
+                    job_data = await resp.json()
+                    node_address = job_data.get("nodeAddress")
+                    job_state = job_data.get("jobState")
+                    
+                    # 2=COMPLETED, 3=STOPPED in Nosana
+                    is_finished = job_state in (2, 3, 4, "COMPLETED", "STOPPED")
+                    
+                    if not node_address and not is_finished:
+                        raise RuntimeError("Job does not have a node assigned yet")
+
+            # 2. Return the sidecar WS URL and subscription params
+            # We use the sidecar as a proxy for the logs
+            ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace("https://", "wss://")
+            
+            return {
+                "ws_url": ws_url,
+                "provider": "nosana",
+                "subscription": {
+                    "type": "subscribe_logs",
+                    "provider": "nosana",
+                    "jobId": provider_instance_id,
+                    "nodeAddress": node_address or "none"
+                }
+            }
+        except Exception as e:
+            logger.exception("Nosana get_log_streaming_info error")
+            return {"error": str(e)}
 
 
 # {

@@ -46,7 +46,22 @@ dependencies = [
   "psycopg2-binary==2.9.11",
   "redis>=5.0",
   "sqlalchemy>=2.0",
+  "alembic>=1.13",
   "greenlet",
+  "jinja2",
+
+  # ML / Filtration Core
+  "numpy",
+  "transformers>=4.40",
+  "tokenizers>=0.21",
+  "chromadb",
+  "llm-guard",
+  "presidio-analyzer",
+  "spacy",
+  "pypdf",
+  "python-docx",
+  "requests",
+  "groq",
 
   # Observability
   "prometheus-client",
@@ -59,7 +74,7 @@ dependencies = [
   "pynacl",
   "cachetools",
 
-  # Others
+  # Orchestration Core
   "python-multipart",
   "skypilot",
   "kubernetes==33.1.0",
@@ -70,30 +85,28 @@ Repository = "https://github.com/InferiaAI/InferiaLLM"
 Documentation = "https://docs.inferia.ai/docs"
 
 # ---------------------------------
-# Optional: Cloud / Orchestration
+# Optional: Compute Providers
 # ---------------------------------
 [project.optional-dependencies]
 aws = [
   "boto3==1.42.10",
+  "skypilot[aws]",
 ]
-ml = [
-  "numpy",
-  "transformers>=4.40",
-  "tokenizers>=0.21",
-  "chromadb",
-  "llm-guard",
-  "presidio-analyzer",
-  "spacy",
-  "pypdf",
-  "python-docx",
-  "requests",
-  "groq",
+gcp = [
+  "skypilot[gcp]",
 ]
-db = [
-  "sqlalchemy>=2.0",
-  "alembic>=1.13",
-  "greenlet",
-  "jinja2",
+azure = [
+  "skypilot[azure]",
+]
+lambda = [
+  "skypilot[lambda]",
+]
+runpod = [
+  "skypilot[runpod]",
+]
+all-providers = [
+  "boto3==1.42.10",
+  "skypilot[aws,gcp,azure,lambda,runpod,kubernetes]",
 ]
 dev = [
   "pytest>=8.0",

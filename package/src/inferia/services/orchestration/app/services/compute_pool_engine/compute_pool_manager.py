@@ -77,16 +77,19 @@ class ComputePoolManagerService(
         return compute_pool_pb2.poolEmpty()
 
     async def ListPoolInventory(self, request, context):
+        def utcnow_naive():
+            return datetime.now(timezone.utc).replace(tzinfo=None)
+
         rows = await self.repo.list_pool_inventory(UUID(request.pool_id))
-        now = datetime.now(timezone.utc)
+        now = utcnow_naive()
         filtered_nodes = []
         for r in rows:
             check_time = r["last_heartbeat"] or r["created_at"]
             if check_time:
-                # Ensure heartbeat/created_at is aware for comparison
+                # Ensure hb is naive for comparison with now
                 hb = check_time
-                if hb.tzinfo is None:
-                    hb = hb.replace(tzinfo=timezone.utc)
+                if hb.tzinfo is not None:
+                    hb = hb.replace(tzinfo=None)
                 
                 if (now - hb) > timedelta(minutes=2):
                     continue

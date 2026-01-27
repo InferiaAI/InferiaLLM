@@ -189,3 +189,45 @@ class KubernetesAdapter(ProviderAdapter):
         except Exception:
             logger.exception("Kubernetes deprovision error")
             raise
+
+    # -----------------------------------------------------
+    # LOGS
+    # -----------------------------------------------------
+    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+        """
+        Fetch logs from a Kubernetes pod.
+        """
+        try:
+            # Similar to deprovision, we need to find the namespace
+            namespace = "default"
+            try:
+                pods = self.core.list_pod_for_all_namespaces(
+                    field_selector=f"metadata.name={provider_instance_id}"
+                )
+                if pods.items:
+                    namespace = pods.items[0].metadata.namespace
+            except Exception:
+                pass
+
+            logs = self.core.read_namespaced_pod_log(
+                name=provider_instance_id,
+                namespace=namespace,
+                tail_lines=100
+            )
+            return {"logs": logs.split("\n")}
+        except Exception as e:
+            logger.exception("Kubernetes get_logs error")
+            return {"logs": [f"Error fetching logs: {str(e)}"]}
+
+    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+        """
+        Returns info for K8s log streaming.
+        """
+        # Standardize for future K8s WS logs
+        return {
+            "ws_url": None,
+            "provider": "k8s",
+            "subscription": {
+                "pod_name": provider_instance_id
+            }
+        }

@@ -2,39 +2,37 @@
 .git
 .gitignore
 
-# Python bloat
-**/__pycache__/
+# Python
+**/__pycache__
 **/*.pyc
 **/*.pyo
 **/*.pyd
-.venv/
-venv/
-.pytest_cache/
+.venv
+.pytest_cache
 .coverage
-htmlcov/
+htmlcov
+dist
+build
+*.egg-info
 
-# Node/Web bloat
-node_modules/
-**/node_modules/
-.next/
-.turbo/
-apps/docs/
-package-lock.json
-pnpm-lock.yaml
+# Node / Frontend
+**/node_modules
+**/dist
+**/.next
+**/out
+.npm
 
-# Build artifacts
-dist/
-build/
-*.egg-info/
+# Docker - IMPORTANT: Do not ignore the docker/ directory itself
+docker-compose.yml
 
-# Local configuration
+# Environment & Secrets
 .env
 .env.*
-!.env.sample
+!*.example
+!*.sample
 
-# Large assets/Logs
+# Local / Debug
 *.log
-assets/
-docs/
-tests/
-**/tests/
+debug.log
+.DS_Store
+chroma_db/

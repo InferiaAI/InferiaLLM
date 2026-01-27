@@ -168,9 +168,6 @@ export default function Deployments() {
           <table className="w-full text-sm text-left">
             <thead className="bg-slate-50 dark:bg-zinc-900 text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider border-b dark:border-zinc-800">
               <tr>
-                <th className="px-4 py-3 w-8">
-                  <input type="checkbox" className="rounded border-slate-300 dark:border-zinc-700 dark:bg-zinc-900" />
-                </th>
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Model</th>
                 <th className="px-4 py-3 font-medium">Replicas</th>
@@ -183,9 +180,7 @@ export default function Deployments() {
               {isLoading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <tr key={i} className="animate-pulse">
-                    <td className="px-4 py-3">
-                      <div className="h-4 w-4 bg-slate-100 dark:bg-zinc-800 rounded"></div>
-                    </td>
+
                     <td className="px-4 py-3">
                       <div className="h-4 w-32 bg-slate-100 dark:bg-zinc-800 rounded"></div>
                     </td>
@@ -207,7 +202,7 @@ export default function Deployments() {
               ) : filteredDeployments?.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={6}
                     className="px-4 py-12 text-center text-slate-500 dark:text-zinc-500"
                   >
                     No deployments found
@@ -219,12 +214,7 @@ export default function Deployments() {
                     key={d.id}
                     className="group hover:bg-slate-50/80 dark:hover:bg-zinc-900/50 transition-colors"
                   >
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        className="rounded border-slate-300 dark:border-zinc-700 dark:bg-zinc-900"
-                      />
-                    </td>
+
                     <td className="px-4 py-3 font-medium text-blue-600 dark:text-blue-400">
                       <Link
                         to={`/dashboard/deployments/${d.id}`}

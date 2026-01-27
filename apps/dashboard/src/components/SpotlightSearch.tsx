@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { Search, LayoutDashboard, Rocket, Box, FileText, Database, Key, Building2, Users, Shield, Clock, Activity, X } from "lucide-react"
+import { Search, LayoutDashboard, Rocket, Box, FileText, Database, Key, Building2, Users, Shield, Clock, Activity, X, Cloud } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface SearchItem {
@@ -26,7 +26,13 @@ const SEARCH_ITEMS: SearchItem[] = [
     { title: "Users", path: "/dashboard/settings/users", icon: Users, category: "Settings", keywords: ["team", "members", "invite"] },
     { title: "Roles", path: "/dashboard/settings/roles", icon: Shield, category: "Settings", keywords: ["permissions", "access"] },
     { title: "Audit Logs", path: "/dashboard/settings/audit-logs", icon: Clock, category: "Settings", keywords: ["logs", "history", "activity"] },
-    { title: "System Status", path: "/dashboard/status", icon: Activity, category: "Settings", keywords: ["health", "services", "status"] },
+    { title: "Infrastructure & Compute", path: "/dashboard/settings/providers/cloud", icon: Cloud, category: "Settings", keywords: ["infrastructure", "aws", "nosana", "akash", "depin", "cloud"] },
+    { title: "Vector Databases", path: "/dashboard/settings/providers/vector-db", icon: Database, category: "Settings", keywords: ["chroma", "pinecone", "database", "embeddings", "rag"] },
+    { title: "Security Guardrails", path: "/dashboard/settings/providers/guardrails", icon: Shield, category: "Settings", keywords: ["pii", "groq", "lakera", "firewall", "security", "guard"] },
+    { title: "AWS Configuration", path: "/dashboard/settings/providers/cloud/aws", icon: Cloud, category: "Settings", keywords: ["amazon", "s3", "iam", "cloud"] },
+    { title: "ChromaDB Configuration", path: "/dashboard/settings/providers/vector-db/chroma", icon: Database, category: "Settings", keywords: ["chroma", "vector", "local"] },
+    { title: "Security", path: "/dashboard/settings/security", icon: Shield, category: "Settings", keywords: ["2fa", "auth", "password", "security", "totp"] },
+    { title: "System Status", path: "/dashboard/status", icon: Activity, category: "Settings", keywords: ["health", "services", "status", "uptime"] },
 ]
 
 interface SpotlightSearchProps {

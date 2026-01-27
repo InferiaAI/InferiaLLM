@@ -17,9 +17,27 @@ class LakeraProvider(GuardrailProvider):
 
     def __init__(self):
         self.settings = guardrail_settings
-        self.api_key = self.settings.lakera_api_key
+        self.api_key = None
         self.base_url = "https://api.lakera.ai"
+        self._client = httpx.AsyncClient(timeout=10.0)
+        self.refresh_config()
+
+    def refresh_config(self):
+        """Refresh configuration from settings."""
+        if hasattr(self.settings, 'refresh_from_main_settings'):
+            self.settings.refresh_from_main_settings()
+            
+        current_key = self.settings.lakera_api_key
         
+        # If key is missing but exists in main settings, attempt to hydrate
+        if not current_key:
+            try:
+                from config import settings
+                current_key = settings.providers.guardrails.lakera.api_key
+            except ImportError:
+                pass
+        
+        self.api_key = current_key
         if not self.api_key:
             logger.warning("LAKERA_API_KEY not set. Lakera Guard will fail if used.")
 
@@ -28,75 +46,78 @@ class LakeraProvider(GuardrailProvider):
         return "lakera-guard"
 
     async def scan_input(self, text: str, user_id: str, config: Dict[str, Any], metadata: Dict[str, Any] = None) -> GuardrailResult:
+        self.refresh_config()
         if not self.api_key:
              logger.error("Lakera API Key missing.")
-             return GuardrailResult(is_valid=True, sanitized_text=text) # Fail open or closed? Usually fail closed for security but let's adhere to others.
+             return GuardrailResult(
+                is_valid=False, 
+                sanitized_text=text,
+                violations=[Violation(
+                    scanner="Lakera",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details="Guardrail engine 'lakera-guard' failed: Missing Lakera API Key."
+                )]
+            )
 
         start_time = time.time()
         
-        # Lakera Endpoint: https://api.lakera.ai/v1/prompt_injection
-                # Lakera Endpoint: https://api.lakera.ai/v2/guard
+        # Lakera Endpoint: https://api.lakera.ai/v2/guard
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/v2/guard",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"messages": [{"role": "user", "content": text}]}
-                )
-                response.raise_for_status()
-                result = response.json()
+            response = await self._client.post(
+                f"{self.base_url}/v2/guard",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={"messages": [{"role": "user", "content": text}]}
+            )
+            response.raise_for_status()
+            result = response.json()
                 
-                # Result format:
-                # { "results": [ { "prediction": "jailbreak", "confidence": 0.9, ... } ] }
-                # Or simpler format depending on version. 
-                # Checking docs: usually returns { "results": [ { "category": "prompt_injection", "flagged": true, "score": 0.99 } ] }
-                # Let's assume standard response structure.
-
-                violations = []
-                is_valid = True
-                
-                # Check for flagged results (List format)
-                results_list = result.get("results", [])
-                for res in results_list:
-                    if res.get("flagged"):
-                        is_valid = False
-                        category = res.get("category", "")
-                        violation_type = self._map_category(category)
-                        
-                        violations.append(Violation(
-                            scanner="Lakera",
-                            violation_type=violation_type,
-                            score=res.get("score", 1.0),
-                            details=f"Lakera detected {category.replace('_', ' ')}" if category else "Lakera detected threat"
-                        ))
-                
-                # Handle single object return if not list
-                if not results_list and result.get("flagged"):
-                     is_valid = False
-                     # Try to deduce category if not present in top level
-                     category = result.get("category", "") # Some versions might have it
-                     violations.append(Violation(
-                            scanner="Lakera",
-                            violation_type=self._map_category(category),
-                            score=result.get("score", 1.0),
-                            details=f"Lakera detected {category.replace('_', ' ')}" if category else "Lakera detected violation"
-                        ))
-
-                # Filter violations based on config
-                allowed_scanners = config.get("input_scanners") if config else None
-                if allowed_scanners is not None:
-                    violations = [v for v in violations if v.violation_type in allowed_scanners]
+            # Result format: usually returns { "results": [ { "category": "prompt_injection", "flagged": true, "score": 0.99 } ] }
+            violations = []
+            is_valid = True
+            
+            # Check for flagged results (List format)
+            results_list = result.get("results", [])
+            for res in results_list:
+                if res.get("flagged"):
+                    is_valid = False
+                    category = res.get("category", "")
+                    violation_type = self._map_category(category)
                     
-                # Re-evaluate validity based on remaining violations
-                is_valid = len(violations) == 0
+                    violations.append(Violation(
+                        scanner="Lakera",
+                        violation_type=violation_type,
+                        score=res.get("score", 1.0),
+                        details=f"Lakera detected {category.replace('_', ' ')}" if category else "Lakera detected threat"
+                    ))
+            
+            # Handle single object return if not list
+            if not results_list and result.get("flagged"):
+                 is_valid = False
+                 # Try to deduce category if not present in top level
+                 category = result.get("category", "") # Some versions might have it
+                 violations.append(Violation(
+                        scanner="Lakera",
+                        violation_type=self._map_category(category),
+                        score=result.get("score", 1.0),
+                        details=f"Lakera detected {category.replace('_', ' ')}" if category else "Lakera detected violation"
+                    ))
 
-                return GuardrailResult(
-                    is_valid=is_valid,
-                    sanitized_text=text, 
-                    risk_score=1.0 if not is_valid else 0.0,
-                    violations=violations,
-                    scan_time_ms=(time.time() - start_time) * 1000
-                )
+            # Filter violations based on config
+            allowed_scanners = config.get("input_scanners") if config else None
+            if allowed_scanners is not None:
+                violations = [v for v in violations if v.violation_type in allowed_scanners]
+                
+            # Re-evaluate validity based on remaining violations
+            is_valid = len(violations) == 0
+
+            return GuardrailResult(
+                is_valid=is_valid,
+                sanitized_text=text, 
+                risk_score=1.0 if not is_valid else 0.0,
+                violations=violations,
+                scan_time_ms=(time.time() - start_time) * 1000
+            )
 
         except Exception as e:
             logger.error(f"Lakera API failed: {e}")

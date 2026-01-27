@@ -38,7 +38,7 @@ inferiallm init
 
 # 3. Launch all services
 # Starts Orchestration, Inference, and Filtration gateways in a single process
-inferiallm api-start
+inferiallm start
 ```
 
 ---
@@ -57,12 +57,6 @@ The CLI manages configuration through environment variables. The most critical s
 | `INTERNAL_API_KEY` | Secret for service-to-service auth | - |
 | `SECRET_ENCRYPTION_KEY` | 32-byte base64 key for encrypting credentials | - |
 
-### 2. Provider Specifics (Optional)
-Required for provisioning compute from external providers:
-* `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
-* `AKASH_MNEMONIC`
-* `NOSANA_WALLET_PRIVATE_KEY`
-
 ---
 
 ## CLI Reference
@@ -78,17 +72,13 @@ Bootstraps the unified database environment.
 [inferia:init] Bootstrap complete
 ```
 
-### `inferiallm api-start`
+### `inferiallm start`
 Starts all InferiaLLM gateways (Orchestration, Inference, Filtration) and the Dashboard in one command.
 
-### `inferiallm orchestration-gateway`
-Starts the Orchestration Gateway standalone (manages compute and routing).
-
-### `inferiallm inference-gateway`
-Starts the Inference Gateway standalone (handles data-plane ingress).
-
-### `inferiallm filtration-gateway`
-Starts the Filtration Gateway standalone (enforces RBAC, quotas, and guardrails).
+You can also start specific services:
+* `inferiallm start orchestration`: Starts the Orchestration Gateway stack.
+* `inferiallm start inference`: Starts the Inference Gateway standalone.
+* `inferiallm start filtration`: Starts the Filtration Gateway standalone.
 
 ---
 

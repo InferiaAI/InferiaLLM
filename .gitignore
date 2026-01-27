@@ -125,3 +125,7 @@ developerScript.sh
 *.service_pids
 sync_package.sh
 apps/docs
+
+*.bin
+package/chroma_db
+sync_dashboard.sh

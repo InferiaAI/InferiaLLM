@@ -1,14 +1,18 @@
 from sqlalchemy import Column, String, DateTime, JSON, ForeignKey
 from sqlalchemy.orm import relationship
-from datetime import datetime
-from db.database import Base
+from datetime import datetime, timezone
 import uuid
+from ..database import Base
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=utcnow_naive, nullable=False)
+
     user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
     action = Column(String, nullable=False, index=True)
     resource_type = Column(String, nullable=True)

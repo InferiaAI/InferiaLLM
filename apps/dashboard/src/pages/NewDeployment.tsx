@@ -479,10 +479,10 @@ export default function NewDeployment() {
 
                             {/* vLLM Specific Fields */}
                             {selectedEngine === "vllm" && (
-                                <div className="space-y-4 p-4 bg-blue-50/50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-900/50">
+                                <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
                                     <div className="flex items-center gap-2 mb-2">
-                                        <Cpu className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                                        <h4 className="font-medium text-sm text-blue-900 dark:text-blue-100">vLLM Configuration</h4>
+                                        <Cpu className="w-4 h-4 text-primary" />
+                                        <h4 className="font-medium text-sm">vLLM Configuration</h4>
                                     </div>
 
                                     <div>
@@ -529,10 +529,10 @@ export default function NewDeployment() {
 
                             {/* Triton Specific Fields */}
                             {selectedEngine === "triton" && (
-                                <div className="space-y-4 p-4 bg-green-50/50 dark:bg-green-900/10 rounded-lg border border-green-100 dark:border-green-900/30">
+                                <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
                                     <div className="flex items-center gap-2 mb-2">
-                                        <Layers className="w-4 h-4 text-green-600 dark:text-green-400" />
-                                        <h4 className="font-medium text-sm text-green-900 dark:text-green-100">Triton Configuration</h4>
+                                        <Layers className="w-4 h-4 text-primary" />
+                                        <h4 className="font-medium text-sm">Triton Configuration</h4>
                                     </div>
 
                                     <div>
@@ -562,10 +562,10 @@ export default function NewDeployment() {
 
                             {/* Training Specific Fields */}
                             {deploymentType === "training" && (
-                                <div className="space-y-4 p-4 bg-green-50/50 dark:bg-green-900/10 rounded-lg border border-green-100 dark:border-green-900/30">
+                                <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
                                     <div className="flex items-center gap-2 mb-2">
-                                        <Layers className="w-4 h-4 text-green-600 dark:text-green-400" />
-                                        <h4 className="font-medium text-sm text-green-900 dark:text-green-100">Training Configuration</h4>
+                                        <Layers className="w-4 h-4 text-primary" />
+                                        <h4 className="font-medium text-sm">Training Configuration</h4>
                                     </div>
 
                                     <div>
@@ -611,27 +611,7 @@ export default function NewDeployment() {
                                 </div>
                             )}
 
-                            <div className="space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Job Specification (JSON)</label>
-                                    <span className="text-xs text-slate-500 dark:text-zinc-400">Nosana Container Format</span>
-                                </div>
-                                <div className="relative">
-                                    <textarea
-                                        value={jobDescription}
-                                        onChange={e => setJobDescription(e.target.value)}
-                                        className="w-full h-64 font-mono text-xs px-4 py-3 border dark:border-zinc-700 rounded-md bg-slate-50 dark:bg-zinc-900 focus:bg-white dark:focus:bg-zinc-900 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all dark:text-zinc-300"
-                                    />
-                                    <div className="absolute top-2 right-2 px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 rounded text-[10px] text-slate-600 dark:text-zinc-400 font-mono pointer-events-none">
-                                        Read-Only Preview (if vLLM)
-                                    </div>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                    {selectedEngine === "vllm"
-                                        ? "Auto-generated from configuration above. Manual edits here will be overwritten by form changes."
-                                        : "Define your container args, env, and exposure settings here."}
-                                </p>
-                            </div>
+
 
                             <div className="flex gap-4 pt-6 border-t dark:border-zinc-800">
                                 <button onClick={() => setStep(3)} className="flex-1 py-2.5 border dark:border-zinc-700 rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium text-slate-700 dark:text-zinc-300 transition-colors">Back</button>

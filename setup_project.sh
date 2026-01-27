@@ -145,5 +145,5 @@ fi
 echo -e "\n${BLUE}==============================================${NC}"
 echo -e "${GREEN}Setup Complete!${NC}"
 echo -e "To activate the environment in the future, run: ${YELLOW}source .venv/bin/activate${NC}"
-echo -e "To start the services, run: ${YELLOW}inferiallm api-start${NC}"
+echo -e "To start the services, run: ${YELLOW}inferiallm start${NC}"
 echo -e "${BLUE}==============================================${NC}"

@@ -96,35 +96,41 @@ class GatewayService:
         
         
         
-        # Define blocking scanner types (Scanner Name -> Error Message)
-        blocking_map = {
-            "Toxicity": "Toxicity found",
-            "PromptInjection": "Prompt injection found",
-            "Secrets": "Secrets detected",
-            "Code": "Code injection detected",
-            "LlamaGuard": "Safety violation found (Llama Guard)",
-            "Lakera": "Lakera Guard detected a violation"
-        }
-        
-        # Check blocking violations
-        # We now rely on the 'is_valid' flag from the filtration service.
-        # If proceed_on_violation is enabled, filtration service returns is_valid=True even with violations.
         if not scan_result.get("is_valid", True):
-             # Violations present AND blocking is enforced
-             violations = scan_result.get("violations", [])
-             
-             # Fallback: if no violations provided but is_valid=False (unlikely), generic error
-             if not violations:
+            violations = scan_result.get("violations", [])
+            if not violations:
                  raise HTTPException(status_code=400, detail={"error": "guardrail_violation", "message": "Input violated guardrails"})
 
-             # Construct detailed error from first violation
-             v = violations[0]
-             scanner_name = v.get("scanner", "Unknown")
-             
-             # Use blocking map for friendly messages, or fallback
-             error_msg = blocking_map.get(scanner_name, f"Safety violation found: {scanner_name}")
-             
-             raise HTTPException(status_code=400, detail={"error": "guardrail_violation", "message": error_msg, "violation": v})
+            # 1. Detect if it's a scanner failure vs a safety violation
+            v = violations[0]
+            v_type = v.get("type", "")
+            scanner_name = v.get("scanner", "Unknown")
+            
+            if v_type == "external_service_error":
+                error_msg = f"Guardrail engine '{scanner_name}' failed: Check API Key or Configuration"
+                error_code = "guardrail_error"
+            else:
+                # Friendly name mapping for common scanners
+                friendly_shorthand = {
+                    "Toxicity": "Toxicity",
+                    "PromptInjection": "Prompt Injection",
+                    "Secrets": "Sensitive Secrets",
+                    "Code": "Malicious Code",
+                    "LlamaGuard": "Llama Guard Safety",
+                    "Lakera": "Lakera Guard Safety"
+                }
+                display_name = friendly_shorthand.get(scanner_name, scanner_name)
+                error_msg = f"Inference blocked: {display_name} violation detected"
+                error_code = "guardrail_violation"
+                
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "error": error_code, 
+                    "message": error_msg, 
+                    "violation": v
+                }
+            )
         
         # If we reach here, no blocking violations found.
         # Check PII (Anonymize) - if present, it's not an error, but we use sanitized text.

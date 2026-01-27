@@ -25,7 +25,6 @@ class ModelDeploymentWorker:
         inventory_repo,
         runtime_resolver,
         runtime_strategies,  # dict: {"vllm": ..., "llmd": ...}
-        nosana_client,       # HTTP client for sidecar
     ):
         self.deployments = deployment_repo
         self.models = model_registry_repo
@@ -35,7 +34,6 @@ class ModelDeploymentWorker:
         self.inventory = inventory_repo
         self.runtime_resolver = runtime_resolver
         self.strategies = runtime_strategies
-        self.nosana = nosana_client
 
     # -------------------------------------------------
     # EVENT HANDLER
@@ -143,35 +141,16 @@ class ModelDeploymentWorker:
                     await self.deployments.update_state(deployment_id, "RUNNING")
                     return
 
-                # ---- NOSANA READINESS POLL ----
-                expose_url = None
-                if pool["provider"] == "nosana":
-                    start = asyncio.get_event_loop().time()
-                    while True:
-                        job = await self.nosana.get_job(
-                            node_spec["provider_instance_id"]
-                        )
-                        
-                        is_training = metadata.get("workload_type") == "training"
-                        
-                        if job.get("jobState") == 1: # 1 = CREATED/RUNNING
-                             # For training, we might not have a URL, but the job is running.
-                             if is_training:
-                                 expose_url = job.get("serviceUrl") or "training-job-running"
-                                 break
-                             
-                             expose_url = job.get("serviceUrl")
-                             break
-                            
-                        # Also check for success/fail explicitly if state isn't 1 but has URL?
-                        if job.get("status") == "success" and job.get("serviceUrl"):
-                            expose_url = job.get("serviceUrl")
-                            break
-
-                        if asyncio.get_event_loop().time() - start > NOSANA_READY_TIMEOUT:
-                            raise RuntimeError("Nosana job never became RUNNING")
-
-                        await asyncio.sleep(PROVISION_WAIT_SECONDS)
+                # ---- Universal Readiness Poll ----
+                expose_url = await adapter.wait_for_ready(
+                    provider_instance_id=node_spec["provider_instance_id"],
+                    timeout=NOSANA_READY_TIMEOUT
+                )
+                
+                # If the adapter returned a special indicator instead of a real URL, 
+                # check if the node_spec already had one (common for Akash/AWS)
+                if not expose_url or expose_url.endswith("-ready"):
+                    expose_url = expose_url or node_spec.get("expose_url")
                 
                 # Use URL directly from adapter if available (e.g. Akash, AWS)
                 if not expose_url and node_spec.get("expose_url"):
@@ -304,47 +283,12 @@ class ModelDeploymentWorker:
         if d.get("node_ids"):
             for node_id in d["node_ids"]:
                     node = await self.inventory.get_node_by_id(node_id)
-                    if node and node["provider"] == "nosana":
-                        job_address = node["provider_instance_id"]
-                        log.info(f"Stopping Nosana job {job_address} for node {node_id}")
-                        
-                        # Retry logic for rate limits
-                        max_retries = 3
-                        for attempt in range(max_retries):
-                            try:
-                                await self.nosana.stop_job(job_address)
-                                break  # Success, exit retry loop
-                            except Exception as e:
-                                msg = str(e)
-                                
-                                # Handle cases where the job is already stopped/gone:
-                                job_gone_indicators = [
-                                    "Account not found",
-                                    "Job not found", 
-                                    "Cannot stop job in state",
-                                    "already stopped",
-                                    "does not exist",
-                                ]
-                                if any(indicator.lower() in msg.lower() for indicator in job_gone_indicators):
-                                    log.warning(f"Job {job_address} already stopped or not found ({msg}), proceeding with cleanup")
-                                    break  # Job is gone, proceed with cleanup
-                                
-                                # Handle rate limiting - wait and retry
-                                if "429" in msg or "too many requests" in msg.lower() or "rate" in msg.lower():
-                                    if attempt < max_retries - 1:
-                                        wait_seconds = 10 * (attempt + 1)  # 10s, 20s, 30s
-                                        log.warning(f"Rate limited stopping job {job_address}, waiting {wait_seconds}s before retry ({attempt + 1}/{max_retries})")
-                                        await asyncio.sleep(wait_seconds)
-                                        continue  # Retry
-                                    else:
-                                        # Max retries exhausted due to rate limiting
-                                        # Proceed with cleanup anyway - the stop request may still work eventually
-                                        log.warning(f"Rate limit retries exhausted for {job_address}, proceeding with cleanup (job may still stop)")
-                                        break
-                                
-                                # Other transient errors - re-raise to retry via worker loop
-                                log.error(f"Transient error stopping job {job_address}: {msg}")
-                                raise e
+                    if node:
+                        adapter = get_adapter(node["provider"])
+                        log.info(f"Deprovisioning {node['provider']} node {node_id}")
+                        await adapter.deprovision_node(
+                            provider_instance_id=node["provider_instance_id"]
+                        )
 
         print(f"Stopped runtime for deployment {deployment_id}")
 

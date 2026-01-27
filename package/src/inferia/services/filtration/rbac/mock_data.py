@@ -4,7 +4,11 @@ This will be replaced with actual PostgreSQL database in production.
 """
 
 import bcrypt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 from typing import Dict, Optional
 from .models import User, Role, RoleType, PermissionType, UserQuota
 
@@ -78,7 +82,7 @@ MOCK_USERS: Dict[str, User] = {
         hashed_password=hash_pw("admin123"),
         roles=[RoleType.ADMIN],
         is_active=True,
-        created_at=datetime.utcnow() - timedelta(days=365),
+        created_at=utcnow_naive() - timedelta(days=365),
     ),
     "developer": User(
         user_id="user_dev_001",
@@ -87,7 +91,7 @@ MOCK_USERS: Dict[str, User] = {
         hashed_password=hash_pw("dev123"),
         roles=[RoleType.POWER_USER],
         is_active=True,
-        created_at=datetime.utcnow() - timedelta(days=180),
+        created_at=utcnow_naive() - timedelta(days=180),
     ),
     "user1": User(
         user_id="user_std_001",
@@ -96,7 +100,7 @@ MOCK_USERS: Dict[str, User] = {
         hashed_password=hash_pw("user123"),
         roles=[RoleType.STANDARD_USER],
         is_active=True,
-        created_at=datetime.utcnow() - timedelta(days=90),
+        created_at=utcnow_naive() - timedelta(days=90),
     ),
     "guest": User(
         user_id="user_guest_001",
@@ -105,7 +109,7 @@ MOCK_USERS: Dict[str, User] = {
         hashed_password=hash_pw("guest123"),
         roles=[RoleType.GUEST],
         is_active=True,
-        created_at=datetime.utcnow() - timedelta(days=1),
+        created_at=utcnow_naive() - timedelta(days=1),
     ),
 }
 
@@ -117,25 +121,25 @@ MOCK_QUOTAS: Dict[str, UserQuota] = {
         user_id="user_admin_001",
         quota_limit=10000,
         quota_used=1250,
-        reset_at=datetime.utcnow() + timedelta(days=1),
+        reset_at=utcnow_naive() + timedelta(days=1),
     ),
     "user_dev_001": UserQuota(
         user_id="user_dev_001",
         quota_limit=5000,
         quota_used=842,
-        reset_at=datetime.utcnow() + timedelta(days=1),
+        reset_at=utcnow_naive() + timedelta(days=1),
     ),
     "user_std_001": UserQuota(
         user_id="user_std_001",
         quota_limit=1000,
         quota_used=234,
-        reset_at=datetime.utcnow() + timedelta(days=1),
+        reset_at=utcnow_naive() + timedelta(days=1),
     ),
     "user_guest_001": UserQuota(
         user_id="user_guest_001",
         quota_limit=100,
         quota_used=45,
-        reset_at=datetime.utcnow() + timedelta(days=1),
+        reset_at=utcnow_naive() + timedelta(days=1),
     ),
 }
 

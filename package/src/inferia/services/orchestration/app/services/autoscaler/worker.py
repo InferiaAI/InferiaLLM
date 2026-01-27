@@ -1,6 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import logging
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 logger = logging.getLogger("autoscaler")
 
@@ -19,7 +22,7 @@ class Autoscaler:
             stats = await self.repo.pool_stats(pool_id)
             state = await self.repo.state(pool_id)
 
-            now = datetime.utcnow()
+            now = utcnow_naive()
             if state["last_scale_at"]:
                 if now - state["last_scale_at"] < timedelta(
                     seconds=policy["cooldown_seconds"]

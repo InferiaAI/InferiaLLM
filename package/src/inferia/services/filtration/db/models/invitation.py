@@ -4,6 +4,9 @@ from ..database import Base
 import uuid
 import datetime
 
+def utcnow_naive():
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
 class Invitation(Base):
     __tablename__ = "invitations"
 
@@ -15,7 +18,7 @@ class Invitation(Base):
     org_id = Column(String, ForeignKey("organizations.id"), nullable=False)
     created_by = Column(String, ForeignKey("users.id"), nullable=False)
     
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_naive)
     expires_at = Column(DateTime, nullable=False)
     accepted_at = Column(DateTime, nullable=True)
     

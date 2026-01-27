@@ -2,9 +2,12 @@
 Guardrail configuration.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
+import logging
+from typing import List, Optional, Any
 from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class GuardrailSettings(BaseSettings):
@@ -49,6 +52,34 @@ class GuardrailSettings(BaseSettings):
         case_sensitive=False,
         env_prefix="GUARDRAIL_"
     )
+    
+    def refresh_from_main_settings(self) -> None:
+        """Hydrate keys from main application config."""
+        try:
+            from config import settings
+            
+            # We always prefer main settings if they are present and non-empty
+            # This ensures dynamic updates via API are reflected here
+            groq_key = settings.providers.guardrails.groq.api_key
+            if groq_key is not None:
+                if groq_key:
+                    logger.info(f"[GuardrailSettings] Hydrating Groq key from config: {groq_key[:6]}...")
+                self.groq_api_key = groq_key
+            else:
+                logger.debug("[GuardrailSettings] No Groq key found in main settings")
+                
+            lakera_key = settings.providers.guardrails.lakera.api_key
+            if lakera_key is not None:
+                if lakera_key:
+                    logger.info(f"[GuardrailSettings] Hydrating Lakera key from config: {lakera_key[:6]}...")
+                self.lakera_api_key = lakera_key
+        except ImportError:
+            logger.error("[GuardrailSettings] Failed to import config.settings for hydration")
+            pass
+
+    def model_post_init(self, __context: Any) -> None:
+        """Hydrate keys from main application config if missing."""
+        self.refresh_from_main_settings()
     
     def get_banned_substrings_list(self) -> List[str]:
         """Parse banned substrings from comma-separated string."""
