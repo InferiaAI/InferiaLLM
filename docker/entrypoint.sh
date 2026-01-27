@@ -8,19 +8,17 @@ echo "Starting Inferia service: $TYPE"
 
 case "$TYPE" in
   filtration)
-    exec inferiallm filtration-gateway
+    exec inferiallm start filtration
     ;;
   inference)
-    exec inferiallm inference-gateway
+    exec inferiallm start inference
     ;;
   orchestration)
-    # The orchestration service needs multiple processes
-    # Gateway, Worker, and DePIN Sidecar
     echo "Starting Orchestration Stack..."
-    inferiallm orchestration-start
+    exec inferiallm start orchestration
     ;;
   unified)
-    exec inferiallm api-start
+    exec inferiallm start
     ;;
   *)
     echo "Unknown SERVICE_TYPE: $TYPE. Falling back to exec $@"

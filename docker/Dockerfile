@@ -54,7 +54,7 @@ ENTRYPOINT ["entrypoint.sh"]
 FROM python-builder AS filtration
 LABEL service="filtration"
 EXPOSE 8000
-CMD ["inferiallm", "filtration-gateway"]
+CMD ["inferiallm", "start", "filtration"]
 
 # ==========================================
 # Stage 5: Inference Service
@@ -62,7 +62,7 @@ CMD ["inferiallm", "filtration-gateway"]
 FROM python-builder AS inference
 LABEL service="inference"
 EXPOSE 8001
-CMD ["inferiallm", "inference-gateway"]
+CMD ["inferiallm", "start", "inference"]
 
 # ==========================================
 # Stage 6: Orchestration Service (Python + Node)
@@ -79,7 +79,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 COPY --from=node-builder /build/depin-sidecar /app/package/src/inferia/services/orchestration/app/services/depin-sidecar
 
 EXPOSE 8080 3000 50051
-CMD ["inferiallm", "orchestration-start"]
+CMD ["inferiallm", "start", "orchestration"]
 
 # ==========================================
 # Stage 7: Unified Image (Everything)
@@ -88,4 +88,4 @@ FROM orchestration AS unified
 LABEL service="unified"
 
 EXPOSE 8000 8001 8080 3000 3001 50051
-CMD ["inferiallm", "api-start"]
+CMD ["inferiallm", "start"]
