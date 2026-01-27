@@ -40,7 +40,7 @@ FROM base AS python-builder
 COPY package/ /app/package/
 
 WORKDIR /app/package
-RUN pip install --no-cache-dir ".[ml,db,aws]"
+RUN pip install --no-cache-dir ".[all-providers]"
 
 # Copy entrypoint script
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
