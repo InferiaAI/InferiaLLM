@@ -11,6 +11,9 @@ class ComputeNodeService(
         self.inventory = inventory_repo
 
     async def Heartbeat(self, request, context):
+        def utcnow_naive():
+            return datetime.now(timezone.utc).replace(tzinfo=None)
+
         node_id = UUID(request.node_id)
         used = request.used
 
@@ -18,7 +21,7 @@ class ComputeNodeService(
         if not node:
             context.abort(5, "Node not found")
 
-        now = datetime.now(timezone.utc)
+        now = utcnow_naive()
 
         # --------------------------------------------------
         # CRITICAL STATE TRANSITION (MISSING IN YOUR SYSTEM)

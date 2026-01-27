@@ -2,11 +2,13 @@
 RBAC data models for users, roles, and permissions.
 """
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class RoleType(str, Enum):
     """Predefined user roles."""
@@ -45,8 +47,8 @@ class User(BaseModel):
     hashed_password: str
     roles: List[RoleType]
     is_active: bool = True
-    created_at: datetime = datetime.utcnow()
-    updated_at: datetime = datetime.utcnow()
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     metadata: Dict[str, Any] = {}
 
 

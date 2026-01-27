@@ -11,11 +11,13 @@ from schemas.management import (
     InviteRequest, InviteResponse, InvitationListResponse
 )
 from management.dependencies import get_current_user_context
-from datetime import datetime, timedelta
-from schemas.auth import PermissionEnum
-from rbac.authorization import authz_service
+from datetime import datetime, timedelta, timezone
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 router = APIRouter(tags=["Organizations"])
+
 
 @router.post("/organizations", response_model=OrganizationResponse, status_code=201)
 async def create_organization(
@@ -114,13 +116,13 @@ async def create_invitation(
         DBInvitation.email == invite_data.email,
         DBInvitation.org_id == user_ctx.org_id,
         DBInvitation.accepted_at == None,
-        DBInvitation.expires_at > datetime.utcnow()
+        DBInvitation.expires_at > utcnow_naive()
     ))
     if existing_invite.scalars().first():
          raise HTTPException(status_code=400, detail="Pending invitation already exists for this email")
 
     token = secrets.token_urlsafe(32)
-    expires = datetime.utcnow() + timedelta(hours=48)
+    expires = datetime.now(timezone.utc) + timedelta(hours=48)
     
     new_invite = DBInvitation(
         email=invite_data.email,
@@ -163,7 +165,7 @@ async def list_invitations(
     invites_query = select(DBInvitation).where(
         DBInvitation.org_id == user_ctx.org_id,
         DBInvitation.accepted_at == None,
-        DBInvitation.expires_at > datetime.utcnow()
+        DBInvitation.expires_at > utcnow_naive()
     )
     invites = await db.execute(invites_query)
     

@@ -2,7 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 from db.database import get_db
 from db.models import Policy as DBPolicy, Usage as DBUsage, ApiKey as DBApiKey
@@ -227,7 +230,7 @@ async def get_usage_stats(
     keys = keys_result.scalars().all()
     
     stats = []
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     
     for key in keys:
         usage_result = await db.execute(
@@ -263,7 +266,7 @@ async def get_config(
          return ConfigResponse(
             policy_type=policy_type,
             config_json={},
-            updated_at=datetime.utcnow()
+            updated_at=utcnow_naive()
         )
     
     stmt = select(DBPolicy).where(
@@ -283,7 +286,7 @@ async def get_config(
         return ConfigResponse(
             policy_type=policy_type,
             config_json={},
-            updated_at=datetime.utcnow()
+            updated_at=utcnow_naive()
         )
         
     return policy

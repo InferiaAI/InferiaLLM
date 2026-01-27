@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any, Literal
-from datetime import datetime
-from uuid import uuid4
+from datetime import datetime, timezone
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class Message(BaseModel):
     """Chat message."""
@@ -49,7 +51,7 @@ class InferenceResponse(BaseModel):
     """Standard inference response format."""
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid4()}")
     object: str = "chat.completion"
-    created: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()))
+    created: int = Field(default_factory=lambda: int(utcnow_naive().timestamp()))
     model: str
     choices: List[Choice]
     usage: Usage

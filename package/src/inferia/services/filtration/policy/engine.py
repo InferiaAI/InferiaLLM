@@ -36,6 +36,12 @@ class PolicyEngine:
         # Reduced from 60s to handle real-time setting changes better
         self.context_cache = cachetools.TTLCache(maxsize=2000, ttl=10)
         
+        # Cache for Org ID lookups from API Key ID: Key=api_key_id, Value=org_id
+        self.org_id_cache = cachetools.TTLCache(maxsize=5000, ttl=300)
+        
+        # Cache for Quota Policies: Key=org_id, Value=PolicyConfigDict
+        self.quota_policy_cache = cachetools.TTLCache(maxsize=2000, ttl=60)
+
         # Redis Client for Quotas
         self.redis = redis.from_url(settings.redis_url, decode_responses=True)
 
@@ -222,28 +228,38 @@ class PolicyEngine:
         org_id = None
         if user_id.startswith("apikey:"):
             try:
-                # Remove int() cast as ID is UUID string
                 api_key_id = user_id.split(":")[1]
-                stmt = select(DBApiKey.org_id).where(DBApiKey.id == api_key_id)
-                result = await db.execute(stmt)
-                org_id = result.scalars().first()
+                if api_key_id in self.org_id_cache:
+                    org_id = self.org_id_cache[api_key_id]
+                else:
+                    stmt = select(DBApiKey.org_id).where(DBApiKey.id == api_key_id)
+                    result = await db.execute(stmt)
+                    org_id = result.scalars().first()
+                    if org_id:
+                        self.org_id_cache[api_key_id] = org_id
             except (ValueError, IndexError):
                 pass
 
         # 2. If Org ID found, fetch quota policy
         if org_id:
-            stmt = select(DBPolicy).where(
-                (DBPolicy.org_id == org_id)
-                & (DBPolicy.policy_type == "quota")
-                & (DBPolicy.deployment_id.is_(None))  # Org-wide quota policy
-            )
-            result = await db.execute(stmt)
-            quota_policy = result.scalars().first()
-
-            if quota_policy and quota_policy.config_json:
-                policy_config = quota_policy.config_json
+            if org_id in self.quota_policy_cache:
+                policy_config = self.quota_policy_cache[org_id]
                 limit_requests = policy_config.get("request_limit", limit_requests)
                 limit_tokens = policy_config.get("token_limit", limit_tokens)
+            else:
+                stmt = select(DBPolicy).where(
+                    (DBPolicy.org_id == org_id)
+                    & (DBPolicy.policy_type == "quota")
+                    & (DBPolicy.deployment_id.is_(None))  # Org-wide quota policy
+                )
+                result = await db.execute(stmt)
+                quota_policy = result.scalars().first()
+
+                if quota_policy and quota_policy.config_json:
+                    policy_config = quota_policy.config_json
+                    self.quota_policy_cache[org_id] = policy_config
+                    limit_requests = policy_config.get("request_limit", limit_requests)
+                    limit_tokens = policy_config.get("token_limit", limit_tokens)
 
         # 3. Check Redis Usage
         try:
@@ -278,14 +294,19 @@ class PolicyEngine:
         """
         Increment user's quota usage in Redis (Primary) and Async Postgres (Secondary).
         """
-        today = date.today()
-        today_str = today.isoformat()
+        # 1. Redis Increment (Atomic & Immediate)
+        await self.increment_redis_only(user_id, model, usage_data)
 
-        prompt_incr = usage_data.get("prompt_tokens", 0)
-        compl_incr = usage_data.get("completion_tokens", 0)
+        # 2. Postgres Persistence (Ideally backgrounded, but keeping signature for now)
+        await self.persist_usage_db(db, user_id, model, usage_data)
+
+    async def increment_redis_only(
+        self, user_id: str, model: str, usage_data: Dict[str, int]
+    ) -> None:
+        """Increment usage in Redis for real-time quota checks."""
+        today_str = date.today().isoformat()
         total_incr = usage_data.get("total_tokens", 0)
         
-        # 1. Redis Increment (Atomic)
         req_key = f"usage:{user_id}:{today_str}:{model}:requests"
         tok_key = f"usage:{user_id}:{today_str}:{model}:tokens"
         
@@ -293,15 +314,21 @@ class PolicyEngine:
             async with self.redis.pipeline(transaction=True) as pipe:
                 await pipe.incr(req_key, amount=1)
                 await pipe.incrby(tok_key, amount=total_incr)
-                # Set expiry to 24h + buffer (e.g. 48h) to allow date turnover
                 await pipe.expire(req_key, 172800)
                 await pipe.expire(tok_key, 172800)
                 await pipe.execute()
         except redis.RedisError as e:
             print(f"Redis Usage Increment Failed: {e}")
 
-        # 2. Postgres Persistence (Sync for now, move to background task ideally)
-        # We keep this for Audit/Reporting history.
+    async def persist_usage_db(
+        self, db: AsyncSession, user_id: str, model: str, usage_data: Dict[str, int]
+    ) -> None:
+        """Persist usage to Postgres for long-term reporting."""
+        today = date.today()
+        prompt_incr = usage_data.get("prompt_tokens", 0)
+        compl_incr = usage_data.get("completion_tokens", 0)
+        total_incr = usage_data.get("total_tokens", 0)
+
         stmt = insert(DBUsage).values(
             user_id=user_id,
             date=today,
@@ -327,8 +354,6 @@ class PolicyEngine:
             await db.execute(stmt)
             await db.commit()
         except Exception as e:
-             # DB failure shouldn't stop flow if Redis worked? 
-             # But this is inside track_usage which is fire-and-forget from router usually.
             print(f"DB Usage Persist Failed: {e}")
 
     async def get_quotas(self, db: AsyncSession, user_id: str) -> dict:

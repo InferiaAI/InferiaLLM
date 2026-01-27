@@ -1,19 +1,19 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from fastapi import HTTPException, status
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.ext.asyncio import AsyncSession
 import bcrypt
 
 from config import settings
 from models import AuthToken, TokenPayload, LoginRequest, OrganizationBasicInfo
-# from rbac.mock_data import mock_db # Removing mock_db dependency
 from db.models import User as DBUser, UserOrganization, Organization
 from audit.service import audit_service
 from audit.api_models import AuditLogCreate
 
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class AuthService:
     """Authentication service for handling JWT tokens."""
@@ -37,7 +37,7 @@ class AuthService:
 
     def create_access_token(self, user: DBUser, org_id: str, role: str) -> str:
         """Create JWT access token with org context."""
-        expire = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
+        expire = utcnow_naive() + timedelta(minutes=self.access_token_expire_minutes)
         
         # Role is now passed explicitly
         roles = [role]
@@ -47,7 +47,7 @@ class AuthService:
             "username": user.email, # Using email as username
             "email": user.email,
             "exp": expire,
-            "iat": datetime.utcnow(),
+            "iat": utcnow_naive(),
             "type": "access",
             "roles": roles,
             "org_id": org_id
@@ -58,12 +58,12 @@ class AuthService:
     
     def create_refresh_token(self, user: DBUser, org_id: Optional[str] = None) -> str:
         """Create JWT refresh token."""
-        expire = datetime.utcnow() + timedelta(days=self.refresh_token_expire_days)
+        expire = utcnow_naive() + timedelta(days=self.refresh_token_expire_days)
         
         payload = {
             "sub": user.id,
             "exp": expire,
-            "iat": datetime.utcnow(),
+            "iat": utcnow_naive(),
             "type": "refresh",
             "org_id": org_id or user.default_org_id
         }
@@ -101,8 +101,6 @@ class AuthService:
             return None
         if not self.verify_password(password, user.password_hash):
             return None
-        # if not user.is_active: # Assuming active for now
-        #    return None
         return user
     
     async def log_failed_login(self, db: AsyncSession, username: str):
@@ -275,7 +273,6 @@ class AuthService:
                             target_role = uo.role
             
             access_token = self.create_access_token(user, org_id=target_org_id, role=target_role)
-            # refresh_token_new = self.create_refresh_token(user, org_id=target_org_id) # Optional rotation
             
             return AuthToken(
                 access_token=access_token,

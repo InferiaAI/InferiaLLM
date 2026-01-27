@@ -13,14 +13,17 @@ from sqlalchemy.future import select
 import uuid
 import secrets
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import pyotp
 import qrcode
 import io
 import base64
-from fastapi.responses import JSONResponse
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
 security = HTTPBearer()
 
 
@@ -95,7 +98,7 @@ async def register_invite(
         raise HTTPException(status_code=404, detail="Invalid invitation token")
     if invite.accepted_at:
         raise HTTPException(status_code=400, detail="Invitation already accepted")
-    if invite.expires_at < datetime.utcnow():
+    if invite.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Invitation expired")
         
     # 2. Check if user exists (Should use Accept Invite flow if exists, but handling edge cases)
@@ -122,7 +125,7 @@ async def register_invite(
     db.add(uo)
     
     # 5. Mark invite accepted
-    invite.accepted_at = datetime.utcnow()
+    invite.accepted_at = utcnow_naive()
     
     await db.commit()
     await db.refresh(new_user)
@@ -167,7 +170,7 @@ async def accept_invitation(
         raise HTTPException(status_code=404, detail="Invalid invitation token")
     if invite.accepted_at:
         raise HTTPException(status_code=400, detail="Invitation already accepted")
-    if invite.expires_at < datetime.utcnow():
+    if invite.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Invitation expired")
         
     # Check if email matches current user?
@@ -195,7 +198,7 @@ async def accept_invitation(
         db.add(uo)
     
     # Mark invite accepted
-    invite.accepted_at = datetime.utcnow()
+    invite.accepted_at = utcnow_naive()
     # db.add(invite) # Already attached
     
     await db.commit()
@@ -241,7 +244,7 @@ async def get_invite_info(
     if not invite:
         raise HTTPException(status_code=404, detail="Invitation not found")
         
-    if invite.expires_at < datetime.utcnow():
+    if invite.expires_at < datetime.now(timezone.utc):
          raise HTTPException(status_code=400, detail="Invitation expired")
     
     if invite.accepted_at:

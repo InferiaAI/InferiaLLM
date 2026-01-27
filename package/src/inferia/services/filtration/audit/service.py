@@ -1,11 +1,14 @@
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc
 from db.models import AuditLog
 from audit.api_models import AuditLogFilter, AuditLogCreate
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class AuditService:
     def __init__(self):
@@ -21,7 +24,7 @@ class AuditService:
         """
         db_log = AuditLog(
             id=str(uuid.uuid4()),
-            timestamp=datetime.utcnow(),
+            timestamp=utcnow_naive(),
             user_id=event.user_id,
             action=event.action,
             resource_type=event.resource_type,

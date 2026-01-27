@@ -6,7 +6,7 @@ Handles request routing to the orchestration layer.
 from typing import Any, Dict, List
 
 from db.database import get_db
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, BackgroundTasks
 from guardrail.api_models import GuardrailScanRequest, ScanType
 from guardrail.engine import guardrail_engine
 from guardrail.pii_service import pii_service
@@ -22,23 +22,20 @@ from config import settings
  
 
 import logging
+logger = logging.getLogger(__name__)
 
 encryption_service = None
-try:
-    if settings.log_encryption_key:
+if settings.log_encryption_key:
+    try:
         encryption_service = LogEncryption(settings.log_encryption_key)
-except Exception as e:
-    # Fail fast if key is invalid
-    print(f"Failed to initialize log encryption: {e}")
-
+    except Exception as e:
+        logger.critical(f"Failed to initialize log encryption: {e}")
+        raise RuntimeError(f"Log encryption key provided but initialization failed: {e}")
 
 router = APIRouter(prefix="/internal", tags=["Internal Inference"])
 router.include_router(auth_router.router)
 
 
-
-logger = logging.getLogger(__name__)
-logger.info("Loaded Internal Gateway Router")
 
 # --- Policy Engine: Internal Endpoints ---
 from policy.engine import policy_engine
@@ -70,15 +67,26 @@ async def check_user_quota(
 
 @router.post("/policy/track_usage")
 async def track_user_usage(
-    request: UsageTrackRequest, db: AsyncSession = Depends(get_db)
+    request: UsageTrackRequest, 
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Increment user usage stats.
+    Uses Redis for real-time tracking and background task for Postgres persistence.
     """
-    await policy_engine.increment_usage(
+    # 1. Immediate Redis update for quota enforcement
+    await policy_engine.increment_redis_only(
+        request.user_id, request.model, request.usage
+    )
+    
+    # 2. Background DB persistence
+    background_tasks.add_task(
+        policy_engine.persist_usage_db, 
         db, request.user_id, request.model, request.usage
     )
-    return {"status": "ok", "message": "Usage tracked"}
+    
+    return {"status": "ok", "message": "Usage tracking initiated"}
 
 
 # --- Inference Logging ---
@@ -87,39 +95,48 @@ import uuid
 from db.models import InferenceLog
 from models import InferenceLogCreate
 
+async def _persist_log_background(db: AsyncSession, log_data: InferenceLogCreate, log_id: str):
+    """Background task to persist inference log."""
+    try:
+        log = InferenceLog(
+            id=log_id,
+            deployment_id=log_data.deployment_id,
+            user_id=log_data.user_id,
+            model=log_data.model,
+            request_payload=(
+                {"encrypted": True, "ciphertext": encryption_service.encrypt(log_data.request_payload)}
+                if encryption_service and log_data.request_payload
+                else log_data.request_payload
+            ),
+            latency_ms=log_data.latency_ms,
+            ttft_ms=log_data.ttft_ms,
+            tokens_per_second=log_data.tokens_per_second,
+            prompt_tokens=log_data.prompt_tokens,
+            completion_tokens=log_data.completion_tokens,
+            total_tokens=log_data.total_tokens,
+            status_code=log_data.status_code,
+            error_message=log_data.error_message,
+            is_streaming=log_data.is_streaming,
+            applied_policies=log_data.applied_policies,
+        )
+        db.add(log)
+        await db.commit()
+    except Exception as e:
+        logger.error(f"Failed to persist inference log in background: {e}")
 
 @router.post("/logs/create")
 async def create_inference_log(
-    log_data: InferenceLogCreate, db: AsyncSession = Depends(get_db)
+    log_data: InferenceLogCreate, 
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create an inference log entry.
-    Internal endpoint called by Inference Gateway after each request.
+    Offloaded to background task for performance.
     """
-    log = InferenceLog(
-        id=str(uuid.uuid4()),
-        deployment_id=log_data.deployment_id,
-        user_id=log_data.user_id,
-        model=log_data.model,
-        request_payload=(
-            {"encrypted": True, "ciphertext": encryption_service.encrypt(log_data.request_payload)}
-            if encryption_service and log_data.request_payload
-            else log_data.request_payload
-        ),
-        latency_ms=log_data.latency_ms,
-        ttft_ms=log_data.ttft_ms,
-        tokens_per_second=log_data.tokens_per_second,
-        prompt_tokens=log_data.prompt_tokens,
-        completion_tokens=log_data.completion_tokens,
-        total_tokens=log_data.total_tokens,
-        status_code=log_data.status_code,
-        error_message=log_data.error_message,
-        is_streaming=log_data.is_streaming,
-        applied_policies=log_data.applied_policies,
-    )
-    db.add(log)
-    await db.commit()
-    return {"status": "ok", "log_id": log.id}
+    log_id = str(uuid.uuid4())
+    background_tasks.add_task(_persist_log_background, db, log_data, log_id)
+    return {"status": "ok", "log_id": log_id}
 
 
 @router.post("/guardrails/scan", response_model=dict)
@@ -155,84 +172,40 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
             pii_enabled = True
 
 
-    import asyncio
-    
-    # Run PII Scan (if enabled) and Guardrail Scan in parallel
-    scan_coros = []
-    
-    # 1. Prepare PII Scan
-    async def run_pii():
-        if pii_enabled:
-            return await pii_service.anonymize(request_body.text, request_body.pii_entities or [])
-        return request_body.text, []
+    # Run Guardrail Scan first
+    # NOTE: Guardrails run on ORIGINAL text to detect malicious intent effectively.
+    if request_body.scan_type == ScanType.INPUT:
+         result = await guardrail_engine.scan_input(
+            prompt=request_body.text,
+            user_id=user_id,
+            custom_keywords=request_body.custom_banned_keywords or [],
+            pii_entities=request_body.pii_entities or [],
+            config=request_body.config or {},
+        )
+    else:
+         # Output scan requires context
+         context = request_body.context or ""
+         result = await guardrail_engine.scan_output(
+            prompt=context,
+            output=request_body.text,
+            user_id=user_id,
+            custom_keywords=request_body.custom_banned_keywords or [],
+            config=request_body.config or {},
+        )
 
-    scan_coros.append(run_pii())
-
-    # 2. Prepare Guardrail Scan (Input or Output)
-    async def run_guardrail(text_to_scan):
-        # NOTE: Guardrails run on ORIGINAL text to detect malicious intent effectively.
-        # Running on sanitized text might mask injection attacks that rely on PII structures.
-        if request_body.scan_type == ScanType.INPUT:
-             return await guardrail_engine.scan_input(
-                prompt=text_to_scan,
-                user_id=user_id,
-                custom_keywords=request_body.custom_banned_keywords or [],
-                pii_entities=request_body.pii_entities or [],
-                config=request_body.config or {},
-            )
-        else:
-             # Output scan requires context
-             context = request_body.context or ""
-             return await guardrail_engine.scan_output(
-                prompt=context,
-                output=text_to_scan,
-                user_id=user_id,
-                custom_keywords=request_body.custom_banned_keywords or [],
-                config=request_body.config or {},
-            )
-
-    # We launch PII and Guardrail simultaneously. 
-    # Guardrail sees the raw input (request_body.text).
-    scan_coros.append(run_guardrail(request_body.text))
-
-
-    # Execute
-    results = await asyncio.gather(*scan_coros)
-    
-    # Unpack
-    (sanitized_text, pii_violations) = results[0]
-    result = results[1]
-
-    # Merge PII Violations into Guardrail Result
-    if pii_violations:
-        result.violations.extend(pii_violations)
-        # If PII was found, ensure result reflects sanitized text
-        # Logic: If Guardrail didn't modify text (e.g. no toxicity blocking), use PII sanitized version.
-        # If Guardrail BLOCKED it, sanitized text might be empty/masked differently.
-        # We prioritize PII sanitization for the final output if the request is valid.
-
-        if (
-            result.is_valid
-        ):  # Only override if valid so far? No, always enforce PII sanitization
-            result.sanitized_text = sanitized_text  # guardrail might have sanitized further, but PII logic takes precedence?
-            # Actually, guardrail engine might have sanitized OTHER things.
-            # If guardrail returned sanitized_text different from input 'sanitized_text', lets keep it.
-            # But if guardrail just returned 'sanitized_text' (input), then we are good.
-            # Logic: If guardrail result.sanitized_text IS the input we gave it, and we changed it from original, update it?
-            # Simple approach: If PII changed text, mark as anonymized.
-            pass
-
-    # Ensure final sanitized text reflects PII changes if engine didn't change it further
-    if sanitized_text != request_body.text:
-        if result.sanitized_text == sanitized_text:
-            # Engine didn't change it further
-            pass
-        elif result.sanitized_text == request_body.text:
-            # Engine ignored our sanitized input? Unlikely.
+    # 2. PII Scan (Sequential to ensure merging if Guardrail didn't block it)
+    if pii_enabled and result.is_valid:
+        # Run PII on the potentially already-sanitized text from Guardrail
+        # This ensures BOTH sets of redactions are applied.
+        sanitized_text, pii_violations = await pii_service.anonymize(
+            result.sanitized_text or "", request_body.pii_entities or []
+        )
+        
+        if pii_violations:
+            result.violations.extend(pii_violations)
             result.sanitized_text = sanitized_text
-
-        if "anonymized" not in result.actions_taken:
-            result.actions_taken.append("anonymized")
+            if "anonymized" not in result.actions_taken:
+                result.actions_taken.append("anonymized")
 
     return {
         "is_valid": result.is_valid,

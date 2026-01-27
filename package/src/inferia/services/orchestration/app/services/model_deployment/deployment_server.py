@@ -74,9 +74,12 @@ class DeleteModelRequest(BaseModel):
 
 
 # Audit Helper
+def utcnow_naive():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 async def log_audit_event(user_id: str | None, action: str, resource_type: str, resource_id: str | None, details: dict | None = None, status: str = "success"):
     import uuid
-    from datetime import datetime
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         try:
@@ -84,7 +87,7 @@ async def log_audit_event(user_id: str | None, action: str, resource_type: str, 
              await conn.execute('''
                 INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ''', str(uuid.uuid4()), datetime.utcnow(), user_id, action, resource_type, resource_id, json.dumps(details) if details else None, status)
+             ''', str(uuid.uuid4()), utcnow_naive(), user_id, action, resource_type, resource_id, json.dumps(details) if details else None, status)
         finally:
             await conn.close()
     except Exception as e:

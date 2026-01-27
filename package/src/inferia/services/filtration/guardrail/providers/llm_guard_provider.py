@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Dict, Any, List
@@ -113,9 +114,10 @@ class LLMGuardProvider(GuardrailProvider):
         if custom_keywords:
             current_scanners.append(BanSubstrings(substrings=custom_keywords, match_type="str"))
 
-        # Run scan
-        # scan_prompt returns (sanitized_prompt, results_valid, results_score)
-        sanitized_prompt, results_valid, results_score = scan_prompt(current_scanners, text)
+        # Run scan in thread pool as it's CPU intensive and blocking
+        sanitized_prompt, results_valid, results_score = await asyncio.to_thread(
+            scan_prompt, current_scanners, text
+        )
         
         violations = []
         is_valid = True
@@ -165,8 +167,10 @@ class LLMGuardProvider(GuardrailProvider):
         if custom_keywords:
              current_scanners.append(BanSubstrings(substrings=custom_keywords, match_type="str"))
 
-        # scan_output returns (sanitized_output, results_valid, results_score)
-        sanitized_output, results_valid, results_score = scan_output(current_scanners, prompt=text, output=output)
+        # Run scan in thread pool as it's CPU intensive and blocking
+        sanitized_output, results_valid, results_score = await asyncio.to_thread(
+            scan_output, current_scanners, prompt=text, output=output
+        )
         
         violations = []
         is_valid = True
