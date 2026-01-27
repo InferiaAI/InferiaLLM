@@ -228,20 +228,6 @@ URLs and credentials for core infrastructure.
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
 | `DATABASE_URL` | Primary database URL (Postgres format) | `postgresql://inferia:inferia@localhost:5432/inferia` |
 
-### 4. Provider Specific (Optional)
-
-Required if using specific compute providers or external models.
-
-| Variable | Description |
-| --- | --- |
-| `OPENAI_API_KEY` | OpenAI key (if using OpenAI models) |
-| `NOSANA_INTERNAL_API_KEY` | Secret for Nosana sidecar authentication |
-| `NOSANA_SIDECAR_URL` | URL for the Nosana sidecar service |
-| `AWS_ACCESS_KEY_ID` | AWS access key for compute provisioning |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key for compute provisioning |
-| `AWS_REGION` | Target AWS region (e.g., `us-east-1`) |
-| `AKASH_MNEMONIC` | Mnemonic for Akash network deployment |
-
  ---
 
 ## CLI Reference
