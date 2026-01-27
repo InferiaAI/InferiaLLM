@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.venv
+.pytest_cache
+.coverage
+htmlcov
+dist
+build
+*.egg-info
+
+# Node / Frontend
+**/node_modules
+**/dist
+**/.next
+**/out
+.npm
+
+# Docker - IMPORTANT: Do not ignore the docker/ directory itself
+docker-compose.yml
+
+# Environment & Secrets
+.env
+.env.*
+!*.example
+!*.sample
+
+# Local / Debug
+*.log
+debug.log
+.DS_Store
+chroma_db/
