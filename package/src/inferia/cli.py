@@ -18,6 +18,7 @@ KNOWN_COMMANDS = {
     "filtration-gateway",
     "inference-gateway",
     "orchestration-gateway",
+    "orchestration-start",
     "api-start",
 }
 
@@ -320,6 +321,7 @@ def main(argv=None):
     sub.add_parser("filtration-gateway", add_help=False)
     sub.add_parser("inference-gateway", add_help=False)
     sub.add_parser("orchestration-gateway", add_help=False)
+    sub.add_parser("orchestration-start", help="Start orchestration stack (gateway, worker, sidecars)")
     sub.add_parser("api-start", help="Start all services (orchestration, inference, filtration)")
 
     args, unknown = parser.parse_known_args(argv)
@@ -341,6 +343,12 @@ def main(argv=None):
             start_api()
 
         elif args.command == "orchestration-gateway":
+            if wants_help(flags):
+                show_orchestration_docs()
+                return
+            run_orchestration_stack()
+
+        elif args.command == "orchestration-start":
             if wants_help(flags):
                 show_orchestration_docs()
                 return

@@ -1,0 +1,129 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: inferia-postgres
+    environment:
+      POSTGRES_USER: ${PG_ADMIN_USER:-inferia}
+      POSTGRES_PASSWORD: ${PG_ADMIN_PASSWORD:-inferia}
+      POSTGRES_DB: inferia
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - inferia-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inferia"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: inferia-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - inferia-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # Unified Profile
+  # ==========================================
+  inferia-unified:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: unified
+    container_name: inferia-unified
+    profiles: ["unified"]
+    environment:
+      - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
+      - REDIS_URL=redis://inferia-redis:6379/0
+      - SERVICE_TYPE=unified
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8080:8080"
+      - "3000:3000"
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - inferia-net
+
+  # ==========================================
+  # Split Profile (Microservices)
+  # ==========================================
+  filtration:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: filtration
+    container_name: inferia-filtration
+    profiles: ["split"]
+    environment:
+      - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
+      - REDIS_URL=redis://inferia-redis:6379/0
+      - SERVICE_TYPE=filtration
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - inferia-net
+
+  inference:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: inference
+    container_name: inferia-inference
+    profiles: ["split"]
+    environment:
+      - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
+      - REDIS_URL=redis://inferia-redis:6379/0
+      - FILTRATION_URL=http://filtration:8000
+      - SERVICE_TYPE=inference
+    ports:
+      - "8001:8001"
+    depends_on:
+      - filtration
+    networks:
+      - inferia-net
+
+  orchestration:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: orchestration
+    container_name: inferia-orchestration
+    profiles: ["split"]
+    environment:
+      - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
+      - REDIS_URL=redis://inferia-redis:6379/0
+      - FILTRATION_URL=http://filtration:8000
+      - SERVICE_TYPE=orchestration
+    ports:
+      - "8080:8080"
+      - "3000:3000"
+    depends_on:
+      - filtration
+    networks:
+      - inferia-net
+
+volumes:
+  pgdata:
+
+networks:
+  inferia-net:

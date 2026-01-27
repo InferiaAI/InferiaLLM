@@ -1,7 +1,6 @@
-
 # InferiaLLM Makefile
 
-.PHONY: setup start test clean docker-up docker-down
+.PHONY: setup start test clean docker-build-unified docker-build-split docker-up-unified docker-up-split docker-down docker-clean
 
 # Setup the project (env, dependencies, init)
 setup:
@@ -21,15 +20,30 @@ clean:
 	rm -rf .venv
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 
-# Docker helpers
-docker-up:
-	cd deploy/non-unified && docker compose up -d
+# ==========================================
+# Docker Commands
+# ==========================================
 
+DOCKER_COMPOSE = docker compose -f docker/docker-compose.yml
+
+# Build images
+docker-build-unified:
+	$(DOCKER_COMPOSE) --profile unified build
+
+docker-build-split:
+	$(DOCKER_COMPOSE) --profile split build
+
+# Run services
+docker-up-unified:
+	$(DOCKER_COMPOSE) --profile unified up -d
+
+docker-up-split:
+	$(DOCKER_COMPOSE) --profile split up -d
+
+# Stop services
 docker-down:
-	cd deploy/non-unified && docker compose down
+	$(DOCKER_COMPOSE) --profile unified --profile split down
 
-docker-unified-up:
-	cd deploy/unified && docker compose up -d
-
-docker-unified-down:
-	cd deploy/unified && docker compose down
+# Clean up docker (volumes, orphans)
+docker-clean:
+	$(DOCKER_COMPOSE) --profile unified --profile split down -v --remove-orphans
