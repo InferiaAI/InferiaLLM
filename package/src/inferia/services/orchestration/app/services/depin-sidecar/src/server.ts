@@ -282,8 +282,9 @@ wss.on('connection', (ws: WebSocket) => {
                                 };
 
                                 if (result && typeof result === 'object') {
-                                    if (result.opStates && Array.isArray(result.opStates)) {
-                                        result.opStates.forEach((op: any) => {
+                                    const resAny = result as any;
+                                    if (resAny.opStates && Array.isArray(resAny.opStates)) {
+                                        resAny.opStates.forEach((op: any) => {
                                             if (op.logs) sendLogs(op.logs);
                                         });
                                     } else {
