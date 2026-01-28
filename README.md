@@ -30,7 +30,7 @@
 </div>
 
 > [!IMPORTANT]  
-> **Active Development**: InferiaLLM is currently in beta. While it is usable, APIs may change as we finalize the control plane features.
+> **Active Development**: InferiaLLM is currently in beta. While it is usable, Package may change as we finalize the control plane features.
 > Your feedback is invaluable! Open [an issue](https://github.com/InferiaAI/InferiaLLM/issues) to report bugs or request features.
 
 InferiaLLM acts as the **authoritative execution layer** between your applications and your AI infrastructure. It governs how LLMs are accessed, secured, routed, and run on compute.
