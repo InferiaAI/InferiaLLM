@@ -20,7 +20,7 @@
   <img src="assets/inferia-cli.gif" width="100%" alt="Inferia CLI Demo" />
 
   <p>
-    <a href="./docs/README.md"><img src="https://img.shields.io/badge/Documentation-0078D4?style=for-the-badge&logoColor=white" height="30" alt="Documentation"></a>
+    <a href="./apps/docs/README.md"><img src="https://img.shields.io/badge/Documentation-0078D4?style=for-the-badge&logoColor=white" height="30" alt="Documentation"></a>
     &nbsp;
     <a href="https://github.com/InferiaAI/InferiaLLM/issues"><img src="https://img.shields.io/badge/Issues-D73502?style=for-the-badge&logoColor=white" height="30" alt="Issues"></a>
     &nbsp;
@@ -103,7 +103,10 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Install in editable mode
+# The backend logic resides in the 'package' directory
+cd package
 pip install -e .
+cd ..
 
 # Configure environment
 cp .env.sample .env
@@ -157,35 +160,18 @@ For local development with source code mounting and profiles (unified or split):
 
 ```bash
 # Unified Profile (Monolithic)
-docker compose -f docker/docker-compose.yml --profile unified up --build
+docker compose -f deploy/docker-compose.yml --profile unified up --build
 
 # Split Profile (Microservices)
-docker compose -f docker/docker-compose.yml --profile split up --build
+docker compose -f deploy/docker-compose.yml --profile split up --build
 ```
 
 **Services will be available at:**
 
-* **Dashboard:** `http://localhost:3001` (Default: <admin@example.com> / admin123)
+* **Dashboard:** `http://localhost:3001` (React/Vite Frontend)
 * **Orchestration API:** `http://localhost:8080`
 * **Filtration Gateway:** `http://localhost:8000`
 * **Inference Gateway:** `http://localhost:8001`
-
-### 4. Automated Setup
-
-Run the automated setup script to configure your environment, generate secrets, and install dependencies:
-
-```bash
-# Mac/Linux
-make setup
-# OR directly:
-./setup_project.sh
-```
-
-Then start the API:
-
-```bash
-make start
-```
 
  ---
 
@@ -385,12 +371,12 @@ InferiaLLM is explicitly split into two planes:
 
 These are the **only externally reachable services**.
 
-| Service                   | Responsibility                                                                | Documentation                                    |
+| Service | Responsibility | Documentation |
 | ------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
-| **Admin Dashboard**       | Administrative control surface for policies, compute pools, usage, and audits | [README](./apps/dashboard/README.md)             |
-| **Filtration Gateway**    | Authentication, RBAC, policy enforcement, and guardrails                      | [README](./package/src/inferia/services/filtration/README.md)    |
-| **Inference Gateway**     | Data-plane ingress for all LLM inference traffic                              | [README](./package/src/inferia/gateways/inference_gateway/README.md)     |
-| **Orchestration Gateway** | Compute control authority and execution routing                               | [README](./package/src/inferia/gateways/orchestration_gateway/README.md) |
+| **Admin Dashboard** | Administrative control surface for policies, compute pools, usage, and audits | [README](./apps/dashboard/README.md) |
+| **Filtration Gateway** | Authentication, RBAC, policy enforcement, and guardrails | [README](./package/src/inferia/services/filtration/README.md) |
+| **Inference Gateway** | Data-plane ingress for all LLM inference traffic | [README](./package/src/inferia/gateways/inference_gateway/README.md) |
+| **Orchestration Gateway** | Compute control authority and execution routing | [README](./package/src/inferia/gateways/orchestration_gateway/README.md) |
 
 ---
 
@@ -469,16 +455,16 @@ Supports:
 
 ## Core Services (Control Plane Internals)
 
-| Component        | Responsibility                            | Documentation                                       |
-|  ----------------  |  -----------------------------------------  |  ---------------------------------------------------  |
-| **Orchestrator** | Compute lifecycle and workload management | [README](./package/src/inferia/services/orchestration/README.md)        |
-| **Guardrails**   | Safety enforcement and content filtering  | [README](./package/src/inferia/services/filtration/guardrail/README.md) |
-| **RBAC**         | Identity and access boundaries            | [README](./package/src/inferia/services/filtration/rbac/README.md)      |
-| **Gateway**      | Secure internal service routing           | [README](./package/src/inferia/services/filtration/gateway/README.md)   |
-| **Audit**        | Immutable execution and policy logs       | [README](./package/src/inferia/services/filtration/audit/README.md)     |
-| **Policy**       | Quota, rate, and budget enforcement       | [README](./package/src/inferia/services/filtration/policy/README.md)    |
-| **Prompt**       | Prompt templates and versioning           | [README](./package/src/inferia/services/filtration/prompt/README.md)    |
-| **Packages**     | Installation, versioning, and initialization | [README](./package/README.md)                    |
+| Component | Responsibility | Documentation |
+| ---------------- | ----------------------------------------- | --------------------------------------------------- |
+| **Orchestrator** | Compute lifecycle and workload management | [README](./package/src/inferia/services/orchestration/README.md) |
+| **Guardrails** | Safety enforcement and content filtering | [README](./package/src/inferia/services/filtration/guardrail/README.md) |
+| **RBAC** | Identity and access boundaries | [README](./package/src/inferia/services/filtration/rbac/README.md) |
+| **Gateway** | Secure internal service routing | [README](./package/src/inferia/services/filtration/gateway/README.md) |
+| **Audit** | Immutable execution and policy logs | [README](./package/src/inferia/services/filtration/audit/README.md) |
+| **Policy** | Quota, rate, and budget enforcement | [README](./package/src/inferia/services/filtration/policy/README.md) |
+| **Prompt** | Prompt templates and versioning | [README](./package/src/inferia/services/filtration/prompt/README.md) |
+| **Packages** | Installation, versioning, and initialization | [README](./package/README.md) |
 
  ---
 

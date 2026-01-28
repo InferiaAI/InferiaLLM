@@ -12,7 +12,6 @@
 InferiaLLM acts as the authoritative execution layer between your applications and your AI infrastructure. It governs how LLMs are accessed, secured, routed, and run on compute.
 
 
-
 ---
 
 ## Installation
@@ -79,6 +78,24 @@ You can also start specific services:
 * `inferiallm start orchestration`: Starts the Orchestration Gateway stack.
 * `inferiallm start inference`: Starts the Inference Gateway standalone.
 * `inferiallm start filtration`: Starts the Filtration Gateway standalone.
+
+---
+
+## Package Structure
+
+The `inferia` package is a monorepo-style library that contains all backend services:
+
+```text
+package/src/inferia/
+├── cli.py                  # Entry point for the CLI
+├── gateways/
+│   ├── filtration_gateway  # Security & Policy Service (Port 8000)
+│   ├── inference_gateway   # Inference Proxy Service (Port 8001)
+│   └── orchestration_gateway # Compute Control Plane (Port 8080)
+└── services/               # Shared business logic
+    ├── filtration/         # Guardrails, RBAC, Audit logic
+    └── orchestration/      # Compute Adapters, Scheduling logic
+```
 
 ---
 
