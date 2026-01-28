@@ -1,116 +1,65 @@
+# =============================================================================
+# InferiaLLM Deployment - Unified (Monolithic) Mode
+# =============================================================================
+# Usage:
+# 1. Copy .env.example to .env and fill in your secrets.
+# 2. Run: docker compose up -d
+# =============================================================================
+
 services:
-  # --- Infrastucture ---
   postgres:
     image: postgres:15
     container_name: inferia-postgres
+    restart: unless-stopped
     env_file: .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_DB: inferia
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../package/src/inferia/services/orchestration/docs:/docker-entrypoint-initdb.d
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inferia}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - inferia-net
 
   redis:
     image: redis:7
     container_name: inferia-redis
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - inferia-net
 
-  # --- Gateways ---
-  orchestrator:
-    build:
-      context: ..
-      dockerfile: deploy/orchestrator.Dockerfile
-    container_name: inferia-orchestrator
-    volumes:
-      - ../package/src/inferia/services/orchestration:/app/package/src/inferia/services/orchestration
-      - ../apps/orchestration-gateway:/app/apps/orchestration-gateway
-      - ~/.sky:/root/.sky
-      - ~/.ssh:/root/.ssh
+  inferia:
+    # Change this to your published image name
+    image: inferiaai/inferiallm:latest
+    container_name: inferia-app
+    restart: unless-stopped
+    pull_policy: always
     env_file: .env
     environment:
-      POSTGRES_DSN: ${POSTGRES_DSN}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      HTTP_PORT: ${ORCHESTRATOR_HTTP_PORT:-8080}
-      GRPC_PORT: ${ORCHESTRATOR_GRPC_PORT:-50051}
-      NOSANA_SIDECAR_URL: http://localhost:3000/nosana
-      NOSANA_WALLET_PRIVATE_KEY: ${NOSANA_WALLET_PRIVATE_KEY}
-      SOLANA_RPC_URL: ${SOLANA_RPC_URL}
-      AKASH_MNEMONIC: ${AKASH_MNEMONIC}
-      ORCHESTRATOR_URL: http://localhost:8080
+      - SERVICE_TYPE=unified
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-inferia}:${POSTGRES_PASSWORD:-inferia}@postgres:5432/inferia
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8000:8000"   # Filtration Gateway
+      - "8001:8001"   # Inference Gateway
+      - "8080:8080"   # Orchestration Gateway
+      - "3000:3000"   # DePIN Sidecar
+      - "3001:3001"   # Dashboard
     depends_on:
-      - postgres
-      - redis
-    ports:
-      - "${ORCHESTRATOR_DEVICE_PORT:-8080}:${ORCHESTRATOR_HTTP_PORT:-8080}"
-      - "${ORCHESTRATOR_GRPC_PORT:-50051}:${ORCHESTRATOR_GRPC_PORT:-50051}"
-      - "3000:3000"
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - inferia-net
-    tty: true
-
-  filtration:
-    build:
-      context: ..
-      dockerfile: deploy/filtration.Dockerfile
-    container_name: inferia-filtration
-    volumes:
-      - ../package/src/inferia/services/filtration:/app/package/src/inferia/services/filtration
-      - ../apps/filtration-gateway:/app/apps/filtration-gateway
-    env_file: .env
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      PORT: ${FILTRATION_INTERNAL_PORT:-8000}
-    depends_on:
-      - postgres
-      - redis
-    ports:
-      - "${FILTRATION_API_PORT:-8000}:${FILTRATION_INTERNAL_PORT:-8000}"
-    networks:
-      - inferia-net
-
-  inference:
-    build:
-      context: ..
-      dockerfile: deploy/inference.Dockerfile
-    container_name: inferia-inference
-    volumes:
-      - ../apps/inference-gateway:/app/apps/inference-gateway
-    env_file: .env
-    environment:
-      # Use internal docker hostname
-      FILTRATION_GATEWAY_URL: http://filtration:8000
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-    depends_on:
-      - filtration
-    ports:
-      - "${INFERENCE_API_PORT:-8001}:${INFERENCE_INTERNAL_PORT:-8001}"
-    networks:
-      - inferia-net
-
-  dashboard:
-    image: python:3.12-slim
-    container_name: inferia-dashboard
-    working_dir: /app
-    volumes:
-      - ../package/src/inferia/dashboard:/app/dashboard
-    command: python -m http.server 3001 --directory /app/dashboard
-    ports:
-      - "3001:3001"
-    networks:
-      - inferia-net
-
 
 volumes:
   pgdata:

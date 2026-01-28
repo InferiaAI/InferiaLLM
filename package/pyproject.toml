@@ -4,26 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "inferiallm"
-version = "0.1.1"
-description = "Inferia: distributed inference, filtration, and compute orchestration platform"
+version = "1.0.6"
+description = "InferiaLLM: distributed inference, filtration, and compute orchestration platform"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Business Source License 1.1" }
 
 authors = [
-    { name = "Hooman Digital LLP" },
-    { name = "Meet Sonawane" },
-    { name = "Chandra K Rajwal" }
-]
-
-classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Developers",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Operating System :: OS Independent",
+    { name = "Inferia AI" },
 ]
 
 # -------------------------
@@ -62,7 +50,22 @@ dependencies = [
   "psycopg2-binary==2.9.11",
   "redis>=5.0",
   "sqlalchemy>=2.0",
+  "alembic>=1.13",
   "greenlet",
+  "jinja2",
+
+  # ML / Filtration Core
+  "numpy",
+  "transformers>=4.40",
+  "tokenizers>=0.21",
+  "chromadb",
+  "llm-guard",
+  "presidio-analyzer",
+  "spacy",
+  "pypdf",
+  "python-docx",
+  "requests",
+  "groq",
 
   # Observability
   "prometheus-client",
@@ -75,7 +78,7 @@ dependencies = [
   "pynacl",
   "cachetools",
 
-  # Others
+  # Orchestration Core
   "python-multipart",
   "skypilot",
   "kubernetes==33.1.0",
@@ -86,34 +89,34 @@ dependencies = [
   "jinja2",
 ]
 
+[project.urls]
+Repository = "https://github.com/InferiaAI/InferiaLLM"
+Documentation = "https://docs.inferia.ai/docs"
+
 # ---------------------------------
-# Optional: Cloud / Orchestration
+# Optional: Compute Providers
 # ---------------------------------
 [project.optional-dependencies]
 aws = [
   "boto3==1.42.10",
+  "skypilot[aws]",
 ]
-
-# ---------------------------------
-# Optional: ML / Inference
-# ---------------------------------
-inference = [
-  "numpy",
-  "transformers>=4.40",
-  "tokenizers>=0.21",
-  "chromadb",
-  "llm-guard",
-  "presidio-analyzer",
-  "spacy",
-  "pypdf",
-  "python-docx",
-  "requests",
-  "groq",
+gcp = [
+  "skypilot[gcp]",
 ]
-
-# ---------------------------------
-# Optional: Testing
-# ---------------------------------
+azure = [
+  "skypilot[azure]",
+]
+lambda = [
+  "skypilot[lambda]",
+]
+runpod = [
+  "skypilot[runpod]",
+]
+all-providers = [
+  "boto3==1.42.10",
+  "skypilot[aws,gcp,azure,lambda,runpod,kubernetes]",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov",
@@ -124,18 +127,34 @@ dev = [
   "pytest-tornasync",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["**/node_modules", "**/dist", "**/build"]
+
 [tool.setuptools.package-data]
 inferia = [
   "dashboard/**/*",
   "infra/schema/*.sql",
-  "services/orchestration/app/services/depin-sidecar/**/*"
+  "services/orchestration/app/services/depin-sidecar/package.json",
+  "services/orchestration/app/services/depin-sidecar/tsconfig.json",
+  "services/orchestration/app/services/depin-sidecar/src/**/*"
 ]
+
+[tool.setuptools.exclude-package-data]
+inferia = [
+    "**/node_modules/**/*",
+    "**/dist/**/*",
+    "**/.env",
+    "**/*.pyc",
+    "**/__pycache__/**/*"
+]
+
 # -------------------------
 # CLI entrypoint
 # -------------------------
 [project.scripts]
-inferia = "inferia.cli:main"
-
-[project.urls]
-Repository = "https://github.com/InferiaAI/InferiaLLM"
-Documentation = "https://inferiallm.ai/docs"
+inferiallm = "inferia.cli:main"

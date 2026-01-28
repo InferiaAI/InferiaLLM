@@ -40,6 +40,7 @@ See `.env.example` for all configuration options.
 ## Endpoints
 
 - `GET /health` - Health check
-- `POST /deployment/create` - Create deployment
-- `GET /deployment/list/{owner_id}` - List deployments
+- `POST /deployment/deploy` - Create deployment
+- `GET /deployment/deployments` - List all deployments
+- `GET /deployment/listPools/{owner_id}` - List compute pools
 - `POST /inventory/heartbeat` - Node heartbeat

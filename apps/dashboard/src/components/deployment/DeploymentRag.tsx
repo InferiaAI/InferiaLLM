@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react"
-import { Save } from "lucide-react"
+import { Save, AlertCircle, ArrowRight, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import api from "@/lib/api"
+import { useQuery } from "@tanstack/react-query"
+import { ConfigService } from "@/services/configService"
+import { Link } from "react-router-dom"
 
 interface DeploymentRagProps {
     deploymentId: string
@@ -20,6 +23,14 @@ export default function DeploymentRag({ deploymentId }: DeploymentRagProps) {
     const [jsonInput, setJsonInput] = useState("{}")
     const [dbConfig, setDbConfig] = useState<ConfigResponse | null>(null)
     const [collections, setCollections] = useState<string[]>([])
+
+    // Check Provider Configuration
+    const { data: providers, isLoading: loadingProviders } = useQuery({
+        queryKey: ["providerConfig"],
+        queryFn: () => ConfigService.getProviderConfig()
+    })
+
+    const isVectorDbConfigured = providers?.vectordb.chroma.is_local || !!providers?.vectordb.chroma.api_key;
 
     const fetchConfig = async () => {
         setLoading(true)
@@ -112,7 +123,30 @@ export default function DeploymentRag({ deploymentId }: DeploymentRagProps) {
                         </label>
                     </div>
 
-                    {config.enabled && (
+                    {loadingProviders ? (
+                        <div className="flex flex-col items-center justify-center p-8 gap-3">
+                            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                            <p className="text-xs text-muted-foreground animate-pulse">Verifying Vector DB configuration...</p>
+                        </div>
+                    ) : !isVectorDbConfigured ? (
+                        <div className="p-8 bg-orange-500/5 border border-orange-500/20 rounded-xl flex flex-col items-center text-center gap-4">
+                            <div className="w-12 h-12 bg-orange-500/10 text-orange-500 rounded-full flex items-center justify-center">
+                                <AlertCircle className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h4 className="font-bold">Vector Database Not Configured</h4>
+                                <p className="text-sm text-muted-foreground max-w-sm">
+                                    RAG requires a connected Vector Database to retrieve document context.
+                                </p>
+                            </div>
+                            <Link
+                                to="/dashboard/settings/providers/vectordb/chroma"
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors group"
+                            >
+                                Configure ChromaDB <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                            </Link>
+                        </div>
+                    ) : config.enabled && (
                         <div className="grid gap-6">
                             <div className="grid gap-2">
                                 <label className="text-sm font-medium">Knowledge Base Collection</label>

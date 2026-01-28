@@ -63,7 +63,7 @@ async def initialize_default_org(db: AsyncSession):
 
         if not org:
             logger.info(f"No organization found. Creating default organization: {settings.default_org_name}")
-            org = Organization(name=settings.default_org_name)
+            org = Organization(name=settings.default_org_name, log_payloads=True)
             db.add(org)
             await db.commit()
             await db.refresh(org)

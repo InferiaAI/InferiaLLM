@@ -2,6 +2,7 @@ import { createNosanaClient, NosanaClient, NosanaNetwork, getJobExposedServices,
 import { address, createKeyPairSignerFromBytes } from '@solana/kit';
 import bs58 from 'bs58';
 import type { JobDefinition } from '@nosana/types';
+import { LogStreamer } from './nosana_logs';
 
 // Job timing constants (in milliseconds)
 const JOB_TIMEOUT_MS = 30 * 60 * 1000;
@@ -21,6 +22,7 @@ interface WatchedJobInfo {
         ram_gb_allocated: number;
     };
     userStopped: boolean;
+    serviceUrl?: string;
 }
 
 async function retry<T>(fn: () => Promise<T>, retries = 5, delay = 500): Promise<T> {
@@ -210,7 +212,10 @@ export class NosanaService {
         }
     }
 
-    // ... (keep getJob, getJobLogs, getBalance, recoverJobs as is) ...
+    async getLogStreamer() {
+        if (!this.client.wallet) throw new Error("Wallet not initialized");
+        return new LogStreamer(this.client.wallet);
+    }
 
     async getJob(jobAddress: string) {
         // ... (existing implementation) ...
@@ -220,7 +225,13 @@ export class NosanaService {
             const isRunning = job.state === JobState.RUNNING;
             let serviceUrl: string | null = null;
 
-            if (isRunning && job.ipfsJob) {
+            // OPTIMIZATION: Check cache first
+            const cachedJob = this.watchedJobs.get(jobAddress);
+            if (cachedJob?.serviceUrl) {
+                serviceUrl = cachedJob.serviceUrl;
+            }
+
+            if (isRunning && !serviceUrl && job.ipfsJob) {
                 try {
                     const rawDef = await retry(() => this.client.ipfs.retrieve(job.ipfsJob!));
                     if (rawDef) {
@@ -229,6 +240,11 @@ export class NosanaService {
                         if (services && services.length > 0) {
                             const domain = process.env.NOSANA_INGRESS_DOMAIN || "node.k8s.prd.nos.ci";
                             serviceUrl = `https://${services[0].hash}.${domain}`;
+
+                            // Update cache
+                            if (cachedJob) {
+                                cachedJob.serviceUrl = serviceUrl;
+                            }
                         }
                     }
                 } catch (e) {
@@ -284,7 +300,7 @@ export class NosanaService {
         // ... (existing implementation) ...
         if (!this.client.wallet) return;
         try {
-            const jobs = await this.client.jobs.all();
+            const jobs = await retry(() => this.client.jobs.all());
             const myAddress = this.client.wallet.address.toString();
             const myJobs = jobs.filter((j: any) => j.project?.toString() === myAddress);
 
@@ -578,7 +594,7 @@ export class NosanaService {
                 console.error(`[watchdog] Error loop ${jobAddress}:`, error);
             }
 
-            await new Promise((r) => setTimeout(r, 30000));
+            await new Promise((r) => setTimeout(r, 60000));
         }
     }
 

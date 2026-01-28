@@ -20,7 +20,7 @@ from services.scheduler.service import SchedulerService
 from services.model_deployment.runtime_resolver import RuntimeResolver
 from services.model_deployment.strategies.vllm import VLLMDeploymentStrategy
 # from services.vllm_runtime.runtime import VLLMRuntime
-from services.nosana_runtime.client import NosanaRuntimeClient
+# from services.nosana_runtime.client import NosanaRuntimeClient
 
 
 POSTGRES_DSN = os.getenv("POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia")
@@ -117,7 +117,6 @@ async def main():
         scheduler_repo=scheduler_repo,
     )
 
-    nosana_client = NosanaRuntimeClient(base_url=NOSANA_SIDECAR_URL)
 
     worker = ModelDeploymentWorker(
         deployment_repo=deployment_repo,
@@ -130,7 +129,6 @@ async def main():
         runtime_strategies={
             "vllm": vllm_strategy,
         },
-        nosana_client=nosana_client,
     )
 
     log.info("ModelDeploymentWorker started")

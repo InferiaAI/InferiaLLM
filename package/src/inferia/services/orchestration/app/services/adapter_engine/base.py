@@ -39,6 +39,14 @@ class ProviderAdapter(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    async def wait_for_ready(self, *, provider_instance_id: str, timeout: int = 300) -> str:
+        """
+        Wait until the node is ready and return its access endpoint (e.g. URL).
+        If the provider doesn't require waiting, it should return the endpoint immediately.
+        """
+        raise NotImplementedError
+
     # -------------------------------------------------
     # DEPROVISION
     # -------------------------------------------------
@@ -58,5 +66,12 @@ class ProviderAdapter(ABC):
         """
         Fetch logs for a specific instance.
         Returns a dict containing 'logs': List[str] or List[Dict] usually.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+        """
+        Returns connection details for WebSocket log streaming.
         """
         raise NotImplementedError

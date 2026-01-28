@@ -59,7 +59,6 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Rate limiting: {'enabled' if settings.rate_limit_enabled else 'disabled'}")
-    logger.info(f"Mock orchestration: {'enabled' if settings.use_mock_orchestration else 'disabled'}")
 
     # Initialize Default Org & Superadmin
     from db.database import AsyncSessionLocal
@@ -67,10 +66,21 @@ async def lifespan(app: FastAPI):
     
     async with AsyncSessionLocal() as session:
         await initialize_default_org(session)
+
+    # Start Config Polling
+    from management.config_manager import config_manager
+    await config_manager.initialize()
+    
+    # Sync dependent services
+    from guardrail.config import guardrail_settings
+    guardrail_settings.refresh_from_main_settings()
+    
+    config_manager.start_polling()
     
     yield
     # Shutdown
     logger.info(f"Shutting down {settings.app_name}")
+    config_manager.stop_polling()
 
 
 # Create FastAPI app
@@ -156,7 +166,6 @@ async def health_check():
         components={
             "rbac": "healthy",
             "rate_limiter": "healthy",
-            "mock_orchestration": "healthy" if settings.use_mock_orchestration else "disabled"
         }
     )
     return JSONResponse(content=jsonable_encoder(response))

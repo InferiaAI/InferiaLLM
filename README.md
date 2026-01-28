@@ -1,11 +1,13 @@
+
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/3ad89406-a12b-4b70-b548-b45a9594dded" width="100%" alt="InferiaLLM Banner" />
 
 # InferiaLLM
 
 ### The Operating System for LLMs in Production
 
-  [![License](https://img.shields.io/badge/license-BSL%201.1-blue)](./LICENSE)[![Python](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)[![Status](https://img.shields.io/badge/status-beta-orange?style=flat-square)]()[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)[![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)[![Kubernetes](https://img.shields.io/badge/kubernetes-%23326ce5.svg?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
+  [![License](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](./LICENSE)[![Python](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)[![Status](https://img.shields.io/badge/status-beta-orange?style=flat-square)]()[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)[![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)[![Kubernetes](https://img.shields.io/badge/kubernetes-%23326ce5.svg?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
+
+</div>
 
   <br/>
   
@@ -18,7 +20,7 @@
   <img src="assets/inferia-cli.gif" width="100%" alt="Inferia CLI Demo" />
 
   <p>
-    <a href="./docs/README.md"><img src="https://img.shields.io/badge/Documentation-0078D4?style=for-the-badge&logoColor=white" height="30" alt="Documentation"></a>
+    <a href="./apps/docs/README.md"><img src="https://img.shields.io/badge/Documentation-0078D4?style=for-the-badge&logoColor=white" height="30" alt="Documentation"></a>
     &nbsp;
     <a href="https://github.com/InferiaAI/InferiaLLM/issues"><img src="https://img.shields.io/badge/Issues-D73502?style=for-the-badge&logoColor=white" height="30" alt="Issues"></a>
     &nbsp;
@@ -52,8 +54,11 @@ To operate LLMs in production, teams must build platform - level primitives:
 These are **operating system responsibilities**.
 
 InferiaLLM provides these primitives as a single, cohesive system.
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/3ad89406-a12b-4b70-b548-b45a9594dded" width="100%" alt="InferiaLLM Banner" />
+</div>
 
- ---
+---
 
 ## Quick Start
 
@@ -78,10 +83,10 @@ curl -o .env https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sa
 nano .env
 
 # 3. Initialize database
-inferia init
+inferiallm init
 
 # 4. Start all services
-inferia api-start
+inferiallm start
 ```
 
 ### 2. Build from Source (Recommended for development)
@@ -98,58 +103,191 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Install in editable mode
+# The backend logic resides in the 'package' directory
+cd package
 pip install -e .
+cd ..
 
 # Configure environment
 cp .env.sample .env
 
 # Initialize databases
-inferia init
+inferiallm init
 
 # Start API services
-inferia api-start
+inferiallm start
 ```
 
-### 3. Run via Docker (Recommended for reliable deployment)
+### 3. Run via Docker (Recommended for Production)
 
-We provide a production-ready `docker-compose` setup that orchestrates all gateways, databases, and queues.
+We provide a unified, production-ready Docker image that contains the entire control plane. You can either use the official image from Docker Hub or build it locally.
+
+#### Option A: Use Docker Hub (Fastest)
+
+The official unified image is available on [Docker Hub](https://hub.docker.com/r/inferiaai/inferiallm).
 
 ```bash
-# Clone the repository
-git clone https://github.com/InferiaAI/InferiaLLM.git
-cd inferiaLLM/deploy
+# 1. Download the docker-compose and sample env
+curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/deploy/docker-compose.yml -o docker-compose.yml
+curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sample -o .env
 
-# Configure environment
-cp ../.env.sample .env
-# Edit .env to set your secrets
+# 2. Configure your credentials in .env
+nano .env
 
-# Start the stack
+# 3. Start the stack
 docker compose up -d
 ```
 
-This will spin up:
-
-* **Orchestration Gateway** (Port 8080)
-* **Filtration Gateway** (Port 8000)
-* **Inference Gateway** (Port 8001)
-* **Postgres & Redis**
-
-### 4. Automated Setup
-
-Run the automated setup script to configure your environment, generate secrets, and install dependencies:
+#### Option B: Build from Source
 
 ```bash
-# Mac/Linux
-make setup
-# OR directly:
-./setup_project.sh
+# 1. Clone the repository
+git clone https://github.com/InferiaAI/InferiaLLM.git
+cd inferiaLLM
+
+# 2. Configure environment
+cp .env.sample .env
+# Edit .env to set your secrets
+
+# 3. Build and start (Production Profile)
+cd deploy
+docker compose up -d --build
 ```
 
-Then start the API:
+#### Option C: Development with Docker
+
+For local development with source code mounting and profiles (unified or split):
 
 ```bash
-make start
+# Unified Profile (Monolithic)
+docker compose -f deploy/docker-compose.yml --profile unified up --build
+
+# Split Profile (Microservices)
+docker compose -f deploy/docker-compose.yml --profile split up --build
 ```
+
+**Services will be available at:**
+
+* **Dashboard:** `http://localhost:3001` (React/Vite Frontend)
+* **Orchestration API:** `http://localhost:8080`
+* **Filtration Gateway:** `http://localhost:8000`
+* **Inference Gateway:** `http://localhost:8001`
+
+ ---
+
+## Configuration
+
+InferiaLLM requires several environment variables to be configured in a `.env` file. You can find a template in `.env.sample`.
+
+### 1. Database Setup (Required for `init`)
+
+These variables are used by `inferiallm init` to bootstrap your database.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `PG_ADMIN_USER` | PostgreSQL admin username | `postgres` |
+| `PG_ADMIN_PASSWORD` | PostgreSQL admin password | - |
+| `DATABASE_URL` | Application database connection string | `postgresql://inferia:inferia@localhost:5432/inferia` |
+| `INFERIA_DB` | (Optional) Override database name | `inferia` |
+
+> [!TIP]
+> `inferiallm init` will automatically extract the app-level database user, password, host, and port from your `DATABASE_URL`.
+
+### 2. Security & Authentication
+
+Essential for protecting your gateways and dashboard.
+
+| Variable | Description |
+| --- | --- |
+| `JWT_SECRET_KEY` | Secret key for signing access tokens (use a long random string) |
+| `INTERNAL_API_KEY` | Secret key for service-to-service communication |
+| `SECRET_ENCRYPTION_KEY` | 32-byte base64 key for encrypting provider credentials |
+| `SUPERADMIN_EMAIL` | Initial admin user email |
+| `SUPERADMIN_PASSWORD` | Initial admin user password |
+
+### 3. Service Connectivity
+
+URLs and credentials for core infrastructure.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
+| `DATABASE_URL` | Primary database URL (Postgres format) | `postgresql://inferia:inferia@localhost:5432/inferia` |
+
+ ---
+
+## CLI Reference
+
+InferiaLLM provides a unified CLI to manage the platform.
+
+### 1. `inferiallm init`
+
+Initialize the control-plane databases, roles, and schemas.
+
+**Expected Output:**
+
+```text
+[inferia:init] Connecting as admin
+[inferia:init] Creating role: inferia_user
+[inferia:init] Creating database: inferia
+[inferia:init] Repairing privileges on inferia
+[inferia:init] Applying schema: global_schema
+[inferia:init] Bootstrapping filtration database (tables, default org, super admin)
+...
+[inferia:init] Bootstrap complete
+```
+
+### 2. `inferiallm start`
+
+Start Inferia services. You can start all services at once or specific components.
+
+**Usage:**
+```bash
+inferiallm start [service]
+```
+
+**Arguments:**
+* `all`: Start all services (default)
+* `orchestration`: Start Orchestration Gateway stack
+* `inference`: Start Inference Gateway
+* `filtration`: Start Filtration Gateway
+
+**Examples:**
+
+```bash
+# Start everything
+inferiallm start
+
+# Start only Orchestration
+inferiallm start orchestration
+```
+
+**Expected Output (Unified):**
+
+```text
+[CLI] Starting All Services...
+[Orchestration Gateway API] Listening on port 8080
+[Inference Gateway API] Listening on port 8001
+[Filtration Gateway API] Listening on port 8000
+[Dashboard] Serving at http://localhost:3001/
+...
+```
+
+### 3. Service Specific Commands
+
+Instead of running everything, you can run individual gateways:
+
+#### `inferiallm start orchestration`
+
+Start the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecars).
+
+#### `inferiallm start inference`
+
+Start the Inference Gateway standalone.
+
+#### `inferiallm start filtration`
+
+Start the Filtration Gateway standalone.
 
  ---
 
@@ -233,12 +371,12 @@ InferiaLLM is explicitly split into two planes:
 
 These are the **only externally reachable services**.
 
-| Service                   | Responsibility                                                                | Documentation                                    |
+| Service | Responsibility | Documentation |
 | ------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
-| **Admin Dashboard**       | Administrative control surface for policies, compute pools, usage, and audits | [README](./apps/dashboard/README.md)             |
-| **Filtration Gateway**    | Authentication, RBAC, policy enforcement, and guardrails                      | [README](./apps/filtration-gateway/README.md)    |
-| **Inference Gateway**     | Data-plane ingress for all LLM inference traffic                              | [README](./apps/inference-gateway/README.md)     |
-| **Orchestration Gateway** | Compute control authority and execution routing                               | [README](./apps/orchestration-gateway/README.md) |
+| **Admin Dashboard** | Administrative control surface for policies, compute pools, usage, and audits | [README](./apps/dashboard/README.md) |
+| **Filtration Gateway** | Authentication, RBAC, policy enforcement, and guardrails | [README](./package/src/inferia/services/filtration/README.md) |
+| **Inference Gateway** | Data-plane ingress for all LLM inference traffic | [README](./package/src/inferia/gateways/inference_gateway/README.md) |
+| **Orchestration Gateway** | Compute control authority and execution routing | [README](./package/src/inferia/gateways/orchestration_gateway/README.md) |
 
 ---
 
@@ -317,16 +455,16 @@ Supports:
 
 ## Core Services (Control Plane Internals)
 
-| Component        | Responsibility                            | Documentation                                       |
-|  ----------------  |  -----------------------------------------  |  ---------------------------------------------------  |
-| **Orchestrator** | Compute lifecycle and workload management | [README](./package/src/inferia/services/orchestration/README.md)        |
-| **Guardrails**   | Safety enforcement and content filtering  | [README](./package/src/inferia/services/filtration/guardrail/README.md) |
-| **RBAC**         | Identity and access boundaries            | [README](./package/src/inferia/services/filtration/rbac/README.md)      |
-| **Gateway**      | Secure internal service routing           | [README](./package/src/inferia/services/filtration/gateway/README.md)   |
-| **Audit**        | Immutable execution and policy logs       | [README](./package/src/inferia/services/filtration/audit/README.md)     |
-| **Policy**       | Quota, rate, and budget enforcement       | [README](./package/src/inferia/services/filtration/policy/README.md)    |
-| **Prompt**       | Prompt templates and versioning           | [README](./package/src/inferia/services/filtration/prompt/README.md)    |
-| **Packages**     | Installation, versioning, and initialization | [README](./package/README.md)                    |
+| Component | Responsibility | Documentation |
+| ---------------- | ----------------------------------------- | --------------------------------------------------- |
+| **Orchestrator** | Compute lifecycle and workload management | [README](./package/src/inferia/services/orchestration/README.md) |
+| **Guardrails** | Safety enforcement and content filtering | [README](./package/src/inferia/services/filtration/guardrail/README.md) |
+| **RBAC** | Identity and access boundaries | [README](./package/src/inferia/services/filtration/rbac/README.md) |
+| **Gateway** | Secure internal service routing | [README](./package/src/inferia/services/filtration/gateway/README.md) |
+| **Audit** | Immutable execution and policy logs | [README](./package/src/inferia/services/filtration/audit/README.md) |
+| **Policy** | Quota, rate, and budget enforcement | [README](./package/src/inferia/services/filtration/policy/README.md) |
+| **Prompt** | Prompt templates and versioning | [README](./package/src/inferia/services/filtration/prompt/README.md) |
+| **Packages** | Installation, versioning, and initialization | [README](./package/README.md) |
 
  ---
 
@@ -396,11 +534,9 @@ It provides:
 
 **From raw LLMs to real users - without building a platform from scratch.**
 
-## License
+---
 
-inferiaLLM is source-available under the Business Source License 1.1 (BSL).
+InferiaLLM  
+Copyright © 2026 Inferia AI
 
-- Free for non-commercial, research, and evaluation use
-- Commercial use requires a separate license
-
-See [LICENSE](LICENSE) and [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for details.
+InferiaLLM is an open-source LLM execution and control plane licensed under the Apache License, Version 2.0.

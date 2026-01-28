@@ -3,7 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 from db.database import get_db
 from db.models import ApiKey as DBApiKey
@@ -14,6 +17,7 @@ from rbac.authorization import authz_service
 from rbac.auth import auth_service
 
 router = APIRouter(tags=["API Keys"])
+
 
 @router.post("/api-keys", response_model=ApiKeyCreatedResponse, status_code=201)
 async def create_api_key(
@@ -112,7 +116,8 @@ async def revoke_api_key(
         
     # Soft delete / deactivation
     api_key.is_active = False
-    api_key.last_used_at = datetime.utcnow() # Mark revocation time roughly
+    api_key.last_used_at = utcnow_naive()
+ # Mark revocation time roughly
     
     await db.commit()
     

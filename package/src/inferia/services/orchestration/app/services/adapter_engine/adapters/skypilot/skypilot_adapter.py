@@ -175,3 +175,25 @@ class SkyPilotAdapter(ProviderAdapter):
                 raise RuntimeError(f"SkyPilot provisioning timeout for {task_name}")
 
             await asyncio.sleep(10)
+
+    # -------------------------------------------------
+    # LOGS
+    # -------------------------------------------------
+    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+        """
+        Fetch logs from a SkyPilot cluster.
+        """
+        # In actual SkyPilot, this usually requires 'sky.logs cluster_name'
+        return {"logs": ["SkyPilot logs are currently available via CLI: sky logs " + provider_instance_id]}
+
+    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+        """
+        Returns info for SkyPilot log streaming.
+        """
+        return {
+            "ws_url": None,
+            "provider": "skypilot",
+            "subscription": {
+                "cluster_name": provider_instance_id
+            }
+        }

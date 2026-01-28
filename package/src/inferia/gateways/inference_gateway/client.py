@@ -22,9 +22,9 @@ class FiltrationGatewayClient:
         self.timeout = settings.request_timeout
         self._client: Optional[httpx.AsyncClient] = None
         # Local in-memory cache for resolved contexts to reduce network hops
-        # TTL = 60s
+        # TTL = 10s (Reduced from 60s for faster settings propagation)
         import cachetools
-        self.context_cache = cachetools.TTLCache(maxsize=1000, ttl=60)
+        self.context_cache = cachetools.TTLCache(maxsize=1000, ttl=10)
 
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the shared httpx client."""
@@ -100,16 +100,17 @@ class FiltrationGatewayClient:
         deployment_id: str,
         user_id: str,
         model: str,
-        request_payload: Dict[str, Any] = None,
-        latency_ms: int = None,
-        ttft_ms: int = None,
-        tokens_per_second: float = None,
+        request_payload: Optional[Dict[str, Any]] = None,
+        latency_ms: Optional[int] = None,
+        ttft_ms: Optional[int] = None,
+        tokens_per_second: Optional[float] = None,
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
         total_tokens: int = 0,
         status_code: int = 200,
-        error_message: str = None,
+        error_message: Optional[str] = None,
         is_streaming: bool = False,
+        applied_policies: Optional[List[str]] = None,
     ) -> None:
         """
         Log inference request details (fire and forget).
@@ -138,6 +139,7 @@ class FiltrationGatewayClient:
                         "status_code": status_code,
                         "error_message": error_message,
                         "is_streaming": is_streaming,
+                        "applied_policies": applied_policies,
                     },
                     headers=self._get_headers(),
                 )

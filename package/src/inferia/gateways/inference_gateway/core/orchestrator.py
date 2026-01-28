@@ -26,6 +26,7 @@ class OrchestrationService:
         api_key: str, body: Dict, background_tasks: BackgroundTasks
     ):
         start_time = time.time()
+        applied_policies = []
 
         # Validation
         model = body.get("model")
@@ -46,9 +47,11 @@ class OrchestrationService:
         rag_cfg = context["rag_config"] or {}
         template_config = context.get("template_config")
         rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
 
         # 2. Rate Limit
         if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
             rpm = int(rate_limit_config.get("rpm", 0))
             if rpm > 0:
                 allowed, wait_time = rate_limiter.check_limit(
@@ -62,11 +65,18 @@ class OrchestrationService:
                         headers=headers,
                     )
 
-        # 3. Check Quota & 4. Input Guardrails (Parallel)
-        # We run these in parallel to save latency.
+        # 3. Check Quota
+        applied_policies.append("quota")
         quota_task = asyncio.create_task(
             filtration_client.check_quota(user_context_id, model)
         )
+        
+        # 4. Input Guardrails
+        if guardrail_cfg.get("enabled") or guardrail_cfg.get("pii_enabled"):
+            applied_policies.append("guardrail")
+            if guardrail_cfg.get("pii_enabled"):
+                applied_policies.append("pii")
+        
         scan_task = asyncio.create_task(
             GatewayService.scan_input(messages, guardrail_cfg, user_context_id)
         )
@@ -82,9 +92,14 @@ class OrchestrationService:
         await scan_task
 
         # 5. Prompt Processing (RAG / Templates)
+        if rag_cfg.get("enabled"):
+            applied_policies.append("rag")
+        if template_config and template_config.get("enabled"):
+            applied_policies.append("prompt_template")
+
         # Note: GatewayService.process_prompt now fails closed on error (Phase 1 Fix)
         messages = await GatewayService.process_prompt(
-            messages, model, user_context_id, org_id, rag_cfg, template_config, body
+            messages, model, user_context_id, org_id or "default", rag_cfg, template_config or {}, body
         )
 
         # 6. Prepare Provider Request
@@ -104,10 +119,11 @@ class OrchestrationService:
         
         # Resolve API key from credentials_json (Management API) or configuration (Orchestration API)
         credentials = deployment.get("credentials_json") or deployment.get("configuration") or {}
-        provider_key = (
+        provider_key = str(
             credentials.get("api_key")
             or credentials.get("key")
             or credentials.get("token")
+            or ""
         )
         
         # Special handling for Nosana deployments - use global internal API key
@@ -149,6 +165,8 @@ class OrchestrationService:
                 body,
                 start_time,
                 background_tasks,
+                applied_policies,
+                log_payloads,
             )
         else:
             return await OrchestrationService._handle_standard(
@@ -163,6 +181,8 @@ class OrchestrationService:
                 start_time,
                 guardrail_cfg,
                 background_tasks,
+                applied_policies,
+                log_payloads,
             )
 
     @staticmethod
@@ -177,6 +197,8 @@ class OrchestrationService:
         original_body,
         start_time,
         background_tasks,
+        applied_policies,
+        log_payloads,
     ):
         # Tracker state
         tracker = {"prompt_tokens": 0, "completion_tokens": 0, "ttft_ms": None}
@@ -190,13 +212,6 @@ class OrchestrationService:
             stream_gen, start_time, tracker
         )
 
-        # Background task wrapper to capture tracker state AFTER stream ends
-        async def log_after_stream():
-            # Wait for strict completion loop or handle inside generator?
-            # BackgroundTasks runs after response.
-            pass  # We need a way to log after stream inside the response handling or middleware
-            # The previous implementation put bg tasks inside the generator finally block.
-
         # We need a generator that logs on finish.
         async def logging_generator_wrapper():
             try:
@@ -204,9 +219,6 @@ class OrchestrationService:
                     yield chunk
             finally:
                 # Log completion
-                # Log completion - Fire and forget using asyncio.create_task
-                # We can't use FastAPI BackgroundTasks here because the response is already returned.
-                # But we can spawn a task that outlives this generator.
                 asyncio.create_task(
                     OrchestrationService._log_request(
                         deployment_id,
@@ -218,6 +230,8 @@ class OrchestrationService:
                         tracker["completion_tokens"],
                         tracker["ttft_ms"],
                         is_streaming=True,
+                        applied_policies=applied_policies,
+                        log_payloads=log_payloads,
                     )
                 )
 
@@ -244,6 +258,8 @@ class OrchestrationService:
         start_time,
         guardrail_cfg,
         background_tasks,
+        applied_policies,
+        log_payloads,
     ):
         response_data = await GatewayService.call_upstream(
             endpoint_url, provider_payload, provider_headers, engine
@@ -276,6 +292,8 @@ class OrchestrationService:
             completion_tokens,
             None,
             False,
+            applied_policies,
+            log_payloads,
         )
 
         return response_data
@@ -293,6 +311,8 @@ class OrchestrationService:
         completion_tokens,
         ttft_ms,
         is_streaming,
+        applied_policies,
+        log_payloads,
     ):
         end_time = time.time()
         latency_ms = int((end_time - start_time) * 1000)
@@ -302,29 +322,36 @@ class OrchestrationService:
         if latency_ms > 0 and completion_tokens > 0:
             tokens_per_second = round(completion_tokens / (latency_ms / 1000), 2)
 
-        # Log to Filtration
-        await filtration_client.log_inference(
-            deployment_id=deployment_id,
-            user_id=user_id,
-            model=model,
-            request_payload=request_payload,
-            latency_ms=latency_ms,
-            ttft_ms=ttft_ms,
-            tokens_per_second=tokens_per_second,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            status_code=200,
-            is_streaming=is_streaming,
-        )
+        # Respect log_payloads setting
+        final_payload = request_payload if log_payloads else None
+        
+        if not log_payloads:
+            logger.debug(f"Payload logging disabled for request to {model}")
 
-        # Track Usage
-        await filtration_client.track_usage(
-            user_id,
-            model,
-            {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            },
+        # Log to Filtration and Track Usage in parallel
+        await asyncio.gather(
+            filtration_client.log_inference(
+                deployment_id=deployment_id,
+                user_id=user_id,
+                model=model,
+                request_payload=final_payload,
+                latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
+                tokens_per_second=tokens_per_second,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                status_code=200,
+                is_streaming=is_streaming,
+                applied_policies=applied_policies,
+            ),
+            filtration_client.track_usage(
+                user_id,
+                model,
+                {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+            )
         )

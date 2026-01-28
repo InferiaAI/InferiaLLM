@@ -102,9 +102,6 @@ export default function Instances() {
           <table className="w-full text-sm text-left">
             <thead className="bg-slate-50 dark:bg-zinc-900 text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider border-b dark:border-zinc-800">
               <tr>
-                <th className="px-4 py-3 w-8">
-                  <input type="checkbox" className="rounded border-slate-300 dark:border-zinc-700 dark:bg-zinc-900" />
-                </th>
                 <th className="px-4 py-3 font-medium">Pool Name</th>
                 <th className="px-4 py-3 font-medium">Provider</th>
                 <th className="px-4 py-3 font-medium">Status</th>
@@ -114,11 +111,11 @@ export default function Instances() {
             <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500 dark:text-zinc-500">Loading pools...</td>
+                  <td colSpan={4} className="px-4 py-8 text-center text-slate-500 dark:text-zinc-500">Loading pools...</td>
                 </tr>
               ) : filteredInstances.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500 dark:text-zinc-500">No compute pools found. Create one to get started.</td>
+                  <td colSpan={4} className="px-4 py-8 text-center text-slate-500 dark:text-zinc-500">No compute pools found. Create one to get started.</td>
                 </tr>
               ) : (
                 filteredInstances.map((instance) => (
@@ -126,12 +123,7 @@ export default function Instances() {
                     key={instance.pool_id}
                     className="group hover:bg-slate-50/80 dark:hover:bg-zinc-900/50 transition-colors"
                   >
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        className="rounded border-slate-300 dark:border-zinc-700 dark:bg-zinc-900"
-                      />
-                    </td>
+
                     <td className="px-4 py-3 font-medium text-blue-600 dark:text-blue-400">
                       <Link
                         to={`/dashboard/compute/pools/${instance.pool_id}`}

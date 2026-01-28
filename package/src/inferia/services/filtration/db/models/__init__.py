@@ -9,3 +9,4 @@ from .inference_log import InferenceLog
 from .invitation import Invitation
 from .user_organization import UserOrganization
 from .audit_log import AuditLog
+from .system_setting import SystemSetting

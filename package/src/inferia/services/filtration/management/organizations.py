@@ -7,15 +7,17 @@ import secrets
 from db.database import get_db
 from db.models import Organization as DBOrganization, Invitation as DBInvitation, User as DBUser
 from schemas.management import (
-    OrganizationCreate, OrganizationResponse,
+    OrganizationCreate, OrganizationResponse, OrganizationUpdate,
     InviteRequest, InviteResponse, InvitationListResponse
 )
 from management.dependencies import get_current_user_context
-from datetime import datetime, timedelta
-from schemas.auth import PermissionEnum
-from rbac.authorization import authz_service
+from datetime import datetime, timedelta, timezone
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 router = APIRouter(tags=["Organizations"])
+
 
 @router.post("/organizations", response_model=OrganizationResponse, status_code=201)
 async def create_organization(
@@ -28,7 +30,8 @@ async def create_organization(
     
     new_org = DBOrganization(
         name=org_data.name,
-        api_key=api_key
+        api_key=api_key,
+        log_payloads=org_data.log_payloads
     )
     db.add(new_org)
     await db.commit()
@@ -51,6 +54,33 @@ async def get_my_organization(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
         
+    return org
+
+@router.patch("/organizations/me", response_model=OrganizationResponse)
+async def update_my_organization(
+    org_data: OrganizationUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+    
+    if not user_ctx.org_id:
+         raise HTTPException(status_code=400, detail="No active organization context")
+        
+    org_result = await db.execute(select(DBOrganization).where(DBOrganization.id == user_ctx.org_id))
+    org = org_result.scalars().first()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+        
+    if org_data.name is not None:
+        org.name = org_data.name
+    if org_data.log_payloads is not None:
+        org.log_payloads = org_data.log_payloads
+        
+    await db.commit()
+    await db.refresh(org)
     return org
 
 # --- Invitations (Grouped with Org Management) ---
@@ -86,13 +116,13 @@ async def create_invitation(
         DBInvitation.email == invite_data.email,
         DBInvitation.org_id == user_ctx.org_id,
         DBInvitation.accepted_at == None,
-        DBInvitation.expires_at > datetime.utcnow()
+        DBInvitation.expires_at > utcnow_naive()
     ))
     if existing_invite.scalars().first():
          raise HTTPException(status_code=400, detail="Pending invitation already exists for this email")
 
     token = secrets.token_urlsafe(32)
-    expires = datetime.utcnow() + timedelta(hours=48)
+    expires = datetime.now(timezone.utc) + timedelta(hours=48)
     
     new_invite = DBInvitation(
         email=invite_data.email,
@@ -135,7 +165,7 @@ async def list_invitations(
     invites_query = select(DBInvitation).where(
         DBInvitation.org_id == user_ctx.org_id,
         DBInvitation.accepted_at == None,
-        DBInvitation.expires_at > datetime.utcnow()
+        DBInvitation.expires_at > utcnow_naive()
     )
     invites = await db.execute(invites_query)
     

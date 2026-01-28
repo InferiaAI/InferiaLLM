@@ -47,8 +47,11 @@ class InventoryManagerService(
     # HEARTBEAT (AUTHORITATIVE STATE RECONCILER)
     # -------------------------------------------------
     async def InvenHeartbeat(self, request, context):
+        def utcnow_naive():
+            return datetime.now(timezone.utc).replace(tzinfo=None)
+
         node_id = UUID(request.node_id)
-        now = datetime.now(timezone.utc)
+        now = utcnow_naive()
 
         node = await self.repo.get(node_id)
         if not node:

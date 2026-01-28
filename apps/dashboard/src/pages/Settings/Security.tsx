@@ -82,11 +82,7 @@ export default function Security() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <div className="flex items-center text-sm text-muted-foreground mb-2">
-                        <span>Settings</span>
-                        <span className="mx-2">/</span>
-                        <span className="text-foreground font-medium">Security</span>
-                    </div>
+
                     <h1 className="text-3xl font-bold tracking-tight mb-2">Security Settings</h1>
                     <p className="text-muted-foreground">Manage your account security and authentication preferences.</p>
                 </div>

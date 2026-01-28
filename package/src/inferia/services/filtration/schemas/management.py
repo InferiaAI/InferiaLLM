@@ -5,13 +5,19 @@ from datetime import datetime
 # --- Organization ---
 class OrganizationCreate(BaseModel):
     name: str
+    log_payloads: bool = True
     
 class OrganizationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     name: str
     api_key: Optional[str] = None
+    log_payloads: bool = True
     created_at: datetime
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = None
+    log_payloads: Optional[bool] = None
 
 # --- User ---
 class UserCreate(BaseModel):

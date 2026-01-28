@@ -76,12 +76,15 @@ async def heartbeat(payload: HeartbeatPayload, request: Request):
                 
                 if payload.provider == "nosana" and target_state == "TERMINATED":
                     from datetime import datetime, timedelta, timezone
+                    def utcnow_naive():
+                        return datetime.now(timezone.utc).replace(tzinfo=None)
+                    
                     created_at = current_d.get("created_at")
                     if created_at:
-                        if created_at.tzinfo is None:
-                            created_at = created_at.replace(tzinfo=timezone.utc)
+                        if created_at.tzinfo is not None:
+                            created_at = created_at.replace(tzinfo=None)
                         
-                        now = datetime.now(timezone.utc)
+                        now = utcnow_naive()
                         duration = now - created_at
                         if duration < timedelta(minutes=10):
                             final_state = "FAILED"

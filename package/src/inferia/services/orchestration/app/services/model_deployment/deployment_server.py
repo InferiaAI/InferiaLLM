@@ -19,7 +19,7 @@ from services.adapter_engine.registry import get_adapter
 import os
 
 POSTGRES_DSN = os.getenv("POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia")
-GRPC_ADDR = "localhost:50051"
+GRPC_ADDR = "127.0.0.1:50051"
 
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
 
@@ -74,9 +74,12 @@ class DeleteModelRequest(BaseModel):
 
 
 # Audit Helper
+def utcnow_naive():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 async def log_audit_event(user_id: str | None, action: str, resource_type: str, resource_id: str | None, details: dict | None = None, status: str = "success"):
     import uuid
-    from datetime import datetime
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         try:
@@ -84,7 +87,7 @@ async def log_audit_event(user_id: str | None, action: str, resource_type: str, 
              await conn.execute('''
                 INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ''', str(uuid.uuid4()), datetime.utcnow(), user_id, action, resource_type, resource_id, json.dumps(details) if details else None, status)
+             ''', str(uuid.uuid4()), utcnow_naive(), user_id, action, resource_type, resource_id, json.dumps(details) if details else None, status)
         finally:
             await conn.close()
     except Exception as e:
@@ -425,7 +428,8 @@ async def list_deployments(pool_id: str | None = None):
                 "replicas": d.replicas,
                 "pool_id": d.pool_id,
                 "engine": d.engine,
-                "configuration": json.loads(d.configuration) if d.configuration else {},
+                "endpoint": d.endpoint,
+                "org_id": d.org_id,
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
@@ -511,22 +515,85 @@ async def get_deployment_logs(deployment_id: str):
     finally:
         await conn.close()
 
+@router.get("/logs/{deployment_id}/stream")
+async def get_deployment_log_stream_info(deployment_id: str):
+    """
+    Get WebSocket connection details for log streaming.
+    """
+    from uuid import UUID
+    import asyncpg
+    
+    try:
+        dep_uuid = UUID(deployment_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID")
+
+    conn = await asyncpg.connect(POSTGRES_DSN)
+    try:
+        # 1. Get deployment and provider
+        dep = await conn.fetchrow(
+            """
+            SELECT p.provider, d.node_ids 
+            FROM model_deployments d
+            JOIN compute_pools p ON d.pool_id = p.id
+            WHERE d.deployment_id = $1
+            """,
+            dep_uuid
+        )
+        
+        if not dep:
+             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
+        
+        provider = dep["provider"]
+        if not dep["node_ids"]:
+             return {"error": "No nodes assigned to this deployment yet."}
+             
+        node_id = dep["node_ids"][0]
+        
+        node = await conn.fetchrow(
+             "SELECT provider_instance_id FROM compute_inventory WHERE id = $1",
+             node_id
+        )
+        
+        if not node:
+             return {"error": "Node record not found"}
+
+        provider_instance_id = node["provider_instance_id"]
+        
+        # 2. Call Adapter for streaming info
+        try:
+            adapter = get_adapter(provider)
+            stream_info = await adapter.get_log_streaming_info(provider_instance_id=provider_instance_id)
+            return stream_info
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=f"Adapter error: {str(e)}")
+
+    finally:
+        await conn.close()
+
 @router.get("/deployments")
 async def list_all_deployments(org_id: str | None = None):
     """
     List ALL deployments across all pools.
     Optionally filter by org_id.
     """
+    import logging
+    logger = logging.getLogger("deployment-server")
+    logger.info(f"list_all_deployments called for org_id: {org_id}")
+    
     async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
         try:
+            logger.info("Calling gRPC ListDeployments...")
             resp = await stub.ListDeployments(
                 model_deployment_pb2.ListDeploymentsRequest(
                     pool_id="",
                     org_id=org_id or ""
                 )
             )
+            logger.info(f"gRPC ListDeployments returned {len(resp.deployments)} items")
         except grpc.RpcError as e:
+            logger.error(f"gRPC ListDeployments failed: {e.code()} - {e.details()}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to list all deployments: {e.details()}",
@@ -543,7 +610,8 @@ async def list_all_deployments(org_id: str | None = None):
                 "pool_id": d.pool_id,
                 "created_at": None, # or fetch if available
                 "engine": d.engine,
-                "configuration": json.loads(d.configuration) if d.configuration else {},
+                "endpoint": d.endpoint,
+                "org_id": d.org_id,
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility

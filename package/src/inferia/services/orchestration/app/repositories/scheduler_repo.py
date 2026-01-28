@@ -280,7 +280,7 @@ class SchedulerRepository:
             owner_type,
             owner_id,
             node["node_class"],
-            datetime.now(timezone.utc),
+            datetime.now(timezone.utc).replace(tzinfo=None),
         )
 
     async def _release_allocation_locked(
@@ -315,5 +315,5 @@ class SchedulerRepository:
             WHERE allocation_id = $1
             """,
             allocation_id,
-            datetime.now(timezone.utc),
+            datetime.now(timezone.utc).replace(tzinfo=None),
         )

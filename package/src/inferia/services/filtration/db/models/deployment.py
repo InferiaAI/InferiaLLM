@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from ..database import Base
 import uuid
+from db.security import EncryptedJSON
 
 class Deployment(Base):
     __tablename__ = "model_deployments"
@@ -12,7 +13,7 @@ class Deployment(Base):
     
     # Unified Fields
     engine = Column(String, nullable=True) # e.g. "vllm", "openai"
-    configuration = Column(JSON, nullable=True) # e.g. {"api_key": "..."}
+    configuration = Column(EncryptedJSON, nullable=True) # Automatically encrypted/decrypted
     endpoint = Column(String, nullable=True) # Exposed URL
     
     # Mapped from org_id column (Unified Schema)

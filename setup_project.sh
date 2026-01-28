@@ -132,11 +132,11 @@ fi
 # 4. Initialization
 echo -e "\n${YELLOW}[4/4] Initializing Database...${NC}"
 echo -e "This requires Docker (Postgres/Redis) to be running if using default settings."
-read -p "Do you want to run 'inferia init'? (y/n) " -n 1 -r
+read -p "Do you want to run 'inferiallm init'? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "Running inferia init..."
-    inferia init
+    echo -e "Running inferiallm init..."
+    inferiallm init
     echo -e "${GREEN}✓ Initialization complete.${NC}"
 else
     echo -e "Skipping initialization."
@@ -145,5 +145,5 @@ fi
 echo -e "\n${BLUE}==============================================${NC}"
 echo -e "${GREEN}Setup Complete!${NC}"
 echo -e "To activate the environment in the future, run: ${YELLOW}source .venv/bin/activate${NC}"
-echo -e "To start the services, run: ${YELLOW}inferia api-start${NC}"
+echo -e "To start the services, run: ${YELLOW}inferiallm start${NC}"
 echo -e "${BLUE}==============================================${NC}"

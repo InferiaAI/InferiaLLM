@@ -10,6 +10,11 @@ class StandardHeaders(BaseModel):
     x_trace_id: Optional[str] = Field(default_factory=lambda: str(uuid4()))
     x_client_version: Optional[str] = None
 
+from datetime import datetime, timezone
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 class ErrorResponse(BaseModel):
     """Standard error response."""
     model_config = ConfigDict(from_attributes=True)
@@ -18,7 +23,7 @@ class ErrorResponse(BaseModel):
     message: str
     details: Optional[Dict[str, Any]] = None
     request_id: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utcnow_naive)
 
 class HealthCheckResponse(BaseModel):
     """Health check response."""
@@ -26,4 +31,4 @@ class HealthCheckResponse(BaseModel):
     
     status: Literal["healthy", "degraded", "unhealthy"]
     version: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utcnow_naive)

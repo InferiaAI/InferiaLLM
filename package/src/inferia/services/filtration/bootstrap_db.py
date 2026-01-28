@@ -6,8 +6,7 @@ import os
 # Ensure current directory is in path (though python does this by default for scripts)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from db.database import DATABASE_URL, Base
 
 # Import all models to ensure they are registered with Base
@@ -31,9 +30,8 @@ async def bootstrap():
         logger.info("Creating tables...")
         await conn.run_sync(Base.metadata.create_all)
 
-    AsyncSessionLocal = sessionmaker(
-        bind=engine,
-        class_=AsyncSession,
+    AsyncSessionLocal = async_sessionmaker(
+        engine,
         expire_on_commit=False
     )
     
