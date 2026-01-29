@@ -163,7 +163,7 @@ async def create_invitation(
     await db.commit()
     await db.refresh(new_invite)
 
-    base_url = "http://localhost:5173/dashboard"
+    base_url = "http://localhost:3001"
     invite_link = f"{base_url}/auth/accept-invite?token={token}"
 
     return InviteResponse(
@@ -194,7 +194,7 @@ async def list_invitations(request: Request, db: AsyncSession = Depends(get_db))
     invites = await db.execute(invites_query)
 
     response_list = []
-    base_url = "http://localhost:5173"
+    base_url = "http://localhost:3001"
 
     for inv in invites.scalars().all():
         response_list.append(
