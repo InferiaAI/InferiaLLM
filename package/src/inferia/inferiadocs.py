@@ -4,15 +4,15 @@ def show_inferia():
     import shutil
 
     class Colors:
-        HEADER = '\033[95m'
-        BLUE = '\033[94m'
-        CYAN = '\033[96m'
-        GREEN = '\033[92m'
-        YELLOW = '\033[93m'
-        RED = '\033[91m'
-        ENDC = '\033[0m'
-        BOLD = '\033[1m'
-        UNDERLINE = '\033[4m'
+        HEADER = "\033[95m"
+        BLUE = "\033[94m"
+        CYAN = "\033[96m"
+        GREEN = "\033[92m"
+        YELLOW = "\033[93m"
+        RED = "\033[91m"
+        ENDC = "\033[0m"
+        BOLD = "\033[1m"
+        UNDERLINE = "\033[4m"
 
     def type_print(text, delay=0.005):
         for char in text:
@@ -23,11 +23,11 @@ def show_inferia():
 
     # Get terminal size
     term_width = shutil.get_terminal_size((80, 24)).columns
-    separator = '─' * term_width
+    separator = "─" * term_width
 
     def center_text(text):
         path = max(0, (term_width - len(text)) // 2)
-        return ' ' * path + text
+        return " " * path + text
 
     logo_lines = [
         r"██╗███╗   ██╗███████╗███████╗██████╗ ██╗ █████╗      ██╗     ██╗     ███╗   ███╗",
@@ -35,54 +35,58 @@ def show_inferia():
         r"██║██╔██╗ ██║█████╗  █████╗  ██████╔╝██║███████║     ██║     ██║     ██╔████╔██║",
         r"██║██║╚██╗██║██╔══╝  ██╔══╝  ██╔══██╗██║██╔══██║     ██║     ██║     ██║╚██╔╝██║",
         r"██║██║ ╚████║██║     ███████╗██║  ██║██║██║  ██║     ███████╗███████╗██║ ╚═╝ ██║",
-        r"╚═╝╚═╝  ╚═══╝╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝     ╚══════╝╚══════╝╚═╝     ╚═╝"
+        r"╚═╝╚═╝  ╚═══╝╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝     ╚══════╝╚══════╝╚═╝     ╚═╝",
     ]
-    
+
     # Print Header
     print(f"\n{separator}")
     print(center_text(f"{Colors.BOLD}{Colors.CYAN}INFERIA LLM{Colors.ENDC}"))
-    print(center_text(f"{Colors.BLUE}Distributed Inference & Orchestration Operating System{Colors.ENDC}"))
+    print(
+        center_text(
+            f"{Colors.BLUE}Distributed Inference & Orchestration Operating System{Colors.ENDC}"
+        )
+    )
     print(f"{separator}\n")
-    
+
     # Animate the logo
     sys.stdout.write(Colors.GREEN)
     sys.stdout.flush()
-    
+
     for line in logo_lines:
         padding = max(0, (term_width - len(line)) // 2)
-        sys.stdout.write(' ' * padding)
+        sys.stdout.write(" " * padding)
         type_print(line, delay=0.004)
-        
+
     sys.stdout.write(Colors.ENDC)
     sys.stdout.flush()
 
     print("\n" + separator)
     print("\n")
-    
+
     desc_title = "InferiaLLM is a operating system for:"
     print(center_text(f"{Colors.BOLD}{desc_title}{Colors.ENDC}"))
-    
+
     # Center bullet points roughly
     bullets = [
         "• Distributed LLM inference",
         "• Compute orchestration and scheduling",
         "• Guardrails, RBAC, policy, and audit enforcement",
-        "• Multi-provider GPU backends (cloud, on-prem, decentralized)"
+        "• Multi-provider GPU backends (cloud, on-prem, decentralized)",
     ]
     longest_bullet = max(len(b) for b in bullets)
     bullet_padding = max(0, (term_width - longest_bullet) // 2)
-    
+
     for b in bullets:
-        print(' ' * bullet_padding + b)
+        print(" " * bullet_padding + b)
 
     print(f"\n{separator}")
     print(center_text(f"{Colors.BOLD}{Colors.YELLOW}Quick Start{Colors.ENDC}"))
     print(f"{separator}\n")
 
-    print(f"  {Colors.GREEN}inferia init{Colors.ENDC}")
+    print(f"  {Colors.GREEN}inferiallm init{Colors.ENDC}")
     print("      Initialize databases, roles, and control-plane schemas\n")
 
-    print(f"  {Colors.GREEN}inferia api-start{Colors.ENDC}")
+    print(f"  {Colors.GREEN}inferiallm start{Colors.ENDC}")
     print("      Start all gateways, workers, and sidecars")
 
     print(f"\n{separator}")
@@ -90,13 +94,25 @@ def show_inferia():
     print(f"{separator}\n")
 
     cols = [
-        (f"{Colors.CYAN}init{Colors.ENDC}", "Initialize Inferia databases and bootstrap state"),
-        (f"{Colors.CYAN}api-start{Colors.ENDC}", "Start all services (orchestration, inference, filtration)"),
-        (f"{Colors.CYAN}orchestration-gateway{Colors.ENDC}", "Run orchestration API + worker + sidecars"),
-        (f"{Colors.CYAN}inference-gateway{Colors.ENDC}", "Run inference gateway"),
-        (f"{Colors.CYAN}filtration-gateway{Colors.ENDC}", "Run filtration / guardrails gateway"),
+        (
+            f"{Colors.CYAN}init{Colors.ENDC}",
+            "Initialize Inferia databases and bootstrap state",
+        ),
+        (
+            f"{Colors.CYAN}start{Colors.ENDC}",
+            "Start all services (orchestration, inference, filtration)",
+        ),
+        (
+            f"{Colors.CYAN}start orchestration{Colors.ENDC}",
+            "Run orchestration API + worker + sidecars",
+        ),
+        (f"{Colors.CYAN}start inference{Colors.ENDC}", "Run inference gateway"),
+        (
+            f"{Colors.CYAN}start filtration{Colors.ENDC}",
+            "Run filtration / guardrails gateway",
+        ),
     ]
-    
+
     for cmd, desc in cols:
         print(f"  {cmd}")
         print(f"      {desc}\n")
@@ -115,6 +131,7 @@ def show_inferia():
     print("    https://github.com/InferiaAI/InferiaLLM")
 
     print(f"\n{separator}\n")
+
 
 def show_orchestration_docs():
     print(r"""
@@ -137,7 +154,7 @@ Components started by this command:
 • Sidecars (e.g., Nosana)
 
 Usage:
-  inferia orchestration-gateway
+  inferiallm start orchestration
 
 Environment Requirements:
 • PostgreSQL (control-plane DB)
@@ -174,7 +191,7 @@ Responsibilities:
 • Policy enforcement (via Filtration)
 
 Usage:
-  inferia inference-gateway
+  inferiallm start inference
 
 Typical APIs:
 • /v1/chat/completions
@@ -209,7 +226,7 @@ Responsibilities:
 • Prompt templates
 
 Usage:
-  inferia filtration-gateway
+  inferiallm start filtration
 
 Sub-systems:
 • Guardrails
