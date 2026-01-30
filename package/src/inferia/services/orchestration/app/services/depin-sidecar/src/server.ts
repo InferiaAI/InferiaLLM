@@ -167,11 +167,11 @@ nosanaRouter.get('/balance', async (req, res) => {
 });
 
 nosanaRouter.post('/jobs/launch', async (req, res) => {
-    const { jobDefinition, marketAddress, resources_allocated } = req.body;
+    const { jobDefinition, marketAddress, resources_allocated, isConfidential = true } = req.body;
     if (!jobDefinition || !marketAddress) return res.status(400).json({ error: "Missing definition/market" });
 
     try {
-        const result = await nosanaService!.launchJob(jobDefinition, marketAddress);
+        const result = await nosanaService!.launchJob(jobDefinition, marketAddress, isConfidential);
 
         // Watchdog
         nosanaService!.watchJob(
@@ -180,6 +180,7 @@ nosanaRouter.post('/jobs/launch', async (req, res) => {
             {
                 jobDefinition,
                 marketAddress,
+                isConfidential,
                 resources_allocated: resources_allocated || { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 }
             }
         ).catch(console.error);
