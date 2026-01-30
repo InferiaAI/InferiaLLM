@@ -16,6 +16,7 @@ interface WatchedJobInfo {
     lastExtendTime: number;
     jobDefinition: any;
     marketAddress: string;
+    isConfidential?: boolean;
     resources: {
         gpu_allocated: number;
         vcpu_allocated: number;
@@ -32,6 +33,7 @@ async function retry<T>(fn: () => Promise<T>, retries = 5, delay = 500): Promise
         if (retries > 0 && (error.message.includes("429") || error.message.includes("Too Many Requests"))) {
             console.log(`[retry] Got 429, retrying in ${delay}ms... (${retries} left)`);
             await new Promise(resolve => setTimeout(resolve, delay));
+            // Backoff: 500ms -> 1s -> 2s -> 4s -> 8s
             return retry(fn, retries - 1, delay * 2);
         }
         throw error;
@@ -77,10 +79,41 @@ export class NosanaService {
         }
     }
 
-    async launchJob(jobDefinition: any, marketAddress: string) {
+    async launchJob(jobDefinition: any, marketAddress: string, isConfidential: boolean = true) {
         try {
+            // Step A: Upload to IPFS
+            let definitionToPin = jobDefinition;
+            if (isConfidential) {
+                console.log("[Launch] Confidential mode ACTIVE. Preparing dummy job definition...");
+                definitionToPin = {
+                    version: jobDefinition.version || "0.1",
+                    type: jobDefinition.type || "container",
+                    meta: {
+                        ...jobDefinition.meta,
+                        trigger: "cli"
+                    },
+                    logistics: {
+                        send: { type: "api-listen", args: {} },
+                        receive: { type: "api-listen", args: {} }
+                    },
+                    ops: []
+                };
+
+                // Add API endpoint support if present in metadata
+                if (jobDefinition.logistics) {
+                    if (jobDefinition.logistics.send && jobDefinition.logistics.send.type === 'api') {
+                        definitionToPin.logistics.send = jobDefinition.logistics.send;
+                    }
+                    if (jobDefinition.logistics.receive && jobDefinition.logistics.receive.type === 'api') {
+                        definitionToPin.logistics.receive = jobDefinition.logistics.receive;
+                    }
+                }
+            } else {
+                console.log("[Launch] Confidential mode INACTIVE. Pinning full job definition.");
+            }
+
             console.log("Pinning job to IPFS...");
-            const ipfsHash = await this.client.ipfs.pin(jobDefinition);
+            const ipfsHash = await this.client.ipfs.pin(definitionToPin);
             console.log(`IPFS Hash: ${ipfsHash}`);
 
             console.log(`Listing on market: ${marketAddress}`);
@@ -97,10 +130,17 @@ export class NosanaService {
 
             const signature = await this.client.solana.buildSignAndSend(instruction);
 
+            // Step C: If confidential, wait for RUNNING state and send real definition
+            if (isConfidential) {
+                console.log(`[Confidential] Job posted (${jobAddress}). Waiting for RUNNING state to send real definition...`);
+                this.waitForRunningAndSendDefinition(jobAddress, jobDefinition, ipfsHash)
+                    .catch(e => console.error(`[Confidential] Failed to handoff definition for ${jobAddress}:`, e));
+            }
+
             this.sendAuditLog({
                 action: "JOB_LAUNCHED",
                 jobAddress,
-                details: { ipfsHash, marketAddress, signature }
+                details: { ipfsHash, marketAddress, signature, isConfidential }
             });
 
             return {
@@ -112,6 +152,104 @@ export class NosanaService {
         } catch (error: any) {
             console.error("Launch Error:", error);
             throw new Error(`Nosana SDK Error: ${error.message}`);
+        }
+    }
+
+    async waitForRunningAndSendDefinition(jobAddress: string, realJobDefinition: any, dummyIpfsHash: string) {
+        console.log(`[Confidential] Starting poll for job ${jobAddress}...`);
+        const maxRetries = 600; // 10 minutes
+        let job: any;
+        const addr = address(jobAddress);
+
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                // Use retry wrapper to handle 429s gracefully during polling
+                job = await retry(() => this.client.jobs.get(addr), 3, 2000);
+                
+                if (job.state === JobState.RUNNING || (job.state as any) === 1) {
+                    console.log(`[Confidential] Job ${jobAddress} is RUNNING on node ${job.node}. Sending definition...`);
+                    break;
+                }
+                if (job.state === JobState.COMPLETED || job.state === JobState.STOPPED) {
+                     console.warn(`[Confidential] Job ${jobAddress} ended before we could send definition.`);
+                     return;
+                }
+            } catch (e) { }
+            // Increase polling interval to 3s to reduce load
+            await new Promise(r => setTimeout(r, 3000));
+        }
+
+        if (!job || (job.state !== JobState.RUNNING && (job.state as any) !== 1)) {
+             console.error(`[Confidential] Timeout waiting for job ${jobAddress} to run.`);
+             return;
+        }
+
+        try {
+            // Generate headers with includeTime: true as per confidential job spec
+            const headers = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
+            const fetchHeaders: any = {};
+            headers.forEach((value, key) => { fetchHeaders[key] = value; });
+            fetchHeaders['Content-Type'] = 'application/json';
+
+            const domain = process.env.NOSANA_INGRESS_DOMAIN || "node.k8s.prd.nos.ci";
+            // Ensure canonical address usage (though jobAddress should be correct)
+            const canonicalJobAddress = job.address.toString();
+            const nodeUrl = `https://${job.node}.${domain}/job/${canonicalJobAddress}/job-definition`;
+            
+            console.log(`[Confidential] Posting definition to ${nodeUrl}...`);
+
+            const response = await fetch(nodeUrl, {
+                method: "POST",
+                headers: fetchHeaders,
+                body: JSON.stringify(realJobDefinition)
+            });
+
+            if (!response.ok) {
+                // Retry logic for 400/500 errors
+                if (response.status >= 400 && response.status < 500) {
+                     console.warn(`[Confidential] Node rejected definition (${response.status} - ${await response.text()}), retrying in 5s...`);
+                     await new Promise(r => setTimeout(r, 5000));
+                     
+                     // Regenerate headers in case of time drift
+                     const newHeaders = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
+                     const newFetchHeaders: any = {};
+                     newHeaders.forEach((value, key) => { newFetchHeaders[key] = value; });
+                     newFetchHeaders['Content-Type'] = 'application/json';
+
+                     const retryResp = await fetch(nodeUrl, {
+                        method: "POST",
+                        headers: newFetchHeaders,
+                        body: JSON.stringify(realJobDefinition)
+                    });
+                    if (!retryResp.ok) {
+                        throw new Error(`Node rejected definition (retry): ${retryResp.status} ${await retryResp.text()}`);
+                    }
+                } else {
+                    throw new Error(`Node rejected definition: ${response.status} ${await response.text()}`);
+                }
+            }
+
+            console.log(`[Confidential] Successfully handed off definition to node for job ${canonicalJobAddress}`);
+
+            // Calculate and cache the Service URL from the REAL definition
+            try {
+                const services = getJobExposedServices(realJobDefinition, canonicalJobAddress);
+                if (services && services.length > 0) {
+                    const domain = process.env.NOSANA_INGRESS_DOMAIN || "node.k8s.prd.nos.ci";
+                    const serviceUrl = `https://${services[0].hash}.${domain}`;
+                    console.log(`[Confidential] Resolved Service URL from secret definition: ${serviceUrl}`);
+                    
+                    const jobInfo = this.watchedJobs.get(jobAddress);
+                    if (jobInfo) {
+                        jobInfo.serviceUrl = serviceUrl;
+                    }
+                }
+            } catch (err) {
+                console.error(`[Confidential] Failed to resolve service URL from definition:`, err);
+            }
+
+        } catch (e) {
+            console.error(`[Confidential] Failed to send definition to node:`, e);
         }
     }
 
@@ -280,8 +418,45 @@ export class NosanaService {
             const result = await retry(() => this.client.ipfs.retrieve(job.ipfsResult!));
             return { status: "completed", ipfsHash: job.ipfsResult, result: result };
         } catch (error: any) {
+             if (error.message && error.message.includes("IPFS")) {
+                 console.log(`[Confidential] IPFS fetch failed. Attempting direct node retrieval for ${jobAddress}...`);
+                 return this.retrieveConfidentialResults(jobAddress);
+             }
             console.error("Get Logs Error:", error);
             throw new Error(`Get Logs Error: ${error.message}`);
+        }
+    }
+
+    async retrieveConfidentialResults(jobAddress: string) {
+        try {
+            const addr = address(jobAddress);
+            const job = await this.client.jobs.get(addr);
+            
+            if (!job.ipfsJob) return { status: "pending", logs: ["Job has no IPFS hash."] };
+
+            const dummyHash = job.ipfsJob;
+            const headers = await this.client.authorization.generateHeaders(dummyHash);
+            const fetchHeaders: any = {};
+            headers.forEach((value, key) => { fetchHeaders[key] = value; });
+
+            const domain = process.env.NOSANA_INGRESS_DOMAIN || "node.k8s.prd.nos.ci";
+            const nodeUrl = `https://${job.node}.${domain}/job/${jobAddress}/results`;
+            
+            console.log(`[Confidential] Fetching results from ${nodeUrl}...`);
+            const response = await fetch(nodeUrl, {
+                method: "GET",
+                headers: fetchHeaders
+            });
+
+            if (!response.ok) {
+                throw new Error(`Node rejected result fetch: ${response.status} ${await response.text()}`);
+            }
+
+            const results = await response.json();
+            return { status: "completed", isConfidential: true, result: results };
+        } catch (e: any) {
+            console.error(`[Confidential] Failed to retrieve results:`, e);
+            return { status: "error", logs: [`Failed to retrieve confidential results: ${e.message}`] };
         }
     }
 
@@ -309,7 +484,8 @@ export class NosanaService {
                 const state = job.state;
                 if (((state as any) === JobState.RUNNING || (state as any) === 1) && !this.watchedJobs.has(jobAddress)) {
                     console.log(`Recovering watchdog for running job: ${jobAddress}`);
-                    this.watchJob(jobAddress, process.env.ORCHESTRATOR_URL || "http://localhost:8080", {
+                        this.watchJob(jobAddress, process.env.ORCHESTRATOR_URL || "http://localhost:8080", {
+                        isConfidential: true,
                         resources_allocated: { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 }
                     });
                 }
@@ -325,6 +501,7 @@ export class NosanaService {
         options?: {
             jobDefinition?: any;
             marketAddress?: string;
+            isConfidential?: boolean;
             resources_allocated?: {
                 gpu_allocated: number;
                 vcpu_allocated: number;
@@ -346,6 +523,7 @@ export class NosanaService {
             lastExtendTime: now,
             jobDefinition: options?.jobDefinition || null,
             marketAddress: options?.marketAddress || "",
+            isConfidential: options?.isConfidential !== undefined ? options.isConfidential : true,
             resources,
             userStopped: false,
         };
@@ -504,7 +682,8 @@ export class NosanaService {
                         try {
                             const newJob = await this.launchJob(
                                 currentJobInfo.jobDefinition,
-                                currentJobInfo.marketAddress
+                                currentJobInfo.marketAddress,
+                                currentJobInfo.isConfidential
                             );
 
                             this.sendAuditLog({
@@ -535,6 +714,7 @@ export class NosanaService {
                             this.watchJob(newJob.jobAddress, orchestratorUrl, {
                                 jobDefinition: currentJobInfo.jobDefinition,
                                 marketAddress: currentJobInfo.marketAddress,
+                                isConfidential: currentJobInfo.isConfidential,
                                 resources_allocated: currentJobInfo.resources,
                             });
                         } catch (redeployErr: any) {
