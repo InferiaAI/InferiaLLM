@@ -12,6 +12,7 @@ const MIN_RUNTIME_FOR_REDEPLOY_MS = 20 * 60 * 1000;
 
 interface WatchedJobInfo {
     jobAddress: string;
+    deploymentUuid?: string;         // Required for API-mode auth
     startTime: number;
     lastExtendTime: number;
     jobDefinition: any;
@@ -30,7 +31,8 @@ async function retry<T>(fn: () => Promise<T>, retries = 5, delay = 500): Promise
     try {
         return await fn();
     } catch (error: any) {
-        if (retries > 0 && (error.message.includes("429") || error.message.includes("Too Many Requests"))) {
+        const errorMsg = error.message || "";
+        if (retries > 0 && (errorMsg.includes("429") || errorMsg.includes("Too Many Requests"))) {
             console.log(`[retry] Got 429, retrying in ${delay}ms... (${retries} left)`);
             await new Promise(resolve => setTimeout(resolve, delay));
             // Backoff: 500ms -> 1s -> 2s -> 4s -> 8s
@@ -42,17 +44,33 @@ async function retry<T>(fn: () => Promise<T>, retries = 5, delay = 500): Promise
 
 export class NosanaService {
     private client: NosanaClient;
-    private privateKey: string;
+    private privateKey: string | undefined;
+    private apiKey: string | undefined;
+    private authMode: 'wallet' | 'api' = 'wallet';
     private watchedJobs = new Map<string, WatchedJobInfo>();
     private summaryInterval: number = 60000;
 
-    constructor(privateKey: string, rpcUrl?: string) {
-        this.privateKey = privateKey;
-        this.client = createNosanaClient(NosanaNetwork.MAINNET, {
-            solana: {
-                rpcEndpoint: rpcUrl || "https://api.mainnet-beta.solana.com",
-            },
-        });
+    constructor(options: { privateKey?: string, apiKey?: string, rpcUrl?: string }) {
+        this.privateKey = options.privateKey;
+        this.apiKey = options.apiKey;
+
+        if (this.apiKey) {
+            this.authMode = 'api';
+            this.client = createNosanaClient(NosanaNetwork.MAINNET, {
+                api: { apiKey: this.apiKey },
+                solana: {
+                    rpcEndpoint: options.rpcUrl || "https://api.mainnet-beta.solana.com",
+                },
+            });
+        } else {
+            this.authMode = 'wallet';
+            this.client = createNosanaClient(NosanaNetwork.MAINNET, {
+                solana: {
+                    rpcEndpoint: options.rpcUrl || "https://api.mainnet-beta.solana.com",
+                },
+            });
+        }
+
         this.startWatchdogSummary();
     }
 
@@ -65,17 +83,19 @@ export class NosanaService {
     }
 
     async init() {
-        if (this.privateKey) {
+        if (this.authMode === 'wallet' && this.privateKey) {
             try {
                 const secretKey = bs58.decode(this.privateKey);
                 const signer = await createKeyPairSignerFromBytes(secretKey);
                 this.client.wallet = signer;
                 const walletAddr = this.client.wallet ? this.client.wallet.address : "Unknown";
-                console.log(`Nosana Adapter initialized. Wallet: ${walletAddr}`);
+                console.log(`Nosana Adapter initialized in WALLET mode. Wallet: ${walletAddr}`);
             } catch (e) {
                 console.error("Failed to initialize Nosana wallet:", e);
                 throw e;
             }
+        } else if (this.authMode === 'api') {
+            console.log("Nosana Adapter initialized in API mode.");
         }
     }
 
@@ -99,7 +119,6 @@ export class NosanaService {
                     ops: []
                 };
 
-                // Add API endpoint support if present in metadata
                 if (jobDefinition.logistics) {
                     if (jobDefinition.logistics.send && jobDefinition.logistics.send.type === 'api') {
                         definitionToPin.logistics.send = jobDefinition.logistics.send;
@@ -112,42 +131,82 @@ export class NosanaService {
                 console.log("[Launch] Confidential mode INACTIVE. Pinning full job definition.");
             }
 
-            console.log("Pinning job to IPFS...");
-            const ipfsHash = await this.client.ipfs.pin(definitionToPin);
-            console.log(`IPFS Hash: ${ipfsHash}`);
-
-            console.log(`Listing on market: ${marketAddress}`);
-            const instruction = await this.client.jobs.post({
-                ipfsHash,
-                market: address(marketAddress),
-                timeout: 1800,
-            });
-
             let jobAddress = "unknown";
-            if (instruction.accounts && instruction.accounts.length > 0) {
-                jobAddress = instruction.accounts[0].address;
-            }
+            let deploymentUuid: string | undefined;
+            let ipfsHash = "pending";
 
-            const signature = await this.client.solana.buildSignAndSend(instruction);
+            if (this.authMode === 'api') {
+                console.log(`[Launch] Creating deployment via API in market: ${marketAddress}`);
+                const deployment = await this.client.api.deployments.create({
+                    name: `inferia-${Date.now()}`,
+                    market: marketAddress,
+                    job_definition: definitionToPin,
+                    replicas: 1,
+                    timeout: 3600,
+                    strategy: 1, // Fix/Deterministic strategy
+                } as any);
+
+                deploymentUuid = (deployment as any).uuid || (deployment as any).id;
+                console.log(`[Launch] Deployment created: ${deploymentUuid}. Waiting for Job Address...`);
+
+                // Bridge: Poll for Job Address
+                let attempts = 0;
+                while (attempts < 30) {
+                    const status = await this.client.api.deployments.get(deploymentUuid!);
+                    const jobs = (status as any).jobs || [];
+                    if (jobs.length > 0) {
+                        jobAddress = jobs[0].address || jobs[0].job;
+                        ipfsHash = jobs[0].ipfs_job;
+                        console.log(`[Launch] Resolved Job Address from API: ${jobAddress}`);
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, 2000));
+                    attempts++;
+                }
+
+                if (jobAddress === "unknown") {
+                    throw new Error("Timeout waiting for Job Address from Nosana API");
+                }
+
+            } else {
+                // Wallet Mode: Legacy Flow
+                console.log("Pinning job to IPFS...");
+                ipfsHash = await this.client.ipfs.pin(definitionToPin);
+                console.log(`IPFS Hash: ${ipfsHash}`);
+
+                console.log(`Listing on market: ${marketAddress}`);
+                const instruction = await this.client.jobs.post({
+                    ipfsHash,
+                    market: address(marketAddress),
+                    timeout: 1800,
+                });
+
+                if (instruction.accounts && instruction.accounts.length > 0) {
+                    jobAddress = instruction.accounts[0].address;
+                }
+
+                const signature = await this.client.solana.buildSignAndSend(instruction);
+                console.log(`[Launch] Job posted via Wallet. Signature: ${signature}`);
+            }
 
             // Step C: If confidential, wait for RUNNING state and send real definition
             if (isConfidential) {
                 console.log(`[Confidential] Job posted (${jobAddress}). Waiting for RUNNING state to send real definition...`);
-                this.waitForRunningAndSendDefinition(jobAddress, jobDefinition, ipfsHash)
+                this.waitForRunningAndSendDefinition(jobAddress, jobDefinition, ipfsHash, deploymentUuid)
                     .catch(e => console.error(`[Confidential] Failed to handoff definition for ${jobAddress}:`, e));
             }
 
             this.sendAuditLog({
                 action: "JOB_LAUNCHED",
                 jobAddress,
-                details: { ipfsHash, marketAddress, signature, isConfidential }
+                details: { ipfsHash, marketAddress, isConfidential, authMode: this.authMode, deploymentUuid }
             });
 
             return {
                 status: "success",
                 jobAddress: jobAddress,
+                deploymentUuid: deploymentUuid,
                 ipfsHash: ipfsHash,
-                txSignature: signature,
             };
         } catch (error: any) {
             console.error("Launch Error:", error);
@@ -155,7 +214,7 @@ export class NosanaService {
         }
     }
 
-    async waitForRunningAndSendDefinition(jobAddress: string, realJobDefinition: any, dummyIpfsHash: string) {
+    async waitForRunningAndSendDefinition(jobAddress: string, realJobDefinition: any, dummyIpfsHash: string, deploymentUuid?: string) {
         console.log(`[Confidential] Starting poll for job ${jobAddress}...`);
         const maxRetries = 600; // 10 minutes
         let job: any;
@@ -185,53 +244,61 @@ export class NosanaService {
         }
 
         try {
-            // Generate headers with includeTime: true as per confidential job spec
-            const headers = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
-            const fetchHeaders: any = {};
-            headers.forEach((value, key) => { fetchHeaders[key] = value; });
-            fetchHeaders['Content-Type'] = 'application/json';
+            let fetchHeaders: any = { 'Content-Type': 'application/json' };
+
+            if (this.authMode === 'api' && deploymentUuid) {
+                console.log(`[Confidential] Requesting Auth Header from API for deployment ${deploymentUuid}...`);
+                const deployment = await this.client.api.deployments.get(deploymentUuid);
+                const authHeader = await (deployment as any).generateAuthHeader();
+                fetchHeaders['Authorization'] = authHeader;
+            } else {
+                const headers = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
+                headers.forEach((value, key) => { fetchHeaders[key] = value; });
+            }
 
             const domain = process.env.NOSANA_INGRESS_DOMAIN || "node.k8s.prd.nos.ci";
-            // Ensure canonical address usage (though jobAddress should be correct)
             const canonicalJobAddress = job.address.toString();
             const nodeUrl = `https://${job.node}.${domain}/job/${canonicalJobAddress}/job-definition`;
             
             console.log(`[Confidential] Posting definition to ${nodeUrl}...`);
 
-            const response = await fetch(nodeUrl, {
-                method: "POST",
-                headers: fetchHeaders,
-                body: JSON.stringify(realJobDefinition)
-            });
+            const sendDef = async (headers: any) => {
+                const response = await fetch(nodeUrl, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(realJobDefinition)
+                });
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw { status: response.status, message: text };
+                }
+                return response;
+            };
 
-            if (!response.ok) {
-                // Retry logic for 400/500 errors
-                if (response.status >= 400 && response.status < 500) {
-                     console.warn(`[Confidential] Node rejected definition (${response.status} - ${await response.text()}), retrying in 5s...`);
+            try {
+                await sendDef(fetchHeaders);
+            } catch (e: any) {
+                if (e.status >= 400 && e.status < 500) {
+                     console.warn(`[Confidential] Node rejected definition (${e.status} - ${e.message}), retrying in 5s...`);
                      await new Promise(r => setTimeout(r, 5000));
                      
-                     // Regenerate headers in case of time drift
-                     const newHeaders = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
-                     const newFetchHeaders: any = {};
-                     newHeaders.forEach((value, key) => { newFetchHeaders[key] = value; });
-                     newFetchHeaders['Content-Type'] = 'application/json';
+                     // Regenerate headers
+                     if (this.authMode === 'api' && deploymentUuid) {
+                         const deployment = await this.client.api.deployments.get(deploymentUuid);
+                         fetchHeaders['Authorization'] = await (deployment as any).generateAuthHeader();
+                     } else {
+                         const newHeaders = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
+                         newHeaders.forEach((value, key) => { fetchHeaders[key] = value; });
+                     }
 
-                     const retryResp = await fetch(nodeUrl, {
-                        method: "POST",
-                        headers: newFetchHeaders,
-                        body: JSON.stringify(realJobDefinition)
-                    });
-                    if (!retryResp.ok) {
-                        throw new Error(`Node rejected definition (retry): ${retryResp.status} ${await retryResp.text()}`);
-                    }
+                     await sendDef(fetchHeaders);
                 } else {
-                    throw new Error(`Node rejected definition: ${response.status} ${await response.text()}`);
+                    throw e;
                 }
             }
 
             console.log(`[Confidential] Successfully handed off definition to node for job ${canonicalJobAddress}`);
 
-            // Calculate and cache the Service URL from the REAL definition
             try {
                 const services = getJobExposedServices(realJobDefinition, canonicalJobAddress);
                 if (services && services.length > 0) {
@@ -248,8 +315,8 @@ export class NosanaService {
                 console.error(`[Confidential] Failed to resolve service URL from definition:`, err);
             }
 
-        } catch (e) {
-            console.error(`[Confidential] Failed to send definition to node:`, e);
+        } catch (e: any) {
+            console.error(`[Confidential] Failed to send definition to node:`, e.message || e);
         }
     }
 
@@ -269,9 +336,6 @@ export class NosanaService {
         };
 
         try {
-            // Using internal endpoint which might require a mock internal key or similar if enforced
-            // Assuming this runs in a trusted environment or we need to add a header.
-            // For now, simple fetch.
             await fetch(`${filtrationUrl}/audit/internal/log`, {
                 method: "POST",
                 headers: {
@@ -287,28 +351,34 @@ export class NosanaService {
 
     async stopJob(jobAddress: string) {
         try {
-            console.log(`Attempting to stop job: ${jobAddress}`);
-            const addr = address(jobAddress);
-            const job = await retry(() => this.client.jobs.get(addr));
-
-            let instruction;
-            if (job.state === JobState.RUNNING) {
-                instruction = await retry(() => this.client.jobs.end({ job: addr }));
-            } else if (job.state === JobState.QUEUED) {
-                instruction = await retry(() => this.client.jobs.delist({ job: addr }));
+            console.log(`Attempting to stop job: ${jobAddress} (Mode: ${this.authMode})`);
+            
+            if (this.authMode === 'api') {
+                await this.client.api.jobs.stop(jobAddress);
+                console.log(`Job ${jobAddress} stopped via API`);
+                return { status: "stopped" };
             } else {
-                throw new Error(`Cannot stop job in state: ${job.state}`);
+                const addr = address(jobAddress);
+                const job = await retry(() => this.client.jobs.get(addr));
+
+                let instruction;
+                if (job.state === JobState.RUNNING) {
+                    instruction = await retry(() => this.client.jobs.end({ job: addr }));
+                } else if (job.state === JobState.QUEUED) {
+                    instruction = await retry(() => this.client.jobs.delist({ job: addr }));
+                } else {
+                    throw new Error(`Cannot stop job in state: ${job.state}`);
+                }
+
+                const signature = await retry(() => this.client.solana.buildSignAndSend(instruction));
+                this.sendAuditLog({
+                    action: "JOB_STOPPED",
+                    jobAddress,
+                    details: { signature, manual_stop: true }
+                });
+
+                return { status: "stopped", txSignature: signature };
             }
-
-            const signature = await retry(() => this.client.solana.buildSignAndSend(instruction));
-
-            this.sendAuditLog({
-                action: "JOB_STOPPED",
-                jobAddress,
-                details: { signature, manual_stop: true }
-            });
-
-            return { status: "stopped", txSignature: signature };
         } catch (error: any) {
             console.error("Stop Job Failed:", error);
             this.sendAuditLog({
@@ -325,19 +395,25 @@ export class NosanaService {
         try {
             console.log(`Extending job ${jobAddress} by ${duration} seconds...`);
             const addr = address(jobAddress);
-            const instruction = await this.client.jobs.extend({
-                job: addr,
-                timeout: duration,
-            });
-            const signature = await this.client.solana.buildSignAndSend(instruction);
+            
+            if (this.authMode === 'api') {
+                await this.client.api.jobs.extend({ address: jobAddress, seconds: duration } as any);
+                return { status: "success", jobAddress };
+            } else {
+                const instruction = await this.client.jobs.extend({
+                    job: addr,
+                    timeout: duration,
+                });
+                const signature = await this.client.solana.buildSignAndSend(instruction);
 
-            this.sendAuditLog({
-                action: "JOB_EXTENDED",
-                jobAddress,
-                details: { duration, signature }
-            });
+                this.sendAuditLog({
+                    action: "JOB_EXTENDED",
+                    jobAddress,
+                    details: { duration, signature }
+                });
 
-            return { status: "success", jobAddress, txSignature: signature };
+                return { status: "success", jobAddress, txSignature: signature };
+            }
         } catch (error: any) {
             console.error("Extend Error:", error);
             this.sendAuditLog({
@@ -351,19 +427,17 @@ export class NosanaService {
     }
 
     async getLogStreamer() {
-        if (!this.client.wallet) throw new Error("Wallet not initialized");
-        return new LogStreamer(this.client.wallet);
+        if (!this.client.wallet && this.authMode === 'wallet') throw new Error("Wallet not initialized");
+        return new LogStreamer(this.client.wallet as any);
     }
 
     async getJob(jobAddress: string) {
-        // ... (existing implementation) ...
         try {
             const addr = address(jobAddress);
             const job = await retry(() => this.client.jobs.get(addr));
             const isRunning = job.state === JobState.RUNNING;
             let serviceUrl: string | null = null;
 
-            // OPTIMIZATION: Check cache first
             const cachedJob = this.watchedJobs.get(jobAddress);
             if (cachedJob?.serviceUrl) {
                 serviceUrl = cachedJob.serviceUrl;
@@ -379,7 +453,6 @@ export class NosanaService {
                             const domain = process.env.NOSANA_INGRESS_DOMAIN || "node.k8s.prd.nos.ci";
                             serviceUrl = `https://${services[0].hash}.${domain}`;
 
-                            // Update cache
                             if (cachedJob) {
                                 cachedJob.serviceUrl = serviceUrl;
                             }
@@ -406,7 +479,6 @@ export class NosanaService {
     }
 
     async getJobLogs(jobAddress: string) {
-        // ... (existing implementation) ...
         try {
             const addr = address(jobAddress);
             const job = await retry(() => this.client.jobs.get(addr));
@@ -435,9 +507,16 @@ export class NosanaService {
             if (!job.ipfsJob) return { status: "pending", logs: ["Job has no IPFS hash."] };
 
             const dummyHash = job.ipfsJob;
-            const headers = await this.client.authorization.generateHeaders(dummyHash);
-            const fetchHeaders: any = {};
-            headers.forEach((value, key) => { fetchHeaders[key] = value; });
+            let fetchHeaders: any = {};
+            
+            const cachedJob = this.watchedJobs.get(jobAddress);
+            if (this.authMode === 'api' && cachedJob?.deploymentUuid) {
+                const deployment = await this.client.api.deployments.get(cachedJob.deploymentUuid);
+                fetchHeaders['Authorization'] = await (deployment as any).generateAuthHeader();
+            } else {
+                const headers = await this.client.authorization.generateHeaders(dummyHash, { includeTime: true } as any);
+                headers.forEach((value, key) => { fetchHeaders[key] = value; });
+            }
 
             const domain = process.env.NOSANA_INGRESS_DOMAIN || "node.k8s.prd.nos.ci";
             const nodeUrl = `https://${job.node}.${domain}/job/${jobAddress}/results`;
@@ -461,7 +540,14 @@ export class NosanaService {
     }
 
     async getBalance() {
-        // ... (existing implementation) ...
+        if (this.authMode === 'api') {
+            const balance = await this.client.api.credits.balance();
+            return {
+                sol: 0,
+                nos: (balance as any).amount || "0",
+                address: "API_ACCOUNT"
+            };
+        }
         const sol = await this.client.solana.getBalance();
         const nos = await this.client.nos.getBalance();
         return {
@@ -472,7 +558,10 @@ export class NosanaService {
     }
 
     async recoverJobs() {
-        // ... (existing implementation) ...
+        if (this.authMode === 'api') {
+            console.log("Job recovery for API mode is handled by Deployment listing (not implemented yet)");
+            return;
+        }
         if (!this.client.wallet) return;
         try {
             const jobs = await retry(() => this.client.jobs.all());
@@ -501,6 +590,7 @@ export class NosanaService {
         options?: {
             jobDefinition?: any;
             marketAddress?: string;
+            deploymentUuid?: string;
             isConfidential?: boolean;
             resources_allocated?: {
                 gpu_allocated: number;
@@ -519,6 +609,7 @@ export class NosanaService {
 
         const jobInfo: WatchedJobInfo = {
             jobAddress,
+            deploymentUuid: options?.deploymentUuid,
             startTime: now,
             lastExtendTime: now,
             jobDefinition: options?.jobDefinition || null,
@@ -537,7 +628,7 @@ export class NosanaService {
         this.sendAuditLog({
             action: "WATCHDOG_STARTED",
             jobAddress,
-            details: { resources }
+            details: { resources, deploymentUuid: options?.deploymentUuid }
         });
 
         while (true) {
@@ -593,7 +684,6 @@ export class NosanaService {
 
                     // Heartbeat
                     if (currentTime - lastHeartbeat > 30000) {
-                        // ... (heartbeat logic) ...
                         try {
                             const payload = {
                                 provider: "nosana",
@@ -641,7 +731,6 @@ export class NosanaService {
                         }
                     });
 
-                    // Auto-Redeploy Logic
                     const shouldRedeploy =
                         !currentJobInfo.userStopped &&
                         currentJobInfo.jobDefinition &&
@@ -651,9 +740,7 @@ export class NosanaService {
                     const tooShort = runtime < MIN_RUNTIME_FOR_REDEPLOY_MS;
 
                     if (currentJobInfo.userStopped) {
-                        // User stopped
                     } else if (tooShort) {
-                        // Too short, failed
                         try {
                             const payload = {
                                 provider: "nosana",
@@ -672,13 +759,6 @@ export class NosanaService {
                         } catch (err) { }
                     } else if (shouldRedeploy) {
                         console.log(`[auto-redeploy] Attempting redeploy for ${jobAddress}...`);
-
-                        this.sendAuditLog({
-                            action: "JOB_AUTO_REDEPLOY_ATTEMPT",
-                            jobAddress,
-                            details: { runtime_mins: runtimeMins }
-                        });
-
                         try {
                             const newJob = await this.launchJob(
                                 currentJobInfo.jobDefinition,
@@ -686,13 +766,6 @@ export class NosanaService {
                                 currentJobInfo.isConfidential
                             );
 
-                            this.sendAuditLog({
-                                action: "JOB_AUTO_REDEPLOY_SUCCESS",
-                                jobAddress: newJob.jobAddress, // New ID
-                                details: { old_job_address: jobAddress }
-                            });
-
-                            // Notify orchestrator...
                             try {
                                 const updatePayload = {
                                     provider: "nosana",
@@ -715,18 +788,11 @@ export class NosanaService {
                                 jobDefinition: currentJobInfo.jobDefinition,
                                 marketAddress: currentJobInfo.marketAddress,
                                 isConfidential: currentJobInfo.isConfidential,
+                                deploymentUuid: newJob.deploymentUuid,
                                 resources_allocated: currentJobInfo.resources,
                             });
                         } catch (redeployErr: any) {
                             console.error(`[auto-redeploy] Failed:`, redeployErr);
-
-                            this.sendAuditLog({
-                                action: "JOB_AUTO_REDEPLOY_FAILED",
-                                jobAddress,
-                                status: "error",
-                                details: { error: redeployErr.message }
-                            });
-
                             try {
                                 const payload = {
                                     provider: "nosana",
@@ -744,11 +810,8 @@ export class NosanaService {
                                 });
                             } catch (err) { }
                         }
-                    } else {
-                        // No redeploy
                     }
 
-                    // Final terminated heartbeat
                     try {
                         const payload = {
                             provider: "nosana",

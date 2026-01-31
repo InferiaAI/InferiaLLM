@@ -59,7 +59,7 @@ export default function ProviderConfigPage() {
             case "chroma": return data.vectordb.chroma.is_local !== false ? (!!data.vectordb.chroma.url) : !!data.vectordb.chroma.api_key;
             case "groq": return !!data.guardrails.groq.api_key;
             case "lakera": return !!data.guardrails.lakera.api_key;
-            case "nosana": return !!data.depin.nosana.wallet_private_key;
+            case "nosana": return !!data.depin.nosana.wallet_private_key || !!data.depin.nosana.api_key;
             case "akash": return !!data.depin.akash.mnemonic;
             default: return false;
         }
@@ -228,15 +228,40 @@ export default function ProviderConfigPage() {
                 );
             case "nosana":
                 return (
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium">Wallet Private Key</label>
-                        <input
-                            type="password"
-                            value={config.depin.nosana.wallet_private_key || ""}
-                            onChange={(e) => updateField(['depin', 'nosana', 'wallet_private_key'], e.target.value)}
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            placeholder="Base58..."
-                        />
+                    <div className="space-y-4">
+                        <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                            Nosana supports both Wallet-based (on-chain) and API-based (credit) deployments. Enter either a Private Key or an API Key below.
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Wallet Private Key</label>
+                            <input
+                                type="password"
+                                value={config.depin.nosana.wallet_private_key || ""}
+                                onChange={(e) => updateField(['depin', 'nosana', 'wallet_private_key'], e.target.value)}
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                placeholder="Base58 Private Key..."
+                            />
+                            <p className="text-[10px] text-muted-foreground italic">Use for direct on-chain deployments via Solana.</p>
+                        </div>
+
+                        <div className="relative py-2 text-center">
+                            <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                                <div className="w-full border-t border-muted"></div>
+                            </div>
+                            <span className="relative bg-background px-2 text-xs text-muted-foreground uppercase">OR</span>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Nosana API Key</label>
+                            <input
+                                type="password"
+                                value={config.depin.nosana.api_key || ""}
+                                onChange={(e) => updateField(['depin', 'nosana', 'api_key'], e.target.value)}
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                placeholder="nos_..."
+                            />
+                            <p className="text-[10px] text-muted-foreground italic">Use for credit-based deployments via the Nosana API.</p>
+                        </div>
                     </div>
                 )
             case "akash":

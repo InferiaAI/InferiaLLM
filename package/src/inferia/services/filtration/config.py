@@ -9,10 +9,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Nested Configuration Models ---
 
+
 class AWSConfig(BaseModel):
     access_key_id: Optional[str] = None
     secret_access_key: Optional[str] = None
     region: str = "ap-south-1"
+
 
 class ChromaConfig(BaseModel):
     api_key: Optional[str] = None
@@ -21,31 +23,41 @@ class ChromaConfig(BaseModel):
     is_local: bool = True
     database: Optional[str] = None
 
+
 class GroqConfig(BaseModel):
     api_key: Optional[str] = None
+
 
 class LakeraConfig(BaseModel):
     api_key: Optional[str] = None
 
+
 class NosanaConfig(BaseModel):
     wallet_private_key: Optional[str] = None
+    api_key: Optional[str] = None
+
 
 class AkashConfig(BaseModel):
     mnemonic: Optional[str] = None
 
+
 class CloudConfig(BaseModel):
     aws: AWSConfig = Field(default_factory=AWSConfig)
 
+
 class VectorDBConfig(BaseModel):
     chroma: ChromaConfig = Field(default_factory=ChromaConfig)
+
 
 class GuardrailsConfig(BaseModel):
     groq: GroqConfig = Field(default_factory=GroqConfig)
     lakera: LakeraConfig = Field(default_factory=LakeraConfig)
 
+
 class DePINConfig(BaseModel):
     nosana: NosanaConfig = Field(default_factory=NosanaConfig)
     akash: AkashConfig = Field(default_factory=AkashConfig)
+
 
 class ProvidersConfig(BaseModel):
     cloud: CloudConfig = Field(default_factory=CloudConfig)
@@ -55,6 +67,7 @@ class ProvidersConfig(BaseModel):
 
 
 # --- Main Settings ---
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -70,18 +83,23 @@ class Settings(BaseSettings):
     port: int = 8000
     reload: bool = True
 
-
     # Multi-tenancy / Organization Settings
     default_org_name: str = "Default Organization"
     superadmin_email: str = "admin@example.com"
     superadmin_password: str = Field(default="admin123", min_length=1)
 
     # Internal API Key (for service-to-service auth)
-    internal_api_key: str = Field(default="dev-internal-key-change-in-prod", min_length=1)
-    allowed_origins: str = "http://localhost:8001,http://localhost:5173"  # Comma-separated list
+    internal_api_key: str = Field(
+        default="dev-internal-key-change-in-prod", min_length=1
+    )
+    allowed_origins: str = (
+        "http://localhost:8001,http://localhost:5173"  # Comma-separated list
+    )
 
     # RBAC Settings
-    jwt_secret_key: str = Field(default="dev-secret-key-change-in-production", min_length=1)
+    jwt_secret_key: str = Field(
+        default="dev-secret-key-change-in-production", min_length=1
+    )
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
@@ -96,47 +114,75 @@ class Settings(BaseSettings):
     # Database Settings
     database_url: str = Field(
         default="postgresql+asyncpg://inferia:inferia@localhost:5432/inferia",
-        validation_alias="DATABASE_URL"
+        validation_alias="DATABASE_URL",
     )
 
     # LLM Settings
     openai_api_key: Optional[str] = None
 
     # Security / Encryption
-    log_encryption_key: Optional[str] = Field(default=None, description="32-byte hex key for log encryption")
-    secret_encryption_key: Optional[str] = Field(default=None, validation_alias="SECRET_ENCRYPTION_KEY")
+    log_encryption_key: Optional[str] = Field(
+        default=None, description="32-byte hex key for log encryption"
+    )
+    secret_encryption_key: Optional[str] = Field(
+        default=None, validation_alias="SECRET_ENCRYPTION_KEY"
+    )
 
     # Infrastructure / Provider Keys (Loaded from ~/.inferia/config.json)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
-    
+
     # Backward compatibility mappings (properties that map to nested config)
     @property
-    def aws_access_key_id(self) -> Optional[str]: return self.providers.cloud.aws.access_key_id
+    def aws_access_key_id(self) -> Optional[str]:
+        return self.providers.cloud.aws.access_key_id
+
     @property
-    def aws_secret_access_key(self) -> Optional[str]: return self.providers.cloud.aws.secret_access_key
+    def aws_secret_access_key(self) -> Optional[str]:
+        return self.providers.cloud.aws.secret_access_key
+
     @property
-    def aws_region(self) -> str: return self.providers.cloud.aws.region
-    
+    def aws_region(self) -> str:
+        return self.providers.cloud.aws.region
+
     @property
-    def guardrail_groq_api_key(self) -> Optional[str]: return self.providers.guardrails.groq.api_key
+    def guardrail_groq_api_key(self) -> Optional[str]:
+        return self.providers.guardrails.groq.api_key
+
     @property
-    def guardrail_lakera_api_key(self) -> Optional[str]: return self.providers.guardrails.lakera.api_key
-    
+    def guardrail_lakera_api_key(self) -> Optional[str]:
+        return self.providers.guardrails.lakera.api_key
+
     @property
-    def chroma_api_key(self) -> Optional[str]: return self.providers.vectordb.chroma.api_key
+    def chroma_api_key(self) -> Optional[str]:
+        return self.providers.vectordb.chroma.api_key
+
     @property
-    def chroma_tenant(self) -> Optional[str]: return self.providers.vectordb.chroma.tenant
+    def chroma_tenant(self) -> Optional[str]:
+        return self.providers.vectordb.chroma.tenant
+
     @property
-    def chroma_url(self) -> Optional[str]: return self.providers.vectordb.chroma.url
+    def chroma_url(self) -> Optional[str]:
+        return self.providers.vectordb.chroma.url
+
     @property
-    def chroma_is_local(self) -> bool: return self.providers.vectordb.chroma.is_local
+    def chroma_is_local(self) -> bool:
+        return self.providers.vectordb.chroma.is_local
+
     @property
-    def chroma_database(self) -> str: return self.providers.vectordb.chroma.database
-    
+    def chroma_database(self) -> str:
+        return self.providers.vectordb.chroma.database
+
     @property
-    def nosana_wallet_private_key(self) -> Optional[str]: return self.providers.depin.nosana.wallet_private_key
+    def nosana_wallet_private_key(self) -> Optional[str]:
+        return self.providers.depin.nosana.wallet_private_key
+
     @property
-    def akash_mnemonic(self) -> Optional[str]: return self.providers.depin.akash.mnemonic
+    def nosana_api_key(self) -> Optional[str]:
+        return self.providers.depin.nosana.api_key
+
+    @property
+    def akash_mnemonic(self) -> Optional[str]:
+        return self.providers.depin.akash.mnemonic
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
@@ -144,12 +190,10 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context: Any) -> None:
         """
-        Initialization logic. 
+        Initialization logic.
         Note: DB config loading is handled by ConfigManager asynchronously.
         """
         pass
-
-
 
     @property
     def sqlalchemy_database_url(self) -> str:
@@ -158,10 +202,9 @@ class Settings(BaseSettings):
         if url.startswith("postgresql://"):
             return url.replace("postgresql://", "postgresql+asyncpg://", 1)
         return url
-        
+
     @property
     def is_production(self) -> bool:
-
         """Check if running in production environment."""
         return self.environment == "production"
 

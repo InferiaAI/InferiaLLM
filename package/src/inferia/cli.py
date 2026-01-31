@@ -161,7 +161,7 @@ def run_nosana_sidecar(queue=None):
 
         print("[DePIN] Launching sidecar...")
         subprocess.Popen(
-            ["npx", "tsx", "src/server.ts"],
+            ["npm", "start"],
             cwd=sidecar_dir,
             stdout=sys.stdout,
             stderr=sys.stderr,

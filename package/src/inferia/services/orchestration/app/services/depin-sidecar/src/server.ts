@@ -28,22 +28,26 @@ const akashService = new AkashService();
 let nosanaService: NosanaService | null = null;
 
 // Helper to initialize/refresh Nosana
-const initNosana = async (key: string | undefined, rpc?: string) => {
-    if (!key) {
-        console.warn("[Sidecar] Nosana key missing. Nosana module disabled.");
+const initNosana = async (privateKey: string | undefined, apiKey: string | undefined, rpc?: string) => {
+    if (!privateKey && !apiKey) {
+        console.warn("[Sidecar] Nosana credentials missing. Nosana module disabled.");
         nosanaService = null;
         return;
     }
-    // Avoid re-init if key hasn't changed (assumes NosanaService stores it)
-    if (nosanaService && (nosanaService as any).privateKey === key) {
+
+    // Avoid re-init if credentials haven't changed
+    const currentKey = (nosanaService as any)?.privateKey;
+    const currentApiKey = (nosanaService as any)?.apiKey;
+    if (nosanaService && currentKey === privateKey && currentApiKey === apiKey) {
         return; 
     }
 
     try {
-        console.log("[Sidecar] Initializing Nosana Service...");
-        nosanaService = new NosanaService(key, rpc);
+        const mode = apiKey ? "API" : "WALLET";
+        console.log(`[Sidecar] Initializing Nosana Service in ${mode} mode...`);
+        nosanaService = new NosanaService({ privateKey, apiKey, rpcUrl: rpc });
         await nosanaService.init();
-        console.log("[Sidecar] Nosana Service Wallet Initialized");
+        console.log("[Sidecar] Nosana Service Initialized");
         await nosanaService.recoverJobs();
     } catch (e) {
         console.error("[Sidecar] Failed to init Nosana Service:", e);
@@ -51,9 +55,13 @@ const initNosana = async (key: string | undefined, rpc?: string) => {
     }
 };
 
-// Initial Load (will be updated by poll immediately)
+// Initial Load
 akashService.init().catch(err => console.error("Failed to init Akash:", err));
-initNosana(process.env.NOSANA_WALLET_PRIVATE_KEY, process.env.SOLANA_RPC_URL);
+initNosana(
+    process.env.NOSANA_WALLET_PRIVATE_KEY, 
+    process.env.NOSANA_API_KEY, 
+    process.env.SOLANA_RPC_URL
+);
 
 
 // --- Polling Logic (Fetch from Gateway) ---
@@ -73,12 +81,23 @@ const fetchConfigFromGateway = async () => {
         const providers = data.providers;
         const depin = providers.depin || {};
 
-        // Refresh Nosana if key changed
+        // Refresh Nosana if credentials changed
         const newNosanaKey = depin.nosana?.wallet_private_key;
-        if (newNosanaKey && newNosanaKey !== process.env.NOSANA_WALLET_PRIVATE_KEY) {
-            console.log("[Sidecar] Nosana key received from Gateway.");
-            process.env.NOSANA_WALLET_PRIVATE_KEY = newNosanaKey;
-            initNosana(newNosanaKey, process.env.SOLANA_RPC_URL);
+        const newNosanaApiKey = depin.nosana?.api_key;
+        
+        const keyChanged = newNosanaKey && newNosanaKey !== process.env.NOSANA_WALLET_PRIVATE_KEY;
+        const apiKeyChanged = newNosanaApiKey && newNosanaApiKey !== process.env.NOSANA_API_KEY;
+
+        if (keyChanged || apiKeyChanged) {
+            console.log("[Sidecar] Nosana credentials updated from Gateway.");
+            if (keyChanged) process.env.NOSANA_WALLET_PRIVATE_KEY = newNosanaKey;
+            if (apiKeyChanged) process.env.NOSANA_API_KEY = newNosanaApiKey;
+            
+            initNosana(
+                process.env.NOSANA_WALLET_PRIVATE_KEY, 
+                process.env.NOSANA_API_KEY, 
+                process.env.SOLANA_RPC_URL
+            );
         }
 
         // Refresh Akash if mnemonic changed
@@ -181,6 +200,7 @@ nosanaRouter.post('/jobs/launch', async (req, res) => {
                 jobDefinition,
                 marketAddress,
                 isConfidential,
+                deploymentUuid: result.deploymentUuid,
                 resources_allocated: resources_allocated || { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 }
             }
         ).catch(console.error);

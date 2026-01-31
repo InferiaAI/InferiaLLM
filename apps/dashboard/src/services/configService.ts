@@ -24,6 +24,7 @@ export interface LakeraConfig {
 
 export interface NosanaConfig {
     wallet_private_key?: string;
+    api_key?: string;
 }
 
 export interface AkashConfig {
