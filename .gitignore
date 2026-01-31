@@ -128,4 +128,5 @@ apps/docs
 
 *.bin
 package/chroma_db
+package/dist/
 sync_dashboard.sh

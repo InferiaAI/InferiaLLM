@@ -1,9 +1,9 @@
 import os
-import uuid
 import secrets
 import logging
 from typing import List, Dict, Optional
 import aiohttp
+import time
 
 from services.adapter_engine.base import ProviderAdapter
 from services.adapter_engine.adapters.nosana.job_builder import (
@@ -43,27 +43,6 @@ class NosanaAdapter(ProviderAdapter):
     # DISCOVER
     # -------------------------------------------------
     async def discover_resources(self) -> List[Dict]:
-        mode = os.getenv("NOSANA_MODE", "simulation")
-
-        # if mode == "simulation":
-        #     return [
-        #         {
-        #             "provider": "nosana",
-        #             "provider_resource_id": "nosana-rtx3060",
-        #             "gpu_type": "RTX3060",
-        #             "gpu_count": 1,
-        #             "gpu_memory_gb": 12,
-        #             "vcpu": 8,
-        #             "ram_gb": 32,
-        #             "region": "global",
-        #             "pricing_model": "fixed",
-        #             "price_per_hour": 0.25,
-        #             "metadata": {"mode": "simulation"},
-        #         }
-        #     ]
-
-        import time
-
         if (
             self._resources_cache
             and (time.time() - self._last_discovery_time) < self.CACHE_DURATION
@@ -142,8 +121,6 @@ class NosanaAdapter(ProviderAdapter):
         engine = metadata.get("engine", "vllm")
         hf_token = metadata.get("hf_token") or metadata.get("env", {}).get("HF_TOKEN")
 
-        mode = os.getenv("NOSANA_MODE", "simulation")
-
         # --- Auto-Resolve Slug to Address (Fix for legacy pools) ---
         if len(pool_id) < 30 or "-" in pool_id:
             logger.warning(
@@ -168,14 +145,12 @@ class NosanaAdapter(ProviderAdapter):
                 logger.error(f"Failed to resolve slug during provision: {e}")
 
         # ---------- BUILD JOB DEFINITION ----------
-        # Use job_builder if model_id is provided (new path with API key security)
-
         workload_type = metadata.get("workload_type", "inference")
 
         if workload_type == "training":
             logger.info(f"Building TRAINING job for pool {pool_id}")
             job_definition = create_training_job(
-                image=image,  # Required in metadata for training
+                image=image,
                 training_script=str(metadata.get("training_script") or ""),
                 git_repo=metadata.get("git_repo"),
                 dataset_url=metadata.get("dataset_url"),
@@ -206,15 +181,10 @@ class NosanaAdapter(ProviderAdapter):
                 model_id=model_id,
                 image=image,
                 hf_token=hf_token,
-                api_key=NOSANA_INTERNAL_API_KEY,  # Global API key for security
+                api_key=NOSANA_INTERNAL_API_KEY,
                 **job_config,
             )
-
-            logger.debug(
-                f"Built job definition with API key: {bool(NOSANA_INTERNAL_API_KEY)}"
-            )
         else:
-            # Legacy fallback: Use metadata directly (no API key security)
             logger.warning(
                 "No model_id in metadata, using legacy job definition without API key"
             )
@@ -306,9 +276,7 @@ class NosanaAdapter(ProviderAdapter):
     async def wait_for_ready(
         self, *, provider_instance_id: str, timeout: int = 300
     ) -> str:
-        """
-        Polls Nosana sidecar until the job is RUNNING and has a service URL.
-        """
+        """Polls Nosana sidecar until the job is RUNNING."""
         import asyncio
 
         start = asyncio.get_event_loop().time()
@@ -320,45 +288,26 @@ class NosanaAdapter(ProviderAdapter):
                     async with session.get(
                         f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}"
                     ) as resp:
-                        if resp.status != 200:
-                            logger.error(
-                                f"Failed to fetch Nosana job status: {resp.status}"
-                            )
-                        else:
+                        if resp.status == 200:
                             job = await resp.json()
-
-                            # 1 = CREATED/RUNNING in Nosana
+                            # 1 = RUNNING
                             if job.get("jobState") == 1:
                                 url = job.get("serviceUrl")
                                 if url:
                                     return url
-                                # Fallback for confidential jobs (where serviceUrl isn't public) or training
                                 logger.info(
-                                    f"Job {provider_instance_id} is RUNNING but has no serviceUrl (Confidential?). Marking ready."
+                                    f"Job {provider_instance_id} is RUNNING. Marking ready."
                                 )
                                 return "job-running-confidential"
-
-                            # Also check success status
-                            if job.get("status") == "success" and job.get("serviceUrl"):
-                                return job.get("serviceUrl")
-
             except Exception as e:
                 logger.warning(f"Error polling Nosana readiness: {e}")
 
             if asyncio.get_event_loop().time() - start > timeout:
-                raise RuntimeError(
-                    f"Nosana job {provider_instance_id} timed out waiting for readiness"
-                )
+                raise RuntimeError(f"Nosana job {provider_instance_id} timed out")
 
             await asyncio.sleep(poll_interval)
 
-    # -------------------------------------------------
-    # DEPROVISION
-    # -------------------------------------------------
     async def deprovision_node(self, *, provider_instance_id: str) -> None:
-        # if os.getenv("NOSANA_MODE", "simulation") == "simulation":
-        #     return
-
         try:
             async with aiohttp.ClientSession() as session:
                 await session.post(
@@ -369,77 +318,48 @@ class NosanaAdapter(ProviderAdapter):
             logger.exception("Nosana deprovision error")
             raise
 
-    # -------------------------------------------------
-    # LOGS
-    # -------------------------------------------------
     async def get_logs(self, *, provider_instance_id: str) -> Dict:
-        """
-        Fetch logs from the Nosana sidecar (IPFS result).
-        """
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}/logs"
                 ) as resp:
                     if resp.status != 200:
-                        logger.error("Nosana log fetch failed: %s", resp.status)
-                        return {"logs": ["Failed to fetch logs from sidecar"]}
+                        return {"logs": ["Failed to fetch logs"]}
 
                     data = await resp.json()
-                    # data = { status: "completed"|"pending", result: {...}, logs: [...] }
-
                     if data.get("status") == "pending":
                         return {"logs": data.get("logs", ["Job is running..."])}
 
-                    # If completed, extract logs from result
-                    # Nosana IPFS result structure varies, but let's assume raw text or "logs" field
                     result = data.get("result", {})
                     logs = result if isinstance(result, list) else [result]
-
-                    # Try to find a specific logs field if result is dict
                     if isinstance(result, dict):
-                        if "logs" in result:
-                            logs = result["logs"]
-                        elif "stdout" in result:
-                            logs = result["stdout"]
+                        logs = result.get("logs", result.get("stdout", [result]))
 
                     return {"logs": logs}
-        except Exception as e:
+        except Exception:
             logger.exception("Nosana get_logs error")
-            return {"logs": [f"Internal error fetching logs: {str(e)}"]}
+            return {"logs": ["Internal error fetching logs"]}
 
     async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
-        """
-        Returns WebSocket connection details for Nosana log streaming.
-        """
         try:
-            # 1. Get job details from sidecar to get the node address
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}"
                 ) as resp:
                     if resp.status != 200:
-                        raise RuntimeError(
-                            f"Failed to fetch job details: {await resp.text()}"
-                        )
-
+                        raise RuntimeError(f"Failed to fetch job details")
                     job_data = await resp.json()
                     node_address = job_data.get("nodeAddress")
                     job_state = job_data.get("jobState")
-
-                    # 2=COMPLETED, 3=STOPPED in Nosana
                     is_finished = job_state in (2, 3, 4, "COMPLETED", "STOPPED")
 
                     if not node_address and not is_finished:
                         raise RuntimeError("Job does not have a node assigned yet")
 
-            # 2. Return the sidecar WS URL and subscription params
-            # We use the sidecar as a proxy for the logs
             ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
                 "https://", "wss://"
             )
-
             return {
                 "ws_url": ws_url,
                 "provider": "nosana",
@@ -451,80 +371,5 @@ class NosanaAdapter(ProviderAdapter):
                 },
             }
         except Exception as e:
-            # If job not found in sidecar, check if it was recently launched and maybe not yet indexed?
-            # Or suppress error if job is clearly gone.
             logger.warning(f"Nosana get_log_streaming_info warning: {e}")
             return {"error": str(e)}
-
-
-# {
-#   "version": "0.1",
-#   "type": "container",
-#   "meta": {
-#     "trigger": "dashboard",
-#     "system_requirements": {
-#       "required_cuda": [
-#         "11.8",
-#         "12.1",
-#         "12.2",
-#         "12.3",
-#         "12.4",
-#         "12.5",
-#         "12.6",
-#         "12.8",
-#         "12.9"
-#       ],
-#       "required_vram": 16
-#     }
-#   },
-#   "ops": [
-#     {
-#       "id": "meta-llama/Meta-Llama-3-8B-Instruct",
-#       "args": {
-#         "cmd": [
-#           "--model",
-#           "meta-llama/Meta-Llama-3-8B-Instruct",
-#           "--served-model-name",
-#           "meta-llama/Meta-Llama-3-8B-Instruct",
-#           "--port",
-#           "9000",
-#           "--max-model-len",
-#           "8192",
-#           "--gpu-memory-utilization",
-#           "0.96",
-#           "--max-num-seqs",
-#           "256",
-#           "--dtype",
-#           "auto",
-#           "--trust-remote-code"
-#         ],
-#         "env": {
-#           "HF_TOKEN": "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"
-#         },
-#         "gpu": true,
-#         "image": "docker.io/vllm/vllm-openai:latest",
-#         "expose": [
-#           {
-#             "port": 9000,
-#             "health_checks": [
-#               {
-#                 "body": "{\"model\": \"meta-llama/Meta-Llama-3-8B-Instruct\", \"messages\": [{\"role\": \"user\", \"content\": \"Respond with a single word: Ready\"}], \"stream\": false}",
-#                 "path": "/v1/chat/completions",
-#                 "type": "http",
-#                 "method": "POST",
-#                 "headers": {
-#                   "Content-Type": "application/json"
-#                 },
-#                 "continuous": false,
-#                 "expected_status": 200
-#               }
-#             ]
-#           }
-#         ]
-#       },
-#       "type": "container/run"
-#     }
-#   ]
-# }
-
-# for vllm you should use this

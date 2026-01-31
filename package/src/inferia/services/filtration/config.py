@@ -169,7 +169,7 @@ class Settings(BaseSettings):
         return self.providers.vectordb.chroma.is_local
 
     @property
-    def chroma_database(self) -> str:
+    def chroma_database(self) -> Optional[str]:
         return self.providers.vectordb.chroma.database
 
     @property

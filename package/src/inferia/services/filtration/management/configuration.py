@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
+import asyncio
 
 
 def utcnow_naive():
@@ -146,7 +147,6 @@ async def update_provider_config(
     if wrapper.providers.vectordb:
         try:
             # Run potentially blocking initialization in a separate thread
-            import asyncio
             from data.engine import data_engine
             from fastapi import BackgroundTasks
 
@@ -292,8 +292,8 @@ async def get_usage_stats(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/config/{policy_type}", response_model=ConfigResponse)
 async def get_config(
     policy_type: str,
+    request: Request,
     deployment_id: Optional[str] = None,
-    request: Request = None,
     db: AsyncSession = Depends(get_db),
 ):
     user_ctx = get_current_user_context(request)
