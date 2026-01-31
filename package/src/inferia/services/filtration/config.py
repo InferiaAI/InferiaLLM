@@ -128,61 +128,8 @@ class Settings(BaseSettings):
         default=None, validation_alias="SECRET_ENCRYPTION_KEY"
     )
 
-    # Infrastructure / Provider Keys (Loaded from ~/.inferia/config.json)
+    # Infrastructure / Provider Keys (Managed via Dashboard/DB)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
-
-    # Backward compatibility mappings (properties that map to nested config)
-    @property
-    def aws_access_key_id(self) -> Optional[str]:
-        return self.providers.cloud.aws.access_key_id
-
-    @property
-    def aws_secret_access_key(self) -> Optional[str]:
-        return self.providers.cloud.aws.secret_access_key
-
-    @property
-    def aws_region(self) -> str:
-        return self.providers.cloud.aws.region
-
-    @property
-    def guardrail_groq_api_key(self) -> Optional[str]:
-        return self.providers.guardrails.groq.api_key
-
-    @property
-    def guardrail_lakera_api_key(self) -> Optional[str]:
-        return self.providers.guardrails.lakera.api_key
-
-    @property
-    def chroma_api_key(self) -> Optional[str]:
-        return self.providers.vectordb.chroma.api_key
-
-    @property
-    def chroma_tenant(self) -> Optional[str]:
-        return self.providers.vectordb.chroma.tenant
-
-    @property
-    def chroma_url(self) -> Optional[str]:
-        return self.providers.vectordb.chroma.url
-
-    @property
-    def chroma_is_local(self) -> bool:
-        return self.providers.vectordb.chroma.is_local
-
-    @property
-    def chroma_database(self) -> Optional[str]:
-        return self.providers.vectordb.chroma.database
-
-    @property
-    def nosana_wallet_private_key(self) -> Optional[str]:
-        return self.providers.depin.nosana.wallet_private_key
-
-    @property
-    def nosana_api_key(self) -> Optional[str]:
-        return self.providers.depin.nosana.api_key
-
-    @property
-    def akash_mnemonic(self) -> Optional[str]:
-        return self.providers.depin.akash.mnemonic
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"

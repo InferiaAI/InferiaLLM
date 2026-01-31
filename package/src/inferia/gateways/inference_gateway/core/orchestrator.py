@@ -70,13 +70,13 @@ class OrchestrationService:
         quota_task = asyncio.create_task(
             filtration_client.check_quota(user_context_id, model)
         )
-        
+
         # 4. Input Guardrails
         if guardrail_cfg.get("enabled") or guardrail_cfg.get("pii_enabled"):
             applied_policies.append("guardrail")
             if guardrail_cfg.get("pii_enabled"):
                 applied_policies.append("pii")
-        
+
         scan_task = asyncio.create_task(
             GatewayService.scan_input(messages, guardrail_cfg, user_context_id)
         )
@@ -99,7 +99,13 @@ class OrchestrationService:
 
         # Note: GatewayService.process_prompt now fails closed on error (Phase 1 Fix)
         messages = await GatewayService.process_prompt(
-            messages, model, user_context_id, org_id or "default", rag_cfg, template_config or {}, body
+            messages,
+            model,
+            user_context_id,
+            org_id or "default",
+            rag_cfg,
+            template_config or {},
+            body,
         )
 
         # 6. Prepare Provider Request
@@ -113,34 +119,27 @@ class OrchestrationService:
 
         # Get engine type for provider-specific routing
         engine = deployment.get("engine", "vllm")
-        
+
         # Get provider adapter
         adapter = get_adapter(engine)
-        
+
         # Resolve API key from credentials_json (Management API) or configuration (Orchestration API)
-        credentials = deployment.get("credentials_json") or deployment.get("configuration") or {}
+        credentials = (
+            deployment.get("credentials_json") or deployment.get("configuration") or {}
+        )
         provider_key = str(
             credentials.get("api_key")
             or credentials.get("key")
             or credentials.get("token")
             or ""
         )
-        
-        # Special handling for Nosana deployments - use global internal API key
-        provider = deployment.get("provider", "")
-        if provider == "nosana" or "nos.ci" in endpoint_url:
-            from config import settings
-            nosana_key = settings.nosana_internal_api_key
-            if nosana_key:
-                provider_key = nosana_key
-                logger.debug("Using NOSANA_INTERNAL_API_KEY for Nosana deployment")
 
         # Use provider-specific headers
         provider_headers = adapter.get_headers(provider_key)
 
         provider_payload = body.copy()
         provider_payload["messages"] = messages
-        
+
         # Resolve model name for provider API:
         # Priority: inference_model > configuration.model > model_name
         # For external providers, configuration.model contains the actual provider model name
@@ -324,7 +323,7 @@ class OrchestrationService:
 
         # Respect log_payloads setting
         final_payload = request_payload if log_payloads else None
-        
+
         if not log_payloads:
             logger.debug(f"Payload logging disabled for request to {model}")
 
@@ -353,5 +352,5 @@ class OrchestrationService:
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
                 },
-            )
+            ),
         )

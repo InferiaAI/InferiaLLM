@@ -112,7 +112,7 @@ async def update_provider_config(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Update provider configuration. Writes to ~/.inferia/config.json.
+    Update provider configuration. Persists to the system database.
     Requires Admin role.
     """
     user_ctx = get_current_user_context(request)
