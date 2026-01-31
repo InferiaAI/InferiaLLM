@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package orchestration.v1;
+
+import "google/protobuf/empty.proto";
+
+service ComputePoolManager {
+  rpc RegisterPool(RegisterPoolRequest) returns (PoolResponse);
+  rpc GetPool(GetPoolRequest) returns (PoolResponse);
+  rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
+
+  rpc UpdatePool(UpdatePoolRequest) returns (PoolResponse);
+  rpc DeletePool(DeletePoolRequest) returns (poolEmpty);
+
+  rpc BindProviderResource(BindProviderResourceRequest) returns (poolEmpty);
+  rpc UnbindProviderResource(UnbindProviderResourceRequest) returns (poolEmpty);
+
+  rpc ListPoolInventory(ListPoolInventoryRequest)
+      returns (ListPoolInventoryResponse);
+}
+
+/* ---------- Pool ---------- */
+
+message UpdatePoolRequest {
+  string pool_id = 1;
+  repeated string allowed_gpu_types = 2;
+  double max_cost_per_hour = 3;
+  bool is_dedicated = 4;
+}
+
+message DeletePoolRequest {
+  string pool_id = 1;
+}
+
+/* ---------- Provider Binding ---------- */
+
+message BindProviderResourceRequest {
+  string pool_id = 1;
+  string provider_resource_id = 2;
+  int32 priority = 3;
+}
+
+message UnbindProviderResourceRequest {
+  string pool_id = 1;
+  string provider_resource_id = 2;
+}
+
+/* ---------- Inventory ---------- */
+
+message ListPoolInventoryRequest {
+  string pool_id = 1;
+}
+
+message InventoryNode {
+  string node_id = 1;
+  string provider = 2;
+  string state = 3;
+  int32 gpu_total = 4;
+  int32 gpu_allocated = 5;
+  int32 vcpu_total = 6;
+  int32 vcpu_allocated = 7;
+  string expose_url = 8;
+}
+
+message ListPoolInventoryResponse {
+  repeated InventoryNode nodes = 1;
+}
+
+/* ---------- Existing ---------- */
+
+message RegisterPoolRequest {
+  string pool_name = 1;
+  string owner_type = 2;
+  string owner_id = 3;
+  string provider = 4;
+  repeated string allowed_gpu_types = 5;
+  double max_cost_per_hour = 6;
+  bool is_dedicated = 7;
+  string scheduling_policy_json = 8; // NEW
+  string provider_pool_id = 9;
+}
+
+message GetPoolRequest {
+  string pool_id = 1;
+}
+
+message ListPoolsRequest {
+  string owner_id = 1;
+}
+
+message PoolResponse {
+  string pool_id = 1;
+  string pool_name = 2;
+  string provider = 3;
+  bool is_active = 4;
+}
+
+message ListPoolsResponse {
+  repeated PoolResponse pools = 1;
+}
+
+message poolEmpty {}

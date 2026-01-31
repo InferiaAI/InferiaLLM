@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package orchestration.v1;
+
+import "google/protobuf/empty.proto";
+
+service InventoryManager {
+  rpc InvenRegisterNode(InvenRegisterNodeRequest) returns (google.protobuf.Empty);
+  rpc InvenHeartbeat(InvenHeartbeatRequest) returns (google.protobuf.Empty);
+}
+
+message InvenRegisterNodeRequest {
+  string pool_id = 1;
+  string provider = 2;
+  string provider_instance_id = 3;
+  int32 gpu_total = 4;
+  int32 vcpu_total = 5;
+  int32 ram_gb_total = 6;
+  string hostname = 7;
+}
+
+message InvenHeartbeatRequest {
+  string provider = 1;
+  string provider_instance_id = 2;
+
+  int32 gpu_allocated = 3;
+  int32 vcpu_allocated = 4;
+  int32 ram_gb_allocated = 5;
+
+  int32 health_score = 6;
+}
+
+message InvenEmpty {}

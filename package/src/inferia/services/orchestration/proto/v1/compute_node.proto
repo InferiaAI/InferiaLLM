@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package orchestration.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service ComputeNodeService {
+  rpc RegisterNode (RegisterNodeRequest) returns (ComputeNode);
+  rpc Heartbeat (NodeHeartbeatRequest) returns (google.protobuf.Empty);
+  rpc ListNodes (ListNodesRequest) returns (ListNodesResponse);
+}
+
+message RegisterNodeRequest {
+  string pool_id = 1;
+  string node_name = 2;
+  string node_type = 3; // gpu-node | cpu-node
+  map<string, string> allocatable = 4;
+}
+
+message NodeHeartbeatRequest {
+  string node_id = 1;
+  map<string, string> used = 2;
+}
+
+message ListNodesRequest {
+  string pool_id = 1;
+}
+
+message ListNodesResponse {
+  repeated ComputeNode nodes = 1;
+}
+
+message ComputeNode {
+  string id = 1;
+  string pool_id = 2;
+  string node_name = 3;
+  string node_type = 4;
+  string status = 5;
+  map<string, string> allocatable = 6;
+  map<string, string> used = 7;
+  google.protobuf.Timestamp last_heartbeat = 8;
+}

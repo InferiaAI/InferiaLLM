@@ -1,0 +1,68 @@
+# =============================================================================
+# InferiaLLM Deployment - Unified (Monolithic) Mode
+# =============================================================================
+# Usage:
+# 1. Copy .env.example to .env and fill in your secrets.
+# 2. Run: docker compose up -d
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: inferia-postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: inferia
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inferia}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - inferia-net
+
+  redis:
+    image: redis:7
+    container_name: inferia-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - inferia-net
+
+  inferia:
+    # Change this to your published image name
+    image: inferiaai/inferiallm:latest
+    container_name: inferia-app
+    restart: unless-stopped
+    pull_policy: always
+    env_file: .env
+    environment:
+      - SERVICE_TYPE=unified
+      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-inferia}:${POSTGRES_PASSWORD:-inferia}@postgres:5432/inferia
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8000:8000"   # Filtration Gateway
+      - "8001:8001"   # Inference Gateway
+      - "8080:8080"   # Orchestration Gateway
+      - "3000:3000"   # DePIN Sidecar
+      - "3001:3001"   # Dashboard
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - inferia-net
+
+volumes:
+  pgdata:
+
+networks:
+  inferia-net:

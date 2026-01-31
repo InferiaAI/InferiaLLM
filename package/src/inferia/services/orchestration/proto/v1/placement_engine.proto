@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package orchestration.v1;
+
+service PlacementEngine {
+  rpc PlaceWorkload (PlaceWorkloadRequest)
+      returns (PlaceWorkloadResponse);
+}
+
+message PlaceWorkloadRequest {
+  string pool_id = 1;
+
+  int32 gpu_required = 2;
+  int32 vcpu_required = 3;
+  int32 ram_gb_required = 4;
+
+  string workload_type = 5; // inference, training, batch
+}
+
+message PlaceWorkloadResponse {
+  bool accepted = 1;
+  string node_id = 2;
+  string rejection_reason = 3;
+}

@@ -1,0 +1,56 @@
+syntax = "proto3";
+package orchestration.v1;
+
+service ModelRegistry {
+  rpc RegisterModel (RegisterModelRequest)
+      returns (RegisterModelResponse);
+
+  rpc GetModel (GetModelRequest)
+      returns (GetModelResponse);
+
+  rpc ListModels (ListModelsRequest)
+      returns (ListModelsResponse);
+
+  rpc DeleteModel (DeleteModelRequest)
+      returns (Empty);
+}
+
+message RegisterModelRequest {
+  string name = 1;
+  string version = 2;
+  string backend = 3;        // vllm | trt | gguf
+  string artifact_uri = 4;   // s3://, hf://, pvc://
+  string config_json = 5;    // optional JSON
+}
+
+message RegisterModelResponse {
+  string model_id = 1;
+}
+
+message GetModelRequest {
+  string name = 1;
+  string version = 2;
+}
+
+message GetModelResponse {
+  string model_id = 1;
+  string name = 2;
+  string version = 3;
+  string backend = 4;
+  string artifact_uri = 5;
+  string config_json = 6;
+}
+
+message ListModelsRequest {
+  string name = 1; // optional filter
+}
+
+message ListModelsResponse {
+  repeated GetModelResponse models = 1;
+}
+
+message DeleteModelRequest {
+  string model_id = 1;
+}
+
+message Empty {}

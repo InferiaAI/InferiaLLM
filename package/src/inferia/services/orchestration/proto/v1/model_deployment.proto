@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package orchestration.v1;
+
+service ModelDeploymentService {
+  rpc DeployModel (DeployModelRequest)
+      returns (DeployModelResponse);
+
+  rpc GetDeployment (GetDeploymentRequest)
+      returns (GetDeploymentResponse);
+
+  rpc ListDeployments (ListDeploymentsRequest)
+      returns (ListDeploymentsResponse);
+
+  rpc ScaleDeployment (ScaleDeploymentRequest)
+      returns (ScaleDeploymentResponse);
+
+  rpc DeleteDeployment (DeleteDeploymentRequest)
+      returns (DeleteDeploymentResponse);
+
+  rpc StartDeployment (StartDeploymentRequest)
+      returns (StartDeploymentResponse);
+}
+
+/* -------------------------
+   DEPLOY
+------------------------- */
+
+message DeployModelRequest {
+  string model_name = 1;
+  string model_version = 2;
+
+  string pool_id = 3;
+
+  int32 replicas = 4;
+  int32 gpu_per_replica = 5;
+
+  string workload_type = 6; // inference (default), batch
+
+  // Unified Deployment Fields
+  string engine = 7; // e.g., "vllm"
+  string configuration = 8; // JSON string
+  string owner_id = 9;
+  string endpoint = 10; // Optional override
+  string org_id = 11;
+  string policies = 12; // JSON string for filtration policies
+  string inference_model = 13; // backend model slug (e.g. meta-llama/Llama-2-7b)
+}
+
+message DeployModelResponse {
+  string deployment_id = 1;
+  string state = 2; // provisioning
+}
+
+/* -------------------------
+   GET
+------------------------- */
+
+message GetDeploymentRequest {
+  string deployment_id = 1;
+}
+
+message GetDeploymentResponse {
+  string deployment_id = 1;
+  string model_name = 2;
+  string model_version = 3;
+
+  int32 replicas = 4;
+  int32 gpu_per_replica = 5;
+
+  string pool_id = 6;
+  string state = 7; // pending, ready, failed, deleting
+
+  string engine = 8;
+  string configuration = 9;
+  string owner_id = 10;
+  string endpoint = 11;
+  string org_id = 12;
+  string policies = 13;
+  string inference_model = 14;
+}
+
+/* -------------------------
+   LIST
+------------------------- */
+
+message ListDeploymentsRequest {
+  string pool_id = 1; // optional filter
+  string org_id = 2; // optional filter
+}
+
+message ListDeploymentsResponse {
+  repeated GetDeploymentResponse deployments = 1;
+}
+
+/* -------------------------
+   SCALE
+------------------------- */
+
+message ScaleDeploymentRequest {
+  string deployment_id = 1;
+  int32 replicas = 2;
+}
+
+message ScaleDeploymentResponse {
+  bool accepted = 1;
+  string state = 2; // scaling
+}
+
+/* -------------------------
+   DELETE
+------------------------- */
+
+message DeleteDeploymentRequest {
+  string deployment_id = 1;
+}
+
+message DeleteDeploymentResponse {
+  bool accepted = 1;
+}
+
+/* -------------------------
+   START
+------------------------- */
+
+message StartDeploymentRequest {
+  string deployment_id = 1;
+}
+
+message StartDeploymentResponse {
+  bool accepted = 1;
+  string state = 2; // pending
+}
