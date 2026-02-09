@@ -4,8 +4,14 @@ from sqlalchemy.future import select
 from typing import List
 
 from inferia.services.filtration.db.database import get_db
-from inferia.services.filtration.db.models import Deployment as DBDeployment, InferenceLog as DBInferenceLog
-from inferia.services.filtration.schemas.management import DeploymentCreate, DeploymentResponse
+from inferia.services.filtration.db.models import (
+    Deployment as DBDeployment,
+    InferenceLog as DBInferenceLog,
+)
+from inferia.services.filtration.schemas.management import (
+    DeploymentCreate,
+    DeploymentResponse,
+)
 from inferia.services.filtration.schemas.logging import InferenceLogResponse
 from inferia.services.filtration.schemas.auth import PermissionEnum
 from inferia.services.filtration.management.dependencies import get_current_user_context
@@ -219,7 +225,10 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
         return ModelsListResponse(data=[])
 
     result = await db.execute(
-        select(DBDeployment).where(DBDeployment.org_id == user_ctx.org_id)
+        select(DBDeployment).where(
+            (DBDeployment.org_id == user_ctx.org_id)
+            & (DBDeployment.state.in_(["RUNNING", "READY", "ready"]))
+        )
     )
     deployments = result.scalars().all()
 

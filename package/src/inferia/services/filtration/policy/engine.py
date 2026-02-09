@@ -122,6 +122,13 @@ class PolicyEngine:
 
         deployment, organization = row
 
+        # 2.1 Validate Deployment State (Only allow active models for inference)
+        if deployment.state not in ["RUNNING", "READY", "ready"]:
+            return {
+                "valid": False,
+                "error": f"Model '{model}' is currently {deployment.state}. Please start the deployment first.",
+            }
+
         # Convert deployment to dict for caching and session independence
         deployment_dict = {
             "id": deployment.id,

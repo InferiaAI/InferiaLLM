@@ -243,7 +243,13 @@ async def list_models(
         )
 
     # Get available models from database (real deployments) with pagination
-    result = await db.execute(select(Deployment).offset(skip).limit(limit))
+    # Only return models that are in a 'running' state (READY or RUNNING)
+    result = await db.execute(
+        select(Deployment)
+        .where(Deployment.state.in_(["RUNNING", "READY", "ready"]))
+        .offset(skip)
+        .limit(limit)
+    )
     deployments = result.scalars().all()
 
     mock_models = [
