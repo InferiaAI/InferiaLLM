@@ -85,16 +85,18 @@ class Settings(BaseSettings):
 
     # Multi-tenancy / Organization Settings
     default_org_name: str = "Default Organization"
-    superadmin_email: str = Field(
-        default="admin@example.com", validation_alias="SUPERADMIN_EMAIL"
-    )
+
+    # Superadmin credentials - MUST be set via environment variables in production
+    # No defaults for security - will raise error if not set
+    superadmin_email: str = Field(default=None, validation_alias="SUPERADMIN_EMAIL")
     superadmin_password: str = Field(
-        default="", min_length=5, validation_alias="SUPERADMIN_PASSWORD"
+        default=None, validation_alias="SUPERADMIN_PASSWORD"
     )
 
-    # Internal API Key (for service-to-service auth)
+    # Internal API Key (for service-to-service auth) - MUST be set in production
+    # Generate with: openssl rand -hex 32
     internal_api_key: str = Field(
-        default="", min_length=32, validation_alias="INTERNAL_API_KEY"
+        default=None, min_length=32, validation_alias="INTERNAL_API_KEY"
     )
     allowed_origins: str = (
         "http://localhost:8001,http://localhost:5173"  # Comma-separated list
@@ -116,6 +118,8 @@ class Settings(BaseSettings):
     use_redis_rate_limit: bool = False
 
     # Database Settings
+    # In production, use strong credentials and enable SSL
+    # Example: postgresql+asyncpg://user:strong_password@host:5432/dbname?sslmode=require
     database_url: str = Field(
         default="postgresql+asyncpg://inferia:inferia@localhost:5432/inferia",
         validation_alias="DATABASE_URL",
@@ -133,11 +137,24 @@ class Settings(BaseSettings):
     )
 
     # Service URLs (Microservices)
+    # In production, these should use HTTPS with valid certificates
     guardrail_service_url: str = Field(
         default="http://localhost:8002", validation_alias="GUARDRAIL_SERVICE_URL"
     )
     data_service_url: str = Field(
         default="http://localhost:8003", validation_alias="DATA_SERVICE_URL"
+    )
+
+    # SSL/TLS Configuration for service communication
+    verify_ssl: bool = Field(
+        default=True,
+        validation_alias="VERIFY_SSL",
+        description="Verify SSL certificates for HTTPS service calls",
+    )
+    ssl_ca_bundle: Optional[str] = Field(
+        default=None,
+        validation_alias="SSL_CA_BUNDLE",
+        description="Path to custom CA bundle for SSL verification",
     )
 
     # Infrastructure / Provider Keys (Managed via Dashboard/DB)

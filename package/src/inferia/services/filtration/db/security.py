@@ -9,6 +9,7 @@ from config import settings
 # Users can generate one using: Fernet.generate_key().decode()
 ENCRYPTION_KEY = settings.secret_encryption_key or os.getenv("SECRET_ENCRYPTION_KEY")
 
+
 class EncryptionService:
     def __init__(self):
         self.fernet = None
@@ -43,16 +44,17 @@ class EncryptionService:
         """Decrypts a string back into its original type."""
         if not encrypted_str:
             return None
-        
+
         # Check if it looks like JSON (unencrypted)
         # This is for backward compatibility with existing data
         stripped = encrypted_str.strip()
-        if stripped.startswith('{') or stripped.startswith('['):
+        if stripped.startswith("{") or stripped.startswith("["):
             try:
                 return json.loads(encrypted_str)
-            except:
+            except json.JSONDecodeError:
+                # Not valid JSON, proceed to decrypt
                 pass
-                
+
         decrypted = self.decrypt_string(encrypted_str)
         try:
             return json.loads(decrypted)
@@ -60,7 +62,9 @@ class EncryptionService:
             # Fallback if it was just a string
             return decrypted
 
+
 encryption_service = EncryptionService()
+
 
 class EncryptedJSON(TypeDecorator):
     """
@@ -68,6 +72,7 @@ class EncryptedJSON(TypeDecorator):
     and decrypts it when reading.
     Stores as a JSON object: {"data": "encrypted_base64_string"}
     """
+
     impl = JSON
     cache_ok = True
 
@@ -82,6 +87,6 @@ class EncryptedJSON(TypeDecorator):
             return None
         if isinstance(value, dict) and "data" in value:
             return encryption_service.decrypt_json(value["data"])
-        
+
         # Fallback for existing unencrypted JSON data
         return value

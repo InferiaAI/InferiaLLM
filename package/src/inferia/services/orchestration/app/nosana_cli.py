@@ -62,9 +62,9 @@ async def interactive_mode(adapter):
             image = input("Enter custom image (e.g. myrepo/myimage:tag): ")
         else:
             image = images[img_idx]
-    except:
+    except (ValueError, IndexError) as e:
         image = "ubuntu:latest"
-        print(f"Invalid selection, defaulting to {image}")
+        print(f"Invalid selection ({e}), defaulting to {image}")
 
     # 4. Provision
     print(f"\nProvisioning {image} on {market_id}...")

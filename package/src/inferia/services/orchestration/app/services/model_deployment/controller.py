@@ -23,15 +23,19 @@ class ModelDeploymentController:
         self.outbox = outbox_repo
         self.event_bus = event_bus
 
-    def _inject_workload_type(self, configuration: Optional[str], workload_type: str) -> str:
+    def _inject_workload_type(
+        self, configuration: Optional[str], workload_type: str
+    ) -> str:
         import json
+
         config_dict = {}
         if configuration:
             try:
                 config_dict = json.loads(configuration)
-            except:
+            except json.JSONDecodeError:
+                # Invalid JSON, start with empty config
                 pass
-        
+
         config_dict["workload_type"] = workload_type
         return json.dumps(config_dict)
 
@@ -56,33 +60,34 @@ class ModelDeploymentController:
         policies: Optional[str] = None,
         inference_model: Optional[str] = None,
     ) -> UUID:
-        
         model_id = None
-        
+
         # If engine is NOT provided, assume legacy flow via Model Registry
         if not engine:
             # Validate model or auto-register
             model = await self.models.get_model(model_name, model_version)
             if not model:
                 # Auto-register logic for smoother UX in this phase
-                print(f"Model {model_name}:{model_version} not found, auto-registering...")
+                print(
+                    f"Model {model_name}:{model_version} not found, auto-registering..."
+                )
                 model_id_val = await self.models.register_model(
                     name=model_name,
                     version=model_version,
-                    backend="vllm", # Defaulting to vllm for now
-                    artifact_uri=model_name, # Defaulting artifact_uri to model name (e.g. HF ID)
-                    config={}
+                    backend="vllm",  # Defaulting to vllm for now
+                    artifact_uri=model_name,  # Defaulting artifact_uri to model name (e.g. HF ID)
+                    config={},
                 )
                 model_id = model_id_val
             else:
                 model_id = model["model_id"]
-        
+
         # If engine IS provided, we treat model_name as the artifact URI / model identifier directly
         # and skip strict registry requirement for now (or we could still register it).
         # For this task, we make model_id optional in DB, so we can proceed without it if engine is set.
-        
+
         deployment_id = uuid4()
-        
+
         # External deployments (API passthrough) don't need worker processing
         is_external = workload_type == "external"
         initial_state = "RUNNING" if is_external else "PENDING"
@@ -100,7 +105,7 @@ class ModelDeploymentController:
                 engine=engine,
                 configuration=self._inject_workload_type(configuration, workload_type),
                 endpoint=endpoint,
-                model_name=model_name, # Explicitly store name
+                model_name=model_name,  # Explicitly store name
                 owner_id=owner_id,
                 org_id=org_id,
                 policies=policies,
@@ -177,33 +182,31 @@ class ModelDeploymentController:
         #         tx=tx,
         #     )
 
-            d = await self.deployments.get(deployment_id)
-            if not d:
-                raise ValueError("Deployment not found")
+        d = await self.deployments.get(deployment_id)
+        if not d:
+            raise ValueError("Deployment not found")
 
-            if d["state"] in ("TERMINATED", "TERMINATING"):
-                return
+        if d["state"] in ("TERMINATED", "TERMINATING"):
+            return
 
-            await self.deployments.update_state(
-                deployment_id, "TERMINATING"
-            )
+        await self.deployments.update_state(deployment_id, "TERMINATING")
 
-            await self.outbox.enqueue(
-                aggregate_type="model_deployment",
-                aggregate_id=deployment_id,
-                event_type="model.deployment.terminate",
-                payload={
-                    "deployment_id": str(deployment_id),
-                },
-                # tx=tx,
-            )
+        await self.outbox.enqueue(
+            aggregate_type="model_deployment",
+            aggregate_id=deployment_id,
+            event_type="model.deployment.terminate",
+            payload={
+                "deployment_id": str(deployment_id),
+            },
+            # tx=tx,
+        )
 
-            await self.event_bus.publish(
-                "model.terminate.requested",
-                {
-                    "deployment_id": str(deployment_id),
-                },
-            )
+        await self.event_bus.publish(
+            "model.terminate.requested",
+            {
+                "deployment_id": str(deployment_id),
+            },
+        )
 
     # -------------------------------------------------
     # START (Redeploy)
@@ -215,9 +218,9 @@ class ModelDeploymentController:
         d = await self.deployments.get(deployment_id)
         if not d:
             raise ValueError("Deployment not found")
-        
+
         if d["state"] not in ("STOPPED", "TERMINATED", "FAILED"):
-             raise ValueError(f"Cannot start deployment in state {d['state']}")
+            raise ValueError(f"Cannot start deployment in state {d['state']}")
 
         # Reset to PENDING so worker picks it up
         await self.deployments.update_state(deployment_id, "PENDING")
@@ -231,9 +234,9 @@ class ModelDeploymentController:
                 "pool_id": str(d["pool_id"]),
                 "replicas": d["replicas"],
                 "gpu_per_replica": d["gpu_per_replica"],
-                "workload_type": "inference", # default/stored
+                "workload_type": "inference",  # default/stored
                 "engine": d.get("engine"),
-                "configuration": d.get("configuration"), # Should encompass json
+                "configuration": d.get("configuration"),  # Should encompass json
                 "owner_id": d.get("owner_id"),
             },
         )

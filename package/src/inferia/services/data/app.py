@@ -15,6 +15,11 @@ from inferia.services.data.prompt_engine import prompt_engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("data-service")
 
+# File upload security configuration
+ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".md", ".json", ".csv"}
+MAX_FILE_SIZE_MB = 50  # Maximum file size in MB
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
 from contextlib import asynccontextmanager
 
 
@@ -89,10 +94,58 @@ async def upload_document(
     org_id: Optional[str] = Form(None),
 ):
     """
-    Upload and ingest a file (PDF, DOCX, TXT).
+    Upload and ingest a file (PDF, DOCX, TXT, MD, JSON, CSV).
+    Validates file type, size, and content before processing.
     """
     try:
-        # 1. Parse file content
+        # 1. Validate filename
+        if not file.filename:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Filename is required",
+            )
+
+        # 2. Validate file extension
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File type '{file_ext}' not allowed. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}",
+            )
+
+        # 3. Validate content type (basic check)
+        allowed_content_types = {
+            "text/plain",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/markdown",
+            "application/json",
+            "text/csv",
+            "application/octet-stream",
+        }
+        if file.content_type and file.content_type not in allowed_content_types:
+            logger.warning(
+                f"Suspicious content type: {file.content_type} for file {file.filename}"
+            )
+
+        # 4. Read and validate file size
+        file_content = await file.read()
+        if len(file_content) > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File size exceeds maximum limit of {MAX_FILE_SIZE_MB}MB",
+            )
+
+        if len(file_content) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File is empty",
+            )
+
+        # 5. Reset file position for parser
+        await file.seek(0)
+
+        # 6. Parse file content
         text_content = await parser.extract_text(file)
 
         if not text_content.strip():

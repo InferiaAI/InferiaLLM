@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 from audit.service import audit_service
@@ -27,6 +28,8 @@ from rbac.auth import auth_service
 
 import redis.asyncio as redis
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class PolicyEngine:
@@ -292,12 +295,12 @@ class PolicyEngine:
                     detail=f"Daily quota exceeded (Token Limit). Limit: {limit_tokens}. Used: {used_tokens}.",
                 )
 
-        except redis.RedisError:
+        except redis.RedisError as e:
             # Open circuit on Redis fail? Or Fail Safe?
             # Fail safe allows request if Redis is down (preferred for availability)
             # Fail secure blocks request.
             # We choose Fail Safe but log error.
-            print("Redis Quota Check Failed - Failing Open")
+            logger.error(f"Redis Quota Check Failed - Failing Open: {e}")
             pass
 
     async def increment_usage(
@@ -330,7 +333,7 @@ class PolicyEngine:
                 await pipe.expire(tok_key, 172800)
                 await pipe.execute()
         except redis.RedisError as e:
-            print(f"Redis Usage Increment Failed: {e}")
+            logger.error(f"Redis Usage Increment Failed: {e}")
 
     async def persist_usage_db(
         self, db: AsyncSession, user_id: str, model: str, usage_data: Dict[str, int]
@@ -366,7 +369,7 @@ class PolicyEngine:
             await db.execute(stmt)
             await db.commit()
         except Exception as e:
-            print(f"DB Usage Persist Failed: {e}")
+            logger.error(f"DB Usage Persist Failed: {e}")
 
     async def get_quotas(self, db: AsyncSession, user_id: str) -> dict:
         """

@@ -40,9 +40,13 @@ class ModelDeploymentWorker:
     # -------------------------------------------------
     async def handle_deploy_requested(self, deployment_id: UUID):
         d = await self.deployments.get(deployment_id)
-        log.info(f"Handling deploy request for {deployment_id}. State: {d.get('state') if d else 'None'}")
+        log.info(
+            f"Handling deploy request for {deployment_id}. State: {d.get('state') if d else 'None'}"
+        )
         if not d or d["state"] != "PENDING":
-            log.warning(f"Skipping deploy for {deployment_id} because state is not PENDING")
+            log.warning(
+                f"Skipping deploy for {deployment_id} because state is not PENDING"
+            )
             return
 
         model = None
@@ -50,21 +54,23 @@ class ModelDeploymentWorker:
             try:
                 model = await self.models.get_model_by_id(d["model_id"])
             except Exception:
-                log.warning(f"Failed to fetch model {d['model_id']} from registry, proceeding with config if available.")
+                log.warning(
+                    f"Failed to fetch model {d['model_id']} from registry, proceeding with config if available."
+                )
         pool = await self.pools.get(d["pool_id"])
         resources_required = await self.inventory.get_resource_requirement(d["pool_id"])
-
 
         try:
             await self.deployments.update_state(deployment_id, "PROVISIONING")
 
             # Determine resource needs (default to full node if not specified, or hardcoded fallback)
             vcpu_req = resources_required["vcpu_total"] if resources_required else 8
-            ram_gb_req = resources_required["ram_gb_total"] if resources_required else 32
+            ram_gb_req = (
+                resources_required["ram_gb_total"] if resources_required else 32
+            )
 
             # -------- CAPACITY LOOP --------
             for attempt in range(MAX_PROVISION_RETRIES + 1):
-
                 candidates = await self.placement.fetch_candidate_nodes(
                     pool_id=d["pool_id"],
                     gpu_req=d["gpu_per_replica"],
@@ -83,20 +89,21 @@ class ModelDeploymentWorker:
 
                 # Determine Metadata / Job Spec
                 metadata = {}
-                
+
                 # 1. Use Configuration directly if available (Unified Schema)
                 if d.get("configuration"):
                     # Ensure it's a dict (it should be since it's JSONB/dict)
                     import json
+
                     config = d["configuration"]
                     if isinstance(config, str):
                         try:
                             config = json.loads(config)
-                        except:
+                        except json.JSONDecodeError:
                             config = {}
                     # Update metadata with config, which now includes workload_type
                     metadata = config
-                
+
                 # Inject model identifiers for job_builder (API key security)
                 if d.get("inference_model"):
                     metadata["model_id"] = d["inference_model"]
@@ -110,24 +117,30 @@ class ModelDeploymentWorker:
                     metadata = {
                         "image": model["artifact_uri"],
                         "cmd": [
-                            "--model", "meta-llama/Llama-2-7b-chat-hf", # Generic placeholder if not in config
-                            "--port", "9000" 
+                            "--model",
+                            "meta-llama/Llama-2-7b-chat-hf",  # Generic placeholder if not in config
+                            "--port",
+                            "9000",
                         ],
                         "gpu": True,
-                        "expose": [{"port": 9000, "type": "http"}]
+                        "expose": [{"port": 9000, "type": "http"}],
                     }
-                
+
                 # 3. Last Resort / Error Check
-                if not metadata.get("image") and not metadata.get("cmd") and metadata.get("workload_type") != "training":
-                     # If we still lack info, we can't provision
-                     log.error(f"Missing job definition for deployment {deployment_id}")
-                     await self.deployments.update_state(deployment_id, "FAILED")
-                     return
+                if (
+                    not metadata.get("image")
+                    and not metadata.get("cmd")
+                    and metadata.get("workload_type") != "training"
+                ):
+                    # If we still lack info, we can't provision
+                    log.error(f"Missing job definition for deployment {deployment_id}")
+                    await self.deployments.update_state(deployment_id, "FAILED")
+                    return
 
                 node_spec = await adapter.provision_node(
                     provider_resource_id=pool["allowed_gpu_types"][0],
                     pool_id=pool["provider_pool_id"],
-                    metadata=metadata
+                    metadata=metadata,
                 )
 
                 if node_spec.get("metadata", {}).get("mode") == "simulation":
@@ -144,14 +157,14 @@ class ModelDeploymentWorker:
                 # ---- Universal Readiness Poll ----
                 expose_url = await adapter.wait_for_ready(
                     provider_instance_id=node_spec["provider_instance_id"],
-                    timeout=NOSANA_READY_TIMEOUT
+                    timeout=NOSANA_READY_TIMEOUT,
                 )
-                
-                # If the adapter returned a special indicator instead of a real URL, 
+
+                # If the adapter returned a special indicator instead of a real URL,
                 # check if the node_spec already had one (common for Akash/AWS)
                 if not expose_url or expose_url.endswith("-ready"):
                     expose_url = expose_url or node_spec.get("expose_url")
-                
+
                 # Use URL directly from adapter if available (e.g. Akash, AWS)
                 if not expose_url and node_spec.get("expose_url"):
                     expose_url = node_spec.get("expose_url")
@@ -167,7 +180,7 @@ class ModelDeploymentWorker:
                     pool_id=d["pool_id"],
                     provider=node_spec["provider"],
                     provider_instance_id=node_spec["provider_instance_id"],
-                    provider_resource_id=None, # Fix: Avoid passing string "image_uri" to UUID field
+                    provider_resource_id=None,  # Fix: Avoid passing string "image_uri" to UUID field
                     hostname=node_spec["hostname"],
                     gpu_total=node_spec["gpu_total"],
                     vcpu_total=node_spec["vcpu_total"],
@@ -179,7 +192,7 @@ class ModelDeploymentWorker:
                 )
 
                 await self.deployments.update_state(deployment_id, "RUNNING")
-                
+
                 # Nosana deployments are complete once the node is provisioned and registered.
                 # Attach the node_id so terminate handler can find the job to stop.
                 if pool["provider"] == "nosana":
@@ -190,14 +203,20 @@ class ModelDeploymentWorker:
                             node_ids=[node_id],
                             runtime="nosana",
                         )
-                        log.info(f"Nosana deployment {deployment_id} is RUNNING. Attached node_id {node_id}.")
+                        log.info(
+                            f"Nosana deployment {deployment_id} is RUNNING. Attached node_id {node_id}."
+                        )
                     else:
-                        log.warning(f"Nosana deployment {deployment_id} is RUNNING but no node_id returned from register_node.")
+                        log.warning(
+                            f"Nosana deployment {deployment_id} is RUNNING but no node_id returned from register_node."
+                        )
                     return
 
             # -------- PLACEMENT --------
             if not candidates:
-                log.error(f"Insufficient capacity for deployment {deployment_id} after {MAX_PROVISION_RETRIES} provisioning attempts. Needs GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}")
+                log.error(
+                    f"Insufficient capacity for deployment {deployment_id} after {MAX_PROVISION_RETRIES} provisioning attempts. Needs GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}"
+                )
                 await self.deployments.update_state(deployment_id, "FAILED")
                 return
 
@@ -242,7 +261,7 @@ class ModelDeploymentWorker:
                     gpu_per_replica=d["gpu_per_replica"],
                     vcpu_per_replica=vcpu_req,
                     ram_gb_per_replica=ram_gb_req,
-                    workload_type=None #d["workload_type"],
+                    workload_type=None,  # d["workload_type"],
                 )
 
             except Exception:
@@ -267,12 +286,11 @@ class ModelDeploymentWorker:
             await self.deployments.update_state(deployment_id, "FAILED")
             raise e
 
-
     async def handle_terminate_requested(self, deployment_id: UUID):
         d = await self.deployments.get(deployment_id)
         if not d:
             return
-        
+
         if d["state"] != "TERMINATING":
             return
 
@@ -282,13 +300,13 @@ class ModelDeploymentWorker:
         # Use node_ids to find the exact running instances to stop
         if d.get("node_ids"):
             for node_id in d["node_ids"]:
-                    node = await self.inventory.get_node_by_id(node_id)
-                    if node:
-                        adapter = get_adapter(node["provider"])
-                        log.info(f"Deprovisioning {node['provider']} node {node_id}")
-                        await adapter.deprovision_node(
-                            provider_instance_id=node["provider_instance_id"]
-                        )
+                node = await self.inventory.get_node_by_id(node_id)
+                if node:
+                    adapter = get_adapter(node["provider"])
+                    log.info(f"Deprovisioning {node['provider']} node {node_id}")
+                    await adapter.deprovision_node(
+                        provider_instance_id=node["provider_instance_id"]
+                    )
 
         print(f"Stopped runtime for deployment {deployment_id}")
 
@@ -297,9 +315,7 @@ class ModelDeploymentWorker:
         # ------------------------------------
         if d.get("allocation_ids"):
             for alloc_id in d["allocation_ids"]:
-                await self.scheduler.release(
-                    allocation_id=alloc_id
-                )
+                await self.scheduler.release(allocation_id=alloc_id)
 
         print(f"Released scheduler allocations for deployment {deployment_id}")
 
@@ -313,11 +329,11 @@ class ModelDeploymentWorker:
             for node_id in d["node_ids"]:
                 # Logic: If ephemeral (Nosana), mark terminated so we provision fresh next time.
                 # If static (On-prem), recycle to 'ready' to release back to pool.
-                
+
                 is_ephemeral = False
                 if node and node.get("provider") == "nosana":
-                     is_ephemeral = True
-                
+                    is_ephemeral = True
+
                 if is_ephemeral:
                     await self.inventory.mark_terminated(node_id)
                     print(f"Terminated ephemeral node {node_id}")
@@ -328,9 +344,6 @@ class ModelDeploymentWorker:
         # ------------------------------------
         # 4. FINAL STATE
         # ------------------------------------
-        await self.deployments.update_state(
-            deployment_id, "STOPPED"
-        )
+        await self.deployments.update_state(deployment_id, "STOPPED")
 
         print(f"Deployment {deployment_id} stopped")
-        

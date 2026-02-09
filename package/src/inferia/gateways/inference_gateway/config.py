@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Filtration Gateway Settings
-    filtration_gateway_url: str = "http://localhost:8000"
+    # In production, use HTTPS URLs with valid SSL certificates
+    filtration_gateway_url: str = Field(
+        default="http://localhost:8000",
+        alias="FILTRATION_GATEWAY_URL",
+        validation_alias="FILTRATION_GATEWAY_URL",
+    )
     filtration_internal_key: str = Field(
         default="dev-internal-key-change-in-prod",
         alias="INTERNAL_API_KEY",
@@ -37,6 +42,14 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://localhost:5173,http://localhost:8001",
         alias="ALLOWED_ORIGINS",
         validation_alias="ALLOWED_ORIGINS",
+    )
+
+    # SSL/TLS Configuration for service communication
+    verify_ssl: bool = Field(
+        default=True,
+        alias="VERIFY_SSL",
+        validation_alias="VERIFY_SSL",
+        description="Verify SSL certificates for HTTPS service calls",
     )
 
     # Timeouts

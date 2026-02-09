@@ -19,7 +19,7 @@ class ModelDeploymentRepository(BaseRepository):
         state: str,
         # Unified Deployment Fields
         engine: Optional[str] = None,
-        configuration: Optional[str] = None, # JSON string or dict? DB is jsonb.
+        configuration: Optional[str] = None,  # JSON string or dict? DB is jsonb.
         endpoint: Optional[str] = None,
         model_name: Optional[str] = None,
         owner_id: Optional[str] = None,
@@ -28,7 +28,6 @@ class ModelDeploymentRepository(BaseRepository):
         inference_model: Optional[str] = None,
         tx=None,
     ):
-
         q = """
         INSERT INTO model_deployments (
             deployment_id,
@@ -50,15 +49,16 @@ class ModelDeploymentRepository(BaseRepository):
         """
         # Ensure configuration is passed as json
         import json
+
         if configuration and isinstance(configuration, dict):
             configuration = json.dumps(configuration)
-        
+
         if policies and isinstance(policies, str):
-             # Ensure policies is valid json if string
-             try:
-                 json.loads(policies)
-             except:
-                 policies = "{}"
+            # Ensure policies is valid json if string
+            try:
+                json.loads(policies)
+            except json.JSONDecodeError:
+                policies = "{}"
 
         async with self.db.acquire() as c:
             await c.execute(
@@ -76,7 +76,7 @@ class ModelDeploymentRepository(BaseRepository):
                 owner_id,
                 org_id,
                 policies,
-                inference_model
+                inference_model,
             )
 
         # await self.event_bus.publish(
@@ -142,13 +142,9 @@ class ModelDeploymentRepository(BaseRepository):
             {
                 "deployment_id": str(deployment_id),
                 "allocation_ids": (
-                    [str(a) for a in allocation_ids]
-                    if allocation_ids else None
+                    [str(a) for a in allocation_ids] if allocation_ids else None
                 ),
-                "node_ids": (
-                    [str(n) for n in node_ids]
-                    if node_ids else None
-                ),
+                "node_ids": ([str(n) for n in node_ids] if node_ids else None),
                 "llmd_resource_name": llmd_resource_name,
             },
         )
@@ -176,7 +172,6 @@ class ModelDeploymentRepository(BaseRepository):
             },
         )
 
-
     async def get(self, deployment_id: UUID):
         q = "SELECT * FROM model_deployments WHERE deployment_id=$1"
         async with self.db.acquire() as c:
@@ -187,19 +182,19 @@ class ModelDeploymentRepository(BaseRepository):
         conditions = []
         args = []
         idx = 1
-        
+
         if pool_id:
             conditions.append(f"pool_id=${idx}")
             args.append(pool_id)
             idx += 1
-            
+
         if org_id:
             conditions.append(f"org_id=${idx}")
             args.append(org_id)
             idx += 1
-            
+
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
-        
+
         q = f"""
         SELECT * FROM model_deployments
         {where_clause}
@@ -209,7 +204,6 @@ class ModelDeploymentRepository(BaseRepository):
         async with self.db.acquire() as c:
             rows = await c.fetch(q, *args)
             return [dict(r) for r in rows]
-        
 
     async def list_by_state(self, state: str):
         q = """
@@ -220,7 +214,7 @@ class ModelDeploymentRepository(BaseRepository):
         async with self.db.acquire() as c:
             rows = await c.fetch(q, state)
             return [dict(r) for r in rows]
-    
+
     async def delete(self, deployment_id: UUID):
         """Permanently delete a deployment from the database."""
         q = """
@@ -236,8 +230,6 @@ class ModelDeploymentRepository(BaseRepository):
                 "deployment_id": str(deployment_id),
             },
         )
-        
-        
 
 
 # from uuid import UUID
