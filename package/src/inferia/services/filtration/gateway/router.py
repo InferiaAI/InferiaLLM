@@ -14,6 +14,7 @@ from fastapi import (
     Response,
     status,
     BackgroundTasks,
+    Query,
 )
 from guardrail.api_models import GuardrailScanRequest, ScanType
 
@@ -206,9 +207,16 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
 
 
 @router.get("/models", response_model=ModelsListResponse)
-async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
+async def list_models(
+    request: Request,
+    skip: int = Query(0, ge=0, description="Number of models to skip"),
+    limit: int = Query(
+        50, ge=1, le=100, description="Maximum number of models to return"
+    ),
+    db: AsyncSession = Depends(get_db),
+):
     """
-    List available models.
+    List available models with pagination.
     """
     # Check rate limit
     await rate_limiter.check_rate_limit(request)
@@ -232,8 +240,8 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get available models from database (real deployments)
-    result = await db.execute(select(Deployment))
+    # Get available models from database (real deployments) with pagination
+    result = await db.execute(select(Deployment).offset(skip).limit(limit))
     deployments = result.scalars().all()
 
     mock_models = [

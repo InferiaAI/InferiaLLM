@@ -4,6 +4,7 @@ import type { User, Role, Invitation } from "@/services/rbacService";
 import { toast } from "sonner";
 import { User as UserIcon, Shield } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { Pagination } from "@/components/ui/Pagination";
 
 export default function Users() {
     const [users, setUsers] = useState<User[]>([]);
@@ -17,18 +18,26 @@ export default function Users() {
     const [inviteRole, setInviteRole] = useState("member");
     const [inviting, setInviting] = useState(false);
 
+    // Pagination for users
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
+    const [totalUsers, setTotalUsers] = useState(0);
+
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [currentPage, pageSize]);
 
     const fetchData = async () => {
         try {
+            setLoading(true);
+            const skip = (currentPage - 1) * pageSize;
             const [usersData, rolesData, invitesData] = await Promise.all([
-                rbacService.getUsers(),
+                rbacService.getUsers({ skip, limit: pageSize }),
                 rbacService.getRoles(),
                 rbacService.getInvitations()
             ]);
             setUsers(usersData);
+            setTotalUsers(usersData.length === pageSize ? (currentPage * pageSize) + 1 : (currentPage - 1) * pageSize + usersData.length);
             setRoles(rolesData);
             setInvitations(invitesData);
         } catch (error) {
@@ -145,6 +154,21 @@ export default function Users() {
                         </tbody>
                     </table>
                 </div>
+                
+                {/* Pagination for Users */}
+                {!loading && users.length > 0 && (
+                    <Pagination
+                        currentPage={currentPage}
+                        totalPages={Math.ceil(totalUsers / pageSize)}
+                        onPageChange={setCurrentPage}
+                        pageSize={pageSize}
+                        onPageSizeChange={(size) => {
+                            setPageSize(size);
+                            setCurrentPage(1);
+                        }}
+                        totalItems={totalUsers}
+                    />
+                )}
             </div>
 
             {/* Invitations Table */}

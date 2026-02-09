@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -307,14 +307,23 @@ async def logout():
 
 
 @router.get("/organizations")
-async def list_organizations(request: Request, db: AsyncSession = Depends(get_db)):
-    """List organizations the current user belongs to."""
+async def list_organizations(
+    request: Request,
+    skip: int = Query(0, ge=0, description="Number of organizations to skip"),
+    limit: int = Query(
+        50, ge=1, le=100, description="Maximum number of organizations to return"
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """List organizations the current user belongs to with pagination."""
     user_context = get_current_user_from_request(request)
 
     stmt = (
         select(UserOrganization, DBOrganization)
         .join(DBOrganization, UserOrganization.org_id == DBOrganization.id)
         .where(UserOrganization.user_id == user_context.user_id)
+        .offset(skip)
+        .limit(limit)
     )
 
     result = await db.execute(stmt)

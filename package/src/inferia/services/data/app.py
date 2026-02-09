@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import logging
 import sys
 from pathlib import Path
+import os
 
 # Add current directory to path
 sys.path.append(str(Path(__file__).parent))
@@ -39,6 +41,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Data Service", version="0.1.0", lifespan=lifespan)
+
+# CORS configuration
+# Allow requests from dashboard and other known origins
+allowed_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173,http://localhost:8001",
+)
+_allow_origins = [
+    origin.strip() for origin in allowed_origins.split(",") if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allow_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+)
 
 
 class RetrieveRequest(BaseModel):

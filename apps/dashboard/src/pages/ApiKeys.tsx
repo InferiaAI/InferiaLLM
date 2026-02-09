@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import api from "@/lib/api"
 import { toast } from "sonner"
 import { Key, Plus, Copy } from "lucide-react"
+import { Pagination } from "@/components/ui/Pagination"
 
 interface ApiKey {
     id: string
@@ -21,14 +22,26 @@ export default function ApiKeys() {
     const [loading, setLoading] = useState(true)
     const [showAdd, setShowAdd] = useState(false)
     const [newKeyData, setNewKeyData] = useState<ApiKeyCreated | null>(null)
+    
+    // Pagination
+    const [currentPage, setCurrentPage] = useState(1)
+    const [pageSize, setPageSize] = useState(20)
+    const [totalItems, setTotalItems] = useState(0)
 
     // Form
     const [name, setName] = useState("")
 
-    const fetchKeys = async () => {
+    const fetchKeys = async (page: number = 1, limit: number = 20) => {
         try {
-            const { data } = await api.get("/management/api-keys")
+            setLoading(true)
+            const skip = (page - 1) * limit
+            const { data, headers } = await api.get("/management/api-keys", {
+                params: { skip, limit }
+            })
             setKeys(data)
+            // Try to get total from X-Total-Count header or use data length
+            const total = headers['x-total-count'] ? parseInt(headers['x-total-count']) : data.length
+            setTotalItems(total)
         } catch (error) {
             toast.error("Failed to fetch API keys")
         } finally {
@@ -37,8 +50,8 @@ export default function ApiKeys() {
     }
 
     useEffect(() => {
-        fetchKeys()
-    }, [])
+        fetchKeys(currentPage, pageSize)
+    }, [currentPage, pageSize])
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -48,7 +61,7 @@ export default function ApiKeys() {
             toast.success("API Key created")
             setShowAdd(false)
             setName("")
-            fetchKeys()
+            fetchKeys(currentPage, pageSize)
         } catch (error) {
             toast.error("Failed to create key")
         }
@@ -136,15 +149,15 @@ export default function ApiKeys() {
                                         {key.is_active && (
                                             <button
                                                 onClick={async () => {
-                                                    if (confirm("Are you sure you want to revoke this key? It will stop working immediately.")) {
-                                                        try {
-                                                            await api.delete(`/management/api-keys/${key.id}`)
-                                                            toast.success("API Key revoked")
-                                                            fetchKeys()
-                                                        } catch (e) {
-                                                            toast.error("Failed to revoke key")
-                                                        }
-                                                    }
+                                        if (confirm("Are you sure you want to revoke this key? It will stop working immediately.")) {
+                                            try {
+                                                await api.delete(`/management/api-keys/${key.id}`)
+                                                toast.success("API Key revoked")
+                                                fetchKeys(currentPage, pageSize)
+                                            } catch (e) {
+                                                toast.error("Failed to revoke key")
+                                            }
+                                        }
                                                 }}
                                                 className="text-xs text-destructive hover:underline ml-4"
                                             >
@@ -162,6 +175,21 @@ export default function ApiKeys() {
                         </tbody>
                     </table>
                 </div>
+            )}
+            
+            {/* Pagination */}
+            {!loading && keys.length > 0 && (
+                <Pagination
+                    currentPage={currentPage}
+                    totalPages={Math.ceil(totalItems / pageSize)}
+                    onPageChange={setCurrentPage}
+                    pageSize={pageSize}
+                    onPageSizeChange={(size) => {
+                        setPageSize(size)
+                        setCurrentPage(1)
+                    }}
+                    totalItems={totalItems}
+                />
             )}
         </div>
     )

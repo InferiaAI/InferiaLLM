@@ -35,10 +35,15 @@ export interface Invitation {
     created_at: string;
 }
 
+export interface PaginationParams {
+    skip?: number;
+    limit?: number;
+}
+
 export const rbacService = {
     // Roles
-    getRoles: async () => {
-        const { data } = await api.get<Role[]>("/admin/roles");
+    getRoles: async (params?: PaginationParams) => {
+        const { data } = await api.get<Role[]>("/admin/roles", { params });
         return data;
     },
     createRole: async (role: RoleCreate) => {
@@ -59,8 +64,8 @@ export const rbacService = {
     },
 
     // Users
-    getUsers: async () => {
-        const { data } = await api.get<User[]>("/management/users");
+    getUsers: async (params?: PaginationParams) => {
+        const { data } = await api.get<User[]>("/management/users", { params });
         return data;
     },
     updateUserRole: async (userId: string, roleName: string) => {
@@ -69,8 +74,8 @@ export const rbacService = {
     },
 
     // Invitations
-    getInvitations: async () => {
-        const { data } = await api.get<{ invitations: Invitation[] }>("/management/invitations");
+    getInvitations: async (params?: PaginationParams) => {
+        const { data } = await api.get<{ invitations: Invitation[] }>("/management/invitations", { params });
         return data.invitations;
     },
     inviteUser: async (email: string, role: string) => {

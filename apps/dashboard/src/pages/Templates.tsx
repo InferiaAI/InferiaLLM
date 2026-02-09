@@ -4,6 +4,7 @@ import api from "@/lib/api"
 import { toast } from "sonner"
 import { FileText, Plus, Trash2 } from "lucide-react"
 import { useQueryClient, useMutation } from "@tanstack/react-query"
+import { Pagination } from "@/components/ui/Pagination"
 
 interface PromptTemplate {
     template_id: string
@@ -17,25 +18,35 @@ export default function Templates() {
     const [loading, setLoading] = useState(true)
     const [showAdd, setShowAdd] = useState(false)
 
+    // Pagination
+    const [currentPage, setCurrentPage] = useState(1)
+    const [pageSize, setPageSize] = useState(20)
+    const [totalTemplates, setTotalTemplates] = useState(0)
+
     // Form
     const [templateId, setTemplateId] = useState("")
     const [content, setContent] = useState("")
     const [description, setDescription] = useState("")
 
-    const fetchTemplates = async () => {
+    const fetchTemplates = async (page: number = 1, limit: number = 20) => {
         try {
-            const { data } = await api.get("/management/templates")
+            setLoading(true)
+            const skip = (page - 1) * limit
+            const { data } = await api.get("/management/templates", {
+                params: { skip, limit }
+            })
             setTemplates(data)
-            setLoading(false)
+            setTotalTemplates(data.length === limit ? (page * limit) + 1 : (page - 1) * limit + data.length)
         } catch (error) {
             toast.error("Failed to fetch templates")
+        } finally {
             setLoading(false)
         }
     }
 
     useEffect(() => {
-        fetchTemplates()
-    }, [])
+        fetchTemplates(currentPage, pageSize)
+    }, [currentPage, pageSize])
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -50,7 +61,7 @@ export default function Templates() {
             setTemplateId("")
             setContent("")
             setDescription("")
-            fetchTemplates()
+            fetchTemplates(currentPage, pageSize)
         } catch (error) {
             toast.error("Failed to create template")
         }
@@ -172,6 +183,21 @@ export default function Templates() {
                         </tbody>
                     </table>
                 </div>
+            )}
+            
+            {/* Pagination */}
+            {!loading && templates.length > 0 && (
+                <Pagination
+                    currentPage={currentPage}
+                    totalPages={Math.ceil(totalTemplates / pageSize)}
+                    onPageChange={setCurrentPage}
+                    pageSize={pageSize}
+                    onPageSizeChange={(size) => {
+                        setPageSize(size);
+                        setCurrentPage(1);
+                    }}
+                    totalItems={totalTemplates}
+                />
             )}
         </div>
     )

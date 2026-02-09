@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Activity, Server, Database, Zap, Cloud, Check, X, RefreshCw, Clock, AlertTriangle } from "lucide-react"
+import { Activity, Server, Database, Zap, Cloud, Check, X, RefreshCw, Clock, AlertTriangle, Shield } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
 
@@ -16,6 +16,8 @@ const MANAGEMENT_BASE = import.meta.env.VITE_MANAGEMENT_URL || "http://localhost
 const COMPUTE_BASE = import.meta.env.VITE_COMPUTE_URL || "http://localhost:8080"
 const INFERENCE_BASE = import.meta.env.VITE_INFERENCE_URL || "http://localhost:8001"
 const SIDECAR_BASE = import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000"
+const DATA_BASE = import.meta.env.VITE_DATA_URL || "http://localhost:8003"
+const GUARDRAIL_BASE = import.meta.env.VITE_GUARDRAIL_URL || "http://localhost:8002"
 
 const SERVICES = [
     {
@@ -38,10 +40,22 @@ const SERVICES = [
         description: "Deployment management and compute orchestration"
     },
     {
-        name: "Nosana Sidecar",
+        name: "Data Service",
+        url: `${DATA_BASE}/health`,
+        icon: Database,
+        description: "Document processing and vector database management"
+    },
+    {
+        name: "Guardrail Service",
+        url: `${GUARDRAIL_BASE}/health`,
+        icon: Shield,
+        description: "Content safety, PII detection, and policy enforcement"
+    },
+    {
+        name: "DePIN Sidecar",
         url: `${SIDECAR_BASE}/health`,
         icon: Cloud,
-        description: "Nosana DePIN job management"
+        description: "DePIN (Nosana/Akash) job management"
     }
 ]
 

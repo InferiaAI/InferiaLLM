@@ -61,8 +61,8 @@ export const authService = {
         const { data } = await api.post<AuthResponse>("/auth/switch-org", { org_id: orgId });
         return data;
     },
-    getOrganizations: async () => {
-        const { data } = await api.get<OrganizationBasicInfo[]>("/auth/organizations");
+    getOrganizations: async (params?: { skip?: number; limit?: number }) => {
+        const { data } = await api.get<OrganizationBasicInfo[]>("/auth/organizations", { params });
         return data;
     }
 };

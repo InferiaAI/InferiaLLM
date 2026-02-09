@@ -3,6 +3,7 @@ import { rbacService } from "@/services/rbacService";
 import type { Role, RoleCreate } from "@/services/rbacService";
 import { toast } from "sonner";
 import { Plus, Trash2, Edit, Shield } from "lucide-react";
+import { Pagination } from "@/components/ui/Pagination";
 
 export default function Roles() {
     const [roles, setRoles] = useState<Role[]>([]);
@@ -14,17 +15,25 @@ export default function Roles() {
     const [editingRole, setEditingRole] = useState<Role | null>(null);
     const [formData, setFormData] = useState<RoleCreate>({ name: "", description: "", permissions: [] });
 
+    // Pagination
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
+    const [totalRoles, setTotalRoles] = useState(0);
+
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [currentPage, pageSize]);
 
     const fetchData = async () => {
         try {
+            setLoading(true);
+            const skip = (currentPage - 1) * pageSize;
             const [rolesData, permsData] = await Promise.all([
-                rbacService.getRoles(),
+                rbacService.getRoles({ skip, limit: pageSize }),
                 rbacService.getPermissions()
             ]);
             setRoles(rolesData);
+            setTotalRoles(rolesData.length === pageSize ? (currentPage * pageSize) + 1 : (currentPage - 1) * pageSize + rolesData.length);
             setPermissionsList(permsData);
         } catch (error) {
             console.error(error);
@@ -155,6 +164,21 @@ export default function Roles() {
                     </tbody>
                 </table>
             </div>
+
+            {/* Pagination */}
+            {!loading && roles.length > 0 && (
+                <Pagination
+                    currentPage={currentPage}
+                    totalPages={Math.ceil(totalRoles / pageSize)}
+                    onPageChange={setCurrentPage}
+                    pageSize={pageSize}
+                    onPageSizeChange={(size) => {
+                        setPageSize(size);
+                        setCurrentPage(1);
+                    }}
+                    totalItems={totalRoles}
+                />
+            )}
 
             {/* Modal */}
             {isModalOpen && (
