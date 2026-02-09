@@ -3,7 +3,7 @@ import grpc
 import json
 import datetime as dt
 
-from v1 import (
+from inferia.services.orchestration.v1 import (
     compute_pool_pb2,
     compute_pool_pb2_grpc,
 )

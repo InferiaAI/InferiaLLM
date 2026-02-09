@@ -9,20 +9,6 @@ This is the main entry point for the orchestration layer that includes:
 
 import asyncio
 import logging
-from pathlib import Path
-import sys
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("orchestration-service")
-
-# Add orchestration app to path so internal imports work
-orchestration_app_path = str(Path(__file__).parent / "app")
-if orchestration_app_path not in sys.path:
-    sys.path.insert(0, orchestration_app_path)
-
 import asyncpg
 import grpc
 from fastapi import FastAPI
@@ -31,30 +17,52 @@ import uvicorn
 
 from inferia.services.orchestration.config import settings
 
-# Import from internal app structure (now supported via sys.path)
-from services.inventory_manager.http import router as inventory_router
-from services.model_deployment.deployment_server import (
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("orchestration-service")
+
+# Import from absolute paths
+from inferia.services.orchestration.services.inventory_manager.http import (
+    router as inventory_router,
+)
+from inferia.services.orchestration.services.model_deployment.deployment_server import (
     router as deployment_engine_router,
 )
 
-from v1 import (
+from inferia.services.orchestration.v1 import (
     compute_pool_pb2_grpc,
     model_registry_pb2_grpc,
     model_deployment_pb2_grpc,
 )
 
-from services.compute_pool_engine.compute_pool_manager import ComputePoolManagerService
-from services.model_registry.service import ModelRegistryService
-from services.model_deployment.service import ModelDeploymentService
-from services.model_deployment.controller import ModelDeploymentController
+from inferia.services.orchestration.services.compute_pool_engine.compute_pool_manager import (
+    ComputePoolManagerService,
+)
+from inferia.services.orchestration.services.model_registry.service import (
+    ModelRegistryService,
+)
+from inferia.services.orchestration.services.model_deployment.service import (
+    ModelDeploymentService,
+)
+from inferia.services.orchestration.services.model_deployment.controller import (
+    ModelDeploymentController,
+)
 
-from repositories.pool_repo import ComputePoolRepository
-from repositories.model_registry_repo import ModelRegistryRepository
-from repositories.model_deployment_repo import ModelDeploymentRepository
-from repositories.outbox_repo import OutboxRepository
-from repositories.inventory_repo import InventoryRepository
+from inferia.services.orchestration.repositories.pool_repo import ComputePoolRepository
+from inferia.services.orchestration.repositories.model_registry_repo import (
+    ModelRegistryRepository,
+)
+from inferia.services.orchestration.repositories.model_deployment_repo import (
+    ModelDeploymentRepository,
+)
+from inferia.services.orchestration.repositories.outbox_repo import OutboxRepository
+from inferia.services.orchestration.repositories.inventory_repo import (
+    InventoryRepository,
+)
 
-from infra.redis_event_bus import RedisEventBus
+from inferia.services.orchestration.infra.redis_event_bus import RedisEventBus
 
 
 async def create_db_pool():

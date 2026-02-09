@@ -1,8 +1,8 @@
 import asyncio
 import uuid
-from infra.db import create_test_db_pool
-from v1 import scheduler_pb2
-from infra.test_setup import scheduler_stub
+from inferia.services.orchestration.infra.db import create_test_db_pool
+from inferia.services.orchestration.v1 import scheduler_pb2
+from inferia.services.orchestration.infra.test_setup import scheduler_stub
 
 
 async def test_quota_preemption():

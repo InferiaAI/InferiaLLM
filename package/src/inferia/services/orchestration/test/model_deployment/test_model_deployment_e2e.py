@@ -3,10 +3,10 @@ import grpc
 import json
 from uuid import UUID
 
-from infra.db import create_test_db_pool
-from infra.test_setup import uid
+from inferia.services.orchestration.infra.db import create_test_db_pool
+from inferia.services.orchestration.infra.test_setup import uid
 
-from v1 import (
+from inferia.services.orchestration.v1 import (
     model_registry_pb2,
     model_registry_pb2_grpc,
     model_deployment_pb2,

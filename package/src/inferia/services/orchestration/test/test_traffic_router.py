@@ -1,5 +1,5 @@
 import unittest
-from app.services.traffic_router.engine import TrafficRouter
+from inferia.services.orchestration.services.traffic_router.engine import TrafficRouter
 
 class TestTrafficRouter(unittest.TestCase):
     def setUp(self):

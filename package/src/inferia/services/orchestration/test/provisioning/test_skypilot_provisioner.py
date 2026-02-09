@@ -2,7 +2,7 @@ import pytest
 import sys
 from unittest.mock import MagicMock
 
-from app.provisioning.skypilot import SkyPilotProvisioner
+from inferia.services.orchestration.provisioning.skypilot import SkyPilotProvisioner
 
 
 class DummyRequest:

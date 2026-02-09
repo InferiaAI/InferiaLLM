@@ -1,6 +1,6 @@
 import asyncio
 import grpc
-from v1 import (
+from inferia.services.orchestration.v1 import (
     placement_engine_pb2,
     placement_engine_pb2_grpc,
 )

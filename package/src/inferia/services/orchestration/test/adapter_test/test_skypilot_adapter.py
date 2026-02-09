@@ -2,7 +2,7 @@ import asyncio
 import grpc
 from uuid import UUID
 
-from services.orchestration.app.v1 import (
+from inferia.services.orchestration.v1 import (
     model_registry_pb2,
     model_registry_pb2_grpc,
     model_deployment_pb2,

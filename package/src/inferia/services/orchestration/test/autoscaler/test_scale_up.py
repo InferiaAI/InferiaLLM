@@ -2,10 +2,10 @@ import asyncio
 import uuid
 import json
 
-from services.autoscaler.worker import Autoscaler
-from repositories.autoscaler_repo import AutoscalerRepository
-from services.adapter_stub import FakeAdapterStub
-from infra.db import create_test_db_pool
+from inferia.services.orchestration.services.autoscaler.worker import Autoscaler
+from inferia.services.orchestration.repositories.autoscaler_repo import AutoscalerRepository
+from inferia.services.orchestration.services.adapter_stub import FakeAdapterStub
+from inferia.services.orchestration.infra.db import create_test_db_pool
 
 
 async def test_autoscaler_scale_up():

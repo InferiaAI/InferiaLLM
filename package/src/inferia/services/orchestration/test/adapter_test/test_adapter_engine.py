@@ -1,6 +1,6 @@
 import asyncio
 import grpc
-from v1 import adapter_engine_pb2, adapter_engine_pb2_grpc
+from inferia.services.orchestration.v1 import adapter_engine_pb2, adapter_engine_pb2_grpc
 
 
 GRPC_ENDPOINT = "localhost:50051"

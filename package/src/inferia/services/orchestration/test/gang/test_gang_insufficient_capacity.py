@@ -1,13 +1,13 @@
 import asyncio
 from uuid import UUID
 import uuid
-from infra.db import create_test_db_pool
-from infra.test_setup import (
+from inferia.services.orchestration.infra.db import create_test_db_pool
+from inferia.services.orchestration.infra.test_setup import (
     scheduler_stub,
     create_test_pool,
     create_ready_node,
 )
-from v1 import scheduler_pb2
+from inferia.services.orchestration.v1 import scheduler_pb2
 
 
 async def test_gang_insufficient_capacity():

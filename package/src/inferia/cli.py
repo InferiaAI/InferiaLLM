@@ -113,12 +113,6 @@ def run_inference_service(queue=None):
 def run_orchestration_service(queue=None):
     from inferia.startup_events import ServiceStarting, ServiceStarted, ServiceFailed
 
-    # Helper to inject paths for orchestration service
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    app_path = os.path.join(base_dir, "services/orchestration/app")
-
-    sys.path.insert(0, app_path)
-
     try:
         if queue:
             queue.put(ServiceStarting("Orchestration Service"))
@@ -139,15 +133,11 @@ def run_orchestration_service(queue=None):
 def run_worker(queue=None):
     from inferia.startup_events import ServiceStarting, ServiceStarted, ServiceFailed
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    app_path = os.path.join(base_dir, "services/orchestration/app")
-    sys.path.insert(0, app_path)
-
     try:
         if queue:
             queue.put(ServiceStarting("Orchestration Worker"))
         import asyncio
-        from inferia.services.orchestration.app.services.model_deployment.worker_main import (
+        from inferia.services.orchestration.services.model_deployment.worker_main import (
             main,
         )
 
@@ -173,7 +163,7 @@ def run_nosana_sidecar(queue=None):
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     sidecar_dir = os.path.join(
-        base_dir, "services/orchestration/app/services/depin-sidecar"
+        base_dir, "services/orchestration/services/depin-sidecar"
     )
 
     print(f"[DePIN] Starting Sidecar from {sidecar_dir}")
