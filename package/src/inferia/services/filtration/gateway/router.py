@@ -6,7 +6,15 @@ Handles request routing to the orchestration layer.
 from typing import Any, Dict, List
 
 from db.database import get_db
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, BackgroundTasks
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+    BackgroundTasks,
+)
 from guardrail.api_models import GuardrailScanRequest, ScanType
 from guardrail.engine import guardrail_engine
 from guardrail.pii_service import pii_service
@@ -19,9 +27,10 @@ from db.models import Deployment
 from gateway.rate_limiter import rate_limiter
 from security.encryption import LogEncryption
 from config import settings
- 
+
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 encryption_service = None
@@ -30,11 +39,12 @@ if settings.log_encryption_key:
         encryption_service = LogEncryption(settings.log_encryption_key)
     except Exception as e:
         logger.critical(f"Failed to initialize log encryption: {e}")
-        raise RuntimeError(f"Log encryption key provided but initialization failed: {e}")
+        raise RuntimeError(
+            f"Log encryption key provided but initialization failed: {e}"
+        )
 
 router = APIRouter(prefix="/internal", tags=["Internal Inference"])
 router.include_router(auth_router.router)
-
 
 
 # --- Policy Engine: Internal Endpoints ---
@@ -67,9 +77,9 @@ async def check_user_quota(
 
 @router.post("/policy/track_usage")
 async def track_user_usage(
-    request: UsageTrackRequest, 
+    request: UsageTrackRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Increment user usage stats.
@@ -79,13 +89,16 @@ async def track_user_usage(
     await policy_engine.increment_redis_only(
         request.user_id, request.model, request.usage
     )
-    
+
     # 2. Background DB persistence
     background_tasks.add_task(
-        policy_engine.persist_usage_db, 
-        db, request.user_id, request.model, request.usage
+        policy_engine.persist_usage_db,
+        db,
+        request.user_id,
+        request.model,
+        request.usage,
     )
-    
+
     return {"status": "ok", "message": "Usage tracking initiated"}
 
 
@@ -95,7 +108,10 @@ import uuid
 from db.models import InferenceLog
 from models import InferenceLogCreate
 
-async def _persist_log_background(db: AsyncSession, log_data: InferenceLogCreate, log_id: str):
+
+async def _persist_log_background(
+    db: AsyncSession, log_data: InferenceLogCreate, log_id: str
+):
     """Background task to persist inference log."""
     try:
         log = InferenceLog(
@@ -104,7 +120,10 @@ async def _persist_log_background(db: AsyncSession, log_data: InferenceLogCreate
             user_id=log_data.user_id,
             model=log_data.model,
             request_payload=(
-                {"encrypted": True, "ciphertext": encryption_service.encrypt(log_data.request_payload)}
+                {
+                    "encrypted": True,
+                    "ciphertext": encryption_service.encrypt(log_data.request_payload),
+                }
                 if encryption_service and log_data.request_payload
                 else log_data.request_payload
             ),
@@ -124,11 +143,12 @@ async def _persist_log_background(db: AsyncSession, log_data: InferenceLogCreate
     except Exception as e:
         logger.error(f"Failed to persist inference log in background: {e}")
 
+
 @router.post("/logs/create")
 async def create_inference_log(
-    log_data: InferenceLogCreate, 
+    log_data: InferenceLogCreate,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Create an inference log entry.
@@ -171,11 +191,10 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
         if "PII" in input_scanners or "Anonymize" in input_scanners:
             pii_enabled = True
 
-
     # Run Guardrail Scan first
     # NOTE: Guardrails run on ORIGINAL text to detect malicious intent effectively.
     if request_body.scan_type == ScanType.INPUT:
-         result = await guardrail_engine.scan_input(
+        result = await guardrail_engine.scan_input(
             prompt=request_body.text,
             user_id=user_id,
             custom_keywords=request_body.custom_banned_keywords or [],
@@ -183,9 +202,9 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
             config=request_body.config or {},
         )
     else:
-         # Output scan requires context
-         context = request_body.context or ""
-         result = await guardrail_engine.scan_output(
+        # Output scan requires context
+        context = request_body.context or ""
+        result = await guardrail_engine.scan_output(
             prompt=context,
             output=request_body.text,
             user_id=user_id,
@@ -200,7 +219,7 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
         sanitized_text, pii_violations = await pii_service.anonymize(
             result.sanitized_text or "", request_body.pii_entities or []
         )
-        
+
         if pii_violations:
             result.violations.extend(pii_violations)
             result.sanitized_text = sanitized_text
@@ -233,20 +252,40 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
     # Check rate limit
     await rate_limiter.check_rate_limit(request)
 
+    # 1. Validate API Key
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    api_key = auth_header.split(" ")[1]
+    key_record = await policy_engine.verify_api_key(db, api_key)
+
+    if not key_record:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Get available models from database (real deployments)
     result = await db.execute(select(Deployment))
     deployments = result.scalars().all()
-    
+
     mock_models = [
         ModelInfo(
             id=str(d.model_name),
+            model_name=str(d.model_name),
             created=int(d.created_at.timestamp()) if d.created_at is not None else 0,
             owned_by=str(d.org_id) if d.org_id is not None else "system",
-            description=f"Model deployment for {d.model_name} ({d.engine})"
+            description=f"Model deployment for {d.model_name} ({d.engine})",
         )
         for d in deployments
     ]
-    
+
     return ModelsListResponse(data=mock_models)
 
 

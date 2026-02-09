@@ -25,9 +25,9 @@ from db.models import Organization as DBOrganization
 from rbac.auth import auth_service
 
 
-
 import redis.asyncio as redis
 from config import settings
+
 
 class PolicyEngine:
     def __init__(self):
@@ -35,15 +35,36 @@ class PolicyEngine:
         # TTL=10 seconds to ensure reasonably fresh configs/keys while offloading DB
         # Reduced from 60s to handle real-time setting changes better
         self.context_cache = cachetools.TTLCache(maxsize=2000, ttl=10)
-        
+
         # Cache for Org ID lookups from API Key ID: Key=api_key_id, Value=org_id
         self.org_id_cache = cachetools.TTLCache(maxsize=5000, ttl=300)
-        
+
         # Cache for Quota Policies: Key=org_id, Value=PolicyConfigDict
         self.quota_policy_cache = cachetools.TTLCache(maxsize=2000, ttl=60)
 
         # Redis Client for Quotas
         self.redis = redis.from_url(settings.redis_url, decode_responses=True)
+
+    async def verify_api_key(
+        self, db: AsyncSession, api_key: str
+    ) -> Optional[DBApiKey]:
+        """
+        Verify if an API key is valid. Returns the key record if valid, None otherwise.
+        """
+        if not api_key:
+            return None
+
+        # Optimistic lookup by prefix
+        prefix = api_key[:6] + "..."
+        stmt = select(DBApiKey).where(DBApiKey.prefix == prefix)
+        result = await db.execute(stmt)
+        candidates = result.scalars().all()
+
+        for key_record in candidates:
+            if auth_service.verify_password(api_key, key_record.key_hash):
+                return key_record
+
+        return None
 
     async def resolve_context(
         self, db: AsyncSession, api_key: str, model: str
@@ -56,27 +77,16 @@ class PolicyEngine:
             return self.context_cache[cache_key]
 
         # 1. Verify API Key
-        # Optimistic lookup by prefix
-        prefix = api_key[:6] + "..."
-        stmt = select(DBApiKey).where(DBApiKey.prefix == prefix)
-        result = await db.execute(stmt)
-        candidates = result.scalars().all()
-
-        auth_key_record = None
-        for key_record in candidates:
-            if auth_service.verify_password(api_key, key_record.key_hash):
-                auth_key_record = key_record
-                break
+        auth_key_record = await self.verify_api_key(db, api_key)
 
         if not auth_key_record:
             return {"valid": False, "error": "Invalid API Key"}
 
         # 2. Resolve Deployment and Organization
-        stmt = (
-            select(DBDeployment, DBOrganization)
-            .join(DBOrganization, DBDeployment.org_id == DBOrganization.id)
+        stmt = select(DBDeployment, DBOrganization).join(
+            DBOrganization, DBDeployment.org_id == DBOrganization.id
         )
-        
+
         if auth_key_record.deployment_id:
             stmt = stmt.where(DBDeployment.id == auth_key_record.deployment_id)
         else:
@@ -88,16 +98,16 @@ class PolicyEngine:
                     | (DBDeployment.llmd_resource_name == model)
                 )
             )
-            
+
         result = await db.execute(stmt)
         row = result.first()
-        
+
         if not row:
             return {
                 "valid": False,
                 "error": "Deployment or Organization not found for model/key combination",
             }
-            
+
         deployment, organization = row
 
         # Convert deployment to dict for caching and session independence
@@ -129,12 +139,12 @@ class PolicyEngine:
                 "rag": {"enabled": False},
                 "prompt_template": None,
             }
-            
+
             # --- MERGE LOGIC ---
             # 1. Org Policies (DB)
             # 2. Deployment Policies (DB - overrides Org)
             # 3. Deployment Inline Policies (Metadata - overrides DB)
-            
+
             org_policies = [p for p in policies if not p.deployment_id]
             dep_policies = [p for p in policies if p.deployment_id]
 
@@ -147,7 +157,7 @@ class PolicyEngine:
                         template_definitions[t_id] = p.config_json.get("content")
 
             sorted_policies = org_policies + dep_policies
-            
+
             # Helper to merge config
             def apply_policy(p_type, p_config):
                 p_type = p_type.lower()
@@ -155,7 +165,7 @@ class PolicyEngine:
                     policy_cfg = p_config.copy()
                     if "enabled" not in policy_cfg:
                         policy_cfg["enabled"] = True
-                        
+
                     if p_type == "prompt_engine":
                         pass
                     else:
@@ -172,7 +182,7 @@ class PolicyEngine:
             # Apply DB Policies
             for p in sorted_policies:
                 apply_policy(p.policy_type, p.config_json)
-                
+
             # Apply Inline Policies (from Deployment Metadata)
             if deployment.policies:
                 # Expecting dict like {"guardrail": {...}, "rag": {...}}
@@ -188,7 +198,9 @@ class PolicyEngine:
             "deployment": deployment_dict,
             "config": config,
             "user_id_context": f"apikey:{auth_key_record.id}",
-            "log_payloads": bool(organization.log_payloads) if hasattr(organization, "log_payloads") else True,
+            "log_payloads": bool(organization.log_payloads)
+            if hasattr(organization, "log_payloads")
+            else True,
         }
 
         # Update Cache
@@ -211,7 +223,7 @@ class PolicyEngine:
         Raises HTTPException if quota exceeded.
         """
         today_str = date.today().isoformat()
-        
+
         # Redis Keys
         req_key = f"usage:{user_id}:{today_str}:{model}:requests"
         tok_key = f"usage:{user_id}:{today_str}:{model}:tokens"
@@ -219,11 +231,11 @@ class PolicyEngine:
         # Initialize limits with defaults
         limit_requests = DEFAULT_DAILY_REQUEST_LIMIT
         limit_tokens = DEFAULT_DAILY_TOKEN_LIMIT
-        
+
         # Resolve Org ID for Policy Lookup (Optimized: only if needed to overwrite defaults)
         # Note: We still access DB here for Policy Config, which is cacheable or less frequent than Usage write.
         # Ideally Policy Config should also be part of the cached context passed in, but signature is fixed for now.
-        
+
         # 1. Extract API Key ID from user_id and find Org ID
         org_id = None
         if user_id.startswith("apikey:"):
@@ -265,10 +277,10 @@ class PolicyEngine:
         try:
             current_requests = await self.redis.get(req_key)
             current_tokens = await self.redis.get(tok_key)
-            
+
             used_requests = int(current_requests) if current_requests else 0
             used_tokens = int(current_tokens) if current_tokens else 0
-            
+
             if used_requests >= limit_requests:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -279,11 +291,11 @@ class PolicyEngine:
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail=f"Daily quota exceeded (Token Limit). Limit: {limit_tokens}. Used: {used_tokens}.",
                 )
-                
+
         except redis.RedisError:
             # Open circuit on Redis fail? Or Fail Safe?
             # Fail safe allows request if Redis is down (preferred for availability)
-            # Fail secure blocks request. 
+            # Fail secure blocks request.
             # We choose Fail Safe but log error.
             print("Redis Quota Check Failed - Failing Open")
             pass
@@ -306,10 +318,10 @@ class PolicyEngine:
         """Increment usage in Redis for real-time quota checks."""
         today_str = date.today().isoformat()
         total_incr = usage_data.get("total_tokens", 0)
-        
+
         req_key = f"usage:{user_id}:{today_str}:{model}:requests"
         tok_key = f"usage:{user_id}:{today_str}:{model}:tokens"
-        
+
         try:
             async with self.redis.pipeline(transaction=True) as pipe:
                 await pipe.incr(req_key, amount=1)
@@ -361,15 +373,17 @@ class PolicyEngine:
         Get usage quotas for a user for today (from Redis if available).
         """
         today_str = date.today().isoformat()
-        
-        req_key = f"usage:{user_id}:{today_str}:*:requests" # We need model breakdown or sum?
+
+        req_key = (
+            f"usage:{user_id}:{today_str}:*:requests"  # We need model breakdown or sum?
+        )
         # Redis keys include model, so getting total requires pattern match or sum.
         # Simple implementation: Fallback to DB for "Get Quota" view since it aggregates.
         # Or just return default limits.
-        
+
         # For simplicity in this phase, let's read from DB for the dashboard view to ensure consistency with historical data.
         # Redis is optimization for real-time checks. DB is source of truth for reporting.
-        
+
         today = date.today()
         stmt = select(
             func.sum(DBUsage.total_tokens), func.sum(DBUsage.request_count)

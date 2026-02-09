@@ -57,6 +57,15 @@ def extract_api_key(authorization: str) -> str:
 # stream_with_tracking removed - logic moved to core.orchestrator.OrchestrationService
 
 
+@app.get("/v1/models")
+async def list_models(authorization: str = Header(None)):
+    """
+    List available models.
+    """
+    api_key = extract_api_key(authorization)
+    return await OrchestrationService.list_models(api_key)
+
+
 @app.post("/v1/chat/completions")
 async def create_completion(
     request: Request,

@@ -22,6 +22,15 @@ class OrchestrationService:
     """
 
     @staticmethod
+    async def list_models(api_key: str):
+        """
+        List available models.
+        """
+        # Forward to Filtration Client (which forwards to Filtration Gateway)
+        # We pass the user API key as a Bearer token for validation.
+        return await filtration_client.list_models(f"Bearer {api_key}")
+
+    @staticmethod
     async def handle_completion(
         api_key: str, body: Dict, background_tasks: BackgroundTasks
     ):
