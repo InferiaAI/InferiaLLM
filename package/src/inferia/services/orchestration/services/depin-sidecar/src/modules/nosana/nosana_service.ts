@@ -100,13 +100,18 @@ export class NosanaService {
         const { method = 'GET', body, headers = {} } = options;
 
         const url = `${NOSANA_API_BASE_URL}${path}`;
+        const fetchHeaders: any = {
+            'Authorization': this.getApiAuthHeader(),
+            ...headers
+        };
+
+        if (body && method !== 'GET') {
+            fetchHeaders['Content-Type'] = 'application/json';
+        }
+
         const fetchOptions: RequestInit = {
             method,
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': this.getApiAuthHeader(),
-                ...headers
-            }
+            headers: fetchHeaders
         };
 
         if (body && method !== 'GET') {
