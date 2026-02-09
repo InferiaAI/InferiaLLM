@@ -30,14 +30,33 @@ class GuardrailConfigManager(HTTPConfigManager):
 
     def _update_settings(self, providers: Dict[str, Any]):
         """Update local settings from gateway data."""
-        # Update Pydantic settings model
-        # The providers dict might have 'guardrails' key or be flat
         guardrails = providers.get("guardrails", {})
-        if guardrails:
-            # Check for keys like groq, lakera etc
-            update_pydantic_model(guardrail_settings, guardrails)
+        if not guardrails:
+            return
 
-        logger.debug("Guardrail settings updated from Filtration Service.")
+        # Map nested JSON to flat settings model
+        # 1. Groq
+        groq_key = guardrails.get("groq", {}).get("api_key")
+        if groq_key:
+            guardrail_settings.groq_api_key = groq_key
+
+        # 2. Lakera
+        lakera_key = guardrails.get("lakera", {}).get("api_key")
+        if lakera_key:
+            guardrail_settings.lakera_api_key = lakera_key
+
+        # 3. Llama Guard
+        llama_model = guardrails.get("llama_guard", {}).get("model_id")
+        if llama_model:
+            guardrail_settings.llama_guard_model_id = llama_model
+
+        # Also update global toggle if present
+        if "enabled" in guardrails:
+            guardrail_settings.enable_guardrails = guardrails["enabled"]
+
+        logger.debug(
+            "Guardrail settings updated from Filtration Service (manually mapped)."
+        )
 
     def start_polling(self, gateway_url: str = None, api_key: str = None):
         """Start polling with optional overrides."""

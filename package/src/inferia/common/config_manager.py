@@ -11,6 +11,9 @@ def update_pydantic_model(model: BaseModel, data: Dict[str, Any]):
     """Recursively update a Pydantic model with data from a dictionary."""
     for key, value in data.items():
         if not hasattr(model, key):
+            logger.debug(
+                f"Skipping key '{key}' - not found in {model.__class__.__name__}"
+            )
             continue
 
         attr = getattr(model, key)
@@ -19,6 +22,7 @@ def update_pydantic_model(model: BaseModel, data: Dict[str, Any]):
         else:
             try:
                 setattr(model, key, value)
+                logger.debug(f"Updated {model.__class__.__name__}.{key}")
             except Exception as e:
                 logger.warning(
                     f"Failed to set attribute {key} on {model.__class__.__name__}: {e}"
