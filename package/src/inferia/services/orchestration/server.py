@@ -164,9 +164,6 @@ async def serve():
     http_server = uvicorn.Server(config)
     asyncio.create_task(http_server.serve())
     logger.info(f"HTTP server started on port {settings.http_port}")
-    logger.info(
-        f"Dashboard available at http://{settings.host}:{settings.http_port}/dashboard"
-    )
 
     # Start gRPC
     server.add_insecure_port(f"[::]:{settings.grpc_port}")
