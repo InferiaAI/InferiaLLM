@@ -209,7 +209,12 @@ class OrchestrationService:
         log_payloads,
     ):
         # Tracker state
-        tracker = {"prompt_tokens": 0, "completion_tokens": 0, "ttft_ms": None}
+        tracker = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "ttft_ms": None,
+            "_tokenizer_model": provider_payload.get("model") or model,
+        }
 
         stream_gen = GatewayService.stream_upstream(
             endpoint_url, provider_payload, provider_headers, engine
@@ -323,12 +328,16 @@ class OrchestrationService:
         log_payloads,
     ):
         end_time = time.time()
-        latency_ms = int((end_time - start_time) * 1000)
+        total_duration_ms = int((end_time - start_time) * 1000)
+        # latency_ms remains full completion time for both streaming and non-streaming.
+        # Streaming TTFT is captured separately in ttft_ms.
+        latency_ms = total_duration_ms
         total_tokens = prompt_tokens + completion_tokens
 
         tokens_per_second = None
-        if latency_ms > 0 and completion_tokens > 0:
-            tokens_per_second = round(completion_tokens / (latency_ms / 1000), 2)
+        # Keep generation speed based on total request duration for consistency.
+        if total_duration_ms > 0 and completion_tokens > 0:
+            tokens_per_second = round(completion_tokens / (total_duration_ms / 1000), 2)
 
         # Respect log_payloads setting
         final_payload = request_payload if log_payloads else None

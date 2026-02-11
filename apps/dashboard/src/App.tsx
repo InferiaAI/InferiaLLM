@@ -12,6 +12,7 @@ import Register from "@/pages/Register";
 import AcceptInvite from "@/pages/AcceptInvite";
 import Setup2FA from "@/pages/Auth/Setup2FA";
 import Overview from "@/pages/Overview";
+import Insights from "@/pages/Insights";
 
 import Deployments from "@/pages/Deployments";
 import NewDeployment from "@/pages/NewDeployment";
@@ -79,6 +80,10 @@ const router = createBrowserRouter([
           {
             index: true,
             element: <Overview />,
+          },
+          {
+            path: "insights",
+            element: <Insights />,
           },
           {
             path: "deployments",

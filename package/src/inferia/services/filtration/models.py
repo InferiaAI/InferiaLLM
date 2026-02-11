@@ -54,4 +54,19 @@ from .schemas.logging import (
     AuditLogResponse,
     AuditLogFilter,
 )
+from .schemas.insights import (
+    InsightsStatusFilter,
+    InsightsGranularity,
+    InsightsFilterParams,
+    InsightsTotals,
+    InsightsLatency,
+    InsightsThroughput,
+    InsightsSummaryResponse,
+    InsightsTimeseriesBucket,
+    InsightsTimeseriesResponse,
+    InsightsPagination,
+    InsightsLogsResponse,
+    InsightsDeploymentFilterOption,
+    InsightsFiltersResponse,
+)
 from .schemas.knowledge_base import KBFileResponse

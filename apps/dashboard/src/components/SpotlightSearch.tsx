@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { Search, LayoutDashboard, Rocket, Box, FileText, Database, Key, Building2, Users, Shield, Clock, Activity, X, Cloud } from "lucide-react"
+import { Search, LayoutDashboard, Rocket, Box, FileText, Database, Key, Building2, Users, Shield, Clock, Activity, X, Cloud, BarChart3 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface SearchItem {
@@ -14,6 +14,7 @@ interface SearchItem {
 const SEARCH_ITEMS: SearchItem[] = [
     // Navigation
     { title: "Overview", path: "/dashboard", icon: LayoutDashboard, category: "Navigation", keywords: ["home", "dashboard", "main"] },
+    { title: "Insights", path: "/dashboard/insights", icon: BarChart3, category: "Navigation", keywords: ["analytics", "metrics", "latency", "tokens", "charts"] },
     { title: "Deployments", path: "/dashboard/deployments", icon: Rocket, category: "Navigation", keywords: ["deploy", "models", "inference"] },
     { title: "New Deployment", path: "/dashboard/deployments/new", icon: Rocket, category: "Actions", keywords: ["create", "add", "deploy"] },
     { title: "Compute Pools", path: "/dashboard/compute/pools", icon: Box, category: "Navigation", keywords: ["pool", "instances", "compute", "gpu"] },

@@ -20,6 +20,7 @@ import {
   PanelLeftOpen,
   ChevronRight,
   Activity,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -62,6 +63,7 @@ export default function DashboardLayout() {
       icon: LayoutDashboard,
       exact: true,
     },
+    { href: "/dashboard/insights", label: "Insights", icon: BarChart3 },
     { href: "/dashboard/deployments", label: "Deployments", icon: Rocket },
     { href: "/dashboard/compute/instances", label: "Pool", icon: Box },
     { href: "/dashboard/templates", label: "Templates", icon: FileText },

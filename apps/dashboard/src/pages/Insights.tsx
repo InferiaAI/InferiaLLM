@@ -1,0 +1,773 @@
+import { type ComponentType, type ReactNode, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+    Activity,
+    Clock3,
+    Gauge,
+    Layers3,
+    TrendingUp,
+    TriangleAlert,
+} from "lucide-react";
+import {
+    Area,
+    AreaChart,
+    CartesianGrid,
+    Legend,
+    Line,
+    LineChart,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+} from "recharts";
+
+import { Pagination } from "@/components/ui/Pagination";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
+import { cn } from "@/lib/utils";
+import {
+    type InsightsGranularity,
+    type InsightsQueryParams,
+    type InsightsStatus,
+    insightsService,
+} from "@/services/insightsService";
+
+type TimePreset = "24h" | "7d" | "30d" | "custom";
+
+function toLocalDateTimeInputValue(date: Date): string {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+}
+
+function parseLocalDateTimeInputValue(value: string): Date | null {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatNumber(value: number, maxFractionDigits = 2): string {
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: maxFractionDigits }).format(value);
+}
+
+function formatBucketLabel(value: string, granularity: InsightsGranularity): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    if (granularity === "hour") {
+        return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    }
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export default function Insights() {
+    const now = new Date();
+    const defaultStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [timePreset, setTimePreset] = useState<TimePreset>("7d");
+    const [customStart, setCustomStart] = useState<string>(toLocalDateTimeInputValue(defaultStart));
+    const [customEnd, setCustomEnd] = useState<string>(toLocalDateTimeInputValue(now));
+    const [deploymentId, setDeploymentId] = useState<string>("");
+    const [model, setModel] = useState<string>("");
+    const [status, setStatus] = useState<InsightsStatus>("all");
+    const [page, setPage] = useState<number>(1);
+    const [pageSize, setPageSize] = useState<number>(20);
+
+    const range = useMemo(() => {
+        const end = new Date();
+        if (timePreset === "24h") {
+            return { start: new Date(end.getTime() - 24 * 60 * 60 * 1000), end };
+        }
+        if (timePreset === "7d") {
+            return { start: new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000), end };
+        }
+        if (timePreset === "30d") {
+            return { start: new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000), end };
+        }
+
+        const parsedStart = parseLocalDateTimeInputValue(customStart);
+        const parsedEnd = parseLocalDateTimeInputValue(customEnd);
+        if (!parsedStart || !parsedEnd || parsedStart >= parsedEnd) {
+            return { start: new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000), end };
+        }
+        return { start: parsedStart, end: parsedEnd };
+    }, [timePreset, customStart, customEnd]);
+
+    const baseParams: InsightsQueryParams = useMemo(
+        () => ({
+            start_time: range.start.toISOString(),
+            end_time: range.end.toISOString(),
+            deployment_id: deploymentId || undefined,
+            model: model || undefined,
+            status,
+        }),
+        [range.start, range.end, deploymentId, model, status]
+    );
+
+    const granularity: InsightsGranularity = useMemo(() => {
+        const durationHours = (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60);
+        return durationHours <= 48 ? "hour" : "day";
+    }, [range.start, range.end]);
+
+    const filtersQuery = useQuery({
+        queryKey: ["insights", "filters", baseParams.start_time, baseParams.end_time],
+        queryFn: () =>
+            insightsService.getFilters({
+                start_time: baseParams.start_time,
+                end_time: baseParams.end_time,
+            }),
+    });
+
+    const summaryQuery = useQuery({
+        queryKey: [
+            "insights",
+            "summary",
+            baseParams.start_time,
+            baseParams.end_time,
+            deploymentId,
+            model,
+            status,
+        ],
+        queryFn: () => insightsService.getSummary(baseParams),
+    });
+
+    const timeseriesQuery = useQuery({
+        queryKey: [
+            "insights",
+            "timeseries",
+            baseParams.start_time,
+            baseParams.end_time,
+            deploymentId,
+            model,
+            status,
+            granularity,
+        ],
+        queryFn: () => insightsService.getTimeseries({ ...baseParams, granularity }),
+    });
+
+    const logsQuery = useQuery({
+        queryKey: [
+            "insights",
+            "logs",
+            baseParams.start_time,
+            baseParams.end_time,
+            deploymentId,
+            model,
+            status,
+            page,
+            pageSize,
+        ],
+        queryFn: () =>
+            insightsService.getLogs({
+                ...baseParams,
+                limit: pageSize,
+                offset: (page - 1) * pageSize,
+            }),
+    });
+
+    const summary = summaryQuery.data;
+    const timeseries = timeseriesQuery.data;
+    const logs = logsQuery.data;
+    const filters = filtersQuery.data;
+
+    const chartData = useMemo(
+        () =>
+            (timeseries?.buckets || []).map((bucket) => ({
+                ...bucket,
+                label: formatBucketLabel(bucket.bucket_start, granularity),
+                successful_requests: Math.max(bucket.requests - bucket.failed_requests, 0),
+            })),
+        [timeseries?.buckets, granularity]
+    );
+    const requestQualityData = useMemo(() => chartData.slice(-12), [chartData]);
+    const chartTotals = useMemo(() => {
+        const totalBuckets = chartData.length || 1;
+        const totalRequests = chartData.reduce((sum, item) => sum + item.requests, 0);
+        const totalSuccess = chartData.reduce((sum, item) => sum + item.successful_requests, 0);
+        const totalFailed = chartData.reduce((sum, item) => sum + item.failed_requests, 0);
+        const totalPrompt = chartData.reduce((sum, item) => sum + item.prompt_tokens, 0);
+        const totalCompletion = chartData.reduce((sum, item) => sum + item.completion_tokens, 0);
+        const avgReqPerBucket = totalRequests / totalBuckets;
+        const avgLatencyAcrossBuckets =
+            chartData.reduce((sum, item) => sum + item.avg_latency_ms, 0) / totalBuckets;
+
+        const peakRequestsBucket = chartData.reduce(
+            (acc, item) => (item.requests > acc.requests ? item : acc),
+            chartData[0] || { label: "-", requests: 0 }
+        );
+        const slowestLatencyBucket = chartData.reduce(
+            (acc, item) => (item.avg_latency_ms > acc.avg_latency_ms ? item : acc),
+            chartData[0] || { label: "-", avg_latency_ms: 0 }
+        );
+        const fastestLatencyBucket = chartData.reduce(
+            (acc, item) => (item.avg_latency_ms < acc.avg_latency_ms ? item : acc),
+            chartData[0] || { label: "-", avg_latency_ms: 0 }
+        );
+
+        return {
+            totalRequests,
+            totalSuccess,
+            totalFailed,
+            totalPrompt,
+            totalCompletion,
+            avgReqPerBucket,
+            avgLatencyAcrossBuckets,
+            peakRequestsBucket,
+            slowestLatencyBucket,
+            fastestLatencyBucket,
+        };
+    }, [chartData]);
+
+    const totalItems = logs?.pagination.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+    const isInitialLoading = summaryQuery.isLoading || timeseriesQuery.isLoading || logsQuery.isLoading;
+    const hasNoData = (summary?.totals.requests ?? 0) === 0 && !isInitialLoading;
+
+    return (
+        <div className="space-y-6">
+            <div className="flex flex-col gap-1">
+                <h1 className="text-2xl font-bold tracking-tight">Insights</h1>
+                <p className="text-muted-foreground">
+                    Analytics from existing inference logs across your organization.
+                </p>
+            </div>
+
+            <div className="rounded-xl border bg-card p-4">
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Time range</label>
+                        <select
+                            value={timePreset}
+                            onChange={(e) => {
+                                setTimePreset(e.target.value as TimePreset);
+                                setPage(1);
+                            }}
+                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        >
+                            <option value="24h">Last 24 hours</option>
+                            <option value="7d">Last 7 days</option>
+                            <option value="30d">Last 30 days</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+
+                    {timePreset === "custom" && (
+                        <>
+                            <div className="space-y-1">
+                                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Start</label>
+                                <input
+                                    type="datetime-local"
+                                    value={customStart}
+                                    onChange={(e) => {
+                                        setCustomStart(e.target.value);
+                                        setPage(1);
+                                    }}
+                                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">End</label>
+                                <input
+                                    type="datetime-local"
+                                    value={customEnd}
+                                    onChange={(e) => {
+                                        setCustomEnd(e.target.value);
+                                        setPage(1);
+                                    }}
+                                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                                />
+                            </div>
+                        </>
+                    )}
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Deployment</label>
+                        <select
+                            value={deploymentId}
+                            onChange={(e) => {
+                                setDeploymentId(e.target.value);
+                                setPage(1);
+                            }}
+                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        >
+                            <option value="">All deployments</option>
+                            {(filters?.deployments || []).map((deployment) => (
+                                <option key={deployment.id} value={deployment.id}>
+                                    {deployment.model_name} ({deployment.id.slice(0, 8)})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Model</label>
+                        <select
+                            value={model}
+                            onChange={(e) => {
+                                setModel(e.target.value);
+                                setPage(1);
+                            }}
+                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        >
+                            <option value="">All models</option>
+                            {(filters?.models || []).map((modelOption) => (
+                                <option key={modelOption} value={modelOption}>
+                                    {modelOption}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</label>
+                        <select
+                            value={status}
+                            onChange={(e) => {
+                                setStatus(e.target.value as InsightsStatus);
+                                setPage(1);
+                            }}
+                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        >
+                            {(filters?.status_options || ["all", "success", "error"]).map((option) => (
+                                <option key={option} value={option}>
+                                    {option[0].toUpperCase() + option.slice(1)}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <MetricCard
+                    icon={Activity}
+                    title="Requests"
+                    value={isInitialLoading ? "..." : formatNumber(summary?.totals.requests || 0, 0)}
+                    subtitle={`${formatNumber(summary?.totals.successful_requests || 0, 0)} successful`}
+                />
+                <MetricCard
+                    icon={TrendingUp}
+                    title="Success Rate"
+                    value={isInitialLoading ? "..." : `${formatNumber(summary?.totals.success_rate || 0)}%`}
+                    subtitle={`${formatNumber(summary?.totals.failed_requests || 0, 0)} failed`}
+                />
+                <MetricCard
+                    icon={Layers3}
+                    title="Total Tokens"
+                    value={isInitialLoading ? "..." : formatNumber(summary?.totals.total_tokens || 0, 0)}
+                    subtitle={`In ${formatNumber(summary?.totals.prompt_tokens || 0, 0)} / Out ${formatNumber(summary?.totals.completion_tokens || 0, 0)}`}
+                />
+                <MetricCard
+                    icon={Gauge}
+                    title="Avg Latency (TTFT)"
+                    value={isInitialLoading ? "..." : `${formatNumber(summary?.latency_ms.avg || 0)} ms`}
+                    subtitle={`${formatNumber(summary?.throughput.requests_per_minute || 0)} req/min`}
+                />
+            </div>
+
+            {isInitialLoading && (
+                <div className="grid gap-4 lg:grid-cols-2">
+                    <Skeleton className="h-[320px] w-full" />
+                    <Skeleton className="h-[320px] w-full" />
+                </div>
+            )}
+
+            {!isInitialLoading && hasNoData && (
+                <EmptyState
+                    icon={TriangleAlert}
+                    title="No inference data in selected range"
+                    description="Try expanding the date range or removing one or more filters."
+                />
+            )}
+
+            {!isInitialLoading && !hasNoData && (
+                <>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                        <ChartCard title="Request Quality" subtitle="Successful vs failed requests per bucket">
+                            <ChartLegend
+                                items={[
+                                    { label: "Successful", colorClass: "bg-green-600" },
+                                    { label: "Failed", colorClass: "bg-red-500" },
+                                ]}
+                            />
+                            <RequestQualityGraph data={requestQualityData} />
+                            <ChartSummary
+                                items={[
+                                    `Successful: ${formatNumber(chartTotals.totalSuccess, 0)}`,
+                                    `Failed: ${formatNumber(chartTotals.totalFailed, 0)}`,
+                                    `Failure rate: ${formatNumber(
+                                        chartTotals.totalRequests > 0
+                                            ? (chartTotals.totalFailed / chartTotals.totalRequests) * 100
+                                            : 0
+                                    )}%`,
+                                ]}
+                            />
+                        </ChartCard>
+
+                        <ChartCard title="Request Volume" subtitle={`${granularity === "hour" ? "Hourly" : "Daily"} requests`}>
+                            <ChartLegend items={[{ label: "Requests", colorClass: "bg-blue-600" }]} />
+                            <ResponsiveContainer width="100%" height={260}>
+                                <LineChart data={chartData}>
+                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                                    <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
+                                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                                    <Tooltip />
+                                    <Line
+                                        type="monotone"
+                                        dataKey="requests"
+                                        stroke="#2563eb"
+                                        strokeWidth={2}
+                                        dot={false}
+                                        name="Requests"
+                                    />
+                                </LineChart>
+                            </ResponsiveContainer>
+                            <ChartSummary
+                                items={[
+                                    `Total: ${formatNumber(chartTotals.totalRequests, 0)}`,
+                                    `Avg per bucket: ${formatNumber(chartTotals.avgReqPerBucket, 1)}`,
+                                    `Peak: ${peakBucketText(
+                                        chartTotals.peakRequestsBucket.label,
+                                        chartTotals.peakRequestsBucket.requests
+                                    )}`,
+                                ]}
+                            />
+                        </ChartCard>
+
+                        <ChartCard title="Token Usage" subtitle="Prompt vs completion tokens">
+                            <ChartLegend
+                                items={[
+                                    { label: "Prompt", colorClass: "bg-green-600" },
+                                    { label: "Completion", colorClass: "bg-blue-500" },
+                                ]}
+                            />
+                            <ResponsiveContainer width="100%" height={260}>
+                                <AreaChart data={chartData}>
+                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                                    <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
+                                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                                    <Tooltip />
+                                    <Legend />
+                                    <Area
+                                        type="monotone"
+                                        dataKey="prompt_tokens"
+                                        stackId="tokens"
+                                        stroke="#16a34a"
+                                        fill="#16a34a"
+                                        fillOpacity={0.35}
+                                        name="Prompt"
+                                    />
+                                    <Area
+                                        type="monotone"
+                                        dataKey="completion_tokens"
+                                        stackId="tokens"
+                                        stroke="#3b82f6"
+                                        fill="#3b82f6"
+                                        fillOpacity={0.35}
+                                        name="Completion"
+                                    />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                            <ChartSummary
+                                items={[
+                                    `Prompt: ${formatNumber(chartTotals.totalPrompt, 0)}`,
+                                    `Completion: ${formatNumber(chartTotals.totalCompletion, 0)}`,
+                                    `Output/Input ratio: ${formatNumber(
+                                        chartTotals.totalPrompt > 0
+                                            ? chartTotals.totalCompletion / chartTotals.totalPrompt
+                                            : 0
+                                    )}x`,
+                                ]}
+                            />
+                        </ChartCard>
+                    </div>
+
+                    <ChartCard title="Average Latency Trend" subtitle="Average TTFT over time (fallback: total latency when TTFT missing)">
+                        <ChartLegend items={[{ label: "Avg Latency (TTFT, ms)", colorClass: "bg-sky-500" }]} />
+                        <ResponsiveContainer width="100%" height={300}>
+                            <LineChart data={chartData}>
+                                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                                <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={20} />
+                                <YAxis tick={{ fontSize: 11 }} />
+                                <Tooltip />
+                                <Legend />
+                                <Line
+                                    type="monotone"
+                                    dataKey="avg_latency_ms"
+                                    stroke="#0ea5e9"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    name="Avg Latency (TTFT, ms)"
+                                />
+                            </LineChart>
+                        </ResponsiveContainer>
+                        <ChartSummary
+                            items={[
+                                `Avg across buckets: ${formatNumber(chartTotals.avgLatencyAcrossBuckets)} ms`,
+                                `Fastest: ${peakBucketText(
+                                    chartTotals.fastestLatencyBucket.label,
+                                    chartTotals.fastestLatencyBucket.avg_latency_ms,
+                                    "ms"
+                                )}`,
+                                `Slowest: ${peakBucketText(
+                                    chartTotals.slowestLatencyBucket.label,
+                                    chartTotals.slowestLatencyBucket.avg_latency_ms,
+                                    "ms"
+                                )}`,
+                            ]}
+                        />
+                    </ChartCard>
+
+                    <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+                        <div className="border-b px-4 py-3">
+                            <h3 className="font-semibold">Trend Breakdown</h3>
+                            <p className="text-xs text-muted-foreground">
+                                Exact values per time bucket for quick interpretation.
+                            </p>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead className="bg-muted/40 text-muted-foreground">
+                                    <tr>
+                                        <th className="px-4 py-3 text-left font-medium">Bucket</th>
+                                        <th className="px-4 py-3 text-left font-medium">Requests</th>
+                                        <th className="px-4 py-3 text-left font-medium">Success %</th>
+                                        <th className="px-4 py-3 text-left font-medium">Avg Latency (TTFT)</th>
+                                        <th className="px-4 py-3 text-left font-medium">Total Tokens</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {chartData.slice(-12).map((bucket) => (
+                                        <tr key={bucket.bucket_start} className="hover:bg-muted/20">
+                                            <td className="px-4 py-3 text-xs font-mono text-muted-foreground">
+                                                {bucket.label}
+                                            </td>
+                                            <td className="px-4 py-3">{formatNumber(bucket.requests, 0)}</td>
+                                            <td className="px-4 py-3">{formatNumber(bucket.success_rate)}%</td>
+                                            <td className="px-4 py-3">{formatNumber(bucket.avg_latency_ms)} ms</td>
+                                            <td className="px-4 py-3">{formatNumber(bucket.total_tokens, 0)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </>
+            )}
+
+            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+                <div className="border-b px-4 py-3">
+                    <h3 className="font-semibold">Detailed Inference Logs</h3>
+                    <p className="text-xs text-muted-foreground">
+                        Throughput: {formatNumber(summary?.throughput.requests_per_minute || 0)} req/min | {formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s
+                    </p>
+                </div>
+
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead className="bg-muted/40 text-muted-foreground">
+                            <tr>
+                                <th className="px-4 py-3 text-left font-medium">Timestamp</th>
+                                <th className="px-4 py-3 text-left font-medium">Deployment</th>
+                                <th className="px-4 py-3 text-left font-medium">Model</th>
+                                <th className="px-4 py-3 text-left font-medium">Tokens</th>
+                                <th className="px-4 py-3 text-left font-medium">Latency (TTFT)</th>
+                                <th className="px-4 py-3 text-left font-medium">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                            {(logs?.items || []).map((log) => (
+                                <tr key={log.id} className="hover:bg-muted/20">
+                                    <td className="px-4 py-3 text-xs font-mono text-muted-foreground">
+                                        {new Date(log.created_at).toLocaleString()}
+                                    </td>
+                                    <td className="px-4 py-3 text-xs font-mono">
+                                        {String(log.deployment_id).slice(0, 8)}...
+                                    </td>
+                                    <td className="px-4 py-3">{log.model}</td>
+                                    <td className="px-4 py-3 font-mono text-xs">
+                                        {formatNumber(log.total_tokens, 0)} ({formatNumber(log.prompt_tokens, 0)}/{formatNumber(log.completion_tokens, 0)})
+                                    </td>
+                                    <td className="px-4 py-3 font-mono text-xs">
+                                        {log.ttft_ms !== null && log.ttft_ms !== undefined
+                                            ? `${formatNumber(log.ttft_ms)} ms`
+                                            : log.latency_ms !== null && log.latency_ms !== undefined
+                                                ? `${formatNumber(log.latency_ms)} ms`
+                                                : "-"}
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <span
+                                            className={cn(
+                                                "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border",
+                                                log.status_code < 400
+                                                    ? "bg-green-500/10 text-green-600 border-green-500/30"
+                                                    : "bg-red-500/10 text-red-500 border-red-500/30"
+                                            )}
+                                        >
+                                            {log.status_code}
+                                        </span>
+                                    </td>
+                                </tr>
+                            ))}
+                            {!logsQuery.isLoading && (logs?.items.length || 0) === 0 && (
+                                <tr>
+                                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                                        No logs found for the selected filters.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                {(logs?.pagination.total || 0) > 0 && (
+                    <Pagination
+                        currentPage={page}
+                        totalPages={totalPages}
+                        onPageChange={setPage}
+                        pageSize={pageSize}
+                        onPageSizeChange={(size) => {
+                            setPageSize(size);
+                            setPage(1);
+                        }}
+                        totalItems={totalItems}
+                    />
+                )}
+            </div>
+        </div>
+    );
+}
+
+function MetricCard({
+    icon: Icon,
+    title,
+    value,
+    subtitle,
+}: {
+    icon: ComponentType<{ className?: string }>;
+    title: string;
+    value: string;
+    subtitle: string;
+}) {
+    return (
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
+                <Icon className="h-4 w-4 text-blue-500" />
+            </div>
+            <div className="text-2xl font-bold">{value}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{subtitle}</div>
+        </div>
+    );
+}
+
+function ChartCard({
+    title,
+    subtitle,
+    children,
+}: {
+    title: string;
+    subtitle?: string;
+    children: ReactNode;
+}) {
+    return (
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-start justify-between">
+                <div>
+                    <h3 className="font-semibold">{title}</h3>
+                    {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+                </div>
+                <Clock3 className="h-4 w-4 text-muted-foreground" />
+            </div>
+            {children}
+        </div>
+    );
+}
+
+function ChartLegend({
+    items,
+}: {
+    items: Array<{ label: string; colorClass: string }>;
+}) {
+    return (
+        <div className="mb-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            {items.map((item) => (
+                <span key={item.label} className="inline-flex items-center gap-1.5">
+                    <span className={cn("h-2.5 w-2.5 rounded-full", item.colorClass)} />
+                    {item.label}
+                </span>
+            ))}
+        </div>
+    );
+}
+
+function ChartSummary({ items }: { items: string[] }) {
+    return (
+        <div className="mt-2 grid gap-2 border-t pt-2 text-xs text-muted-foreground md:grid-cols-3">
+            {items.map((item) => (
+                <span key={item}>{item}</span>
+            ))}
+        </div>
+    );
+}
+
+function peakBucketText(label: string, value: number, unit = "req") {
+    return `${label} (${formatNumber(value)} ${unit})`;
+}
+
+function RequestQualityGraph({
+    data,
+}: {
+    data: Array<{
+        bucket_start: string;
+        label: string;
+        successful_requests: number;
+        failed_requests: number;
+    }>;
+}) {
+    const maxBucketValue = Math.max(
+        1,
+        ...data.map((item) => Math.max(item.successful_requests, item.failed_requests))
+    );
+
+    return (
+        <div className="h-[260px] rounded-md border bg-muted/10 p-3">
+            <div className="flex h-full items-end gap-2 overflow-x-auto pb-8">
+                {data.map((item) => (
+                    <div key={item.bucket_start} className="flex min-w-[72px] flex-col items-center gap-2">
+                        <div className="flex h-[170px] w-full items-end justify-center gap-1">
+                            <div className="flex h-full w-5 flex-col items-center justify-end">
+                                <div
+                                    className="w-full rounded-t bg-green-600"
+                                    style={{
+                                        height: `${Math.max(
+                                            (item.successful_requests / maxBucketValue) * 100,
+                                            item.successful_requests > 0 ? 3 : 0
+                                        )}%`,
+                                    }}
+                                    title={`Successful: ${item.successful_requests}`}
+                                />
+                            </div>
+                            <div className="flex h-full w-5 flex-col items-center justify-end">
+                                <div
+                                    className="w-full rounded-t bg-red-500"
+                                    style={{
+                                        height: `${Math.max(
+                                            (item.failed_requests / maxBucketValue) * 100,
+                                            item.failed_requests > 0 ? 3 : 0
+                                        )}%`,
+                                    }}
+                                    title={`Failed: ${item.failed_requests}`}
+                                />
+                            </div>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                            {item.successful_requests}/{item.failed_requests}
+                        </div>
+                        <div className="w-full truncate text-center text-[11px] text-muted-foreground">
+                            {item.label}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}

@@ -54,6 +54,20 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
         return new Date(dateStr).toLocaleString()
     }
 
+    const formatMs = (value: number | null) => {
+        return value !== null ? `${value.toLocaleString()}ms` : "-"
+    }
+
+    const formatTokensPerSecond = (value: number | null) => {
+        return value !== null
+            ? `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} tok/s`
+            : "-"
+    }
+
+    const formatTokenBreakdown = (log: InferenceLog) => {
+        return `${log.total_tokens.toLocaleString()} (${log.prompt_tokens.toLocaleString()}/${log.completion_tokens.toLocaleString()})`
+    }
+
     const toggleExpand = (id: string) => {
         setExpandedId(expandedId === id ? null : id)
     }
@@ -128,18 +142,24 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                             </div>
 
                             {/* Right: Stats */}
-                            <div className="flex items-center gap-6 text-sm shrink-0 ml-auto">
-                                {/* Latency */}
-                                <div className="flex items-center gap-1.5 text-muted-foreground" title="Latency">
+                            <div className="flex items-center gap-4 text-sm shrink-0 ml-auto">
+                                {/* Total duration */}
+                                <div className="flex items-center gap-1.5 text-muted-foreground" title="Total Duration">
                                     <Clock className="w-3.5 h-3.5" />
-                                    <span className="font-mono">{log.latency_ms ? `${log.latency_ms}ms` : "-"}</span>
+                                    <span className="font-mono">{formatMs(log.latency_ms)}</span>
+                                </div>
+
+                                {/* TTFT */}
+                                <div className="hidden md:flex items-center gap-1.5 text-muted-foreground" title="TTFT (Time to First Token)">
+                                    <span className="text-[10px] uppercase tracking-wide">TTFT</span>
+                                    <span className="font-mono">{formatMs(log.ttft_ms)}</span>
                                 </div>
 
                                 {/* Speed */}
-                                <div className="flex items-center gap-1.5 text-muted-foreground" title="Tokens/sec">
+                                <div className="hidden lg:flex items-center gap-1.5 text-muted-foreground" title="Tokens/sec">
                                     <Zap className="w-3.5 h-3.5" />
                                     <span className="font-mono">
-                                        {log.tokens_per_second ? `${log.tokens_per_second} tok/s` : "-"}
+                                        {formatTokensPerSecond(log.tokens_per_second)}
                                     </span>
                                 </div>
 
@@ -147,9 +167,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                                 <div className="flex items-center gap-1.5 text-muted-foreground" title="Token Usage">
                                     <Hash className="w-3.5 h-3.5" />
                                     <span className="font-mono text-xs">
-                                        <span className="text-green-500">{log.prompt_tokens}</span>
-                                        <span className="mx-1">/</span>
-                                        <span className="text-blue-500">{log.completion_tokens}</span>
+                                        {formatTokenBreakdown(log)}
                                     </span>
                                 </div>
 
@@ -167,7 +185,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                     {expandedId === log.id && (
                         <div className="border-t bg-muted/20 p-4 space-y-4">
                             {/* User & Request Info */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
                                 <div>
                                     <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                                         <User className="w-3 h-3" /> User ID
@@ -177,19 +195,23 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-muted-foreground mb-1">Latency</div>
-                                    <div className="font-medium">{log.latency_ms ? `${log.latency_ms}ms` : "N/A"}</div>
+                                    <div className="text-xs text-muted-foreground mb-1">Total Duration</div>
+                                    <div className="font-medium">{formatMs(log.latency_ms)}</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs text-muted-foreground mb-1">TTFT</div>
+                                    <div className="font-medium">{formatMs(log.ttft_ms)}</div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground mb-1">Speed</div>
                                     <div className="font-medium">
-                                        {log.tokens_per_second ? `${log.tokens_per_second} tokens/sec` : "N/A"}
+                                        {formatTokensPerSecond(log.tokens_per_second)}
                                     </div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground mb-1">Token Usage</div>
                                     <div className="font-medium">
-                                        Input: {log.prompt_tokens} | Output: {log.completion_tokens}
+                                        {formatTokenBreakdown(log)}
                                     </div>
                                 </div>
                             </div>
