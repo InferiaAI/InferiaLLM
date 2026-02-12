@@ -67,6 +67,7 @@ export default function Insights() {
     const [customEnd, setCustomEnd] = useState<string>(toLocalDateTimeInputValue(now));
     const [deploymentId, setDeploymentId] = useState<string>("");
     const [model, setModel] = useState<string>("");
+    const [ipAddress, setIpAddress] = useState<string>("");
     const [status, setStatus] = useState<InsightsStatus>("all");
     const [page, setPage] = useState<number>(1);
     const [pageSize, setPageSize] = useState<number>(20);
@@ -97,9 +98,10 @@ export default function Insights() {
             end_time: range.end.toISOString(),
             deployment_id: deploymentId || undefined,
             model: model || undefined,
+            ip_address: ipAddress.trim() || undefined,
             status,
         }),
-        [range.start, range.end, deploymentId, model, status]
+        [range.start, range.end, deploymentId, model, ipAddress, status]
     );
 
     const granularity: InsightsGranularity = useMemo(() => {
@@ -124,6 +126,7 @@ export default function Insights() {
             baseParams.end_time,
             deploymentId,
             model,
+            ipAddress,
             status,
         ],
         queryFn: () => insightsService.getSummary(baseParams),
@@ -137,6 +140,7 @@ export default function Insights() {
             baseParams.end_time,
             deploymentId,
             model,
+            ipAddress,
             status,
             granularity,
         ],
@@ -151,6 +155,7 @@ export default function Insights() {
             baseParams.end_time,
             deploymentId,
             model,
+            ipAddress,
             status,
             page,
             pageSize,
@@ -232,7 +237,7 @@ export default function Insights() {
             </div>
 
             <div className="rounded-xl border bg-card p-4">
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-7">
                     <div className="space-y-1">
                         <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Time range</label>
                         <select
@@ -333,6 +338,26 @@ export default function Insights() {
                                 </option>
                             ))}
                         </select>
+                    </div>
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Address</label>
+                        <input
+                            type="text"
+                            list="insights-ip-options"
+                            value={ipAddress}
+                            onChange={(e) => {
+                                setIpAddress(e.target.value);
+                                setPage(1);
+                            }}
+                            placeholder="All IPs"
+                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        />
+                        <datalist id="insights-ip-options">
+                            {(filters?.ip_addresses || []).map((ipOption) => (
+                                <option key={ipOption} value={ipOption} />
+                            ))}
+                        </datalist>
                     </div>
                 </div>
             </div>
@@ -576,6 +601,7 @@ export default function Insights() {
                                 <th className="px-4 py-3 text-left font-medium">Timestamp</th>
                                 <th className="px-4 py-3 text-left font-medium">Deployment</th>
                                 <th className="px-4 py-3 text-left font-medium">Model</th>
+                                <th className="px-4 py-3 text-left font-medium">IP</th>
                                 <th className="px-4 py-3 text-left font-medium">Tokens</th>
                                 <th className="px-4 py-3 text-left font-medium">Latency (TTFT)</th>
                                 <th className="px-4 py-3 text-left font-medium">Status</th>
@@ -591,6 +617,7 @@ export default function Insights() {
                                         {String(log.deployment_id).slice(0, 8)}...
                                     </td>
                                     <td className="px-4 py-3">{log.model}</td>
+                                    <td className="px-4 py-3 font-mono text-xs">{log.ip_address || "-"}</td>
                                     <td className="px-4 py-3 font-mono text-xs">
                                         {formatNumber(log.total_tokens, 0)} ({formatNumber(log.prompt_tokens, 0)}/{formatNumber(log.completion_tokens, 0)})
                                     </td>
@@ -617,7 +644,7 @@ export default function Insights() {
                             ))}
                             {!logsQuery.isLoading && (logs?.items.length || 0) === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                                         No logs found for the selected filters.
                                     </td>
                                 </tr>

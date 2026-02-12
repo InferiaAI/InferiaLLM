@@ -71,6 +71,11 @@ Bootstraps the unified database environment.
 [inferia:init] Bootstrap complete
 ```
 
+For existing databases, apply incremental schema updates manually:
+```bash
+psql "$DATABASE_URL" -f db/migrations/20260212_add_inference_logs_ip.sql
+```
+
 ### `inferiallm start`
 Starts all InferiaLLM gateways (Orchestration, Inference, Filtration) and the Dashboard in one command.
 

@@ -123,6 +123,7 @@ async def _persist_log_background(
             id=log_id,
             deployment_id=log_data.deployment_id,
             user_id=log_data.user_id,
+            ip_address=log_data.ip_address,
             model=log_data.model,
             request_payload=(
                 {

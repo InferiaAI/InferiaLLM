@@ -8,6 +8,7 @@ export interface InsightsQueryParams {
     end_time: string;
     deployment_id?: string;
     model?: string;
+    ip_address?: string;
     status?: InsightsStatus;
 }
 
@@ -58,6 +59,7 @@ export interface InferenceLogItem {
     deployment_id: string;
     user_id: string;
     model: string;
+    ip_address: string | null;
     request_payload: Record<string, unknown> | null;
     latency_ms: number | null;
     ttft_ms: number | null;
@@ -91,6 +93,7 @@ export interface InsightsDeploymentFilterOption {
 export interface InsightsFiltersResponse {
     deployments: InsightsDeploymentFilterOption[];
     models: string[];
+    ip_addresses: string[];
     status_options: InsightsStatus[];
 }
 

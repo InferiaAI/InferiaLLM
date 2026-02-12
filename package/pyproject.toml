@@ -139,6 +139,7 @@ exclude = ["**/node_modules", "**/dist", "**/build"]
 inferia = [
   "dashboard/**/*",
   "infra/schema/*.sql",
+  "infra/schema/migrations/*.sql",
   "services/orchestration/app/services/depin-sidecar/package.json",
   "services/orchestration/app/services/depin-sidecar/tsconfig.json",
   "services/orchestration/app/services/depin-sidecar/src/**/*"

@@ -138,7 +138,7 @@ class ModelDeploymentService(
         )
 
         try:
-            await self.controller.start_deployment(deployment_id)
+            next_state = await self.controller.start_deployment(deployment_id)
         except Exception as e:
             import logging
             logging.getLogger(__name__).exception("Failed to start deployment")
@@ -146,7 +146,7 @@ class ModelDeploymentService(
 
         return model_deployment_pb2.StartDeploymentResponse(
             accepted=True,
-            state="PENDING"
+            state=next_state,
         )
 
     # -------------------------------------------------

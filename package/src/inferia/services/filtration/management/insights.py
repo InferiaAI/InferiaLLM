@@ -66,6 +66,7 @@ def _build_filters(
     end_time: datetime,
     deployment_id: str | None,
     model: str | None,
+    ip_address: str | None,
     status: InsightsStatusFilter,
 ) -> List[Any]:
     conditions: List[Any] = [
@@ -83,6 +84,9 @@ def _build_filters(
 
     if model:
         conditions.append(DBInferenceLog.model == model)
+
+    if ip_address:
+        conditions.append(DBInferenceLog.ip_address == ip_address)
 
     if status == "success":
         conditions.append(DBInferenceLog.status_code < 400)
@@ -117,6 +121,7 @@ async def get_insights_summary(
     end_time: datetime = Query(..., description="End datetime (ISO-8601)"),
     deployment_id: str | None = Query(None),
     model: str | None = Query(None),
+    ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -128,7 +133,13 @@ async def get_insights_summary(
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
     filters = _build_filters(
-        user_ctx.org_id, normalized_start, normalized_end, deployment_id, model, status
+        user_ctx.org_id,
+        normalized_start,
+        normalized_end,
+        deployment_id,
+        model,
+        ip_address,
+        status,
     )
 
     success_condition = DBInferenceLog.status_code < 400
@@ -205,6 +216,7 @@ async def get_insights_timeseries(
     end_time: datetime = Query(..., description="End datetime (ISO-8601)"),
     deployment_id: str | None = Query(None),
     model: str | None = Query(None),
+    ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
     granularity: InsightsGranularity = Query("day"),
     db: AsyncSession = Depends(get_db),
@@ -217,7 +229,13 @@ async def get_insights_timeseries(
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
     filters = _build_filters(
-        user_ctx.org_id, normalized_start, normalized_end, deployment_id, model, status
+        user_ctx.org_id,
+        normalized_start,
+        normalized_end,
+        deployment_id,
+        model,
+        ip_address,
+        status,
     )
 
     success_condition = DBInferenceLog.status_code < 400
@@ -280,6 +298,7 @@ async def get_insights_logs(
     end_time: datetime = Query(..., description="End datetime (ISO-8601)"),
     deployment_id: str | None = Query(None),
     model: str | None = Query(None),
+    ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -293,7 +312,13 @@ async def get_insights_logs(
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
     filters = _build_filters(
-        user_ctx.org_id, normalized_start, normalized_end, deployment_id, model, status
+        user_ctx.org_id,
+        normalized_start,
+        normalized_end,
+        deployment_id,
+        model,
+        ip_address,
+        status,
     )
 
     clamped_limit = min(max(limit, 1), 200)
@@ -365,8 +390,26 @@ async def get_insights_filters(
     models_result = await db.execute(models_stmt)
     models = [row.model for row in models_result.all() if row.model]
 
+    ip_addresses_stmt = (
+        select(DBInferenceLog.ip_address)
+        .select_from(DBInferenceLog)
+        .join(DBDeployment, DBInferenceLog.deployment_id == DBDeployment.id)
+        .where(
+            DBDeployment.org_id == user_ctx.org_id,
+            DBInferenceLog.created_at >= normalized_start,
+            DBInferenceLog.created_at <= normalized_end,
+            DBInferenceLog.ip_address.isnot(None),
+            DBInferenceLog.ip_address != "",
+        )
+        .distinct()
+        .order_by(DBInferenceLog.ip_address.asc())
+    )
+    ip_addresses_result = await db.execute(ip_addresses_stmt)
+    ip_addresses = [row.ip_address for row in ip_addresses_result.all() if row.ip_address]
+
     return InsightsFiltersResponse(
         deployments=deployments,
         models=models,
+        ip_addresses=ip_addresses,
         status_options=["all", "success", "error"],
     )

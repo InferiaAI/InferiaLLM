@@ -14,6 +14,7 @@ class InsightsFilterParams(BaseModel):
     end_time: datetime
     deployment_id: Optional[str] = None
     model: Optional[str] = None
+    ip_address: Optional[str] = None
     status: InsightsStatusFilter = "all"
 
 
@@ -78,6 +79,7 @@ class InsightsDeploymentFilterOption(BaseModel):
 class InsightsFiltersResponse(BaseModel):
     deployments: List[InsightsDeploymentFilterOption] = Field(default_factory=list)
     models: List[str] = Field(default_factory=list)
+    ip_addresses: List[str] = Field(default_factory=list)
     status_options: List[InsightsStatusFilter] = Field(
         default_factory=lambda: ["all", "success", "error"]
     )

@@ -4,22 +4,15 @@ Proxies requests to the Filtration service for security and policy enforcement,
 then routes to the actual model provider.
 """
 
-import asyncio
-import json
 import logging
-import time
-from typing import AsyncGenerator, Dict, Optional
+from typing import Optional
 
-import httpx
 from inferia.services.inference.client import filtration_client
 from inferia.services.inference.config import settings
 from inferia.services.inference.core.http_client import http_client
 from inferia.services.inference.core.orchestrator import OrchestrationService
-from inferia.services.inference.core.rate_limiter import rate_limiter
-from inferia.services.inference.core.service import GatewayService
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 
 # Configure logging
 logging.basicConfig(
@@ -45,7 +38,15 @@ app.add_middleware(
     allow_origins=_allow_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Requested-With",
+        "X-IP-Address",
+        "X-Client-IP",
+        "X-Forwarded-For",
+        "X-Real-IP",
+    ],
 )
 
 
@@ -59,6 +60,31 @@ def extract_api_key(authorization: str) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid API Key format")
     return authorization.split(" ")[1]
+
+
+def extract_client_ip(request: Request) -> Optional[str]:
+    """
+    Prefer explicitly provided client IP headers when requests pass through
+    upstream proxies. Fall back to connection source IP.
+    """
+    header_candidates = [
+        request.headers.get("X-IP-Address"),
+        request.headers.get("X-Client-IP"),
+        request.headers.get("X-Forwarded-For"),
+        request.headers.get("X-Real-IP"),
+    ]
+
+    for raw_ip in header_candidates:
+        if not raw_ip:
+            continue
+        first_ip = raw_ip.split(",")[0].strip()
+        if first_ip:
+            return first_ip
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return None
 
 
 # stream_with_tracking removed - logic moved to core.orchestrator.OrchestrationService
@@ -85,7 +111,11 @@ async def create_completion(
     """
     api_key = extract_api_key(authorization)
     body = await request.json()
+    client_ip = extract_client_ip(request)
 
     return await OrchestrationService.handle_completion(
-        api_key=api_key, body=body, background_tasks=background_tasks
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
     )

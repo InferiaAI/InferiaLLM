@@ -10,6 +10,7 @@ class InferenceLog(Base):
     id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     deployment_id = Column(UUID(as_uuid=True), ForeignKey("model_deployments.deployment_id"), index=True, nullable=False)
     user_id = Column(String, index=True, nullable=False)  # User ID or API key context
+    ip_address = Column(String, index=True, nullable=True)  # Client IP supplied by caller/proxy
     
     # Request Info
     request_payload = Column(JSON, nullable=True)  # Full request body (optional to save space)
