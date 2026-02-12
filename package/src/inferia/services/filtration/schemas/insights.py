@@ -71,6 +71,28 @@ class InsightsLogsResponse(BaseModel):
     pagination: InsightsPagination
 
 
+class InsightsTopIp(BaseModel):
+    ip_address: str
+    requests: int
+    success_rate: float
+    total_tokens: int
+
+
+class InsightsTopIpsResponse(BaseModel):
+    items: List[InsightsTopIp] = Field(default_factory=list)
+
+
+class InsightsTopModel(BaseModel):
+    model: str
+    requests: int
+    success_rate: float
+    total_tokens: int
+
+
+class InsightsTopModelsResponse(BaseModel):
+    items: List[InsightsTopModel] = Field(default_factory=list)
+
+
 class InsightsDeploymentFilterOption(BaseModel):
     id: str
     model_name: str

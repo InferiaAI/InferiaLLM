@@ -15,10 +15,15 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
     Area,
     AreaChart,
+    Bar,
+    BarChart,
     CartesianGrid,
+    Cell,
     Legend,
     Line,
     LineChart,
+    Pie,
+    PieChart,
     ResponsiveContainer,
     Tooltip,
     XAxis,
@@ -36,10 +41,12 @@ import {
     insightsService,
 } from "@/services/insightsService";
 
-type TimePreset = "24h" | "7d" | "30d" | "custom";
+type TimePreset = "30m" | "1h" | "5h" | "24h" | "7d" | "30d" | "custom";
 
 const QUERY_STALE_TIME = 30 * 1000;
 const IP_DEBOUNCE_DELAY = 300;
+
+const PIE_COLORS = ["#2563eb", "#db2777", "#16a34a", "#9333ea", "#ea580c", "#0891b2"];
 
 function toLocalDateTimeInputValue(date: Date): string {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -81,6 +88,15 @@ export default function Insights() {
 
     const range = useMemo(() => {
         const end = new Date();
+        if (timePreset === "30m") {
+            return { start: new Date(end.getTime() - 30 * 60 * 1000), end };
+        }
+        if (timePreset === "1h") {
+            return { start: new Date(end.getTime() - 60 * 60 * 1000), end };
+        }
+        if (timePreset === "5h") {
+            return { start: new Date(end.getTime() - 5 * 60 * 60 * 1000), end };
+        }
         if (timePreset === "24h") {
             return { start: new Date(end.getTime() - 24 * 60 * 60 * 1000), end };
         }
@@ -151,6 +167,34 @@ export default function Insights() {
             granularity,
         ],
         queryFn: () => insightsService.getTimeseries({ ...baseParams, granularity }),
+        staleTime: QUERY_STALE_TIME,
+    });
+
+    const topIpsQuery = useQuery({
+        queryKey: [
+            "insights",
+            "top-ips",
+            baseParams.start_time,
+            baseParams.end_time,
+            deploymentId,
+            debouncedIpAddress,
+            status,
+        ],
+        queryFn: () => insightsService.getTopIps(baseParams),
+        staleTime: QUERY_STALE_TIME,
+    });
+
+    const topModelsQuery = useQuery({
+        queryKey: [
+            "insights",
+            "top-models",
+            baseParams.start_time,
+            baseParams.end_time,
+            deploymentId,
+            debouncedIpAddress,
+            status,
+        ],
+        queryFn: () => insightsService.getTopModels(baseParams),
         staleTime: QUERY_STALE_TIME,
     });
 
@@ -231,7 +275,12 @@ export default function Insights() {
     const totalItems = logs?.pagination.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
-    const isInitialLoading = summaryQuery.isLoading || timeseriesQuery.isLoading || logsQuery.isLoading;
+    const isInitialLoading =
+        summaryQuery.isLoading ||
+        timeseriesQuery.isLoading ||
+        topIpsQuery.isLoading ||
+        topModelsQuery.isLoading ||
+        logsQuery.isLoading;
     const hasNoData = (summary?.totals.requests ?? 0) === 0 && !isInitialLoading;
 
     const hasActiveFilters = deploymentId !== "" || ipAddress !== "" || status !== "all";
@@ -287,6 +336,9 @@ export default function Insights() {
                             }}
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         >
+                            <option value="30m">Last 30 mins</option>
+                            <option value="1h">Last 1 hour</option>
+                            <option value="5h">Last 5 hours</option>
                             <option value="24h">Last 24 hours</option>
                             <option value="7d">Last 7 days</option>
                             <option value="30d">Last 30 days</option>
@@ -539,6 +591,158 @@ export default function Insights() {
                                             ? chartTotals.totalCompletion / chartTotals.totalPrompt
                                             : 0
                                     )}x`,
+                                ]}
+                            />
+                        </ChartCard>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                        <ChartCard title="Requests by Model" subtitle="Distribution of traffic across models">
+                            <ResponsiveContainer width="100%" height={260}>
+                                <PieChart>
+                                    <Pie
+                                        data={topModelsQuery.data?.items || []}
+                                        dataKey="requests"
+                                        nameKey="model"
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={60}
+                                        outerRadius={80}
+                                        paddingAngle={2}
+                                        label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                                        labelLine={false}
+                                    >
+                                        {(topModelsQuery.data?.items || []).map((entry, index) => (
+                                            <Cell
+                                                key={entry.model}
+                                                fill={PIE_COLORS[index % PIE_COLORS.length]}
+                                            />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip
+                                        content={({ active, payload }) => {
+                                            if (active && payload && payload.length) {
+                                                const data = payload[0].payload;
+                                                return (
+                                                    <div className="rounded-lg border bg-background p-2 shadow-sm">
+                                                        <div className="flex flex-col gap-1">
+                                                            <span className="font-bold text-muted-foreground">
+                                                                {data.model}
+                                                            </span>
+                                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                                                <span className="text-muted-foreground">Requests:</span>
+                                                                <span className="font-mono">{formatNumber(data.requests, 0)}</span>
+                                                                <span className="text-muted-foreground">Tokens:</span>
+                                                                <span className="font-mono">{formatNumber(data.total_tokens, 0)}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        }}
+                                    />
+                                    <Legend
+                                        layout="vertical"
+                                        verticalAlign="middle"
+                                        align="right"
+                                        wrapperStyle={{ fontSize: "11px", maxWidth: "120px" }}
+                                    />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <ChartSummary
+                                items={[
+                                    `Models active: ${topModelsQuery.data?.items.length || 0}`,
+                                    `Top model: ${
+                                        topModelsQuery.data?.items[0]?.model || "-"
+                                    }`,
+                                ]}
+                            />
+                        </ChartCard>
+
+                        <ChartCard title="Top IPs by Traffic" subtitle="Top active clients by request volume">
+                            <ChartLegend items={[{ label: "Requests", colorClass: "bg-purple-600" }]} />
+                            <ResponsiveContainer width="100%" height={260}>
+                                <BarChart
+                                    data={topIpsQuery.data?.items || []}
+                                    layout="vertical"
+                                    margin={{ top: 0, right: 30, left: 30, bottom: 0 }}
+                                >
+                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} horizontal={true} vertical={false} />
+                                    <XAxis type="number" hide />
+                                    <YAxis
+                                        dataKey="ip_address"
+                                        type="category"
+                                        tick={{ fontSize: 11 }}
+                                        width={100}
+                                        tickFormatter={(ip) => (ip ? ip.slice(0, 15) : "Unknown")}
+                                        interval={0}
+                                    />
+                                    <Tooltip
+                                        cursor={{ fill: "transparent" }}
+                                        content={({ active, payload }) => {
+                                            if (active && payload && payload.length) {
+                                                const data = payload[0].payload;
+                                                return (
+                                                    <div className="rounded-lg border bg-background p-2 shadow-sm z-50 relative">
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    IP Address
+                                                                </span>
+                                                                <span className="font-bold text-muted-foreground">
+                                                                    {data.ip_address}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    Requests
+                                                                </span>
+                                                                <span className="font-bold">{data.requests}</span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    Success Rate
+                                                                </span>
+                                                                <span className="font-bold">
+                                                                    {data.success_rate.toFixed(1)}%
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    Tokens
+                                                                </span>
+                                                                <span className="font-bold">
+                                                                    {formatNumber(data.total_tokens, 0)}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        }}
+                                    />
+                                    <Bar
+                                        dataKey="requests"
+                                        fill="#9333ea"
+                                        radius={[0, 4, 4, 0]}
+                                        name="Requests"
+                                        barSize={16}
+                                        animationDuration={1000}
+                                    />
+                                </BarChart>
+                            </ResponsiveContainer>
+                            <ChartSummary
+                                items={[
+                                    `Unique IPs: ${topIpsQuery.data?.items.length || 0}`,
+                                    `Top IP: ${
+                                        topIpsQuery.data?.items[0]
+                                            ? `${topIpsQuery.data.items[0].ip_address} (${formatNumber(
+                                                  topIpsQuery.data.items[0].requests
+                                              )})`
+                                            : "-"
+                                    }`,
                                 ]}
                             />
                         </ChartCard>

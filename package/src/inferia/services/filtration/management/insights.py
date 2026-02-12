@@ -27,6 +27,10 @@ from inferia.services.filtration.schemas.insights import (
     InsightsTimeseriesResponse,
     InsightsLatency,
     InsightsTotals,
+    InsightsTopIp,
+    InsightsTopIpsResponse,
+    InsightsTopModel,
+    InsightsTopModelsResponse,
 )
 
 router = APIRouter(prefix="/insights", tags=["Insights"])
@@ -43,7 +47,8 @@ def _to_utc_naive(value: datetime) -> datetime:
 def _validate_time_window(start_time: datetime, end_time: datetime) -> None:
     if start_time >= end_time:
         raise HTTPException(
-            status_code=400, detail="Invalid time range: start_time must be before end_time"
+            status_code=400,
+            detail="Invalid time range: start_time must be before end_time",
         )
 
     if end_time - start_time > timedelta(days=MAX_RANGE_DAYS):
@@ -53,7 +58,9 @@ def _validate_time_window(start_time: datetime, end_time: datetime) -> None:
         )
 
 
-def _normalize_time_window(start_time: datetime, end_time: datetime) -> tuple[datetime, datetime]:
+def _normalize_time_window(
+    start_time: datetime, end_time: datetime
+) -> tuple[datetime, datetime]:
     normalized_start = _to_utc_naive(start_time)
     normalized_end = _to_utc_naive(end_time)
     _validate_time_window(normalized_start, normalized_end)
@@ -79,7 +86,9 @@ def _build_filters(
         try:
             normalized_deployment_id = UUID(deployment_id)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid deployment_id") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid deployment_id"
+            ) from exc
         conditions.append(DBInferenceLog.deployment_id == normalized_deployment_id)
 
     if model:
@@ -129,7 +138,9 @@ async def get_insights_summary(
     authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
 
     if not user_ctx.org_id:
-        raise HTTPException(status_code=400, detail="Action requires organization context")
+        raise HTTPException(
+            status_code=400, detail="Action requires organization context"
+        )
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
     filters = _build_filters(
@@ -148,17 +159,27 @@ async def get_insights_summary(
     summary_stmt = (
         select(
             func.count(DBInferenceLog.id).label("requests"),
-            func.count(DBInferenceLog.id).filter(success_condition).label("successful_requests"),
-            func.count(DBInferenceLog.id).filter(failed_condition).label("failed_requests"),
-            func.coalesce(func.sum(DBInferenceLog.prompt_tokens), 0).label("prompt_tokens"),
+            func.count(DBInferenceLog.id)
+            .filter(success_condition)
+            .label("successful_requests"),
+            func.count(DBInferenceLog.id)
+            .filter(failed_condition)
+            .label("failed_requests"),
+            func.coalesce(func.sum(DBInferenceLog.prompt_tokens), 0).label(
+                "prompt_tokens"
+            ),
             func.coalesce(func.sum(DBInferenceLog.completion_tokens), 0).label(
                 "completion_tokens"
             ),
-            func.coalesce(func.sum(DBInferenceLog.total_tokens), 0).label("total_tokens"),
+            func.coalesce(func.sum(DBInferenceLog.total_tokens), 0).label(
+                "total_tokens"
+            ),
             func.avg(_latency_expr())
             .filter(_latency_expr().isnot(None))
             .label("avg_latency_ms"),
-            func.coalesce(func.sum(_active_duration_expr()), 0).label("active_duration_ms"),
+            func.coalesce(func.sum(_active_duration_expr()), 0).label(
+                "active_duration_ms"
+            ),
             func.avg(DBInferenceLog.tokens_per_second)
             .filter(DBInferenceLog.tokens_per_second.isnot(None))
             .label("avg_tokens_per_second"),
@@ -225,7 +246,9 @@ async def get_insights_timeseries(
     authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
 
     if not user_ctx.org_id:
-        raise HTTPException(status_code=400, detail="Action requires organization context")
+        raise HTTPException(
+            status_code=400, detail="Action requires organization context"
+        )
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
     filters = _build_filters(
@@ -248,16 +271,24 @@ async def get_insights_timeseries(
         select(
             bucket_start,
             func.count(DBInferenceLog.id).label("requests"),
-            func.count(DBInferenceLog.id).filter(failed_condition).label("failed_requests"),
-            func.coalesce(func.sum(DBInferenceLog.prompt_tokens), 0).label("prompt_tokens"),
+            func.count(DBInferenceLog.id)
+            .filter(failed_condition)
+            .label("failed_requests"),
+            func.coalesce(func.sum(DBInferenceLog.prompt_tokens), 0).label(
+                "prompt_tokens"
+            ),
             func.coalesce(func.sum(DBInferenceLog.completion_tokens), 0).label(
                 "completion_tokens"
             ),
-            func.coalesce(func.sum(DBInferenceLog.total_tokens), 0).label("total_tokens"),
+            func.coalesce(func.sum(DBInferenceLog.total_tokens), 0).label(
+                "total_tokens"
+            ),
             func.avg(_latency_expr())
             .filter(_latency_expr().isnot(None))
             .label("avg_latency_ms"),
-            func.count(DBInferenceLog.id).filter(success_condition).label("successful_requests"),
+            func.count(DBInferenceLog.id)
+            .filter(success_condition)
+            .label("successful_requests"),
         )
         .select_from(DBInferenceLog)
         .join(DBDeployment, DBInferenceLog.deployment_id == DBDeployment.id)
@@ -274,7 +305,9 @@ async def get_insights_timeseries(
         row_requests = _to_int(row.requests)
         row_failed = _to_int(row.failed_requests)
         row_success = _to_int(row.successful_requests)
-        row_success_rate = (row_success / row_requests * 100.0) if row_requests > 0 else 0.0
+        row_success_rate = (
+            (row_success / row_requests * 100.0) if row_requests > 0 else 0.0
+        )
         buckets.append(
             InsightsTimeseriesBucket(
                 bucket_start=row.bucket_start,
@@ -289,6 +322,157 @@ async def get_insights_timeseries(
         )
 
     return InsightsTimeseriesResponse(granularity=granularity, buckets=buckets)
+
+
+@router.get("/top-ips", response_model=InsightsTopIpsResponse)
+async def get_insights_top_ips(
+    request: Request,
+    start_time: datetime = Query(..., description="Start datetime (ISO-8601)"),
+    end_time: datetime = Query(..., description="End datetime (ISO-8601)"),
+    deployment_id: str | None = Query(None),
+    model: str | None = Query(None),
+    ip_address: str | None = Query(None),
+    status: InsightsStatusFilter = Query("all"),
+    limit: int = Query(12, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
+
+    if not user_ctx.org_id:
+        raise HTTPException(
+            status_code=400, detail="Action requires organization context"
+        )
+
+    normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
+    filters = _build_filters(
+        user_ctx.org_id,
+        normalized_start,
+        normalized_end,
+        deployment_id,
+        model,
+        ip_address,
+        status,
+    )
+
+    success_condition = DBInferenceLog.status_code < 400
+
+    # Ensure we filter out empty IPs
+    ip_filters = list(filters)
+    ip_filters.append(DBInferenceLog.ip_address.isnot(None))
+    ip_filters.append(DBInferenceLog.ip_address != "")
+
+    top_ips_stmt = (
+        select(
+            DBInferenceLog.ip_address,
+            func.count(DBInferenceLog.id).label("requests"),
+            func.count(DBInferenceLog.id)
+            .filter(success_condition)
+            .label("successful_requests"),
+            func.coalesce(func.sum(DBInferenceLog.total_tokens), 0).label(
+                "total_tokens"
+            ),
+        )
+        .select_from(DBInferenceLog)
+        .join(DBDeployment, DBInferenceLog.deployment_id == DBDeployment.id)
+        .where(*ip_filters)
+        .group_by(DBInferenceLog.ip_address)
+        .order_by(func.count(DBInferenceLog.id).desc())
+        .limit(limit)
+    )
+
+    result = await db.execute(top_ips_stmt)
+    rows = result.all()
+
+    items = []
+    for row in rows:
+        requests = _to_int(row.requests)
+        successful_requests = _to_int(row.successful_requests)
+        success_rate = (successful_requests / requests * 100.0) if requests > 0 else 0.0
+
+        items.append(
+            InsightsTopIp(
+                ip_address=row.ip_address,
+                requests=requests,
+                success_rate=success_rate,
+                total_tokens=_to_int(row.total_tokens),
+            )
+        )
+
+    return InsightsTopIpsResponse(items=items)
+
+
+@router.get("/top-models", response_model=InsightsTopModelsResponse)
+async def get_insights_top_models(
+    request: Request,
+    start_time: datetime = Query(..., description="Start datetime (ISO-8601)"),
+    end_time: datetime = Query(..., description="End datetime (ISO-8601)"),
+    deployment_id: str | None = Query(None),
+    model: str | None = Query(None),
+    ip_address: str | None = Query(None),
+    status: InsightsStatusFilter = Query("all"),
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
+
+    if not user_ctx.org_id:
+        raise HTTPException(
+            status_code=400, detail="Action requires organization context"
+        )
+
+    normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
+    filters = _build_filters(
+        user_ctx.org_id,
+        normalized_start,
+        normalized_end,
+        deployment_id,
+        model,
+        ip_address,
+        status,
+    )
+
+    success_condition = DBInferenceLog.status_code < 400
+
+    top_models_stmt = (
+        select(
+            DBInferenceLog.model,
+            func.count(DBInferenceLog.id).label("requests"),
+            func.count(DBInferenceLog.id)
+            .filter(success_condition)
+            .label("successful_requests"),
+            func.coalesce(func.sum(DBInferenceLog.total_tokens), 0).label(
+                "total_tokens"
+            ),
+        )
+        .select_from(DBInferenceLog)
+        .join(DBDeployment, DBInferenceLog.deployment_id == DBDeployment.id)
+        .where(*filters)
+        .group_by(DBInferenceLog.model)
+        .order_by(func.count(DBInferenceLog.id).desc())
+        .limit(limit)
+    )
+
+    result = await db.execute(top_models_stmt)
+    rows = result.all()
+
+    items = []
+    for row in rows:
+        requests = _to_int(row.requests)
+        successful_requests = _to_int(row.successful_requests)
+        success_rate = (successful_requests / requests * 100.0) if requests > 0 else 0.0
+
+        items.append(
+            InsightsTopModel(
+                model=row.model,
+                requests=requests,
+                success_rate=success_rate,
+                total_tokens=_to_int(row.total_tokens),
+            )
+        )
+
+    return InsightsTopModelsResponse(items=items)
 
 
 @router.get("/logs", response_model=InsightsLogsResponse)
@@ -308,7 +492,9 @@ async def get_insights_logs(
     authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
 
     if not user_ctx.org_id:
-        raise HTTPException(status_code=400, detail="Action requires organization context")
+        raise HTTPException(
+            status_code=400, detail="Action requires organization context"
+        )
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
     filters = _build_filters(
@@ -360,7 +546,9 @@ async def get_insights_filters(
     authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
 
     if not user_ctx.org_id:
-        raise HTTPException(status_code=400, detail="Action requires organization context")
+        raise HTTPException(
+            status_code=400, detail="Action requires organization context"
+        )
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
 
@@ -405,7 +593,9 @@ async def get_insights_filters(
         .order_by(DBInferenceLog.ip_address.asc())
     )
     ip_addresses_result = await db.execute(ip_addresses_stmt)
-    ip_addresses = [row.ip_address for row in ip_addresses_result.all() if row.ip_address]
+    ip_addresses = [
+        row.ip_address for row in ip_addresses_result.all() if row.ip_address
+    ]
 
     return InsightsFiltersResponse(
         deployments=deployments,
