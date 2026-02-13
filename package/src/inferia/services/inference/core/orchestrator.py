@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from inferia.services.inference.client import filtration_client
 from fastapi import BackgroundTasks, HTTPException
@@ -32,7 +32,10 @@ class OrchestrationService:
 
     @staticmethod
     async def handle_completion(
-        api_key: str, body: Dict, background_tasks: BackgroundTasks
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
     ):
         start_time = time.time()
         applied_policies = []
@@ -175,6 +178,7 @@ class OrchestrationService:
                 background_tasks,
                 applied_policies,
                 log_payloads,
+                ip_address,
             )
         else:
             return await OrchestrationService._handle_standard(
@@ -191,6 +195,7 @@ class OrchestrationService:
                 background_tasks,
                 applied_policies,
                 log_payloads,
+                ip_address,
             )
 
     @staticmethod
@@ -207,6 +212,7 @@ class OrchestrationService:
         background_tasks,
         applied_policies,
         log_payloads,
+        ip_address,
     ):
         # Tracker state
         tracker = {
@@ -245,6 +251,7 @@ class OrchestrationService:
                         is_streaming=True,
                         applied_policies=applied_policies,
                         log_payloads=log_payloads,
+                        ip_address=ip_address,
                     )
                 )
 
@@ -273,6 +280,7 @@ class OrchestrationService:
         background_tasks,
         applied_policies,
         log_payloads,
+        ip_address,
     ):
         response_data = await GatewayService.call_upstream(
             endpoint_url, provider_payload, provider_headers, engine
@@ -307,6 +315,7 @@ class OrchestrationService:
             False,
             applied_policies,
             log_payloads,
+            ip_address,
         )
 
         return response_data
@@ -326,6 +335,7 @@ class OrchestrationService:
         is_streaming,
         applied_policies,
         log_payloads,
+        ip_address=None,
     ):
         end_time = time.time()
         total_duration_ms = int((end_time - start_time) * 1000)
@@ -361,6 +371,7 @@ class OrchestrationService:
                 status_code=200,
                 is_streaming=is_streaming,
                 applied_policies=applied_policies,
+                ip_address=ip_address,
             ),
             filtration_client.track_usage(
                 user_id,

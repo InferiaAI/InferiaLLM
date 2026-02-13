@@ -41,6 +41,7 @@ def _make_log(log_id: str) -> SimpleNamespace:
         deployment_id=str(uuid4()),
         user_id="user-1",
         model="llama3",
+        ip_address="203.0.113.10",
         request_payload=None,
         latency_ms=150,
         ttft_ms=60,
@@ -128,6 +129,7 @@ async def test_summary_query_includes_org_scope_and_status_filter():
         end_time=_now(),
         deployment_id=None,
         model=None,
+        ip_address="203.0.113.10",
         status="error",
         db=db,
     )
@@ -137,6 +139,7 @@ async def test_summary_query_includes_org_scope_and_status_filter():
     assert "model_deployments.org_id" in stmt_str
     assert "inference_logs.status_code >=" in stmt_str
     assert "inference_logs.ttft_ms" in stmt_str
+    assert "inference_logs.ip_address" in stmt_str
 
 
 @pytest.mark.asyncio
@@ -228,6 +231,7 @@ async def test_timeseries_bucket_ordering_and_granularity():
         end_time=_now(),
         deployment_id=None,
         model=None,
+        ip_address="203.0.113.10",
         status="all",
         granularity="hour",
         db=db,
@@ -237,6 +241,7 @@ async def test_timeseries_bucket_ordering_and_granularity():
     stmt_str = str(stmt)
     assert "date_trunc" in stmt_str
     assert "inference_logs.ttft_ms" in stmt_str
+    assert "inference_logs.ip_address" in stmt_str
     assert response.granularity == "hour"
     assert len(response.buckets) == 2
     assert response.buckets[0].success_rate == 75.0
@@ -261,11 +266,17 @@ async def test_logs_pagination_and_limit_clamping():
         end_time=_now(),
         deployment_id=None,
         model=None,
+        ip_address="203.0.113.10",
         status="all",
         limit=999,
         offset=10,
         db=db,
     )
+
+    count_stmt = db.execute.call_args_list[0].args[0]
+    logs_stmt = db.execute.call_args_list[1].args[0]
+    assert "inference_logs.ip_address" in str(count_stmt)
+    assert "inference_logs.ip_address" in str(logs_stmt)
 
     assert response.pagination.limit == 200
     assert response.pagination.offset == 10
@@ -352,7 +363,12 @@ async def test_filters_endpoint_returns_deployments_and_models():
         SimpleNamespace(model="llama3"),
         SimpleNamespace(model="mixtral"),
     ]
-    db.execute.side_effect = [deployments_result, models_result]
+    ip_addresses_result = MagicMock()
+    ip_addresses_result.all.return_value = [
+        SimpleNamespace(ip_address="203.0.113.10"),
+        SimpleNamespace(ip_address="203.0.113.11"),
+    ]
+    db.execute.side_effect = [deployments_result, models_result, ip_addresses_result]
 
     response = await get_insights_filters(
         request=request,
@@ -363,4 +379,5 @@ async def test_filters_endpoint_returns_deployments_and_models():
 
     assert len(response.deployments) == 2
     assert response.models == ["llama3", "mixtral"]
+    assert response.ip_addresses == ["203.0.113.10", "203.0.113.11"]
     assert response.status_options == ["all", "success", "error"]

@@ -9,7 +9,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "recharts": path.resolve(__dirname, "./src/vendor/recharts.tsx"),
     },
   },
   server: {

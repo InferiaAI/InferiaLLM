@@ -39,6 +39,28 @@ class ModelDeploymentController:
         config_dict["workload_type"] = workload_type
         return json.dumps(config_dict)
 
+    def _extract_workload_type(self, deployment: dict) -> str:
+        """
+        Resolve workload_type from persisted configuration.
+        Defaults to inference for backward compatibility with older rows.
+        """
+        import json
+
+        config = deployment.get("configuration")
+        if isinstance(config, dict):
+            workload_type = config.get("workload_type")
+            return str(workload_type) if workload_type else "inference"
+
+        if isinstance(config, str):
+            try:
+                parsed = json.loads(config)
+                workload_type = parsed.get("workload_type")
+                return str(workload_type) if workload_type else "inference"
+            except json.JSONDecodeError:
+                return "inference"
+
+        return "inference"
+
     # -------------------------------------------------
     # CREATE / DEPLOY
     # -------------------------------------------------
@@ -214,13 +236,21 @@ class ModelDeploymentController:
     async def start_deployment(
         self,
         deployment_id: UUID,
-    ) -> None:
+    ) -> str:
         d = await self.deployments.get(deployment_id)
         if not d:
             raise ValueError("Deployment not found")
 
         if d["state"] not in ("STOPPED", "TERMINATED", "FAILED"):
             raise ValueError(f"Cannot start deployment in state {d['state']}")
+
+        workload_type = self._extract_workload_type(d)
+
+        # External/provider deployments don't require compute orchestration.
+        # Move directly to RUNNING and skip worker deployment events.
+        if workload_type == "external":
+            await self.deployments.update_state(deployment_id, "RUNNING")
+            return "RUNNING"
 
         # Reset to PENDING so worker picks it up
         await self.deployments.update_state(deployment_id, "PENDING")
@@ -234,9 +264,11 @@ class ModelDeploymentController:
                 "pool_id": str(d["pool_id"]),
                 "replicas": d["replicas"],
                 "gpu_per_replica": d["gpu_per_replica"],
-                "workload_type": "inference",  # default/stored
+                "workload_type": workload_type,
                 "engine": d.get("engine"),
                 "configuration": d.get("configuration"),  # Should encompass json
                 "owner_id": d.get("owner_id"),
             },
         )
+
+        return "PENDING"

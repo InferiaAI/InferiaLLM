@@ -8,6 +8,7 @@ export interface InsightsQueryParams {
     end_time: string;
     deployment_id?: string;
     model?: string;
+    ip_address?: string;
     status?: InsightsStatus;
 }
 
@@ -58,6 +59,7 @@ export interface InferenceLogItem {
     deployment_id: string;
     user_id: string;
     model: string;
+    ip_address: string | null;
     request_payload: Record<string, unknown> | null;
     latency_ms: number | null;
     ttft_ms: number | null;
@@ -91,7 +93,30 @@ export interface InsightsDeploymentFilterOption {
 export interface InsightsFiltersResponse {
     deployments: InsightsDeploymentFilterOption[];
     models: string[];
-    status_options: InsightsStatus[];
+    ip_addresses: string[];
+    status_options: InsightsStatusFilter[];
+}
+
+export interface InsightsTopIp {
+    ip_address: string;
+    requests: number;
+    success_rate: number;
+    total_tokens: number;
+}
+
+export interface InsightsTopIpsResponse {
+    items: InsightsTopIp[];
+}
+
+export interface InsightsTopModel {
+    model: string;
+    requests: number;
+    success_rate: number;
+    total_tokens: number;
+}
+
+export interface InsightsTopModelsResponse {
+    items: InsightsTopModel[];
 }
 
 export interface InsightsLogsQueryParams extends InsightsQueryParams {
@@ -121,6 +146,16 @@ export const insightsService = {
 
     async getFilters(params: Pick<InsightsQueryParams, "start_time" | "end_time">): Promise<InsightsFiltersResponse> {
         const { data } = await api.get<InsightsFiltersResponse>("/management/insights/filters", { params });
+        return data;
+    },
+
+    async getTopIps(params: InsightsQueryParams): Promise<InsightsTopIpsResponse> {
+        const { data } = await api.get<InsightsTopIpsResponse>("/management/insights/top-ips", { params });
+        return data;
+    },
+
+    async getTopModels(params: InsightsQueryParams): Promise<InsightsTopModelsResponse> {
+        const { data } = await api.get<InsightsTopModelsResponse>("/management/insights/top-models", { params });
         return data;
     },
 };

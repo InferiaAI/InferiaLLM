@@ -241,6 +241,12 @@ Initialize the control-plane databases, roles, and schemas.
 [inferia:init] Bootstrap complete
 ```
 
+If you already have an initialized database and only need the latest schema updates, run:
+
+```bash
+psql "$DATABASE_URL" -f db/migrations/20260212_add_inference_logs_ip.sql
+```
+
 ### 2. `inferiallm start`
 
 Start Inferia services. You can start all services at once or specific components.
@@ -423,6 +429,17 @@ Does **not** make policy or compute decisions.
 #### Request Flow
 
 ![Request Flow](assets/request_flow.png)
+
+#### Forwarding Client IP
+
+If requests reach Inference Gateway through proxies or load balancers, forward client IP with one of:
+
+* `X-IP-Address`
+* `X-Client-IP`
+* `X-Forwarded-For` (first IP is used)
+* `X-Real-IP`
+
+The value is stored in `inference_logs.ip_address` and can be used in Insights IP filtering.
 
  ---
 

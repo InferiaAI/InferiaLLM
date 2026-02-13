@@ -206,7 +206,7 @@ async def start_deployment(req: TerminateDeploymentRequest): # Reusing same requ
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
         try:
-            await stub.StartDeployment(
+            resp = await stub.StartDeployment(
                 model_deployment_pb2.StartDeploymentRequest(
                     deployment_id=req.deployment_id
                 )
@@ -219,7 +219,7 @@ async def start_deployment(req: TerminateDeploymentRequest): # Reusing same requ
 
     return {
         "deployment_id": req.deployment_id,
-        "status": "PENDING",
+        "status": resp.state,
     }
 
 @router.delete("/delete/{deployment_id}")

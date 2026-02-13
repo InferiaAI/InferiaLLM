@@ -114,6 +114,7 @@ class FiltrationGatewayClient:
         error_message: Optional[str] = None,
         is_streaming: bool = False,
         applied_policies: Optional[List[str]] = None,
+        ip_address: Optional[str] = None,
     ) -> None:
         """
         Log inference request details (fire and forget).
@@ -143,6 +144,7 @@ class FiltrationGatewayClient:
                         "error_message": error_message,
                         "is_streaming": is_streaming,
                         "applied_policies": applied_policies,
+                        "ip_address": ip_address,
                     },
                     headers=self._get_headers(),
                 )

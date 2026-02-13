@@ -130,3 +130,6 @@ apps/docs
 package/chroma_db
 package/dist/
 sync_dashboard.sh
+
+chroma_db
+chromadb/chroma.sqlite3

@@ -1,21 +1,29 @@
-import { type ComponentType, type ReactNode, useMemo, useState } from "react";
+import { type ComponentType, type ReactNode, useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
     Activity,
     Clock3,
+    Download,
     Gauge,
     Layers3,
+    RotateCcw,
     TrendingUp,
     TriangleAlert,
     Zap,
 } from "lucide-react";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
     Area,
     AreaChart,
+    Bar,
+    BarChart,
     CartesianGrid,
+    Cell,
     Legend,
     Line,
     LineChart,
+    Pie,
+    PieChart,
     ResponsiveContainer,
     Tooltip,
     XAxis,
@@ -33,7 +41,12 @@ import {
     insightsService,
 } from "@/services/insightsService";
 
-type TimePreset = "24h" | "7d" | "30d" | "custom";
+type TimePreset = "30m" | "1h" | "5h" | "24h" | "7d" | "30d" | "custom";
+
+const QUERY_STALE_TIME = 30 * 1000;
+const IP_DEBOUNCE_DELAY = 300;
+
+const PIE_COLORS = ["#2563eb", "#db2777", "#16a34a", "#9333ea", "#ea580c", "#0891b2"];
 
 function toLocalDateTimeInputValue(date: Date): string {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -66,13 +79,24 @@ export default function Insights() {
     const [customStart, setCustomStart] = useState<string>(toLocalDateTimeInputValue(defaultStart));
     const [customEnd, setCustomEnd] = useState<string>(toLocalDateTimeInputValue(now));
     const [deploymentId, setDeploymentId] = useState<string>("");
-    const [model, setModel] = useState<string>("");
+    const [ipAddress, setIpAddress] = useState<string>("");
     const [status, setStatus] = useState<InsightsStatus>("all");
     const [page, setPage] = useState<number>(1);
     const [pageSize, setPageSize] = useState<number>(20);
 
+    const debouncedIpAddress = useDebouncedValue(ipAddress.trim(), IP_DEBOUNCE_DELAY);
+
     const range = useMemo(() => {
         const end = new Date();
+        if (timePreset === "30m") {
+            return { start: new Date(end.getTime() - 30 * 60 * 1000), end };
+        }
+        if (timePreset === "1h") {
+            return { start: new Date(end.getTime() - 60 * 60 * 1000), end };
+        }
+        if (timePreset === "5h") {
+            return { start: new Date(end.getTime() - 5 * 60 * 60 * 1000), end };
+        }
         if (timePreset === "24h") {
             return { start: new Date(end.getTime() - 24 * 60 * 60 * 1000), end };
         }
@@ -96,10 +120,10 @@ export default function Insights() {
             start_time: range.start.toISOString(),
             end_time: range.end.toISOString(),
             deployment_id: deploymentId || undefined,
-            model: model || undefined,
+            ip_address: debouncedIpAddress || undefined,
             status,
         }),
-        [range.start, range.end, deploymentId, model, status]
+        [range.start, range.end, deploymentId, debouncedIpAddress, status]
     );
 
     const granularity: InsightsGranularity = useMemo(() => {
@@ -114,6 +138,7 @@ export default function Insights() {
                 start_time: baseParams.start_time,
                 end_time: baseParams.end_time,
             }),
+        staleTime: QUERY_STALE_TIME,
     });
 
     const summaryQuery = useQuery({
@@ -123,10 +148,11 @@ export default function Insights() {
             baseParams.start_time,
             baseParams.end_time,
             deploymentId,
-            model,
+            debouncedIpAddress,
             status,
         ],
         queryFn: () => insightsService.getSummary(baseParams),
+        staleTime: QUERY_STALE_TIME,
     });
 
     const timeseriesQuery = useQuery({
@@ -136,11 +162,40 @@ export default function Insights() {
             baseParams.start_time,
             baseParams.end_time,
             deploymentId,
-            model,
+            debouncedIpAddress,
             status,
             granularity,
         ],
         queryFn: () => insightsService.getTimeseries({ ...baseParams, granularity }),
+        staleTime: QUERY_STALE_TIME,
+    });
+
+    const topIpsQuery = useQuery({
+        queryKey: [
+            "insights",
+            "top-ips",
+            baseParams.start_time,
+            baseParams.end_time,
+            deploymentId,
+            debouncedIpAddress,
+            status,
+        ],
+        queryFn: () => insightsService.getTopIps(baseParams),
+        staleTime: QUERY_STALE_TIME,
+    });
+
+    const topModelsQuery = useQuery({
+        queryKey: [
+            "insights",
+            "top-models",
+            baseParams.start_time,
+            baseParams.end_time,
+            deploymentId,
+            debouncedIpAddress,
+            status,
+        ],
+        queryFn: () => insightsService.getTopModels(baseParams),
+        staleTime: QUERY_STALE_TIME,
     });
 
     const logsQuery = useQuery({
@@ -150,7 +205,7 @@ export default function Insights() {
             baseParams.start_time,
             baseParams.end_time,
             deploymentId,
-            model,
+            debouncedIpAddress,
             status,
             page,
             pageSize,
@@ -161,6 +216,7 @@ export default function Insights() {
                 limit: pageSize,
                 offset: (page - 1) * pageSize,
             }),
+        staleTime: QUERY_STALE_TIME,
     });
 
     const summary = summaryQuery.data;
@@ -219,8 +275,45 @@ export default function Insights() {
     const totalItems = logs?.pagination.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
-    const isInitialLoading = summaryQuery.isLoading || timeseriesQuery.isLoading || logsQuery.isLoading;
+    const isInitialLoading =
+        summaryQuery.isLoading ||
+        timeseriesQuery.isLoading ||
+        topIpsQuery.isLoading ||
+        topModelsQuery.isLoading ||
+        logsQuery.isLoading;
     const hasNoData = (summary?.totals.requests ?? 0) === 0 && !isInitialLoading;
+
+    const hasActiveFilters = deploymentId !== "" || ipAddress !== "" || status !== "all";
+
+    const clearFilters = useCallback(() => {
+        setDeploymentId("");
+        setIpAddress("");
+        setStatus("all");
+        setPage(1);
+    }, []);
+
+    const exportLogsToCSV = useCallback(() => {
+        if (!logs?.items.length) return;
+        const headers = ["Timestamp", "Deployment ID", "Model", "IP Address", "Prompt Tokens", "Completion Tokens", "Total Tokens", "Latency (ms)", "Status"];
+        const rows = logs.items.map((log) => [
+            log.created_at,
+            log.deployment_id,
+            log.model,
+            log.ip_address || "",
+            log.prompt_tokens,
+            log.completion_tokens,
+            log.total_tokens,
+            log.ttft_ms ?? log.latency_ms ?? "",
+            log.status_code,
+        ]);
+        const csvContent = [headers, ...rows].map((row) => row.join(",")).join("\n");
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `insights-logs-${new Date().toISOString().split("T")[0]}.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }, [logs]);
 
     return (
         <div className="space-y-6">
@@ -243,6 +336,9 @@ export default function Insights() {
                             }}
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         >
+                            <option value="30m">Last 30 mins</option>
+                            <option value="1h">Last 1 hour</option>
+                            <option value="5h">Last 5 hours</option>
                             <option value="24h">Last 24 hours</option>
                             <option value="7d">Last 7 days</option>
                             <option value="30d">Last 30 days</option>
@@ -299,25 +395,6 @@ export default function Insights() {
                     </div>
 
                     <div className="space-y-1">
-                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Model</label>
-                        <select
-                            value={model}
-                            onChange={(e) => {
-                                setModel(e.target.value);
-                                setPage(1);
-                            }}
-                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                        >
-                            <option value="">All models</option>
-                            {(filters?.models || []).map((modelOption) => (
-                                <option key={modelOption} value={modelOption}>
-                                    {modelOption}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <div className="space-y-1">
                         <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</label>
                         <select
                             value={status}
@@ -334,7 +411,39 @@ export default function Insights() {
                             ))}
                         </select>
                     </div>
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Address</label>
+                        <input
+                            type="text"
+                            list="insights-ip-options"
+                            value={ipAddress}
+                            onChange={(e) => {
+                                setIpAddress(e.target.value);
+                                setPage(1);
+                            }}
+                            placeholder="All IPs"
+                            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        />
+                        <datalist id="insights-ip-options">
+                            {(filters?.ip_addresses || []).map((ipOption) => (
+                                <option key={ipOption} value={ipOption} />
+                            ))}
+                        </datalist>
+                    </div>
                 </div>
+                {hasActiveFilters && (
+                    <div className="mt-3 flex justify-end">
+                        <button
+                            type="button"
+                            onClick={clearFilters}
+                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Clear all filters
+                        </button>
+                    </div>
+                )}
             </div>
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
@@ -487,6 +596,158 @@ export default function Insights() {
                         </ChartCard>
                     </div>
 
+                    <div className="grid gap-4 lg:grid-cols-2">
+                        <ChartCard title="Requests by Model" subtitle="Distribution of traffic across models">
+                            <ResponsiveContainer width="100%" height={260}>
+                                <PieChart>
+                                    <Pie
+                                        data={topModelsQuery.data?.items || []}
+                                        dataKey="requests"
+                                        nameKey="model"
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={60}
+                                        outerRadius={80}
+                                        paddingAngle={2}
+                                        label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                                        labelLine={false}
+                                    >
+                                        {(topModelsQuery.data?.items || []).map((entry, index) => (
+                                            <Cell
+                                                key={entry.model}
+                                                fill={PIE_COLORS[index % PIE_COLORS.length]}
+                                            />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip
+                                        content={({ active, payload }) => {
+                                            if (active && payload && payload.length) {
+                                                const data = payload[0].payload;
+                                                return (
+                                                    <div className="rounded-lg border bg-background p-2 shadow-sm">
+                                                        <div className="flex flex-col gap-1">
+                                                            <span className="font-bold text-muted-foreground">
+                                                                {data.model}
+                                                            </span>
+                                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                                                <span className="text-muted-foreground">Requests:</span>
+                                                                <span className="font-mono">{formatNumber(data.requests, 0)}</span>
+                                                                <span className="text-muted-foreground">Tokens:</span>
+                                                                <span className="font-mono">{formatNumber(data.total_tokens, 0)}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        }}
+                                    />
+                                    <Legend
+                                        layout="vertical"
+                                        verticalAlign="middle"
+                                        align="right"
+                                        wrapperStyle={{ fontSize: "11px", maxWidth: "120px" }}
+                                    />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <ChartSummary
+                                items={[
+                                    `Models active: ${topModelsQuery.data?.items.length || 0}`,
+                                    `Top model: ${
+                                        topModelsQuery.data?.items[0]?.model || "-"
+                                    }`,
+                                ]}
+                            />
+                        </ChartCard>
+
+                        <ChartCard title="Top IPs by Traffic" subtitle="Top active clients by request volume">
+                            <ChartLegend items={[{ label: "Requests", colorClass: "bg-purple-600" }]} />
+                            <ResponsiveContainer width="100%" height={260}>
+                                <BarChart
+                                    data={topIpsQuery.data?.items || []}
+                                    layout="vertical"
+                                    margin={{ top: 0, right: 30, left: 30, bottom: 0 }}
+                                >
+                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} horizontal={true} vertical={false} />
+                                    <XAxis type="number" hide />
+                                    <YAxis
+                                        dataKey="ip_address"
+                                        type="category"
+                                        tick={{ fontSize: 11 }}
+                                        width={100}
+                                        tickFormatter={(ip) => (ip ? ip.slice(0, 15) : "Unknown")}
+                                        interval={0}
+                                    />
+                                    <Tooltip
+                                        cursor={{ fill: "transparent" }}
+                                        content={({ active, payload }) => {
+                                            if (active && payload && payload.length) {
+                                                const data = payload[0].payload;
+                                                return (
+                                                    <div className="rounded-lg border bg-background p-2 shadow-sm z-50 relative">
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    IP Address
+                                                                </span>
+                                                                <span className="font-bold text-muted-foreground">
+                                                                    {data.ip_address}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    Requests
+                                                                </span>
+                                                                <span className="font-bold">{data.requests}</span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    Success Rate
+                                                                </span>
+                                                                <span className="font-bold">
+                                                                    {data.success_rate.toFixed(1)}%
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                                                    Tokens
+                                                                </span>
+                                                                <span className="font-bold">
+                                                                    {formatNumber(data.total_tokens, 0)}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        }}
+                                    />
+                                    <Bar
+                                        dataKey="requests"
+                                        fill="#9333ea"
+                                        radius={[0, 4, 4, 0]}
+                                        name="Requests"
+                                        barSize={16}
+                                        animationDuration={1000}
+                                    />
+                                </BarChart>
+                            </ResponsiveContainer>
+                            <ChartSummary
+                                items={[
+                                    `Unique IPs: ${topIpsQuery.data?.items.length || 0}`,
+                                    `Top IP: ${
+                                        topIpsQuery.data?.items[0]
+                                            ? `${topIpsQuery.data.items[0].ip_address} (${formatNumber(
+                                                  topIpsQuery.data.items[0].requests
+                                              )})`
+                                            : "-"
+                                    }`,
+                                ]}
+                            />
+                        </ChartCard>
+                    </div>
+
                     <ChartCard title="Average Latency Trend" subtitle="Average TTFT over time (fallback: total latency when TTFT missing)">
                         <ChartLegend items={[{ label: "Avg Latency (TTFT, ms)", colorClass: "bg-sky-500" }]} />
                         <ResponsiveContainer width="100%" height={300}>
@@ -561,12 +822,24 @@ export default function Insights() {
             )}
 
             <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-                <div className="border-b px-4 py-3">
-                    <h3 className="font-semibold">Detailed Inference Logs</h3>
-                    <p className="text-xs text-muted-foreground">
-                        Avg token speed: {formatNumber(summary?.throughput.avg_tokens_per_second || 0)} tok/s |
-                        Overall token speed: {formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s
-                    </p>
+                <div className="border-b px-4 py-3 flex items-start justify-between">
+                    <div>
+                        <h3 className="font-semibold">Detailed Inference Logs</h3>
+                        <p className="text-xs text-muted-foreground">
+                            Avg token speed: {formatNumber(summary?.throughput.avg_tokens_per_second || 0)} tok/s |
+                            Overall token speed: {formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s
+                        </p>
+                    </div>
+                    {logs?.items.length ? (
+                        <button
+                            type="button"
+                            onClick={exportLogsToCSV}
+                            className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+                        >
+                            <Download className="h-3.5 w-3.5" />
+                            Export CSV
+                        </button>
+                    ) : null}
                 </div>
 
                 <div className="overflow-x-auto">
@@ -576,6 +849,7 @@ export default function Insights() {
                                 <th className="px-4 py-3 text-left font-medium">Timestamp</th>
                                 <th className="px-4 py-3 text-left font-medium">Deployment</th>
                                 <th className="px-4 py-3 text-left font-medium">Model</th>
+                                <th className="px-4 py-3 text-left font-medium">IP</th>
                                 <th className="px-4 py-3 text-left font-medium">Tokens</th>
                                 <th className="px-4 py-3 text-left font-medium">Latency (TTFT)</th>
                                 <th className="px-4 py-3 text-left font-medium">Status</th>
@@ -591,6 +865,7 @@ export default function Insights() {
                                         {String(log.deployment_id).slice(0, 8)}...
                                     </td>
                                     <td className="px-4 py-3">{log.model}</td>
+                                    <td className="px-4 py-3 font-mono text-xs">{log.ip_address || "-"}</td>
                                     <td className="px-4 py-3 font-mono text-xs">
                                         {formatNumber(log.total_tokens, 0)} ({formatNumber(log.prompt_tokens, 0)}/{formatNumber(log.completion_tokens, 0)})
                                     </td>
@@ -617,7 +892,7 @@ export default function Insights() {
                             ))}
                             {!logsQuery.isLoading && (logs?.items.length || 0) === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                                         No logs found for the selected filters.
                                     </td>
                                 </tr>
