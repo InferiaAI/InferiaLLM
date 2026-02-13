@@ -138,7 +138,7 @@ nano .env
 docker run -d \
   --name inferia-app \
   --env-file .env \
-  -p 8000:8000 -p 8001:8001 -p 8080:8080 -p 3000:3000 -p 3001:3001 \
+  -p 8000:8000 -p 8001:8001 -p 8002:8002 -p 8003:8003 -p 8080:8080 -p 3000:3000 -p 3001:3001 \
   inferiaai/inferiallm:latest
 ```
 
@@ -176,6 +176,9 @@ docker compose -f deploy/docker-compose.yml --profile split up --build
 * **Orchestration API:** `http://localhost:8080`
 * **Filtration Gateway:** `http://localhost:8000`
 * **Inference Gateway:** `http://localhost:8001`
+* **Guardrail Engine:** `http://localhost:8002`
+* **Data Engine:** `http://localhost:8003`
+* **DePIN Sidecar:** `http://localhost:3000`
 
  ---
 
@@ -386,9 +389,11 @@ These are the **only externally reachable services**.
 | Service | Responsibility | Documentation |
 | ------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
 | **Admin Dashboard** | Administrative control surface for policies, compute pools, usage, and audits | [README](./apps/dashboard/README.md) |
-| **Filtration Gateway** | Authentication, RBAC, policy enforcement, and guardrails | [README](./package/src/inferia/services/filtration/README.md) |
-| **Inference Gateway** | Data-plane ingress for all LLM inference traffic | [README](./package/src/inferia/gateways/inference_gateway/README.md) |
-| **Orchestration Gateway** | Compute control authority and execution routing | [README](./package/src/inferia/gateways/orchestration_gateway/README.md) |
+| **Filtration Gateway** | Authentication, RBAC, policy enforcement | [README](./package/src/inferia/services/filtration/README.md) |
+| **Inference Gateway** | Data-plane ingress for all LLM inference traffic | [README](./package/src/inferia/services/inference/README.md) |
+| **Guardrail Engine** | Content safety scanning and PII detection | [README](./package/src/inferia/services/guardrail/README.md) |
+| **Data Engine** | Data processing and knowledge base operations | [README](./package/src/inferia/services/data/README.md) |
+| **Orchestration Gateway** | Compute control authority and execution routing | [README](./package/src/inferia/services/orchestration/README.md) |
 
 ---
 
@@ -474,14 +479,33 @@ Supports:
 * Register and manage compute providers
 * Inspect usage, cost, and audit logs
 
- ---
+---
+
+### Guardrail Engine (Safety Authority)
+
+* Scans prompts and responses for safety violations
+* Detects PII (Personally Identifiable Information)
+* Supports multiple safety providers (LLM Guard, Llama Guard, Lakera)
+* Configurable scanners for toxicity, secrets, prompt injection
+
+---
+
+### Data Engine (Data Processing)
+
+* Knowledge base management and vector operations
+* Document ingestion and processing
+* Data transformation and enrichment
+* Integration with ChromaDB for vector storage
+
+---
 
 ## Core Services (Control Plane Internals)
 
 | Component | Responsibility | Documentation |
 | ---------------- | ----------------------------------------- | --------------------------------------------------- |
 | **Orchestrator** | Compute lifecycle and workload management | [README](./package/src/inferia/services/orchestration/README.md) |
-| **Guardrails** | Safety enforcement and content filtering | [README](./package/src/inferia/services/filtration/guardrail/README.md) |
+| **Guardrail Engine** | Content safety scanning and PII detection | [README](./package/src/inferia/services/guardrail/README.md) |
+| **Data Engine** | Knowledge base and data processing | [README](./package/src/inferia/services/data/README.md) |
 | **RBAC** | Identity and access boundaries | [README](./package/src/inferia/services/filtration/rbac/README.md) |
 | **Gateway** | Secure internal service routing | [README](./package/src/inferia/services/filtration/gateway/README.md) |
 | **Audit** | Immutable execution and policy logs | [README](./package/src/inferia/services/filtration/audit/README.md) |
