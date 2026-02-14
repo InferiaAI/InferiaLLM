@@ -36,11 +36,11 @@ def run_filtration_service(queue=None):
             queue.put(ServiceStarting("Filtration Service"))
         from inferia.services.filtration.main import start_api
 
-        start_api()
         if queue:
             queue.put(
                 ServiceStarted("Filtration Service", detail="Listening on port 8000")
             )
+        start_api()
     except Exception as e:
         if queue:
             queue.put(ServiceFailed("Filtration Service", error=str(e)))
@@ -98,11 +98,11 @@ def run_inference_service(queue=None):
             queue.put(ServiceStarting("Inference Service"))
         from inferia.services.inference.main import start_api
 
-        start_api()
         if queue:
             queue.put(
                 ServiceStarted("Inference Service", detail="Listening on port 8001")
             )
+        start_api()
     except Exception as e:
         if queue:
             queue.put(ServiceFailed("Inference Service", error=str(e)))
@@ -118,11 +118,11 @@ def run_orchestration_service(queue=None):
             queue.put(ServiceStarting("Orchestration Service"))
         from inferia.services.orchestration.main import start_api
 
-        start_api()
         if queue:
             queue.put(
                 ServiceStarted("Orchestration Service", detail="Listening on port 8080")
             )
+        start_api()
     except Exception as e:
         if queue:
             queue.put(ServiceFailed("Orchestration Service", error=str(e)))
@@ -141,13 +141,13 @@ def run_worker(queue=None):
             main,
         )
 
-        asyncio.run(main())
         if queue:
             queue.put(
                 ServiceStarted(
                     "Orchestration Worker", detail="Connected to message broker"
                 )
             )
+        asyncio.run(main())
     except Exception as e:
         if queue:
             queue.put(ServiceFailed("Orchestration Worker", error=str(e)))
@@ -189,8 +189,8 @@ def run_nosana_sidecar(queue=None):
         subprocess.Popen(
             ["npm", "start"],
             cwd=sidecar_dir,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=env,
         )
         if queue:
@@ -363,6 +363,28 @@ def run_all():
     ui = StartupUI(queue, total=8)
 
     processes = [
+        # Core Gateway
+        multiprocessing.Process(
+            target=run_filtration_service,
+            name="filtration",
+            args=(queue,),
+        ),
+        # Microservices
+        multiprocessing.Process(
+            target=run_data_service,
+            name="data",
+            args=(queue,),
+        ),
+        multiprocessing.Process(
+            target=run_guardrail_service,
+            name="guardrail",
+            args=(queue,),
+        ),
+        multiprocessing.Process(
+            target=run_inference_service,
+            name="inference",
+            args=(queue,),
+        ),
         # Orchestration Stack
         multiprocessing.Process(
             target=run_orchestration_service,
@@ -377,28 +399,6 @@ def run_all():
         multiprocessing.Process(
             target=run_nosana_sidecar,
             name="nosana-sidecar",
-            args=(queue,),
-        ),
-        # Microservices
-        multiprocessing.Process(
-            target=run_guardrail_service,
-            name="guardrail",
-            args=(queue,),
-        ),
-        multiprocessing.Process(
-            target=run_data_service,
-            name="data",
-            args=(queue,),
-        ),
-        # Inference & Filtration
-        multiprocessing.Process(
-            target=run_inference_service,
-            name="inference",
-            args=(queue,),
-        ),
-        multiprocessing.Process(
-            target=run_filtration_service,
-            name="filtration",
             args=(queue,),
         ),
         # Dashboard
