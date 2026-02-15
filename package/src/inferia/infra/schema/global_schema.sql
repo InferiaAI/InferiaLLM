@@ -481,7 +481,7 @@ CREATE TABLE inference_logs (
     is_streaming BOOLEAN, 
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id), 
-    FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id)
+    FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id) ON DELETE CASCADE
 );
 CREATE INDEX ix_inference_logs_user_id ON inference_logs (user_id);
 CREATE INDEX ix_inference_logs_ip_address ON inference_logs (ip_address);
