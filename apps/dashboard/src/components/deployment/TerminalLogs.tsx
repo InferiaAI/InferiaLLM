@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { computeApi } from "@/lib/api"
+import { computeApi, WEB_SOCKET_URL } from "@/lib/api"
 import { Terminal, RefreshCcw, Wifi, WifiOff, Trash2, ChevronDown, Download, Monitor } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -98,7 +98,24 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                 throw new Error("No WebSocket URL provided by the gateway.")
             }
 
-            const ws = new WebSocket(ws_url)
+            let socketUrl = ws_url;
+            // Handle cases where the sidecar returns localhost:3000 but we need to use the configured WS URL
+            if (ws_url.includes('localhost:3000') || ws_url.includes('127.0.0.1:3000')) {
+                // If it's a localhost URL from the sidecar, use our configured WEB_SOCKET_URL
+                // but try to preserve any path/params if they exist
+                try {
+                    const sidecarUrl = new URL(ws_url.startsWith('ws') ? ws_url : `ws://${ws_url}`);
+                    const configUrl = new URL(WEB_SOCKET_URL);
+
+                    configUrl.pathname = sidecarUrl.pathname !== '/' ? sidecarUrl.pathname : configUrl.pathname;
+                    configUrl.search = sidecarUrl.search || configUrl.search;
+                    socketUrl = configUrl.toString();
+                } catch (e) {
+                    socketUrl = WEB_SOCKET_URL;
+                }
+            }
+
+            const ws = new WebSocket(socketUrl)
             wsRef.current = ws
 
             ws.onopen = () => {

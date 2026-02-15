@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Activity, Server, Database, Zap, Cloud, Check, X, RefreshCw, Clock, AlertTriangle, Shield } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
+import { MANAGEMENT_URL, COMPUTE_URL, INFERENCE_URL, SIDECAR_URL, DATA_URL, GUARDRAIL_URL } from "@/lib/api"
 
 interface ServiceStatus {
     name: string
@@ -12,48 +13,43 @@ interface ServiceStatus {
     description: string
 }
 
-const MANAGEMENT_BASE = import.meta.env.VITE_MANAGEMENT_URL || "http://localhost:8000"
-const COMPUTE_BASE = import.meta.env.VITE_COMPUTE_URL || "http://localhost:8080"
-const INFERENCE_BASE = import.meta.env.VITE_INFERENCE_URL || "http://localhost:8001"
-const SIDECAR_BASE = import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000"
-const DATA_BASE = import.meta.env.VITE_DATA_URL || "http://localhost:8003"
-const GUARDRAIL_BASE = import.meta.env.VITE_GUARDRAIL_URL || "http://localhost:8002"
+
 
 const SERVICES = [
     {
         name: "Filtration Gateway",
-        url: `${MANAGEMENT_BASE}/health`,
+        url: `${MANAGEMENT_URL}/health`,
         icon: Activity,
         description: "Policy enforcement, guardrails, and request routing"
     },
     {
         name: "Inference Gateway",
-        url: `${INFERENCE_BASE}/v1/chat/completions`,
+        url: `${INFERENCE_URL}/v1/chat/completions`,
         icon: Zap,
         description: "OpenAI-compatible API endpoint",
         method: "OPTIONS" // Just check if endpoint responds
     },
     {
         name: "Orchestration API",
-        url: `${COMPUTE_BASE}/deployment/listPools/health-check`,
+        url: `${COMPUTE_URL}/deployment/listPools/health-check`,
         icon: Server,
         description: "Deployment management and compute orchestration"
     },
     {
         name: "Data Service",
-        url: `${DATA_BASE}/health`,
+        url: `${DATA_URL}/health`,
         icon: Database,
         description: "Document processing and vector database management"
     },
     {
         name: "Guardrail Service",
-        url: `${GUARDRAIL_BASE}/health`,
+        url: `${GUARDRAIL_URL}/health`,
         icon: Shield,
         description: "Content safety, PII detection, and policy enforcement"
     },
     {
         name: "DePIN Sidecar",
-        url: `${SIDECAR_BASE}/health`,
+        url: `${SIDECAR_URL}/health`,
         icon: Cloud,
         description: "DePIN (Nosana/Akash) job management"
     }
