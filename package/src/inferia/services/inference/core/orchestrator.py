@@ -11,6 +11,7 @@ from .providers import get_adapter, is_external_engine
 from .rate_limiter import rate_limiter
 from .service import GatewayService
 from .stream_processor import StreamProcessor
+from inferia.services.inference.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,10 @@ class OrchestrationService:
             or credentials.get("token")
             or ""
         )
+
+        # Fallback to internal key for compute engines if no specific key provided
+        if not provider_key and not is_external_engine(engine):
+            provider_key = settings.filtration_internal_key
 
         # Use provider-specific headers
         provider_headers = adapter.get_headers(provider_key)

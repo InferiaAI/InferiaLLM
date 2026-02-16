@@ -9,8 +9,8 @@ from typing import Dict, Any, Optional, List
 import json
 import os
 
-# Global API key for all Nosana deployments
-NOSANA_INTERNAL_API_KEY = os.getenv("NOSANA_INTERNAL_API_KEY", "")
+# Internal API key used for service-to-service auth and vLLM security
+NOSANA_INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", os.getenv("NOSANA_INTERNAL_API_KEY", ""))
 
 
 def create_vllm_job(
