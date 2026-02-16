@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # ==========================================
-# Stage 2: Node.js Builder (for Sidecars)
+# Stage 2: Node.js Builder (for Sidecars and Dashboard)
 # ==========================================
 FROM node:20-slim AS node-builder
 
@@ -31,6 +31,32 @@ RUN npm install
 
 # Copy source and build
 COPY package/src/inferia/services/orchestration/services/depin-sidecar/ ./
+RUN npm run build
+
+WORKDIR /build/dashboard
+
+# consume args from compose
+ARG VITE_MANAGEMENT_URL
+ARG VITE_COMPUTE_URL
+ARG VITE_WEB_SOCKET_URL
+ARG VITE_INFERENCE_URL
+ARG VITE_SIDECAR_URL
+ARG VITE_DATA_URL
+ARG VITE_GUARDRAIL_URL
+
+# set envs before build
+ENV VITE_MANAGEMENT_URL=$VITE_MANAGEMENT_URL
+ENV VITE_COMPUTE_URL=$VITE_COMPUTE_URL
+ENV VITE_WEB_SOCKET_URL=$VITE_WEB_SOCKET_URL
+ENV VITE_INFERENCE_URL=$VITE_INFERENCE_URL
+ENV VITE_SIDECAR_URL=$VITE_SIDECAR_URL
+ENV VITE_DATA_URL=$VITE_DATA_URL
+ENV VITE_GUARDRAIL_URL=$VITE_GUARDRAIL_URL
+
+COPY apps/dashboard/package*.json ./
+RUN npm install
+
+COPY apps/dashboard/ ./
 RUN npm run build
 
 # ==========================================
@@ -48,6 +74,9 @@ RUN apt-get update && apt-get install -y \
 COPY package/ /app/package/
 
 WORKDIR /app/package
+
+RUN rm -rf /app/package/src/inferia/dashboard
+COPY --from=node-builder /build/dashboard/dist /app/package/src/inferia/dashboard
 
 # 1. Install CPU-only Torch first to prevent downloading the 2GB CUDA version
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
@@ -72,7 +101,6 @@ ENTRYPOINT ["entrypoint.sh"]
 FROM python-builder AS filtration
 LABEL service="filtration"
 EXPOSE 8000
-CMD ["inferiallm", "start", "filtration"]
 
 # ==========================================
 # Stage 5: Inference Service
@@ -80,7 +108,6 @@ CMD ["inferiallm", "start", "filtration"]
 FROM python-builder AS inference
 LABEL service="inference"
 EXPOSE 8001
-CMD ["inferiallm", "start", "inference"]
 
 # ==========================================
 # Stage 6: Orchestration Service (Python + Node)
@@ -97,7 +124,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 COPY --from=node-builder /build/depin-sidecar /app/package/src/inferia/services/orchestration/services/depin-sidecar
 
 EXPOSE 8080 3000 50051
-CMD ["inferiallm", "start", "orchestration"]
 
 # ==========================================
 # Stage 7: Unified Image (Everything)
@@ -110,4 +136,3 @@ WORKDIR /app
 COPY assets /app/assets
 
 EXPOSE 8000 8001 8002 8003 8080 3000 3001 50051
-CMD ["inferiallm", "start"]
