@@ -107,7 +107,9 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                     const sidecarUrl = new URL(ws_url.startsWith('ws') ? ws_url : `ws://${ws_url}`);
                     const configUrl = new URL(WEB_SOCKET_URL);
 
-                    configUrl.pathname = sidecarUrl.pathname !== '/' ? sidecarUrl.pathname : configUrl.pathname;
+                    if (sidecarUrl.pathname && sidecarUrl.pathname !== "/") {
+                        configUrl.pathname = configUrl.pathname.replace(/\/$/, '') + sidecarUrl.pathname;
+                    }
                     configUrl.search = sidecarUrl.search || configUrl.search;
                     socketUrl = configUrl.toString();
                 } catch (e) {
