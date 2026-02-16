@@ -64,6 +64,7 @@ export default function NewDeployment() {
     const [maxModelLen, setMaxModelLen] = useState("8192")
     const [gpuUtil, setGpuUtil] = useState("0.95")
     const [hfToken, setHfToken] = useState("")
+    const [vllmImage, setVllmImage] = useState("docker.io/vllm/vllm-openai:v0.14.0")
 
     // External Flow State (Direct API)
     const [selectedProvider, setSelectedProvider] = useState("")
@@ -150,7 +151,7 @@ export default function NewDeployment() {
             ]
 
             const spec = {
-                image: "docker.io/vllm/vllm-openai:v0.14.0",
+                image: vllmImage,
                 cmd: cmd,
                 env: env,
                 expose: expose,
@@ -184,7 +185,7 @@ export default function NewDeployment() {
                 gpu: false
             }, null, 4))
         }
-    }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken])
+    }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage])
 
 
 
@@ -493,6 +494,17 @@ export default function NewDeployment() {
                                             className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                                             placeholder="e.g. meta-llama/Meta-Llama-3-8B-Instruct"
                                         />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">vLLM Image</label>
+                                        <input
+                                            value={vllmImage}
+                                            onChange={e => setVllmImage(e.target.value)}
+                                            className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
+                                            placeholder="e.g. docker.io/vllm/vllm-openai:v0.14.0"
+                                        />
+                                        <p className="text-[10px] text-slate-500 mt-1">Docker image for vLLM server (default: v0.14.0)</p>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
