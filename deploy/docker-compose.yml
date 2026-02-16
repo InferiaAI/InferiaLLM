@@ -9,7 +9,7 @@
 services:
   postgres:
     image: postgres:15
-    container_name: inferia-postgres
+#    container_name: inferia-postgres
     restart: unless-stopped
     env_file: .env
     environment:
@@ -26,7 +26,7 @@ services:
 
   redis:
     image: redis:7
-    container_name: inferia-redis
+ #   container_name: inferia-redis
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -36,24 +36,33 @@ services:
     networks:
       - inferia-net
 
-  inferia:
-    # Change this to your published image name
-    image: inferiaai/inferiallm:latest
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        VITE_MANAGEMENT_URL: ${VITE_MANAGEMENT_URL}
+        VITE_COMPUTE_URL: ${VITE_COMPUTE_URL}
+        VITE_WEB_SOCKET_URL: ${VITE_WEB_SOCKET_URL}
+        VITE_INFERENCE_URL: ${VITE_INFERENCE_URL}
+        VITE_SIDECAR_URL: ${VITE_SIDECAR_URL}
+        VITE_DATA_URL: ${VITE_DATA_URL}
+        VITE_GUARDRAIL_URL: ${VITE_GUARDRAIL_URL}
     container_name: inferia-app
     restart: unless-stopped
     pull_policy: always
     env_file: .env
     environment:
       - SERVICE_TYPE=unified
-      - POSTGRES_DSN=postgresql://${POSTGRES_USER:-inferia}:${POSTGRES_PASSWORD:-inferia}@postgres:5432/inferia
-      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - appdata:/data
     ports:
       - "8000:8000"   # Filtration Gateway
       - "8001:8001"   # Inference Gateway
       - "8002:8002"   # Guardrail Engine
       - "8003:8003"   # Data Engine
       - "8080:8080"   # Orchestration Gateway
-      - "3000:3000"   # DePIN Sidecar
+      - "8004:3000"   # DePIN Sidecar
       - "3001:3001"   # Dashboard
       - "50051:50051" # gRPC
     depends_on:
@@ -66,6 +75,7 @@ services:
 
 volumes:
   pgdata:
+  appdata:
 
 networks:
   inferia-net:
