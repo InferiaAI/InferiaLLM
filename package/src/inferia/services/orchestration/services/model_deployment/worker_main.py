@@ -31,34 +31,43 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("deployment-worker")
 
 async def consume_deploy_requests(worker, event_bus):
-    async for msg_id, event in event_bus.consume(
-        stream="model.deploy.requested",
-        group="deployment-workers",
-        consumer="worker-1",
-    ):
+    async def process_deploy(msg_id, event):
         try:
-            log.info(f"Received deploy event: {event}")
+            log.info(f"Processing deploy event: {event}")
             deployment_id = UUID(event["deployment_id"])
             await worker.handle_deploy_requested(deployment_id)
             await event_bus.redis.xack("model.deploy.requested", "deployment-workers", msg_id)
             log.info(f"Successfully processed deploy event for {deployment_id}")
         except Exception:
             log.exception("Failed to process deployment event")
-            # do NOT ack → will be retried
+
+    async for msg_id, event in event_bus.consume(
+        stream="model.deploy.requested",
+        group="deployment-workers",
+        consumer="worker-1",
+    ):
+        log.info(f"Received deploy event: {event}. Spawning task.")
+        asyncio.create_task(process_deploy(msg_id, event))
 
 
 async def consume_terminate_requests(worker, event_bus):
+    async def process_terminate(msg_id, event):
+        try:
+            log.info(f"Processing terminate event: {event}")
+            deployment_id = UUID(event["deployment_id"])
+            await worker.handle_terminate_requested(deployment_id)
+            await event_bus.redis.xack("model.terminate.requested", "deployment-workers", msg_id)
+            log.info(f"Successfully processed terminate event for {deployment_id}")
+        except Exception:
+            log.exception("Failed to process termination event")
+
     async for msg_id, event in event_bus.consume(
         stream="model.terminate.requested",
         group="deployment-workers",
         consumer="worker-1",
     ):
-        try:
-            deployment_id = UUID(event["deployment_id"])
-            await worker.handle_terminate_requested(deployment_id)
-            await event_bus.redis.xack("model.terminate.requested", "deployment-workers", msg_id)
-        except Exception:
-            log.exception("Failed to process termination event")
+        log.info(f"Received terminate event: {event}. Spawning task.")
+        asyncio.create_task(process_terminate(msg_id, event))
 
 
 async def health_check_loop(inventory_repo, deployment_repo):

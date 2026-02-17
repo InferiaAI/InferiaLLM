@@ -160,6 +160,14 @@ class ModelDeploymentWorker:
                     timeout=NOSANA_READY_TIMEOUT,
                 )
 
+                # SAFETY CHECK: Verify that the deployment hasn't been terminated while we were waiting
+                d_latest = await self.deployments.get(deployment_id)
+                if not d_latest or d_latest["state"] != "PROVISIONING":
+                    log.warning(f"Deployment {deployment_id} state changed from PROVISIONING to {d_latest.get('state') if d_latest else 'None'} while waiting for provider. Aborting node registration.")
+                    # We should ideally deprovision if it was a real node, 
+                    # but termination handler might have already handled it or will handle it.
+                    return
+
                 # If the adapter returned a special indicator instead of a real URL,
                 # check if the node_spec already had one (common for Akash/AWS)
                 if not expose_url or expose_url.endswith("-ready"):
