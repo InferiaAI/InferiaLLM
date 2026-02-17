@@ -38,7 +38,7 @@ const initNosana = async (privateKey: string | undefined, apiKey: string | undef
     const currentKey = (nosanaService as any)?.privateKey;
     const currentApiKey = (nosanaService as any)?.apiKey;
     if (nosanaService && currentKey === privateKey && currentApiKey === apiKey) {
-        return true; 
+        return true;
     }
 
     try {
@@ -82,10 +82,10 @@ const fetchConfigFromGateway = async () => {
         // Refresh Nosana with credentials from gateway
         const nosanaKey = depin.nosana?.wallet_private_key;
         const nosanaApiKey = depin.nosana?.api_key;
-        
+
         const initialized = await initNosana(
-            nosanaKey, 
-            nosanaApiKey, 
+            nosanaKey,
+            nosanaApiKey,
             process.env.SOLANA_RPC_URL
         );
 
@@ -105,9 +105,9 @@ const fetchConfigFromGateway = async () => {
 
     } catch (e: any) {
         if (e.code === 'ECONNREFUSED') {
-             console.warn("[Sidecar] Gateway unavailable. Retrying...");
+            console.warn("[Sidecar] Gateway unavailable. Retrying...");
         } else {
-             console.error(`[Sidecar] Error fetching config: ${e.message}`);
+            console.error(`[Sidecar] Error fetching config: ${e.message}`);
         }
     }
 };
@@ -299,12 +299,25 @@ wss.on('connection', (ws: WebSocket) => {
 
                                 if (result && typeof result === 'object') {
                                     const resAny = result as any;
+                                    let foundLogs = false;
+
                                     if (resAny.opStates && Array.isArray(resAny.opStates)) {
                                         resAny.opStates.forEach((op: any) => {
-                                            if (op.logs) sendLogs(op.logs);
+                                            if (op.logs) {
+                                                sendLogs(op.logs);
+                                                foundLogs = true;
+                                            }
                                         });
+                                    } else if (resAny.logs) {
+                                        sendLogs(resAny.logs);
+                                        foundLogs = true;
                                     } else {
                                         sendLogs(result);
+                                        foundLogs = true;
+                                    }
+
+                                    if (!foundLogs) {
+                                        ws.send(JSON.stringify({ type: 'log', data: `[SYSTEM] Raw Result: ${JSON.stringify(result, null, 2)}` }));
                                     }
                                 }
 
