@@ -3,7 +3,7 @@ API Gateway router for inference endpoints.
 Handles request routing to the orchestration layer.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from inferia.services.filtration.db.database import get_db
 from fastapi import (
@@ -32,6 +32,7 @@ from inferia.services.filtration.gateway.rate_limiter import rate_limiter
 from inferia.services.filtration.security.encryption import LogEncryption
 from inferia.services.filtration.config import settings
 import httpx
+import asyncio
 
 
 import logging
@@ -251,7 +252,78 @@ async def list_models(
         .offset(skip)
         .limit(limit)
     )
-    deployments = result.scalars().all()
+    all_deployments = result.scalars().all()
+
+    # Health Check for Nosana deployments
+    async def check_health(client: httpx.AsyncClient, d: Deployment) -> Optional[Deployment]:
+        # Perform health check for Nosana and various inference engines
+        # Often Nosana deployments use vllm, ollama, etc.
+        is_nosana_link = d.endpoint and "nos.ci" in d.endpoint
+        supported_engines = ["nosana", "vllm", "vllm-omni", "ollama", "triton"]
+        if d.engine not in supported_engines and not is_nosana_link:
+            return d
+
+        if not d.endpoint or not d.endpoint.startswith("http") or d.endpoint == "job-running-confidential":
+            return None
+
+        try:
+            # 1. Resolve API key for health check
+            provider_key = None
+            if d.configuration:
+                config = d.configuration
+                # configuration is automatically decrypted JSON from EncryptedJSON column
+                provider_key = (
+                    config.get("api_key") or config.get("key") or config.get("token")
+                )
+
+            # Fallback to internal key if no specific key provided for Depin engine
+            if not provider_key:
+                provider_key = settings.internal_api_key
+
+            headers = {}
+            if provider_key:
+                headers["Authorization"] = f"Bearer {provider_key}"
+
+            # 2. Perform health check to /v1/models as requested
+            health_url = f"{d.endpoint.rstrip('/')}/v1/models"
+            resp = await client.get(health_url, headers=headers, timeout=5.0)
+            
+            # Validate status code AND that response is valid JSON
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        return d
+                    else:
+                        logger.warning(
+                            f"Health check failed for {d.model_name}: Response is JSON but not a dictionary"
+                        )
+                except Exception:
+                    logger.warning(
+                        f"Health check failed for {d.model_name}: Invalid JSON response"
+                    )
+            else:
+                logger.warning(
+                    f"Health check failed for {d.model_name}: Status {resp.status_code}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Health check failed for Nosana model {d.model_name} at {d.endpoint}: {e}"
+            )
+
+        return None
+
+    # Run health checks in parallel
+    async with httpx.AsyncClient() as client:
+        health_results = await asyncio.gather(
+            *(check_health(client, d) for d in all_deployments),
+            return_exceptions=True
+        )
+    
+    deployments = [
+        d for d in health_results 
+        if isinstance(d, Deployment) and d is not None
+    ]
 
     mock_models = [
         ModelInfo(
