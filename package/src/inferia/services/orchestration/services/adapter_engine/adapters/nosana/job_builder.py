@@ -140,12 +140,6 @@ def create_vllm_job(
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": [
-                "11.8",
-                "12.1",
-                "12.2",
-                "12.3",
-                "12.4",
-                "12.5",
                 "12.6",
                 "12.8",
                 "12.9",
@@ -228,13 +222,6 @@ def create_ollama_job(
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": [
-                "11.8",
-                "12.0",
-                "12.1",
-                "12.2",
-                "12.3",
-                "12.4",
-                "12.5",
                 "12.6",
                 "12.8",
                 "12.9",
@@ -332,12 +319,6 @@ def create_vllm_omni_job(
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": [
-                "11.8",
-                "12.1",
-                "12.2",
-                "12.3",
-                "12.4",
-                "12.5",
                 "12.6",
                 "12.8",
                 "12.9",
@@ -428,13 +409,6 @@ def create_triton_job(
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": [
-                "11.8",
-                "12.0",
-                "12.1",
-                "12.2",
-                "12.3",
-                "12.4",
-                "12.5",
                 "12.6",
                 "12.8",
                 "12.9",
@@ -627,12 +601,6 @@ def create_training_job(
             "trigger": "dashboard",
             "system_requirements": {
                 "required_cuda": [
-                    "11.8",
-                    "12.1",
-                    "12.2",
-                    "12.3",
-                    "12.4",
-                    "12.5",
                     "12.6",
                     "12.8",
                     "12.9",
