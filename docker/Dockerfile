@@ -77,6 +77,7 @@ WORKDIR /app/package
 
 RUN rm -rf /app/package/src/inferia/dashboard
 COPY --from=node-builder /build/dashboard/dist /app/package/src/inferia/dashboard
+COPY --from=node-builder /build/depin-sidecar/dist /app/package/src/inferia/services/orchestration/services/depin-sidecar/dist
 
 # 1. Install CPU-only Torch first to prevent downloading the 2GB CUDA version
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
@@ -84,10 +85,6 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 # 2. Install the package WITHOUT [all-providers] (removes AWS/GCP/Azure SDKs)
 #    We install with --no-deps for torch to avoid overwriting the CPU version
 RUN pip install --no-cache-dir .
-
-# Final Cleanup of build artifacts
-RUN find /usr/local/lib/python3.12/site-packages -name "*.pyc" -delete && \
-    find /usr/local/lib/python3.12/site-packages -name "__pycache__" -delete
 
 # Copy entrypoint script
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -120,8 +117,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built sidecar from node-builder
-COPY --from=node-builder /build/depin-sidecar /app/package/src/inferia/services/orchestration/services/depin-sidecar
 
 EXPOSE 8080 3000 50051
 

@@ -189,8 +189,6 @@ def run_nosana_sidecar(queue=None):
         subprocess.Popen(
             ["npm", "start"],
             cwd=sidecar_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
             env=env,
         )
         if queue:

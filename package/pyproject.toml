@@ -142,13 +142,13 @@ inferia = [
   "infra/schema/migrations/*.sql",
   "services/orchestration/services/depin-sidecar/package.json",
   "services/orchestration/services/depin-sidecar/tsconfig.json",
-  "services/orchestration/services/depin-sidecar/src/**/*"
+  "services/orchestration/services/depin-sidecar/src/**/*",
+  "services/orchestration/services/depin-sidecar/dist/**/*",
 ]
 
 [tool.setuptools.exclude-package-data]
 inferia = [
     "**/node_modules/**/*",
-    "**/dist/**/*",
     "**/.env",
     "**/*.pyc",
     "**/__pycache__/**/*"
