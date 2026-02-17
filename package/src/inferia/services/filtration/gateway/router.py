@@ -33,6 +33,7 @@ from inferia.services.filtration.security.encryption import LogEncryption
 from inferia.services.filtration.config import settings
 import httpx
 import asyncio
+import cachetools
 
 
 import logging
@@ -209,6 +210,9 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
         # Fail open or closed? Usually closed for security.
         raise HTTPException(status_code=500, detail=f"Guardrail check failed: {str(e)}")
 
+# In-memory cache for models list (30s TTL)
+models_cache = cachetools.TTLCache(maxsize=100, ttl=30)
+
 
 @router.get("/models", response_model=ModelsListResponse)
 async def list_models(
@@ -243,6 +247,11 @@ async def list_models(
             detail="Invalid API Key",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Check cache after authentication
+    cache_key = (skip, limit)
+    if cache_key in models_cache:
+        return models_cache[cache_key]
 
     # Get available models from database (real deployments) with pagination
     # Only return models that are in a 'running' state (READY or RUNNING)
@@ -336,7 +345,12 @@ async def list_models(
         for d in deployments
     ]
 
-    return ModelsListResponse(data=mock_models)
+    response = ModelsListResponse(data=mock_models)
+    
+    # Cache the response
+    models_cache[cache_key] = response
+    
+    return response
 
 
 # NEW: Context Resolution for Inference Gateway
