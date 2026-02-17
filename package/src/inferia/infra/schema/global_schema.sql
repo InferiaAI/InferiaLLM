@@ -11,6 +11,7 @@ CREATE TABLE organizations (
     id VARCHAR NOT NULL, 
     name VARCHAR NOT NULL, 
     api_key VARCHAR, 
+    log_payloads BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     updated_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id)
@@ -444,7 +445,7 @@ CREATE TABLE policies (
     updated_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id), 
     FOREIGN KEY(org_id) REFERENCES organizations (id), 
-    FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id)
+    FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id) ON DELETE SET NULL
 );
 CREATE INDEX ix_policies_id ON policies (id);
 
@@ -460,14 +461,14 @@ CREATE TABLE api_keys (
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id), 
     UNIQUE (key_hash), 
-    FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id)
+    FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id) ON DELETE SET NULL
 );
 
 CREATE TABLE inference_logs (
     id VARCHAR NOT NULL, 
     deployment_id UUID NOT NULL, 
     user_id VARCHAR NOT NULL, 
-    ip_address VARCHAR, 
+    ip_address VARCHAR,
     request_payload JSON, 
     model VARCHAR NOT NULL, 
     latency_ms INTEGER, 
@@ -479,6 +480,7 @@ CREATE TABLE inference_logs (
     status_code INTEGER, 
     error_message VARCHAR, 
     is_streaming BOOLEAN, 
+    applied_policies JSON,
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id), 
     FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id) ON DELETE CASCADE
@@ -537,6 +539,7 @@ CREATE TABLE audit_logs (
 );
 CREATE INDEX ix_audit_logs_user_id ON audit_logs (user_id);
 CREATE INDEX ix_audit_logs_action ON audit_logs (action);
+
 CREATE TABLE system_settings (
     key VARCHAR NOT NULL, 
     value JSON NOT NULL, 
