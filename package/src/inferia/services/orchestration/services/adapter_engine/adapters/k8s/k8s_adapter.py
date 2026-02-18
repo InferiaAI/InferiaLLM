@@ -1,8 +1,14 @@
 from kubernetes import client, config
-from inferia.services.orchestration.services.adapter_engine.base import ProviderAdapter
+from inferia.services.orchestration.services.adapter_engine.base import (
+    ProviderAdapter,
+    AdapterType,
+    PricingModel,
+    ProviderCapabilities,
+)
 from typing import List, Dict, Optional
 import uuid
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +21,27 @@ class KubernetesAdapter(ProviderAdapter):
     - Deprovisioning: delete pod
     """
 
-    ADAPTER_TYPE = "on_prem"
+    ADAPTER_TYPE = AdapterType.ON_PREM
+
+    CAPABILITIES = ProviderCapabilities(
+        supports_log_streaming=False,  # Native K8s log streaming
+        supports_confidential_compute=False,
+        supports_spot_instances=False,
+        supports_multi_gpu=True,
+        is_ephemeral=False,  # On-prem nodes are managed by cluster admin
+        requires_readiness_poll=True,
+        readiness_timeout_seconds=120,  # K8s pods start relatively fast
+        polling_interval_seconds=5,
+        requires_sidecar=False,
+        supports_direct_provisioning=True,
+        pricing_model=PricingModel.FIXED,  # On-prem typically has fixed costs
+        features={
+            "native_k8s": True,
+            "pod_based": True,
+            "persistent_volumes": True,
+            "namespace_isolation": True,
+        },
+    )
 
     def __init__(self):
         # Load ~/.kube/config or in-cluster config
@@ -60,21 +86,23 @@ class KubernetesAdapter(ProviderAdapter):
                         gpu = int(v)
                         gpu_type = "nvidia" if "nvidia" in k.lower() else "gpu"
 
-                resources.append({
-                    "provider": "k8s",
-                    "provider_resource_id": f"k8s-node-{node.metadata.name}",
-                    "gpu_type": gpu_type,
-                    "gpu_count": gpu,
-                    "gpu_memory_gb": None,
-                    "vcpu": cpu,
-                    "ram_gb": memory,
-                    "region": "local",
-                    "pricing_model": "fixed",
-                    "price_per_hour": 0.0,
-                    "metadata": {
-                        "node": node.metadata.name,
+                resources.append(
+                    {
+                        "provider": "k8s",
+                        "provider_resource_id": f"k8s-node-{node.metadata.name}",
+                        "gpu_type": gpu_type,
+                        "gpu_count": gpu,
+                        "gpu_memory_gb": None,
+                        "vcpu": cpu,
+                        "ram_gb": memory,
+                        "region": "local",
+                        "pricing_model": self.CAPABILITIES.pricing_model.value,
+                        "price_per_hour": 0.0,
+                        "metadata": {
+                            "node": node.metadata.name,
+                        },
                     }
-                })
+                )
 
             return resources
 
@@ -123,7 +151,7 @@ class KubernetesAdapter(ProviderAdapter):
                 labels={
                     "inferia": "worker",
                     "pool_id": str(pool_id),
-                }
+                },
             ),
             spec=client.V1PodSpec(
                 restart_policy="Never",
@@ -135,16 +163,13 @@ class KubernetesAdapter(ProviderAdapter):
                         resources=client.V1ResourceRequirements(
                             requests=resource_requests,
                             limits=resource_limits,
-                        )
+                        ),
                     )
-                ]
-            )
+                ],
+            ),
         )
 
-        self.core.create_namespaced_pod(
-            namespace=namespace,
-            body=pod
-        )
+        self.core.create_namespaced_pod(namespace=namespace, body=pod)
 
         return {
             "provider": "k8s",
@@ -159,8 +184,59 @@ class KubernetesAdapter(ProviderAdapter):
                 "namespace": namespace,
                 "pool_id": str(pool_id),
                 "image": image,
-            }
+            },
         }
+
+    # -----------------------------------------------------
+    # WAIT FOR READY
+    # -----------------------------------------------------
+    async def wait_for_ready(
+        self, *, provider_instance_id: str, timeout: int = 120
+    ) -> str:
+        """
+        Wait until the Kubernetes pod is running.
+        """
+        import asyncio
+
+        capabilities = self.get_capabilities()
+        start = time.time()
+        poll_interval = capabilities.polling_interval_seconds
+
+        # Extract namespace from pod name or use default
+        namespace = "default"
+
+        while True:
+            try:
+                pod = self.core.read_namespaced_pod(
+                    name=provider_instance_id, namespace=namespace
+                )
+
+                phase = pod.status.phase
+
+                if phase == "Running":
+                    # Pod is ready
+                    return f"k8s://{namespace}/{provider_instance_id}"
+                elif phase in ["Failed", "Succeeded", "Unknown"]:
+                    raise RuntimeError(
+                        f"Pod {provider_instance_id} entered {phase} state"
+                    )
+
+            except client.exceptions.ApiException as e:
+                if e.status == 404:
+                    logger.warning(
+                        f"Pod {provider_instance_id} not found yet, waiting..."
+                    )
+                else:
+                    raise
+            except Exception as e:
+                logger.warning(f"Error checking pod status: {e}")
+
+            if time.time() - start > timeout:
+                raise RuntimeError(
+                    f"Pod {provider_instance_id} did not become ready within {timeout}s"
+                )
+
+            await asyncio.sleep(poll_interval)
 
     # -----------------------------------------------------
     # DEPROVISION NODE
@@ -183,8 +259,7 @@ class KubernetesAdapter(ProviderAdapter):
                 pass
 
             self.core.delete_namespaced_pod(
-                name=provider_instance_id,
-                namespace=namespace
+                name=provider_instance_id, namespace=namespace
             )
         except Exception:
             logger.exception("Kubernetes deprovision error")
@@ -210,9 +285,7 @@ class KubernetesAdapter(ProviderAdapter):
                 pass
 
             logs = self.core.read_namespaced_pod_log(
-                name=provider_instance_id,
-                namespace=namespace,
-                tail_lines=100
+                name=provider_instance_id, namespace=namespace, tail_lines=100
             )
             return {"logs": logs.split("\n")}
         except Exception as e:
@@ -222,12 +295,13 @@ class KubernetesAdapter(ProviderAdapter):
     async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
         """
         Returns info for K8s log streaming.
+        TODO: Implement WebSocket streaming via K8s API.
         """
         # Standardize for future K8s WS logs
         return {
             "ws_url": None,
             "provider": "k8s",
-            "subscription": {
-                "pod_name": provider_instance_id
-            }
+            "subscription": {"pod_name": provider_instance_id},
+            "supported": False,
+            "message": "Native K8s log streaming via WebSocket not yet implemented",
         }

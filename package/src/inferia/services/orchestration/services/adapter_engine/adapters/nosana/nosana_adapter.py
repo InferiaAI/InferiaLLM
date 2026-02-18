@@ -5,16 +5,27 @@ from typing import List, Dict, Optional
 import aiohttp
 import time
 
-from inferia.services.orchestration.services.adapter_engine.base import ProviderAdapter
+from inferia.services.orchestration.services.adapter_engine.base import (
+    ProviderAdapter,
+    AdapterType,
+    PricingModel,
+    ProviderCapabilities,
+)
 from inferia.services.orchestration.services.adapter_engine.adapters.nosana.job_builder import (
     build_job_definition,
     create_training_job,
     NOSANA_INTERNAL_API_KEY,
 )
+from inferia.services.orchestration.config import settings
 
 logger = logging.getLogger(__name__)
 
-NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000/nosana")
+
+# Configuration with defaults
+NOSANA_SIDECAR_URL = settings.nosana_sidecar_url
+NOSANA_DISCOVERY_URL = getattr(
+    settings, "nosana_discovery_url", "https://dashboard.k8s.prd.nos.ci/api/markets"
+)
 
 
 def generate_api_key(prefix: str = "nos") -> str:
@@ -32,7 +43,26 @@ class NosanaAdapter(ProviderAdapter):
     - metadata["api_key"]  = Optional API key for Caddy auth (auto-generated if not provided)
     """
 
-    ADAPTER_TYPE = "depin"
+    ADAPTER_TYPE = AdapterType.DEPIN
+
+    CAPABILITIES = ProviderCapabilities(
+        supports_log_streaming=True,
+        supports_confidential_compute=True,
+        supports_spot_instances=False,
+        supports_multi_gpu=True,
+        is_ephemeral=True,  # DePIN nodes are externally managed
+        requires_readiness_poll=True,
+        readiness_timeout_seconds=300,
+        polling_interval_seconds=20,
+        requires_sidecar=True,
+        supports_direct_provisioning=True,
+        pricing_model=PricingModel.FIXED,
+        features={
+            "job_based": True,
+            "market_based_pricing": True,
+            "blockchain_backed": True,
+        },
+    )
 
     # Simple in-memory cache
     _resources_cache: List[Dict] = []
@@ -49,11 +79,9 @@ class NosanaAdapter(ProviderAdapter):
         ):
             return self._resources_cache
 
-        url = "https://dashboard.k8s.prd.nos.ci/api/markets"
-
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
+                async with session.get(NOSANA_DISCOVERY_URL) as resp:
                     if resp.status != 200:
                         logger.error("Nosana discovery failed: %s", resp.status)
                         return []
@@ -79,7 +107,7 @@ class NosanaAdapter(ProviderAdapter):
                                 "vcpu": 8,
                                 "ram_gb": 32,
                                 "region": "global",
-                                "pricing_model": "fixed",
+                                "pricing_model": self.CAPABILITIES.pricing_model.value,
                                 "price_per_hour": price,
                                 "metadata": {
                                     "market_address": m["address"],
@@ -242,7 +270,7 @@ class NosanaAdapter(ProviderAdapter):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{NOSANA_SIDECAR_URL}/jobs/launch",
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/launch",
                     json=payload,
                 ) as resp:
                     if resp.status != 200:
@@ -279,14 +307,15 @@ class NosanaAdapter(ProviderAdapter):
         """Polls Nosana sidecar until the job is RUNNING."""
         import asyncio
 
+        capabilities = self.get_capabilities()
         start = asyncio.get_event_loop().time()
-        poll_interval = 20
+        poll_interval = capabilities.polling_interval_seconds
 
         while True:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
-                        f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}"
+                        f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}"
                     ) as resp:
                         if resp.status == 200:
                             job = await resp.json()
@@ -311,7 +340,7 @@ class NosanaAdapter(ProviderAdapter):
         try:
             async with aiohttp.ClientSession() as session:
                 await session.post(
-                    f"{NOSANA_SIDECAR_URL}/jobs/stop",
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/stop",
                     json={"jobAddress": provider_instance_id},
                 )
         except Exception:
@@ -322,7 +351,7 @@ class NosanaAdapter(ProviderAdapter):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}/logs"
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs"
                 ) as resp:
                     if resp.status != 200:
                         return {"logs": ["Failed to fetch logs"]}
@@ -345,7 +374,7 @@ class NosanaAdapter(ProviderAdapter):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{NOSANA_SIDECAR_URL}/jobs/{provider_instance_id}"
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}"
                 ) as resp:
                     if resp.status != 200:
                         raise RuntimeError(f"Failed to fetch job details")

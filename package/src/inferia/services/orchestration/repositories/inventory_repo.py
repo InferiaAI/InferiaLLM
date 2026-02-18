@@ -1,8 +1,8 @@
 from uuid import UUID
 import json
 
-class InventoryRepository:
 
+class InventoryRepository:
     def __init__(self, db):
         self.db = db
 
@@ -59,15 +59,15 @@ class InventoryRepository:
           AND provider_instance_id = $2
         RETURNING id, expose_url
         """
-        
+
         # Map incoming states to valid DB enum values
         # Valid enum: ordered, provisioning, ready, busy, unhealthy, terminated, offline
         incoming_state = data["state"]
         if incoming_state == "failed":
-            incoming_state = "unhealthy" # Map failed -> unhealthy so it shows as warning/error (yellow)
+            incoming_state = "unhealthy"  # Map failed -> unhealthy so it shows as warning/error (yellow)
         elif incoming_state == "completed":
-             incoming_state = "terminated"
-            
+            incoming_state = "terminated"
+
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(
                 query,
@@ -80,12 +80,12 @@ class InventoryRepository:
                 incoming_state,
                 data.get("expose_url"),
             )
-            
+
             if row:
                 res = dict(row)
                 node_id = res["id"]
                 expose_url = res["expose_url"]
-                
+
                 # Sync logic: If we have an endpoint URL, ensure associated deployments have it
                 if expose_url:
                     await conn.execute(
@@ -150,7 +150,6 @@ class InventoryRepository:
                 data["ram_gb_total"],
             )
 
-
     async def mark_ready_after_boot(self):
         query = """
         UPDATE compute_inventory
@@ -166,7 +165,6 @@ class InventoryRepository:
         async with self.db.acquire() as conn:
             rows = await conn.fetch(query)
             return len(rows)
-        
 
     async def register_node(
         self,
@@ -224,7 +222,6 @@ class InventoryRepository:
             )
             return row["id"] if row else None
 
-
     async def mark_ready(self, *, node_id, last_heartbeat):
         await self.db.execute(
             """
@@ -240,7 +237,6 @@ class InventoryRepository:
             last_heartbeat,
         )
 
-
     async def update_heartbeat(self, *, node_id, last_heartbeat):
         await self.db.execute(
             """
@@ -253,7 +249,6 @@ class InventoryRepository:
             node_id,
             last_heartbeat,
         )
-
 
     async def update_usage(
         self,
@@ -300,7 +295,6 @@ class InventoryRepository:
                     "ram_gb_total": row["ram_gb_total"],
                 }
             return None
-        
 
     async def get_pool_by_id(self, pool_id: UUID):
         query = """
@@ -311,7 +305,7 @@ class InventoryRepository:
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(query, pool_id)
             return dict(row) if row else None
-        
+
     async def get_node_by_id(self, node_id: UUID):
         query = """
         SELECT *
@@ -321,7 +315,7 @@ class InventoryRepository:
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(query, node_id)
             return dict(row) if row else None
-        
+
     async def mark_terminated(self, node_id: UUID):
         query = """
         UPDATE compute_inventory
@@ -332,6 +326,7 @@ class InventoryRepository:
         """
         async with self.db.acquire() as conn:
             await conn.execute(query, node_id)
+
     async def recycle_node(self, node_id: UUID):
         query = """
         UPDATE compute_inventory
@@ -355,3 +350,32 @@ class InventoryRepository:
         async with self.db.acquire() as conn:
             rows = await conn.fetch(query, node_id)
             return [row["deployment_id"] for row in rows]
+
+    async def list_nodes_by_provider(self, provider: str) -> list[dict]:
+        """List all nodes for a specific provider."""
+        query = """
+        SELECT 
+            id,
+            pool_id,
+            provider,
+            provider_instance_id,
+            hostname,
+            gpu_total,
+            gpu_allocated,
+            vcpu_total,
+            vcpu_allocated,
+            ram_gb_total,
+            ram_gb_allocated,
+            state,
+            health_score,
+            expose_url,
+            last_heartbeat,
+            created_at,
+            updated_at
+        FROM compute_inventory
+        WHERE provider = $1
+        ORDER BY created_at DESC
+        """
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(query, provider)
+            return [dict(row) for row in rows]

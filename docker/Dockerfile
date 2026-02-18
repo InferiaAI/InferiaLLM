@@ -36,22 +36,14 @@ RUN npm run build
 WORKDIR /build/dashboard
 
 # consume args from compose
-ARG VITE_MANAGEMENT_URL
-ARG VITE_COMPUTE_URL
+ARG VITE_API_GATEWAY_URL
 ARG VITE_WEB_SOCKET_URL
-ARG VITE_INFERENCE_URL
 ARG VITE_SIDECAR_URL
-ARG VITE_DATA_URL
-ARG VITE_GUARDRAIL_URL
 
 # set envs before build
-ENV VITE_MANAGEMENT_URL=$VITE_MANAGEMENT_URL
-ENV VITE_COMPUTE_URL=$VITE_COMPUTE_URL
+ENV VITE_API_GATEWAY_URL=$VITE_API_GATEWAY_URL
 ENV VITE_WEB_SOCKET_URL=$VITE_WEB_SOCKET_URL
-ENV VITE_INFERENCE_URL=$VITE_INFERENCE_URL
 ENV VITE_SIDECAR_URL=$VITE_SIDECAR_URL
-ENV VITE_DATA_URL=$VITE_DATA_URL
-ENV VITE_GUARDRAIL_URL=$VITE_GUARDRAIL_URL
 
 COPY apps/dashboard/package*.json ./
 RUN npm install
@@ -93,10 +85,10 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["entrypoint.sh"]
 
 # ==========================================
-# Stage 4: Filtration Service
+# Stage 4: API Gateway Service
 # ==========================================
-FROM python-builder AS filtration
-LABEL service="filtration"
+FROM python-builder AS api-gateway
+LABEL service="api-gateway"
 EXPOSE 8000
 
 # ==========================================

@@ -16,7 +16,7 @@ class GuardrailConfigManager(HTTPConfigManager):
 
     def __init__(self):
         super().__init__(
-            gateway_url=guardrail_settings.filtration_url,
+            gateway_url=guardrail_settings.api_gateway_url,
             api_key=guardrail_settings.internal_api_key,
             update_callback=self._update_settings,
             poll_interval=15,

@@ -21,14 +21,14 @@ class Settings(BaseSettings):
     reload: bool = False
     log_level: str = "INFO"
 
-    # Filtration Gateway Settings
+    # API Gateway Settings
     # In production, use HTTPS URLs with valid SSL certificates
-    filtration_gateway_url: str = Field(
+    api_gateway_url: str = Field(
         default="http://localhost:8000",
-        alias="FILTRATION_GATEWAY_URL",
-        validation_alias="FILTRATION_GATEWAY_URL",
+        alias="API_GATEWAY_URL",
+        validation_alias="API_GATEWAY_URL",
     )
-    filtration_internal_key: str = Field(
+    api_gateway_internal_key: str = Field(
         default="dev-internal-key-change-in-prod",
         alias="INTERNAL_API_KEY",
         validation_alias="INTERNAL_API_KEY",

@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from inferia.services.inference.client import filtration_client
+from inferia.services.inference.client import api_gateway_client
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -29,7 +29,7 @@ class OrchestrationService:
         """
         # Forward to Filtration Client (which forwards to Filtration Gateway)
         # We pass the user API key as a Bearer token for validation.
-        return await filtration_client.list_models(f"Bearer {api_key}")
+        return await api_gateway_client.list_models(f"Bearer {api_key}")
 
     @staticmethod
     async def handle_completion(
@@ -81,7 +81,7 @@ class OrchestrationService:
         # 3. Check Quota
         applied_policies.append("quota")
         quota_task = asyncio.create_task(
-            filtration_client.check_quota(user_context_id, model)
+            api_gateway_client.check_quota(user_context_id, model)
         )
 
         # 4. Input Guardrails
@@ -149,7 +149,7 @@ class OrchestrationService:
 
         # Fallback to internal key for compute engines if no specific key provided
         if not provider_key and not is_external_engine(engine):
-            provider_key = settings.filtration_internal_key
+            provider_key = settings.api_gateway_internal_key
 
         # Use provider-specific headers
         provider_headers = adapter.get_headers(provider_key)
@@ -369,7 +369,7 @@ class OrchestrationService:
 
         # Log to Filtration and Track Usage in parallel
         await asyncio.gather(
-            filtration_client.log_inference(
+            api_gateway_client.log_inference(
                 deployment_id=deployment_id,
                 user_id=user_id,
                 model=model,
@@ -385,7 +385,7 @@ class OrchestrationService:
                 applied_policies=applied_policies,
                 ip_address=ip_address,
             ),
-            filtration_client.track_usage(
+            api_gateway_client.track_usage(
                 user_id,
                 model,
                 {

@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from inferia.services.inference.client import filtration_client
+from inferia.services.inference.client import api_gateway_client
 from typing import Dict, Any, List, AsyncGenerator
 import logging
 import httpx
@@ -13,7 +13,7 @@ class GatewayService:
     @staticmethod
     async def resolve_context(api_key: str, model: str) -> Dict[str, Any]:
         """Resolves deployment context via Filtration Gateway."""
-        context = await filtration_client.resolve_context(api_key, model)
+        context = await api_gateway_client.resolve_context(api_key, model)
 
         if not context.get("valid"):
             raise HTTPException(
@@ -82,7 +82,7 @@ class GatewayService:
         }
 
         try:
-            processed_resp = await filtration_client.process_prompt(process_payload)
+            processed_resp = await api_gateway_client.process_prompt(process_payload)
             if processed_resp.get("messages"):
                 return processed_resp["messages"]
         except Exception as e:
@@ -115,7 +115,7 @@ class GatewayService:
             "config": guardrail_cfg,  # Pass entire Guardrail Config
         }
 
-        scan_result = await filtration_client.scan_content(None, scan_payload)
+        scan_result = await api_gateway_client.scan_content(None, scan_payload)
 
         if not scan_result.get("is_valid", True):
             violations = scan_result.get("violations", [])
@@ -188,7 +188,7 @@ class GatewayService:
             "config": guardrail_cfg,  # Pass Config
         }
 
-        scan_result = await filtration_client.scan_content(None, scan_payload)
+        scan_result = await api_gateway_client.scan_content(None, scan_payload)
 
         if not scan_result.get("is_valid", True):
             # Violations present

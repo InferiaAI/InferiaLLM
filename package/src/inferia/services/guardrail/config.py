@@ -67,8 +67,8 @@ class Settings(BaseSettings):
     llama_guard_model_id: str = "meta-llama/llama-guard-4-12b"
 
     # Control Plane Connection
-    filtration_url: str = Field(
-        default="http://localhost:8000", validation_alias="FILTRATION_URL"
+    api_gateway_url: str = Field(
+        default="http://localhost:8000", validation_alias="API_GATEWAY_URL"
     )
     internal_api_key: str = Field(default="", validation_alias="INTERNAL_API_KEY")
 

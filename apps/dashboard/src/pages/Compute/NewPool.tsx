@@ -8,38 +8,32 @@ import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
 import { ConfigService } from "@/services/configService"
 
-// Mock Providers
-const providerMeta = [
-    {
-        id: "nosana",
-        name: "Nosana Network",
-        description: "Decentralized GPU Compute grid. Cheapest and fastest for inference.",
-        icon: Globe,
-        color: "text-green-500 bg-green-500/10",
-        recommended: true,
-        category: "depin",
-        configPath: "/dashboard/settings/providers/depin/nosana"
-    },
-    {
-        id: "akash",
-        name: "Akash Network",
-        description: "Decentralized cloud compute. Open-source marketplace for GPUs.",
-        icon: Cpu,
-        color: "text-purple-500 bg-purple-500/10",
-        category: "depin",
-        configPath: "/dashboard/settings/providers/depin/akash"
-    },
-    {
-        id: "aws",
-        name: "AWS / Cloud",
-        description: "Managed EC2 instances. High reliability, higher cost. (Coming Soon)",
-        icon: Server,
-        color: "text-blue-500 bg-blue-500/10",
-        disabled: true,
-        category: "cloud",
-        configPath: "/dashboard/settings/providers/cloud/aws"
-    }
-]
+// Provider icons mapping
+const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+    nosana: Globe,
+    akash: Cpu,
+    aws: Server,
+    k8s: Server,
+    skypilot: Server,
+}
+
+// Provider color mapping
+const providerColors: Record<string, string> = {
+    nosana: "text-green-500 bg-green-500/10",
+    akash: "text-purple-500 bg-purple-500/10",
+    aws: "text-blue-500 bg-blue-500/10",
+    k8s: "text-orange-500 bg-orange-500/10",
+    skypilot: "text-cyan-500 bg-cyan-500/10",
+}
+
+// Provider descriptions
+const providerDescriptions: Record<string, string> = {
+    nosana: "Decentralized GPU Compute grid. Cheapest and fastest for inference.",
+    akash: "Decentralized cloud compute. Open-source marketplace for GPUs.",
+    aws: "Managed EC2 instances. High reliability, higher cost.",
+    k8s: "On-premises Kubernetes cluster. Full control and privacy.",
+    skypilot: "Multi-cloud orchestration. Unified interface for AWS/GCP/Azure.",
+}
 
 export default function NewPool() {
     const navigate = useNavigate()
@@ -55,11 +49,81 @@ export default function NewPool() {
     const [minVram, setMinVram] = useState<number>(0)
     const [sortBy, setSortBy] = useState<"price_asc" | "price_desc" | "memory">("price_asc")
 
-    // Check Configuration
+    // Fetch provider configuration
     const { data: config, isLoading: loadingConfig } = useQuery({
         queryKey: ["providerConfig"],
         queryFn: () => ConfigService.getProviderConfig()
     })
+
+    // NEW: Fetch registered providers dynamically from API
+    const { data: providersData, isLoading: loadingProviders } = useQuery({
+        queryKey: ["registeredProviders"],
+        queryFn: async () => {
+            try {
+                const res = await computeApi.get('/inventory/providers')
+                return res.data.providers
+            } catch (error) {
+                console.error("Failed to fetch providers:", error)
+                // Fallback to hardcoded if API fails (backward compatibility)
+                return null
+            }
+        },
+        staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    })
+
+    // NEW: Build provider list from API or fallback
+    const getProviderMeta = () => {
+        if (!providersData) {
+            // Fallback to hardcoded list if API not available
+            return [
+                {
+                    id: "nosana",
+                    name: "Nosana Network",
+                    description: providerDescriptions.nosana,
+                    icon: providerIcons.nosana,
+                    color: providerColors.nosana,
+                    recommended: true,
+                    category: "depin",
+                    configPath: "/dashboard/settings/providers/depin/nosana"
+                },
+                {
+                    id: "akash",
+                    name: "Akash Network",
+                    description: providerDescriptions.akash,
+                    icon: providerIcons.akash,
+                    color: providerColors.akash,
+                    category: "depin",
+                    configPath: "/dashboard/settings/providers/depin/akash"
+                },
+                {
+                    id: "aws",
+                    name: "AWS / Cloud",
+                    description: providerDescriptions.aws,
+                    icon: providerIcons.aws,
+                    color: providerColors.aws,
+                    disabled: true,
+                    category: "cloud",
+                    configPath: "/dashboard/settings/providers/cloud/aws"
+                }
+            ]
+        }
+
+        // Build from API data
+        return Object.entries(providersData).map(([id, data]: [string, any]) => ({
+            id,
+            name: `${id.charAt(0).toUpperCase() + id.slice(1)} Network`,
+            description: providerDescriptions[id] || `${id} compute provider`,
+            icon: providerIcons[id] || Server,
+            color: providerColors[id] || "text-slate-500 bg-slate-500/10",
+            category: data.adapter_type || "cloud",
+            configPath: `/dashboard/settings/providers/${data.adapter_type || 'cloud'}/${id}`,
+            capabilities: data.capabilities,
+            // Mark as recommended if it's a DePIN provider with lowest price
+            recommended: data.adapter_type === 'depin' && id === 'nosana',
+        }))
+    }
+
+    const providerMeta = getProviderMeta()
 
     const isProviderConfigured = (pid: string) => {
         if (!config) return false;
@@ -73,7 +137,12 @@ export default function NewPool() {
                 return !!depin.akash?.mnemonic;
             case "aws":
                 return !!cloud.aws?.access_key_id;
-            default: return false;
+            case "k8s":
+                // K8s doesn't require external configuration
+                return true;
+            default:
+                // For new providers, check if they have any configuration
+                return !!(depin[pid] || cloud[pid]);
         }
     };
 
@@ -142,13 +211,16 @@ export default function NewPool() {
             toast.success("Compute Pool created successfully!")
             navigate("/dashboard/compute/pools")
         } catch (error: any) {
-            toast.error(error.response?.data?.detail || error.message)
+            // NEW: Better error handling for provider validation errors
+            const errorDetail = error.response?.data?.detail || error.message
+            toast.error(errorDetail)
+            console.error(error)
         } finally {
             setIsCreating(false)
         }
     }
 
-    if (loadingConfig) {
+    if (loadingConfig || loadingProviders) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[400px]">
                 <Cpu className="w-12 h-12 text-primary/20 animate-pulse mb-4" />
@@ -205,6 +277,17 @@ export default function NewPool() {
                                     <div>
                                         <h3 className="font-bold text-lg mb-1 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors uppercase tracing-tight text-xs">{p.name}</h3>
                                         <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{p.description}</p>
+                                        {/* NEW: Show capabilities if available */}
+                                        {p.capabilities && (
+                                            <div className="mt-2 flex flex-wrap gap-1">
+                                                {p.capabilities.is_ephemeral && (
+                                                    <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Ephemeral</span>
+                                                )}
+                                                {p.capabilities.pricing_model !== 'fixed' && (
+                                                    <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded capitalize">{p.capabilities.pricing_model}</span>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                     {p.recommended && (
                                         <span className="absolute top-4 right-4 text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 px-2 py-1 rounded">Recommended</span>
@@ -219,7 +302,7 @@ export default function NewPool() {
                                     to={p.configPath}
                                     className="text-left group relative p-6 rounded-xl border border-dashed border-slate-300 dark:border-zinc-800 bg-slate-50/30 dark:bg-zinc-900/20 hover:border-slate-400 dark:hover:border-zinc-700 transition-all flex flex-col gap-4"
                                 >
-                                    <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center opacity-40grayscale", p.color)}>
+                                    <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center opacity-40 grayscale", p.color)}>
                                         <p.icon className="w-6 h-6" />
                                     </div>
                                     <div>
@@ -316,6 +399,14 @@ export default function NewPool() {
                                             <div className="mt-2 flex gap-2 text-xs text-slate-400 dark:text-zinc-500">
                                                 <span>{res.vcpu} vCPU</span> • <span>{res.ram_gb}GB RAM</span>
                                             </div>
+                                            {/* NEW: Show pricing model if not fixed */}
+                                            {res.pricing_model && res.pricing_model !== 'fixed' && (
+                                                <div className="mt-1">
+                                                    <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded capitalize">
+                                                        {res.pricing_model}
+                                                    </span>
+                                                </div>
+                                            )}
 
                                             {selectedResource?.provider_resource_id === res.provider_resource_id && (
                                                 <div className="absolute top-4 right-4 w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center">
@@ -374,6 +465,13 @@ export default function NewPool() {
                                 <span className="text-slate-500 dark:text-zinc-400">Cost per Hour</span>
                                 <span className="font-medium">${selectedResource?.price_per_hour}</span>
                             </div>
+                            {/* NEW: Show pricing model if applicable */}
+                            {selectedResource?.pricing_model && selectedResource?.pricing_model !== 'fixed' && (
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500 dark:text-zinc-400">Pricing Model</span>
+                                    <span className="font-medium capitalize">{selectedResource?.pricing_model}</span>
+                                </div>
+                            )}
                         </div>
                     </div>
 

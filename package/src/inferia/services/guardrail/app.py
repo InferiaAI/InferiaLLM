@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
     from inferia.services.guardrail.config_manager import config_manager
 
     config_manager.start_polling(
-        gateway_url=settings.filtration_url,
+        gateway_url=settings.api_gateway_url,
         api_key=settings.internal_api_key,
     )
 
