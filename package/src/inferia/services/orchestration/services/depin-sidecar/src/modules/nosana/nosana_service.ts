@@ -105,16 +105,15 @@ export class NosanaService {
             ...headers
         };
 
-        if (body && method !== 'GET') {
-            fetchHeaders['Content-Type'] = 'application/json';
-        }
-
         const fetchOptions: RequestInit = {
             method,
             headers: fetchHeaders
         };
 
-        if (body && method !== 'GET') {
+        // Only set Content-Type and body if we actually have a body to send
+        // This is critical for endpoints like /jobs/{address}/stop that don't accept a body
+        if (body !== undefined && body !== null && method !== 'GET') {
+            fetchHeaders['Content-Type'] = 'application/json';
             fetchOptions.body = JSON.stringify(body);
         }
 
