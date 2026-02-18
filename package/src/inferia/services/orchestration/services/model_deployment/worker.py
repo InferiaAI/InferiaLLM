@@ -5,12 +5,14 @@ from uuid import UUID
 
 from inferia.services.orchestration.services.placement_engine.scoring import score_node
 from inferia.services.orchestration.services.adapter_engine.registry import get_adapter
+from inferia.services.orchestration.services.adapter_engine.base import (
+    ProviderCapabilities,
+)
 
 log = logging.getLogger(__name__)
 
 MAX_PROVISION_RETRIES = 4
 PROVISION_WAIT_SECONDS = 40
-NOSANA_READY_TIMEOUT = 300  # seconds
 
 
 class ModelDeploymentWorker:
@@ -70,6 +72,7 @@ class ModelDeploymentWorker:
             )
 
             # -------- CAPACITY LOOP --------
+            candidates = []
             for attempt in range(MAX_PROVISION_RETRIES + 1):
                 candidates = await self.placement.fetch_candidate_nodes(
                     pool_id=d["pool_id"],
@@ -86,6 +89,7 @@ class ModelDeploymentWorker:
                     return
 
                 adapter = get_adapter(pool["provider"])
+                capabilities = adapter.get_capabilities()
 
                 # Determine Metadata / Job Spec
                 metadata = {}
@@ -143,28 +147,33 @@ class ModelDeploymentWorker:
                     metadata=metadata,
                 )
 
+                # Handle simulation mode (provider-agnostic)
                 if node_spec.get("metadata", {}).get("mode") == "simulation":
-                    # No real Nosana job exists
+                    # No real compute job exists - simulation mode
                     await self.deployments.attach_runtime(
                         deployment_id=deployment_id,
                         allocation_ids=[],
                         node_ids=[],
-                        runtime="nosana-sim",
+                        runtime=f"{pool['provider']}-sim",
                     )
                     await self.deployments.update_state(deployment_id, "RUNNING")
                     return
 
                 # ---- Universal Readiness Poll ----
+                # Use adapter-specific timeout from capabilities
+                timeout = capabilities.readiness_timeout_seconds
                 expose_url = await adapter.wait_for_ready(
                     provider_instance_id=node_spec["provider_instance_id"],
-                    timeout=NOSANA_READY_TIMEOUT,
+                    timeout=timeout,
                 )
 
                 # SAFETY CHECK: Verify that the deployment hasn't been terminated while we were waiting
                 d_latest = await self.deployments.get(deployment_id)
                 if not d_latest or d_latest["state"] != "PROVISIONING":
-                    log.warning(f"Deployment {deployment_id} state changed from PROVISIONING to {d_latest.get('state') if d_latest else 'None'} while waiting for provider. Aborting node registration.")
-                    # We should ideally deprovision if it was a real node, 
+                    log.warning(
+                        f"Deployment {deployment_id} state changed from PROVISIONING to {d_latest.get('state') if d_latest else 'None'} while waiting for provider. Aborting node registration."
+                    )
+                    # We should ideally deprovision if it was a real node,
                     # but termination handler might have already handled it or will handle it.
                     return
 
@@ -201,22 +210,24 @@ class ModelDeploymentWorker:
 
                 await self.deployments.update_state(deployment_id, "RUNNING")
 
-                # Nosana deployments are complete once the node is provisioned and registered.
-                # Attach the node_id so terminate handler can find the job to stop.
-                if pool["provider"] == "nosana":
+                # For ephemeral providers (DePIN, spot instances), deployment is complete once provisioned
+                # Attach the node_id so terminate handler can find the job to stop
+                if capabilities.is_ephemeral:
                     if node_id:
                         await self.deployments.attach_runtime(
                             deployment_id=deployment_id,
                             allocation_ids=[],
                             node_ids=[node_id],
-                            runtime="nosana",
+                            runtime=pool["provider"],
                         )
                         log.info(
-                            f"Nosana deployment {deployment_id} is RUNNING. Attached node_id {node_id}."
+                            f"Ephemeral deployment {deployment_id} on {pool['provider']} is RUNNING. "
+                            f"Attached node_id {node_id}."
                         )
                     else:
                         log.warning(
-                            f"Nosana deployment {deployment_id} is RUNNING but no node_id returned from register_node."
+                            f"Ephemeral deployment {deployment_id} on {pool['provider']} is RUNNING "
+                            f"but no node_id returned from register_node."
                         )
                     return
 
@@ -303,7 +314,7 @@ class ModelDeploymentWorker:
             return
 
         # ------------------------------------
-        # 1. STOP RUNTIME (Nosana / vLLM / etc)
+        # 1. STOP RUNTIME (External providers / vLLM / etc)
         # ------------------------------------
         # Use node_ids to find the exact running instances to stop
         if d.get("node_ids"):
@@ -328,19 +339,26 @@ class ModelDeploymentWorker:
         print(f"Released scheduler allocations for deployment {deployment_id}")
 
         # ------------------------------------
-        # 3. RECYCLE INVENTORY
-        # ------------------------------------
-        # ------------------------------------
         # 3. HANDLE INVENTORY
         # ------------------------------------
+        node = None
         if d.get("node_ids"):
             for node_id in d["node_ids"]:
-                # Logic: If ephemeral (Nosana), mark terminated so we provision fresh next time.
-                # If static (On-prem), recycle to 'ready' to release back to pool.
+                node = await self.inventory.get_node_by_id(node_id)
 
+                # Use adapter capabilities to determine if ephemeral
                 is_ephemeral = False
-                if node and node.get("provider") == "nosana":
-                    is_ephemeral = True
+                if node:
+                    try:
+                        adapter = get_adapter(node["provider"])
+                        capabilities = adapter.get_capabilities()
+                        is_ephemeral = capabilities.is_ephemeral
+                    except Exception as e:
+                        log.warning(
+                            f"Could not get capabilities for {node['provider']}: {e}"
+                        )
+                        # Fallback: check if provider is known to be ephemeral
+                        is_ephemeral = node.get("provider") in ["nosana", "akash"]
 
                 if is_ephemeral:
                     await self.inventory.mark_terminated(node_id)

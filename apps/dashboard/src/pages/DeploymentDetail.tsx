@@ -12,10 +12,20 @@ import DeploymentPromptTemplate from "@/components/deployment/DeploymentPromptTe
 import DeploymentRateLimit from "@/components/deployment/DeploymentRateLimit"
 import TerminalLogs from "@/components/deployment/TerminalLogs"
 import { toast } from "sonner"
+import { useQuery } from "@tanstack/react-query"
 
 type TabType = "overview" | "logs" | "terminal" | "guardrail" | "rag" | "prompt_template" | "rate_limit"
 
 import { LoadingScreen } from "@/components/ui/LoadingScreen"
+
+// NEW: Provider capabilities cache
+type ProviderCapabilities = {
+    is_ephemeral: boolean;
+    supports_log_streaming: boolean;
+    adapter_type: string;
+}
+
+const providerCapabilitiesCache: Record<string, ProviderCapabilities> = {}
 
 
 
@@ -74,8 +84,57 @@ export default function DeploymentDetail() {
 
     const [processing, setProcessing] = useState(false)
 
+    // NEW: Fetch provider capabilities for the deployment's provider
+    const { data: providerCapabilities } = useQuery({
+        queryKey: ["providerCapabilities", deployment?.provider],
+        queryFn: async () => {
+            const providerId = deployment?.provider?.toLowerCase().replace(" (compute)", "").replace("vllm ", "").trim()
+            if (!providerId || providerId === "compute") return null
+            
+            // Check cache first
+            if (providerCapabilitiesCache[providerId]) {
+                return providerCapabilitiesCache[providerId]
+            }
+            
+            try {
+                const res = await computeApi.get('/inventory/providers')
+                const provider = res.data.providers[providerId]
+                if (provider) {
+                    const caps = {
+                        is_ephemeral: provider.capabilities?.is_ephemeral || false,
+                        supports_log_streaming: provider.capabilities?.supports_log_streaming || false,
+                        adapter_type: provider.adapter_type || 'cloud'
+                    }
+                    providerCapabilitiesCache[providerId] = caps
+                    return caps
+                }
+            } catch (e) {
+                console.error("Failed to fetch provider capabilities:", e)
+            }
+            return null
+        },
+        enabled: !!deployment?.provider,
+        staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    })
+
     const isStopped = ["STOPPED", "TERMINATED", "FAILED", "unknown"].includes(deployment?.state || deployment?.status || "")
     const isRunning = !isStopped
+    
+    // NEW: Determine if this is a compute deployment using capabilities
+    const isComputeDeployment = () => {
+        // Check if engine indicates compute
+        if (deployment?.engine === "vllm") return true
+        
+        // Check if provider is ephemeral (DePIN) using capabilities
+        if (providerCapabilities?.is_ephemeral) return true
+        
+        // Fallback to legacy checks for backward compatibility
+        const provider = deployment?.provider?.toLowerCase() || ""
+        return provider.includes("compute") || 
+               provider.includes("nosana") || 
+               provider.includes("akash") ||
+               provider.includes("depin")
+    }
 
     const handleStop = async () => {
         if (!id || !confirm("Are you sure you want to stop this deployment?")) return
@@ -198,10 +257,7 @@ export default function DeploymentDetail() {
                     { id: "prompt_template", label: "Template" },
                     { id: "rate_limit", label: "Rate Limits" },
                 ].filter(tab => {
-                    const isCompute = deployment?.provider?.toLowerCase().includes("compute") ||
-                        deployment?.engine === "vllm" ||
-                        deployment?.provider?.toLowerCase().includes("nosana") ||
-                        deployment?.provider?.toLowerCase().includes("akash");
+                    const isCompute = isComputeDeployment();
 
                     // Hide terminal for non-compute/external deployments
                     if (tab.id === "terminal" && !isCompute) return false;
