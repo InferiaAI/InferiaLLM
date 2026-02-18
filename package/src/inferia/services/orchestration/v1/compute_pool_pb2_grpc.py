@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import inferia.services.orchestration.v1.compute_pool_pb2 as v1_dot_compute__pool__pb2
+from inferia.services.orchestration.v1 import compute_pool_pb2 as v1_dot_compute__pool__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__

@@ -32,6 +32,105 @@ class OrchestrationService:
         return await api_gateway_client.list_models(f"Bearer {api_key}")
 
     @staticmethod
+    async def handle_embeddings(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+    ):
+        """
+        Handle embedding requests.
+        Simplified flow compared to LLM: No guardrails, no streaming, no templates.
+        Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Embedding Logging
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = body.get("model")
+        input_data = body.get("input")
+        if not model or not input_data:
+            raise HTTPException(status_code=400, detail="Model and input are required")
+
+        # 1. Resolve Context for embedding model
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="embedding"
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute Embedding Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "infinity")
+
+        adapter = get_adapter(engine)
+
+        # For embedding engines (Infinity, TEI), use the internal API key
+        from inferia.services.inference.config import settings
+
+        provider_key = settings.api_gateway_internal_key or ""
+
+        provider_headers = adapter.get_headers(provider_key)
+        provider_payload = adapter.transform_request(body.copy())
+
+        # Call upstream embedding endpoint
+        # Note: Infinity and TEI serve embeddings at /embeddings (not /v1/embeddings)
+        response_data = await GatewayService.call_upstream(
+            endpoint_url,
+            provider_payload,
+            provider_headers,
+            engine,
+            path="/embeddings",
+        )
+
+        # 5. Log embedding usage (simplified logging for embeddings)
+        usage = response_data.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+
+        # Count number of inputs embedded
+        input_count = len(input_data) if isinstance(input_data, list) else 1
+
+        background_tasks.add_task(
+            OrchestrationService._log_embedding_request,
+            deployment_id,
+            user_context_id,
+            model,
+            body,
+            start_time,
+            prompt_tokens,
+            input_count,
+            applied_policies,
+            log_payloads,
+            ip_address,
+        )
+
+        return response_data
+
+    @staticmethod
     async def handle_completion(
         api_key: str,
         body: Dict,
@@ -384,6 +483,7 @@ class OrchestrationService:
                 is_streaming=is_streaming,
                 applied_policies=applied_policies,
                 ip_address=ip_address,
+                request_type="llm",  # LLM request type
             ),
             api_gateway_client.track_usage(
                 user_id,
@@ -392,6 +492,65 @@ class OrchestrationService:
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
+                },
+            ),
+        )
+
+    @staticmethod
+    async def _log_embedding_request(
+        deployment_id,
+        user_id,
+        model,
+        request_payload,
+        start_time,
+        prompt_tokens,
+        input_count,
+        applied_policies,
+        log_payloads,
+        ip_address=None,
+    ):
+        """
+        Log embedding request details.
+        Simplified logging for embeddings (no streaming, no completion tokens).
+        """
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
+        total_tokens = prompt_tokens  # Embeddings only have prompt tokens
+
+        # Respect log_payloads setting
+        final_payload = request_payload if log_payloads else None
+
+        if not log_payloads:
+            logger.debug(f"Payload logging disabled for embedding request to {model}")
+
+        # Log to Filtration and Track Usage in parallel
+        await asyncio.gather(
+            api_gateway_client.log_inference(
+                deployment_id=deployment_id,
+                user_id=user_id,
+                model=model,
+                request_payload=final_payload,
+                latency_ms=latency_ms,
+                ttft_ms=None,  # No TTFT for embeddings (not streaming)
+                tokens_per_second=None,  # Not applicable for embeddings
+                prompt_tokens=prompt_tokens,
+                completion_tokens=0,  # Embeddings don't generate completion tokens
+                total_tokens=total_tokens,
+                status_code=200,
+                is_streaming=False,  # Embeddings never stream
+                applied_policies=applied_policies,
+                ip_address=ip_address,
+                request_type="embedding",  # Embedding request type
+                input_count=input_count,  # Number of texts embedded
+            ),
+            api_gateway_client.track_usage(
+                user_id,
+                model,
+                {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": 0,
+                    "total_tokens": total_tokens,
+                    "input_count": input_count,  # Track embedding count separately
                 },
             ),
         )

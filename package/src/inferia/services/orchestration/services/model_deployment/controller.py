@@ -81,6 +81,7 @@ class ModelDeploymentController:
         org_id: Optional[str] = None,
         policies: Optional[str] = None,
         inference_model: Optional[str] = None,
+        model_type: Optional[str] = "inference",
     ) -> UUID:
         model_id = None
 
@@ -132,6 +133,7 @@ class ModelDeploymentController:
                 org_id=org_id,
                 policies=policies,
                 inference_model=inference_model,
+                model_type=model_type,
                 tx=tx,
             )
 
@@ -150,6 +152,7 @@ class ModelDeploymentController:
                     "configuration": configuration,
                     "owner_id": owner_id,
                     "model_name": model_name,
+                    "model_type": model_type,
                 },
                 tx=tx,
             )
@@ -169,6 +172,7 @@ class ModelDeploymentController:
                         "engine": engine,
                         "configuration": configuration,
                         "owner_id": owner_id,
+                        "model_type": model_type,
                     },
                 )
 

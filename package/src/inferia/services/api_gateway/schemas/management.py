@@ -2,11 +2,13 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
+
 # --- Organization ---
 class OrganizationCreate(BaseModel):
     name: str
     log_payloads: bool = True
-    
+
+
 class OrganizationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -15,15 +17,18 @@ class OrganizationResponse(BaseModel):
     log_payloads: bool = True
     created_at: datetime
 
+
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = None
     log_payloads: Optional[bool] = None
+
 
 # --- User ---
 class UserCreate(BaseModel):
     email: str
     password: str
     role: Literal["admin", "member"] = "member"
+
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -33,10 +38,12 @@ class UserResponse(BaseModel):
     org_id: Optional[str] = None
     created_at: datetime
 
+
 # --- Invitation ---
 class InviteRequest(BaseModel):
     email: str
     role: Literal["admin", "member"] = "member"
+
 
 class InviteResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -49,28 +56,33 @@ class InviteResponse(BaseModel):
     expires_at: datetime
     created_at: datetime
 
+
 class InvitationListResponse(BaseModel):
     invitations: List[InviteResponse]
+
 
 class RegisterRequest(BaseModel):
     email: str
     password: str
-    organization_name: Optional[str] = None # For new organization
-    invite_token: Optional[str] = None # For joining existing organization
+    organization_name: Optional[str] = None  # For new organization
+    invite_token: Optional[str] = None  # For joining existing organization
+
 
 class RegisterInviteRequest(BaseModel):
     token: str
     password: str
-    name: Optional[str] = None # Optional name if we start supporting it
+    name: Optional[str] = None  # Optional name if we start supporting it
 
 
 # --- Deployment ---
 class DeploymentCreate(BaseModel):
-    name: str # e.g. "My production model" (maps to model_name)
-    model_name: str # e.g. "gpt-4"
-    provider: str # (maps to engine)
-    endpoint_url: Optional[str] = None # (maps to endpoint)
-    credentials_json: Dict[str, Any] # (maps to configuration)
+    name: str  # e.g. "My production model" (maps to model_name)
+    model_name: str  # e.g. "gpt-4"
+    provider: str  # (maps to engine)
+    endpoint_url: Optional[str] = None  # (maps to endpoint)
+    credentials_json: Dict[str, Any]  # (maps to configuration)
+    model_type: str = "inference"  # inference, embedding, image_generation, etc.
+
 
 class DeploymentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -81,10 +93,11 @@ class DeploymentResponse(BaseModel):
     org_id: Optional[str] = None
     llmd_resource_name: Optional[str] = None  # Custom deployment name
     inference_model: Optional[str] = None  # Backend model identifier
+    model_type: str = "inference"  # inference, embedding, image_generation, etc.
     created_at: Optional[datetime] = None
-    
+
     # Validator to convert UUID to string
-    @field_validator('id', mode='before')
+    @field_validator("id", mode="before")
     @classmethod
     def convert_uuid_to_str(cls, v):
         if v is not None:
@@ -98,6 +111,7 @@ class ApiKeyCreate(BaseModel):
     days_valid: int = 30
     deployment_id: Optional[str] = None
 
+
 class ApiKeyResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -106,6 +120,7 @@ class ApiKeyResponse(BaseModel):
     is_active: bool
     created_at: datetime
     last_used_at: Optional[datetime] = None
-    
+
+
 class ApiKeyCreatedResponse(ApiKeyResponse):
-    secret_key: str # The raw key "sk-..."
+    secret_key: str  # The raw key "sk-..."

@@ -79,12 +79,12 @@ class PolicyEngine:
         return None
 
     async def resolve_context(
-        self, db: AsyncSession, api_key: str, model: str
+        self, db: AsyncSession, api_key: str, model: str, model_type: str = "inference"
     ) -> Dict[str, Any]:
         """
         Resolve complete inference context (Deployment + Policies) from an API Key.
         """
-        cache_key = (api_key, model)
+        cache_key = (api_key, model, model_type)
         if cache_key in self.context_cache:
             return self.context_cache[cache_key]
 
@@ -102,13 +102,14 @@ class PolicyEngine:
         if auth_key_record.deployment_id:
             stmt = stmt.where(DBDeployment.id == auth_key_record.deployment_id)
         else:
-            # Org scoped lookup
+            # Org scoped lookup with model_type filter
             stmt = stmt.where(
                 (DBDeployment.org_id == auth_key_record.org_id)
                 & (
                     (DBDeployment.model_name == model)
                     | (DBDeployment.llmd_resource_name == model)
                 )
+                & (DBDeployment.model_type == model_type)
             )
 
         result = await db.execute(stmt)

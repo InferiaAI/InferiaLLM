@@ -248,39 +248,49 @@ export default function DeploymentDetail() {
 
             {/* Tabs */}
             <div className="flex gap-1 border-b pb-0">
-                {[
-                    { id: "overview", label: "Overview" },
-                    { id: "guardrail", label: "Guardrails" },
-                    { id: "rag", label: "RAG & Data" },
-                    { id: "logs", label: "Inference Logs" },
-                    { id: "terminal", label: "Terminal Logs" },
-                    { id: "prompt_template", label: "Template" },
-                    { id: "rate_limit", label: "Rate Limits" },
-                ].filter(tab => {
-                    const isCompute = isComputeDeployment();
+                {(() => {
+                    // Determine model type
+                    const isEmbedding = deployment?.model_type === "embedding" || 
+                                       deployment?.engine === "infinity" || 
+                                       deployment?.engine === "tei"
+                    const isTraining = deployment?.workload_type === 'training'
+                    const isCompute = isComputeDeployment()
 
-                    // Hide terminal for non-compute/external deployments
-                    if (tab.id === "terminal" && !isCompute) return false;
+                    const baseTabs = [
+                        { id: "overview", label: "Overview" },
+                        { id: "logs", label: "Inference Logs" },
+                        { id: "terminal", label: "Terminal Logs" },
+                        { id: "rate_limit", label: "Rate Limits" },
+                    ]
 
-                    // specific filtering
-                    if (deployment?.workload_type === 'training') {
-                        return ["overview", "logs", "terminal"].includes(tab.id)
+                    // Add LLM-specific tabs (not for embeddings or training)
+                    if (!isEmbedding && !isTraining) {
+                        baseTabs.splice(1, 0, 
+                            { id: "guardrail", label: "Guardrails" },
+                            { id: "rag", label: "RAG & Data" },
+                            { id: "prompt_template", label: "Template" }
+                        )
                     }
-                    return true
-                }).map((tab) => (
-                    <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id as TabType)}
-                        className={cn(
-                            "px-4 py-2 text-sm font-medium border-b-2 transition-colors",
-                            activeTab === tab.id
-                                ? "border-primary text-primary bg-muted/20 rounded-t-lg"
-                                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10 rounded-t-lg"
-                        )}
-                    >
-                        {tab.label}
-                    </button>
-                ))}
+
+                    return baseTabs.filter(tab => {
+                        // Hide terminal for non-compute/external deployments
+                        if (tab.id === "terminal" && !isCompute) return false;
+                        return true
+                    }).map((tab) => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id as TabType)}
+                            className={cn(
+                                "px-4 py-2 text-sm font-medium border-b-2 transition-colors",
+                                activeTab === tab.id
+                                    ? "border-primary text-primary bg-muted/20 rounded-t-lg"
+                                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/10 rounded-t-lg"
+                            )}
+                        >
+                            {tab.label}
+                        </button>
+                    ))
+                })()}
             </div>
 
             {

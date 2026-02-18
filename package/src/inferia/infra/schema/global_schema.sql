@@ -332,6 +332,7 @@ CREATE TABLE IF NOT EXISTS public.model_deployments
     org_id text, -- Organization ID
     policies jsonb, -- Filtration policies
     inference_model text, -- Backend model slug (e.g. 'meta-llama/...')
+    model_type text DEFAULT 'inference', -- Model type: inference, embedding, image_generation, etc.
 
     pool_id uuid NOT NULL,
     replicas integer NOT NULL,

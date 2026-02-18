@@ -26,6 +26,7 @@ class ModelDeploymentRepository(BaseRepository):
         org_id: Optional[str] = None,
         policies: Optional[str] = None,
         inference_model: Optional[str] = None,
+        model_type: Optional[str] = "inference",
         tx=None,
     ):
         q = """
@@ -43,9 +44,10 @@ class ModelDeploymentRepository(BaseRepository):
             owner_id,
             org_id,
             policies,
-            inference_model
+            inference_model,
+            model_type
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         """
         # Ensure configuration is passed as json
         import json
@@ -77,6 +79,7 @@ class ModelDeploymentRepository(BaseRepository):
                 org_id,
                 policies,
                 inference_model,
+                model_type,
             )
 
         # await self.event_bus.publish(

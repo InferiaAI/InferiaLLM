@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import inferia.services.orchestration.v1.model_registry_pb2 as v1_dot_model__registry__pb2
+from inferia.services.orchestration.v1 import model_registry_pb2 as v1_dot_model__registry__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__

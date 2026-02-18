@@ -11,9 +11,11 @@ logger = logging.getLogger(__name__)
 
 class GatewayService:
     @staticmethod
-    async def resolve_context(api_key: str, model: str) -> Dict[str, Any]:
+    async def resolve_context(
+        api_key: str, model: str, model_type: str = "inference"
+    ) -> Dict[str, Any]:
         """Resolves deployment context via Filtration Gateway."""
-        context = await api_gateway_client.resolve_context(api_key, model)
+        context = await api_gateway_client.resolve_context(api_key, model, model_type)
 
         if not context.get("valid"):
             raise HTTPException(
@@ -247,12 +249,21 @@ class GatewayService:
 
     @staticmethod
     async def call_upstream(
-        endpoint_url: str, payload: Dict, headers: Dict, engine: str = "vllm"
+        endpoint_url: str,
+        payload: Dict,
+        headers: Dict,
+        engine: str = "vllm",
+        path: str = None,
     ) -> Dict:
         adapter = get_adapter(engine)
-        chat_path = adapter.get_chat_path()
+        # Use custom path if provided, otherwise use adapter's chat path
+        if path:
+            full_url = GatewayService._build_full_url(endpoint_url, path)
+        else:
+            chat_path = adapter.get_chat_path()
+            full_url = GatewayService._build_full_url(endpoint_url, chat_path)
+
         transformed_payload = adapter.transform_request(payload)
-        full_url = GatewayService._build_full_url(endpoint_url, chat_path)
 
         client = http_client.get_client()
         try:

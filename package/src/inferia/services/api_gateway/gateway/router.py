@@ -210,6 +210,7 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
         # Fail open or closed? Usually closed for security.
         raise HTTPException(status_code=500, detail=f"Guardrail check failed: {str(e)}")
 
+
 # In-memory cache for models list (30s TTL)
 models_cache = cachetools.TTLCache(maxsize=100, ttl=30)
 
@@ -247,7 +248,7 @@ async def list_models(
             detail="Invalid API Key",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Check cache after authentication
     cache_key = (skip, limit)
     if cache_key in models_cache:
@@ -264,7 +265,9 @@ async def list_models(
     all_deployments = result.scalars().all()
 
     # Health Check for Nosana deployments
-    async def check_health(client: httpx.AsyncClient, d: Deployment) -> Optional[Deployment]:
+    async def check_health(
+        client: httpx.AsyncClient, d: Deployment
+    ) -> Optional[Deployment]:
         # Perform health check for Nosana and various inference engines
         # Often Nosana deployments use vllm, ollama, etc.
         is_nosana_link = d.endpoint and "nos.ci" in d.endpoint
@@ -272,7 +275,11 @@ async def list_models(
         if d.engine not in supported_engines and not is_nosana_link:
             return d
 
-        if not d.endpoint or not d.endpoint.startswith("http") or d.endpoint == "job-running-confidential":
+        if (
+            not d.endpoint
+            or not d.endpoint.startswith("http")
+            or d.endpoint == "job-running-confidential"
+        ):
             return None
 
         try:
@@ -296,7 +303,7 @@ async def list_models(
             # 2. Perform health check to /v1/models as requested
             health_url = f"{d.endpoint.rstrip('/')}/v1/models"
             resp = await client.get(health_url, headers=headers, timeout=5.0)
-            
+
             # Validate status code AND that response is valid JSON
             if resp.status_code == 200:
                 try:
@@ -325,13 +332,11 @@ async def list_models(
     # Run health checks in parallel
     async with httpx.AsyncClient() as client:
         health_results = await asyncio.gather(
-            *(check_health(client, d) for d in all_deployments),
-            return_exceptions=True
+            *(check_health(client, d) for d in all_deployments), return_exceptions=True
         )
-    
+
     deployments = [
-        d for d in health_results 
-        if isinstance(d, Deployment) and d is not None
+        d for d in health_results if isinstance(d, Deployment) and d is not None
     ]
 
     mock_models = [
@@ -346,10 +351,10 @@ async def list_models(
     ]
 
     response = ModelsListResponse(data=mock_models)
-    
+
     # Cache the response
     models_cache[cache_key] = response
-    
+
     return response
 
 
@@ -364,6 +369,7 @@ from sqlalchemy.future import select
 class ResolveContextRequest(BaseModel):
     api_key: str
     model: str
+    model_type: str = "inference"
 
 
 from typing import Any, Dict, Optional
@@ -391,7 +397,9 @@ async def resolve_inference_context(
     Used by Inference Gateway to fetch config.
     """
     # Delegate to Policy Engine
-    result = await policy_engine.resolve_context(db, request.api_key, request.model)
+    result = await policy_engine.resolve_context(
+        db, request.api_key, request.model, request.model_type
+    )
 
     if not result["valid"]:
         return ResolveContextResponse(valid=False, error=result["error"])

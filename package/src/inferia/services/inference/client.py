@@ -116,37 +116,48 @@ class ApiGatewayClient:
         is_streaming: bool = False,
         applied_policies: Optional[List[str]] = None,
         ip_address: Optional[str] = None,
+        request_type: str = "llm",
+        input_count: Optional[int] = None,
     ) -> None:
         """
         Log inference request details (fire and forget).
         Uses asyncio.create_task to avoid blocking the response.
+
+        Args:
+            request_type: "llm" for chat completions, "embedding" for embedding requests
+            input_count: Number of inputs (for embeddings - number of texts embedded)
         """
         client = self._get_client()
 
         # Define the task function
         async def _send_log():
             try:
-                # Need to use the client carefully here.
-                # Since ApiGatewayClient manages a shared client, it should be fine.
+                log_data = {
+                    "deployment_id": deployment_id,
+                    "user_id": user_id,
+                    "model": model,
+                    "request_payload": request_payload,
+                    "latency_ms": latency_ms,
+                    "ttft_ms": ttft_ms,
+                    "tokens_per_second": tokens_per_second,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "status_code": status_code,
+                    "error_message": error_message,
+                    "is_streaming": is_streaming,
+                    "applied_policies": applied_policies,
+                    "ip_address": ip_address,
+                    "request_type": request_type,
+                }
+
+                # Add embedding-specific fields
+                if request_type == "embedding" and input_count is not None:
+                    log_data["input_count"] = input_count
+
                 await client.post(
                     "/internal/logs/create",
-                    json={
-                        "deployment_id": deployment_id,
-                        "user_id": user_id,
-                        "model": model,
-                        "request_payload": request_payload,
-                        "latency_ms": latency_ms,
-                        "ttft_ms": ttft_ms,
-                        "tokens_per_second": tokens_per_second,
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": total_tokens,
-                        "status_code": status_code,
-                        "error_message": error_message,
-                        "is_streaming": is_streaming,
-                        "applied_policies": applied_policies,
-                        "ip_address": ip_address,
-                    },
+                    json=log_data,
                     headers=self._get_headers(),
                 )
             except Exception as e:
@@ -272,18 +283,20 @@ class ApiGatewayClient:
                 detail="API Gateway unavailable",
             )
 
-    async def resolve_context(self, api_key: str, model: str) -> Dict[str, Any]:
+    async def resolve_context(
+        self, api_key: str, model: str, model_type: str = "inference"
+    ) -> Dict[str, Any]:
         """
         Resolve deployment context and config from API Gateway.
         Cached locally for 60s.
         """
-        cache_key = (api_key, model)
+        cache_key = (api_key, model, model_type)
         if cache_key in self.context_cache:
             return self.context_cache[cache_key]
 
         client = self._get_client()
         headers = self._get_headers()  # Use internal key
-        payload = {"api_key": api_key, "model": model}
+        payload = {"api_key": api_key, "model": model, "model_type": model_type}
 
         try:
             response = await client.post(

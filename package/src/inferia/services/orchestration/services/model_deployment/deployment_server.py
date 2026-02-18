@@ -48,6 +48,7 @@ class DeployModelRequest(BaseModel):
     org_id: str | None = None
     policies: dict | None = None
     inference_model: str | None = None
+    model_type: str = "inference"  # inference, embedding, image_generation, etc.
 
 
 class TerminateDeploymentRequest(BaseModel):
@@ -144,6 +145,7 @@ async def deploy_model(req: DeployModelRequest):
                     org_id=req.org_id,
                     policies=json.dumps(req.policies) if req.policies else None,
                     inference_model=req.inference_model,
+                    model_type=req.model_type,
                 )
             )
 

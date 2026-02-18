@@ -1,4 +1,4 @@
-import { CheckCircle2, Loader2, AlertCircle, StopCircle, Eye, EyeOff, Copy } from "lucide-react"
+import { CheckCircle2, Loader2, AlertCircle, StopCircle, Eye, EyeOff, Copy, Database, Cpu } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
@@ -9,13 +9,31 @@ interface DeploymentOverviewProps {
 
 export default function DeploymentOverview({ deployment }: DeploymentOverviewProps) {
     const [showRawEndpoint, setShowRawEndpoint] = useState(false)
+    
+    // Check if this is an embedding deployment
+    const isEmbedding = deployment?.model_type === "embedding" || 
+                       deployment?.model_type === "embedding" ||
+                       deployment?.engine === "infinity" || 
+                       deployment?.engine === "tei"
+    
+    // Check if this is a training deployment
+    const isTraining = deployment?.workload_type === "training"
+
     if (!deployment) return null
 
     return (
         <div className="space-y-6">
             {/* Status Overview Card */}
             <div className="bg-card rounded-lg border shadow-sm p-6">
-                <h3 className="font-mono text-sm font-bold uppercase tracking-wider mb-6">Status Overview</h3>
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="font-mono text-sm font-bold uppercase tracking-wider">Status Overview</h3>
+                    {isEmbedding && (
+                        <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-purple-100 text-purple-700 text-xs font-medium border border-purple-200">
+                            <Database className="w-3 h-3" />
+                            Embedding Model
+                        </span>
+                    )}
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
                     <div>
                         <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Status</div>
@@ -139,8 +157,103 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                 </div>
                             </div>
                         </>
+                    ) : isEmbedding ? (
+                        <>
+                            {/* Embedding-specific UI */}
+                            <div className="flex items-center justify-between mb-4">
+                                <div>
+                                    <div className="text-xs text-muted-foreground font-mono mb-1 uppercase tracking-wider">Raw Embedding Endpoint</div>
+                                    <p className="text-sm text-muted-foreground">The direct URL to the embedding service (hidden by default).</p>
+                                </div>
+                            </div>
+                            <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden mb-6">
+                                <div className="flex flex-col gap-1 w-full">
+                                    {deployment.endpoint_url ? (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-primary break-all">
+                                                {showRawEndpoint ? deployment.endpoint_url : "•".repeat(deployment.endpoint_url.length)}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-2 text-muted-foreground">
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            <span className="text-xs italic">Fetching endpoint...</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setShowRawEndpoint(!showRawEndpoint)}
+                                        className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                        title={showRawEndpoint ? "Hide Endpoint" : "Show Endpoint"}
+                                        disabled={!deployment.endpoint_url}
+                                    >
+                                        {showRawEndpoint ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (deployment.endpoint_url) {
+                                                navigator.clipboard.writeText(deployment.endpoint_url);
+                                                toast.success("Raw endpoint copied to clipboard");
+                                            }
+                                        }}
+                                        className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                        title="Copy Endpoint"
+                                        disabled={!deployment.endpoint_url}
+                                    >
+                                        <Copy className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between mb-4">
+                                <div>
+                                    <div className="text-xs text-muted-foreground font-mono mb-1 uppercase tracking-wider">Public Embedding API</div>
+                                    <p className="text-sm text-muted-foreground">OpenAI-compatible embeddings endpoint.</p>
+                                </div>
+                                {deployment.endpoint_url && (
+                                    <span className="px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-mono border border-green-200">Active</span>
+                                )}
+                            </div>
+                            <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden">
+                                <div className="flex flex-col gap-1 w-full">
+                                    <span className="text-primary break-all">
+                                        http://localhost:8001/v1/embeddings
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        navigator.clipboard.writeText("http://localhost:8001/v1/embeddings");
+                                        toast.success("Endpoint copied to clipboard");
+                                    }}
+                                    className="ml-4 p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                    title="Copy Endpoint"
+                                >
+                                    <Copy className="w-4 h-4" />
+                                </button>
+                            </div>
+
+                            {/* Embedding Model Info */}
+                            <div className="mt-6 grid md:grid-cols-2 gap-6">
+                                <div>
+                                    <div className="text-xs text-muted-foreground font-mono mb-1 uppercase">Embedding Engine</div>
+                                    <div className="flex items-center gap-2 p-3 bg-muted rounded border">
+                                        <Cpu className="w-4 h-4 text-purple-500" />
+                                        <span className="font-mono text-sm">{deployment.engine || "infinity"}</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="text-xs text-muted-foreground font-mono mb-1 uppercase">Model Type</div>
+                                    <div className="flex items-center gap-2 p-3 bg-muted rounded border">
+                                        <Database className="w-4 h-4 text-purple-500" />
+                                        <span className="font-mono text-sm">Embedding (CPU)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
                     ) : (
                         <>
+                            {/* LLM Inference UI */}
                             <div className="flex items-center justify-between mb-4">
                                 <div>
                                     <div className="text-xs text-muted-foreground font-mono mb-1 uppercase tracking-wider">Raw Inference Endpoint</div>
@@ -199,12 +312,12 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                             <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden">
                                 <div className="flex flex-col gap-1 w-full">
                                     <span className="text-primary break-all">
-                                        http://localhost:8001/v1/chat/completion
+                                        http://localhost:8001/v1/chat/completions
                                     </span>
                                 </div>
                                 <button
                                     onClick={() => {
-                                        navigator.clipboard.writeText("http://localhost:8001/v1/chat/completion");
+                                        navigator.clipboard.writeText("http://localhost:8001/v1/chat/completions");
                                         toast.success("Endpoint copied to clipboard");
                                     }}
                                     className="ml-4 p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
