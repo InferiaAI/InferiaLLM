@@ -302,7 +302,14 @@ export default function DeploymentDetail() {
             {
                 activeTab === "logs" && id && (
                     <div className="bg-card rounded-xl border shadow-sm p-6">
-                        <h3 className="text-lg font-medium mb-6">{deployment?.workload_type === 'training' ? 'Training Logs' : 'Inference Logs'}</h3>
+                        <h3 className="text-lg font-medium mb-6">
+                            {deployment?.workload_type === 'training' 
+                                ? 'Training Logs' 
+                                : deployment?.model_type === 'embedding' || deployment?.engine === 'infinity' || deployment?.engine === 'tei'
+                                    ? 'Embedding Logs'
+                                    : 'Inference Logs'
+                            }
+                        </h3>
                         {deployment?.workload_type === 'training' ? (
                             <TrainingLogs deploymentId={id} />
                         ) : (
