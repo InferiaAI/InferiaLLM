@@ -77,8 +77,8 @@ class Settings(BaseSettings):
     redis_password: str = Field(default="", validation_alias="REDIS_PASSWORD")
 
     # Filtration (shared DB)
-    filtration_database_url: str = Field(
-        default="", validation_alias="FILTRATION_DATABASE_URL"
+    api_gateway_database_url: str = Field(
+        default="", validation_alias="API_GATEWAY_DATABASE_URL"
     )
 
     # Provider Settings (backward compatibility)

@@ -26,17 +26,28 @@ def _require_env(name: str, allow_empty: bool = False) -> str:
     if not value and not allow_empty:
         # Special case: try to derive from DATABASE_URL if it's an app-level var
         db_url = os.getenv("DATABASE_URL")
-        if db_url and name in ["INFERIA_DB_USER", "INFERIA_DB_PASSWORD", "INFERIA_DB", "PG_HOST", "PG_PORT"]:
+        if db_url and name in [
+            "INFERIA_DB_USER",
+            "INFERIA_DB_PASSWORD",
+            "INFERIA_DB",
+            "PG_HOST",
+            "PG_PORT",
+        ]:
             try:
                 parsed = urlparse(db_url)
-                if name == "INFERIA_DB_USER": return parsed.username or ""
-                if name == "INFERIA_DB_PASSWORD": return parsed.password or ""
-                if name == "INFERIA_DB": return parsed.path.lstrip('/')
-                if name == "PG_HOST": return parsed.hostname or "localhost"
-                if name == "PG_PORT": return str(parsed.port or 5432)
+                if name == "INFERIA_DB_USER":
+                    return parsed.username or ""
+                if name == "INFERIA_DB_PASSWORD":
+                    return parsed.password or ""
+                if name == "INFERIA_DB":
+                    return parsed.path.lstrip("/")
+                if name == "PG_HOST":
+                    return parsed.hostname or "localhost"
+                if name == "PG_PORT":
+                    return str(parsed.port or 5432)
             except Exception:
                 pass
-        
+
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value or ""
 
@@ -44,8 +55,8 @@ def _require_env(name: str, allow_empty: bool = False) -> str:
 BASE_DIR = Path(__file__).parent
 SCHEMA_DIR = BASE_DIR / "infra" / "schema"
 
-# Path to filtration bootstrap script
-FILTRATION_BOOTSTRAP_SCRIPT = BASE_DIR / "services" / "filtration" / "bootstrap_db.py"
+# Path to API Gateway bootstrap script
+API_GATEWAY_BOOTSTRAP_SCRIPT = BASE_DIR / "services" / "api_gateway" / "bootstrap_db.py"
 
 
 async def _execute_schema(dsn: str, sql_file: Path, label: str):
@@ -78,39 +89,35 @@ async def _execute_schema(dsn: str, sql_file: Path, label: str):
         await conn.close()
 
 
-
-def _bootstrap_filtration(database_url: str):
-    if not FILTRATION_BOOTSTRAP_SCRIPT.exists():
+def _bootstrap_api_gateway(database_url: str):
+    if not API_GATEWAY_BOOTSTRAP_SCRIPT.exists():
         raise RuntimeError(
-            f"Filtration bootstrap script not found: {FILTRATION_BOOTSTRAP_SCRIPT}"
+            f"API Gateway bootstrap script not found: {API_GATEWAY_BOOTSTRAP_SCRIPT}"
         )
 
-    print("[inferia:init] Bootstrapping filtration database (tables, default org, super admin)")
+    print(
+        "[inferia:init] Bootstrapping API Gateway database (tables, default org, super admin)"
+    )
 
     # --------------------------------------------------
-    # Minimal, filtration-scoped environment ONLY
+    # Minimal, api_gateway-scoped environment ONLY
     # --------------------------------------------------
     clean_env = {
         # Required runtime basics
         "PYTHONPATH": os.getenv("PYTHONPATH", ""),
         "PATH": os.getenv("PATH", ""),
         "VIRTUAL_ENV": os.getenv("VIRTUAL_ENV", ""),
-
-        # Filtration DB - Explicitly passed
+        # API Gateway DB - Explicitly passed
         "DATABASE_URL": database_url,
-        
         # Envs for Super Admin creation (passed from current env)
         "SUPERADMIN_EMAIL": os.getenv("SUPERADMIN_EMAIL", ""),
         "SUPERADMIN_PASSWORD": os.getenv("SUPERADMIN_PASSWORD", ""),
         "DEFAULT_ORG_NAME": os.getenv("DEFAULT_ORG_NAME", ""),
-        
-        # Security/Auth secrets required by Filtration Config
+        # Security/Auth secrets required by API Gateway Config
         "INTERNAL_API_KEY": os.getenv("INTERNAL_API_KEY", ""),
         "JWT_SECRET_KEY": os.getenv("JWT_SECRET_KEY", ""),
-
         # We also need these if config.py requires them to validate settings
         # although defaults are set in config.py now.
-        
         # Optional: logging / runtime
         "ENV": os.getenv("ENV", "local"),
     }
@@ -119,11 +126,10 @@ def _bootstrap_filtration(database_url: str):
     clean_env = {k: v for k, v in clean_env.items() if v}
 
     subprocess.run(
-        ["python3", str(FILTRATION_BOOTSTRAP_SCRIPT)],
+        ["python3", str(API_GATEWAY_BOOTSTRAP_SCRIPT)],
         check=True,
         env=clean_env,
     )
-
 
 
 async def _init():
@@ -140,8 +146,7 @@ async def _init():
     inferia_db = _safe_ident(_require_env("INFERIA_DB", allow_empty=True) or "inferia")
 
     admin_dsn = (
-        f"postgresql://{admin_user}:{admin_password}"
-        f"@{pg_host}:{pg_port}/template1"
+        f"postgresql://{admin_user}:{admin_password}@{pg_host}:{pg_port}/template1"
     )
 
     print(f"[inferia:init] Connecting as admin to bootstrap {inferia_db}")
@@ -178,9 +183,7 @@ async def _init():
 
         if not db_exists:
             print(f"[inferia:init] Creating database: {inferia_db}")
-            await conn.execute(
-                f'CREATE DATABASE "{inferia_db}" OWNER {inferia_user}'
-            )
+            await conn.execute(f'CREATE DATABASE "{inferia_db}" OWNER {inferia_user}')
         else:
             print(f"[inferia:init] Database exists: {inferia_db}")
 
@@ -192,8 +195,7 @@ async def _init():
     # --------------------------------------------------
     print(f"[inferia:init] Repairing privileges on {inferia_db}")
     db_dsn = (
-        f"postgresql://{admin_user}:{admin_password}"
-        f"@{pg_host}:{pg_port}/{inferia_db}"
+        f"postgresql://{admin_user}:{admin_password}@{pg_host}:{pg_port}/{inferia_db}"
     )
 
     conn = await asyncpg.connect(db_dsn)
@@ -230,16 +232,16 @@ async def _init():
     )
 
     # --------------------------------------------------
-    # Application-level bootstrap (filtration only)
+    # Application-level bootstrap (API Gateway only)
     # --------------------------------------------------
-    
+
     # Construct DSN for SQLAlchemy
-    filtration_dsn_alchemy = (
+    api_gateway_dsn_alchemy = (
         f"postgresql+asyncpg://{inferia_user}:{inferia_password}"
         f"@{pg_host}:{pg_port}/{inferia_db}"
     )
-    
-    _bootstrap_filtration(filtration_dsn_alchemy)
+
+    _bootstrap_api_gateway(api_gateway_dsn_alchemy)
 
     print("\n[inferia:init] Bootstrap complete")
 

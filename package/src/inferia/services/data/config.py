@@ -53,8 +53,8 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
 
     # Control Plane Connection
-    filtration_url: str = Field(
-        default="http://localhost:8000", validation_alias="FILTRATION_URL"
+    api_gateway_url: str = Field(
+        default="http://localhost:8000", validation_alias="API_GATEWAY_URL"
     )
     internal_api_key: str = Field(default="", validation_alias="INTERNAL_API_KEY")
 

@@ -16,7 +16,7 @@ class DataConfigManager(HTTPConfigManager):
 
     def __init__(self):
         super().__init__(
-            gateway_url=settings.filtration_url,
+            gateway_url=settings.api_gateway_url,
             api_key=settings.internal_api_key,
             update_callback=self._update_settings,
             poll_interval=15,

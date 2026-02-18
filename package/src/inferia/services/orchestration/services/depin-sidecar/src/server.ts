@@ -18,10 +18,10 @@ app.use(express.json());
 app.use(cors());
 
 // --- Configuration Constants ---
-const FILTRATION_URL = process.env.FILTRATION_URL || "http://localhost:8000";
+const API_GATEWAY_URL = process.env.API_GATEWAY_URL || "http://localhost:8000";
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || "dev-internal-key-change-in-prod";
 
-console.log(`[Sidecar] Configured to fetch settings from: ${FILTRATION_URL}`);
+console.log(`[Sidecar] Configured to fetch settings from: ${API_GATEWAY_URL}`);
 
 // --- Initialize Services ---
 const akashService = new AkashService();
@@ -65,7 +65,7 @@ let configFetchedOnce = false;
 
 const fetchConfigFromGateway = async () => {
     try {
-        const url = `${FILTRATION_URL}/internal/config/provider`;
+        const url = `${API_GATEWAY_URL}/internal/config/provider`;
         const response = await axios.get(url, {
             headers: {
                 "X-Internal-Key": INTERNAL_API_KEY

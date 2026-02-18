@@ -99,8 +99,8 @@ def show_inferia():
             "Initialize Inferia databases and bootstrap state",
         ),
         (
-            f"{Colors.CYAN}start{Colors.ENDC}",
-            "Start all services (orchestration, inference, filtration)",
+            f"{Colors.CYAN}start all{Colors.ENDC}",
+            "Start all services (orchestration, inference, api-gateway)",
         ),
         (
             f"{Colors.CYAN}start orchestration{Colors.ENDC}",
@@ -108,8 +108,8 @@ def show_inferia():
         ),
         (f"{Colors.CYAN}start inference{Colors.ENDC}", "Run inference gateway"),
         (
-            f"{Colors.CYAN}start filtration{Colors.ENDC}",
-            "Run filtration / guardrails gateway",
+            f"{Colors.CYAN}start api-gateway{Colors.ENDC}",
+            "Run API Gateway (auth, RBAC, policy, proxy)",
         ),
     ]
 
@@ -188,7 +188,7 @@ Responsibilities:
 • Request validation
 • Streaming / batching
 • Provider abstraction (vLLM, TGI, Python)
-• Policy enforcement (via Filtration)
+• Policy enforcement (via API Gateway)
 
 Usage:
   inferiallm start inference
@@ -210,37 +210,39 @@ GitHub Repo:
 """)
 
 
-def show_filtration_docs():
+def show_api_gateway_docs():
     print(r"""
 ──────────────────────────────────────────────────────────────────────────────
-                  INFERIALLM · FILTRATION GATEWAY
+                  INFERIALLM · API GATEWAY
 ──────────────────────────────────────────────────────────────────────────────
 
-The Filtration Gateway enforces safety, policy, and identity.
+The API Gateway is the central entry point for dashboard and management operations.
 
 Responsibilities:
-• Guardrails (toxicity, prompt injection, PII)
-• RBAC & permissions
-• Rate limits & quotas
+• Authentication & Authorization (JWT, RBAC)
+• Request routing & proxying to downstream services
+• Rate limiting & quotas
 • Audit logging
 • Prompt templates
+• Management APIs (organizations, users, deployments, API keys)
 
 Usage:
-  inferiallm start filtration
+  inferiallm start api-gateway
 
-Sub-systems:
-• Guardrails
-• RBAC
-• Policy Engine
-• Audit Log
+Proxy Routes:
+• /api/v1/deployments/* → Orchestration Service
+• /api/v1/pools/* → Orchestration Service
+• /auth/* → Authentication handlers
+• /management/* → Management operations
+• /admin/* → RBAC administration
 
 Docs:
-  inferia/gateways/filtration_gateway/README.md
+  inferia/services/api_gateway/README.md
           
 Online Docs:
-  https://docs.inferia.ai/docs/gateways/filtration_gateway/filtration
+  https://docs.inferia.ai/docs/services/api_gateway
         
 GitHub Repo:
-  https://github.com/InferiaAI/InferiaLLM/services/filtration
+  https://github.com/InferiaAI/InferiaLLM/services/api_gateway
 ──────────────────────────────────────────────────────────────────────────────
 """)

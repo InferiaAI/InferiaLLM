@@ -7,7 +7,7 @@ from inferia.startup_ui import StartupUI
 from dotenv import load_dotenv, find_dotenv
 from inferia.inferiadocs import (
     show_inferia,
-    show_filtration_docs,
+    show_api_gateway_docs,
     show_inference_docs,
     show_orchestration_docs,
 )
@@ -28,24 +28,24 @@ def _load_env():
     load_dotenv(find_dotenv(), override=False)
 
 
-def run_filtration_service(queue=None):
+def run_api_gateway_service(queue=None):
     from inferia.startup_events import ServiceStarting, ServiceStarted, ServiceFailed
 
     try:
         if queue:
-            queue.put(ServiceStarting("Filtration Service"))
-        from inferia.services.filtration.main import start_api
+            queue.put(ServiceStarting("API Gateway Service"))
+        from inferia.services.api_gateway.main import start_api
 
         if queue:
             queue.put(
-                ServiceStarted("Filtration Service", detail="Listening on port 8000")
+                ServiceStarted("API Gateway Service", detail="Listening on port 8000")
             )
         start_api()
     except Exception as e:
         if queue:
-            queue.put(ServiceFailed("Filtration Service", error=str(e)))
+            queue.put(ServiceFailed("API Gateway Service", error=str(e)))
         else:
-            print(f"Error starting Filtration Service: {e}")
+            print(f"Error starting API Gateway Service: {e}")
 
 
 def run_guardrail_service(queue=None):
@@ -182,8 +182,8 @@ def run_nosana_sidecar(queue=None):
             subprocess.run(["npm", "install"], cwd=sidecar_dir, check=True)
 
         env = os.environ.copy()
-        if not env.get("FILTRATION_URL"):
-            env["FILTRATION_URL"] = "http://localhost:8000"
+        if not env.get("API_GATEWAY_URL"):
+            env["API_GATEWAY_URL"] = "http://localhost:8000"
 
         print("[DePIN] Launching sidecar...")
         subprocess.Popen(
@@ -363,8 +363,8 @@ def run_all():
     processes = [
         # Core Gateway
         multiprocessing.Process(
-            target=run_filtration_service,
-            name="filtration",
+            target=run_api_gateway_service,
+            name="api-gateway",
             args=(queue,),
         ),
         # Microservices
@@ -457,7 +457,7 @@ def main(argv=None):
         default="all",
         choices=[
             "all",
-            "filtration",
+            "api-gateway",
             "inference",
             "orchestration",
             "guardrail",
@@ -487,11 +487,11 @@ def main(argv=None):
                 else:
                     run_all()
 
-            elif service == "filtration":
+            elif service == "api-gateway":
                 if wants_help(flags):
-                    show_filtration_docs()
+                    show_api_gateway_docs()
                 else:
-                    run_filtration_service()
+                    run_api_gateway_service()
 
             elif service == "inference":
                 if wants_help(flags):

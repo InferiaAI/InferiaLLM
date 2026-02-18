@@ -68,20 +68,20 @@ services:
   # ==========================================
   # Split Profile (Microservices)
   # ==========================================
-  filtration:
-    image: inferiaai/inferia-filtration:latest
+  api-gateway:
+    image: inferiaai/inferia-api-gateway:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      target: filtration
-    container_name: inferia-filtration
+      target: api-gateway
+    container_name: inferia-api-gateway
     profiles: ["split"]
     env_file:
       - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
-      - SERVICE_TYPE=filtration
+      - SERVICE_TYPE=api_gateway
     ports:
       - "8000:8000"
     depends_on:
@@ -105,12 +105,12 @@ services:
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
-      - FILTRATION_URL=http://filtration:8000
+      - API_GATEWAY_URL=http://api-gateway:8000
       - SERVICE_TYPE=inference
     ports:
       - "8001:8001"
     depends_on:
-      - filtration
+      - api-gateway
     networks:
       - inferia-net
 
@@ -127,13 +127,13 @@ services:
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
-      - FILTRATION_URL=http://filtration:8000
+      - API_GATEWAY_URL=http://api-gateway:8000
       - SERVICE_TYPE=orchestration
     ports:
       - "8080:8080"
       - "3000:3000"
     depends_on:
-      - filtration
+      - api-gateway
     networks:
       - inferia-net
 

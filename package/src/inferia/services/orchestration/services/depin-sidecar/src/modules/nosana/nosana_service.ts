@@ -512,7 +512,7 @@ export class NosanaService {
         details?: any;
         status?: string;
     }) {
-        const filtrationUrl = process.env.FILTRATION_URL || "http://localhost:8000";
+        const apiGatewayUrl = process.env.API_GATEWAY_URL || "http://localhost:8000";
         const payload = {
             action: event.action,
             resource_type: "job",
@@ -522,7 +522,7 @@ export class NosanaService {
         };
 
         try {
-            await fetch(`${filtrationUrl}/audit/internal/log`, {
+            await fetch(`${apiGatewayUrl}/audit/internal/log`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",

@@ -1,110 +1,74 @@
+import React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Activity, Server, Database, Zap, Cloud, Check, X, RefreshCw, Clock, AlertTriangle, Shield } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
-import { MANAGEMENT_URL, COMPUTE_URL, INFERENCE_URL, SIDECAR_URL, DATA_URL, GUARDRAIL_URL } from "@/lib/api"
+import { MANAGEMENT_URL } from "@/lib/api"
 
-interface ServiceStatus {
+interface ServiceHealth {
     name: string
-    url: string
-    status: "online" | "offline" | "unknown"
-    latency?: number
-    icon: any
-    description: string
+    status: string
+    latency_ms?: number
+    error?: string
 }
 
+interface SystemHealthResponse {
+    status: string
+    version: string
+    services: ServiceHealth[]
+}
 
+const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
+    "API Gateway": Activity,
+    "Inference Gateway": Zap,
+    "Orchestration": Server,
+    "Data Service": Database,
+    "Guardrail Service": Shield,
+    "DePIN Sidecar": Cloud,
+}
 
-const SERVICES = [
-    {
-        name: "Filtration Gateway",
-        url: `${MANAGEMENT_URL}/health`,
-        icon: Activity,
-        description: "Policy enforcement, guardrails, and request routing"
-    },
-    {
-        name: "Inference Gateway",
-        url: `${INFERENCE_URL}/v1/chat/completions`,
-        icon: Zap,
-        description: "OpenAI-compatible API endpoint",
-        method: "OPTIONS" // Just check if endpoint responds
-    },
-    {
-        name: "Orchestration API",
-        url: `${COMPUTE_URL}/deployment/listPools/health-check`,
-        icon: Server,
-        description: "Deployment management and compute orchestration"
-    },
-    {
-        name: "Data Service",
-        url: `${DATA_URL}/health`,
-        icon: Database,
-        description: "Document processing and vector database management"
-    },
-    {
-        name: "Guardrail Service",
-        url: `${GUARDRAIL_URL}/health`,
-        icon: Shield,
-        description: "Content safety, PII detection, and policy enforcement"
-    },
-    {
-        name: "DePIN Sidecar",
-        url: `${SIDECAR_URL}/health`,
-        icon: Cloud,
-        description: "DePIN (Nosana/Akash) job management"
+const descriptionMap: Record<string, string> = {
+    "API Gateway": "Authentication, RBAC, and service routing",
+    "Inference Gateway": "OpenAI-compatible LLM inference API",
+    "Orchestration": "Deployment management and compute orchestration",
+    "Data Service": "Document processing and vector database management",
+    "Guardrail Service": "Content safety, PII detection, and policy enforcement",
+    "DePIN Sidecar": "DePIN (Nosana/Akash) job management",
+}
+
+async function checkSystemHealth(): Promise<SystemHealthResponse> {
+    const response = await fetch(`${MANAGEMENT_URL}/health/services`)
+    if (!response.ok) {
+        throw new Error("Failed to fetch system health")
     }
-]
-
-async function checkHealth(url: string, method: string = "GET"): Promise<{ status: "online" | "offline"; latency: number }> {
-    const start = performance.now()
-    try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 5000) // 5s timeout
-
-        const response = await fetch(url, {
-            method,
-            signal: controller.signal,
-            mode: 'cors'
-        })
-        clearTimeout(timeoutId)
-
-        const latency = Math.round(performance.now() - start)
-        return {
-            status: response.ok || response.status < 500 ? "online" : "offline",
-            latency
-        }
-    } catch (error) {
-        const latency = Math.round(performance.now() - start)
-        return { status: "offline", latency }
-    }
+    return response.json()
 }
 
 export default function Status() {
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
 
-    const { data: statuses, isLoading, refetch, isFetching } = useQuery({
-        queryKey: ["service-health"],
+    const { data: healthData, isLoading, refetch, isFetching, error } = useQuery({
+        queryKey: ["system-health"],
         queryFn: async () => {
-            const results = await Promise.all(
-                SERVICES.map(async (service) => {
-                    const result = await checkHealth(service.url, (service as any).method || "GET")
-                    return {
-                        ...service,
-                        status: result.status,
-                        latency: result.latency
-                    }
-                })
-            )
+            const result = await checkSystemHealth()
             setLastRefresh(new Date())
-            return results as ServiceStatus[]
+            return result
         },
         refetchInterval: 30000, // Auto-refresh every 30s
         staleTime: 10000
     })
 
-    const onlineCount = statuses?.filter(s => s.status === "online").length || 0
-    const totalCount = SERVICES.length
-    const allOnline = onlineCount === totalCount
+    const statuses = healthData?.services.map(service => ({
+        name: service.name,
+        status: service.status as "online" | "offline" | "unknown",
+        latency: service.latency_ms,
+        icon: iconMap[service.name] || Activity,
+        description: descriptionMap[service.name] || "Service",
+    })) || []
+
+    const onlineCount = statuses.filter(s => s.status === "online").length
+    const totalCount = statuses.length
+    const allOnline = onlineCount === totalCount && totalCount > 0
 
     const handleRefresh = () => {
         refetch()
@@ -168,14 +132,24 @@ export default function Status() {
                         <Clock className="w-3.5 h-3.5" />
                         Last checked: {lastRefresh.toLocaleTimeString()}
                     </div>
+                    {healthData?.version && (
+                        <div className="text-xs mt-1">Version: {healthData.version}</div>
+                    )}
                 </div>
             </div>
+
+            {/* Error State */}
+            {error && (
+                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-600 dark:text-red-400">
+                    Failed to check system health: {error instanceof Error ? error.message : "Unknown error"}
+                </div>
+            )}
 
             {/* Service Cards */}
             <div className="grid gap-4 md:grid-cols-2">
                 {isLoading ? (
                     // Loading skeletons
-                    Array.from({ length: 4 }).map((_, i) => (
+                    Array.from({ length: 6 }).map((_, i) => (
                         <div key={i} className="p-6 bg-card rounded-xl border animate-pulse">
                             <div className="flex items-start justify-between">
                                 <div className="flex items-center gap-3">
@@ -190,7 +164,7 @@ export default function Status() {
                         </div>
                     ))
                 ) : (
-                    statuses?.map((service) => (
+                    statuses.map((service) => (
                         <div
                             key={service.name}
                             className={cn(
@@ -255,10 +229,12 @@ export default function Status() {
                     Service Endpoints
                 </h3>
                 <div className="grid gap-2 text-sm font-mono">
-                    {SERVICES.map(service => (
+                    {statuses.map(service => (
                         <div key={service.name} className="flex items-center justify-between py-2 border-b last:border-0">
                             <span className="text-muted-foreground">{service.name}</span>
-                            <code className="text-xs bg-muted px-2 py-1 rounded">{service.url.replace('/health', '').replace('/v1/chat/completions', '')}</code>
+                            <span className="text-xs bg-muted px-2 py-1 rounded capitalize">
+                                {service.status}
+                            </span>
                         </div>
                     ))}
                 </div>
