@@ -442,10 +442,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="inferiallm",
         description="InferiaLLM CLI – distributed inference & orchestration platform",
-        add_help=False,
     )
-    parser.add_argument("command", nargs="?", help="InferiaLLM command")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(
+        dest="command", required=True, help="Available commands"
+    )
 
     sub.add_parser("init", help="Initialize Inferia databases")
 
