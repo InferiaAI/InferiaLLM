@@ -7,6 +7,7 @@ then routes to the actual model provider.
 import logging
 from typing import Optional
 
+from inferia.common.schemas.common import HealthCheckResponse
 from inferia.services.inference.client import api_gateway_client
 from inferia.services.inference.config import settings
 from inferia.services.inference.core.http_client import http_client
@@ -48,6 +49,18 @@ app.add_middleware(
         "X-Real-IP",
     ],
 )
+
+
+@app.get("/health", response_model=HealthCheckResponse)
+async def health_check():
+    """
+    Health check endpoint for the Inference Gateway.
+    """
+    return HealthCheckResponse(
+        status="healthy",
+        version=settings.app_version,
+        service="inference-gateway",
+    )
 
 
 @app.on_event("shutdown")
