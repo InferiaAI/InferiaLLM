@@ -90,12 +90,12 @@ class Settings(BaseSettings):
         description="0 disables global limit",
     )
     upstream_per_deployment_max_in_flight: int = Field(
-        default=1000,
+        default=100,
         alias="UPSTREAM_PER_DEPLOYMENT_MAX_IN_FLIGHT",
         validation_alias="UPSTREAM_PER_DEPLOYMENT_MAX_IN_FLIGHT",
     )
     upstream_slot_acquire_timeout_seconds: float = Field(
-        default=30.0,
+        default=20.0,
         alias="UPSTREAM_SLOT_ACQUIRE_TIMEOUT_SECONDS",
         validation_alias="UPSTREAM_SLOT_ACQUIRE_TIMEOUT_SECONDS",
     )
