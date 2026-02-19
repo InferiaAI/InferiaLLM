@@ -14,7 +14,7 @@ from inferia.services.orchestration.services.adapter_engine.base import (
 from inferia.services.orchestration.services.adapter_engine.adapters.nosana.job_builder import (
     build_job_definition,
     create_training_job,
-    NOSANA_INTERNAL_API_KEY,
+    INTERNAL_API_KEY,
 )
 from inferia.services.orchestration.config import settings
 
@@ -184,7 +184,7 @@ class NosanaAdapter(ProviderAdapter):
                 dataset_url=metadata.get("dataset_url"),
                 base_model=metadata.get("base_model"),
                 hf_token=hf_token,
-                api_key=NOSANA_INTERNAL_API_KEY,
+                api_key=INTERNAL_API_KEY,
                 min_vram=metadata.get("min_vram", 24),
                 gpu_count=gpu_allocated,
             )
@@ -209,7 +209,7 @@ class NosanaAdapter(ProviderAdapter):
                 model_id=model_id,
                 image=image,
                 hf_token=hf_token,
-                api_key=NOSANA_INTERNAL_API_KEY,
+                api_key=INTERNAL_API_KEY,
                 **job_config,
             )
         else:

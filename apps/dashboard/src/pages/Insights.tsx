@@ -10,6 +10,8 @@ import {
     TrendingUp,
     TriangleAlert,
     Zap,
+    MessageSquare,
+    VectorSquare,
 } from "lucide-react";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
@@ -38,6 +40,7 @@ import {
     type InsightsGranularity,
     type InsightsQueryParams,
     type InsightsStatus,
+    type InsightsDeploymentType,
     insightsService,
 } from "@/services/insightsService";
 
@@ -75,6 +78,7 @@ export default function Insights() {
     const now = new Date();
     const defaultStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
+    const [deploymentType, setDeploymentType] = useState<InsightsDeploymentType>("inference");
     const [timePreset, setTimePreset] = useState<TimePreset>("7d");
     const [customStart, setCustomStart] = useState<string>(toLocalDateTimeInputValue(defaultStart));
     const [customEnd, setCustomEnd] = useState<string>(toLocalDateTimeInputValue(now));
@@ -122,8 +126,9 @@ export default function Insights() {
             deployment_id: deploymentId || undefined,
             ip_address: debouncedIpAddress || undefined,
             status,
+            deployment_type: deploymentType,
         }),
-        [range.start, range.end, deploymentId, debouncedIpAddress, status]
+        [range.start, range.end, deploymentId, debouncedIpAddress, status, deploymentType]
     );
 
     const granularity: InsightsGranularity = useMemo(() => {
@@ -132,11 +137,12 @@ export default function Insights() {
     }, [range.start, range.end]);
 
     const filtersQuery = useQuery({
-        queryKey: ["insights", "filters", baseParams.start_time, baseParams.end_time],
+        queryKey: ["insights", "filters", baseParams.start_time, baseParams.end_time, deploymentType],
         queryFn: () =>
             insightsService.getFilters({
                 start_time: baseParams.start_time,
                 end_time: baseParams.end_time,
+                deployment_type: deploymentType,
             }),
         staleTime: QUERY_STALE_TIME,
     });
@@ -150,6 +156,7 @@ export default function Insights() {
             deploymentId,
             debouncedIpAddress,
             status,
+            deploymentType,
         ],
         queryFn: () => insightsService.getSummary(baseParams),
         staleTime: QUERY_STALE_TIME,
@@ -165,6 +172,7 @@ export default function Insights() {
             debouncedIpAddress,
             status,
             granularity,
+            deploymentType,
         ],
         queryFn: () => insightsService.getTimeseries({ ...baseParams, granularity }),
         staleTime: QUERY_STALE_TIME,
@@ -179,6 +187,7 @@ export default function Insights() {
             deploymentId,
             debouncedIpAddress,
             status,
+            deploymentType,
         ],
         queryFn: () => insightsService.getTopIps(baseParams),
         staleTime: QUERY_STALE_TIME,
@@ -193,6 +202,7 @@ export default function Insights() {
             deploymentId,
             debouncedIpAddress,
             status,
+            deploymentType,
         ],
         queryFn: () => insightsService.getTopModels(baseParams),
         staleTime: QUERY_STALE_TIME,
@@ -209,6 +219,7 @@ export default function Insights() {
             status,
             page,
             pageSize,
+            deploymentType,
         ],
         queryFn: () =>
             insightsService.getLogs({
@@ -223,6 +234,15 @@ export default function Insights() {
     const timeseries = timeseriesQuery.data;
     const logs = logsQuery.data;
     const filters = filtersQuery.data;
+
+    const isEmbedding = deploymentType === "embedding";
+    const filteredDeployments = useMemo(() => {
+        const deployments = filters?.deployments || [];
+        return deployments.filter((d) => {
+            if (deploymentType === "all") return true;
+            return d.model_type === deploymentType || (!d.model_type && deploymentType === "inference");
+        });
+    }, [filters?.deployments, deploymentType]);
 
     const chartData = useMemo(
         () =>
@@ -259,6 +279,7 @@ export default function Insights() {
         );
 
         return {
+            totalBuckets,
             totalRequests,
             totalSuccess,
             totalFailed,
@@ -320,8 +341,45 @@ export default function Insights() {
             <div className="flex flex-col gap-1">
                 <h1 className="text-2xl font-bold tracking-tight">Insights</h1>
                 <p className="text-muted-foreground">
-                    Analytics from existing inference logs across your organization.
+                    Analytics from {isEmbedding ? "embedding" : "inference"} logs across your organization.
                 </p>
+            </div>
+
+            <div className="flex border-b">
+                <button
+                    type="button"
+                    onClick={() => {
+                        setDeploymentType("inference");
+                        setDeploymentId("");
+                        setPage(1);
+                    }}
+                    className={cn(
+                        "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        deploymentType === "inference"
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
+                    )}
+                >
+                    <MessageSquare className="h-4 w-4" />
+                    Inference
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        setDeploymentType("embedding");
+                        setDeploymentId("");
+                        setPage(1);
+                    }}
+                    className={cn(
+                        "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        deploymentType === "embedding"
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
+                    )}
+                >
+                    <VectorSquare className="h-4 w-4" />
+                    Embeddings
+                </button>
             </div>
 
             <div className="rounded-xl border bg-card p-4">
@@ -385,8 +443,8 @@ export default function Insights() {
                             }}
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         >
-                            <option value="">All deployments</option>
-                            {(filters?.deployments || []).map((deployment) => (
+                            <option value="">All {isEmbedding ? "embedding" : "inference"} deployments</option>
+                            {filteredDeployments.map((deployment) => (
                                 <option key={deployment.id} value={deployment.id}>
                                     {deployment.model_name} ({deployment.id.slice(0, 8)})
                                 </option>
@@ -461,21 +519,30 @@ export default function Insights() {
                 />
                 <MetricCard
                     icon={Layers3}
-                    title="Total Tokens"
+                    title={isEmbedding ? "Total Tokens" : "Total Tokens"}
                     value={isInitialLoading ? "..." : formatNumber(summary?.totals.total_tokens || 0, 0)}
-                    subtitle={`In ${formatNumber(summary?.totals.prompt_tokens || 0, 0)} / Out ${formatNumber(summary?.totals.completion_tokens || 0, 0)}`}
+                    subtitle={isEmbedding 
+                        ? `${formatNumber(summary?.totals.prompt_tokens || 0, 0)} tokens processed`
+                        : `In ${formatNumber(summary?.totals.prompt_tokens || 0, 0)} / Out ${formatNumber(summary?.totals.completion_tokens || 0, 0)}`
+                    }
                 />
                 <MetricCard
                     icon={Gauge}
-                    title="Avg Latency (TTFT)"
+                    title={isEmbedding ? "Avg Latency" : "Avg Latency (TTFT)"}
                     value={isInitialLoading ? "..." : `${formatNumber(summary?.latency_ms.avg || 0)} ms`}
                     subtitle={`${formatNumber(summary?.throughput.requests_per_minute || 0)} req/min (active time)`}
                 />
                 <MetricCard
                     icon={Zap}
-                    title="Avg Token/s"
-                    value={isInitialLoading ? "..." : formatNumber(summary?.throughput.avg_tokens_per_second || 0)}
-                    subtitle={`${formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s overall`}
+                    title={isEmbedding ? "Avg Req/min" : "Avg Token/s"}
+                    value={isInitialLoading ? "..." : isEmbedding 
+                        ? formatNumber(summary?.throughput.requests_per_minute || 0, 0)
+                        : formatNumber(summary?.throughput.avg_tokens_per_second || 0)
+                    }
+                    subtitle={isEmbedding 
+                        ? `${formatNumber(summary?.totals.requests || 0, 0)} total requests`
+                        : `${formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s overall`
+                    }
                 />
             </div>
 
@@ -489,7 +556,7 @@ export default function Insights() {
             {!isInitialLoading && hasNoData && (
                 <EmptyState
                     icon={TriangleAlert}
-                    title="No inference data in selected range"
+                    title={`No ${isEmbedding ? "embedding" : "inference"} data in selected range`}
                     description="Try expanding the date range or removing one or more filters."
                 />
             )}
@@ -548,51 +615,84 @@ export default function Insights() {
                             />
                         </ChartCard>
 
-                        <ChartCard title="Token Usage" subtitle="Prompt vs completion tokens">
-                            <ChartLegend
-                                items={[
-                                    { label: "Prompt", colorClass: "bg-green-600" },
-                                    { label: "Completion", colorClass: "bg-blue-500" },
-                                ]}
-                            />
-                            <ResponsiveContainer width="100%" height={260}>
-                                <AreaChart data={chartData}>
-                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                                    <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
-                                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="prompt_tokens"
-                                        stackId="tokens"
-                                        stroke="#16a34a"
-                                        fill="#16a34a"
-                                        fillOpacity={0.35}
-                                        name="Prompt"
+                        <ChartCard 
+                            title={isEmbedding ? "Tokens Processed" : "Token Usage"} 
+                            subtitle={isEmbedding ? "Total tokens processed over time" : "Prompt vs completion tokens"}
+                        >
+                            {isEmbedding ? (
+                                <>
+                                    <ChartLegend items={[{ label: "Tokens", colorClass: "bg-green-600" }]} />
+                                    <ResponsiveContainer width="100%" height={260}>
+                                        <AreaChart data={chartData}>
+                                            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                                            <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
+                                            <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                                            <Tooltip />
+                                            <Area
+                                                type="monotone"
+                                                dataKey="total_tokens"
+                                                stroke="#16a34a"
+                                                fill="#16a34a"
+                                                fillOpacity={0.35}
+                                                name="Tokens"
+                                            />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                    <ChartSummary
+                                        items={[
+                                            `Total: ${formatNumber(chartTotals.totalPrompt, 0)}`,
+                                            `Avg per bucket: ${formatNumber(chartTotals.totalBuckets > 0 ? chartTotals.totalPrompt / chartTotals.totalBuckets : 0, 0)}`,
+                                        ]}
                                     />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="completion_tokens"
-                                        stackId="tokens"
-                                        stroke="#3b82f6"
-                                        fill="#3b82f6"
-                                        fillOpacity={0.35}
-                                        name="Completion"
+                                </>
+                            ) : (
+                                <>
+                                    <ChartLegend
+                                        items={[
+                                            { label: "Prompt", colorClass: "bg-green-600" },
+                                            { label: "Completion", colorClass: "bg-blue-500" },
+                                        ]}
                                     />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                            <ChartSummary
-                                items={[
-                                    `Prompt: ${formatNumber(chartTotals.totalPrompt, 0)}`,
-                                    `Completion: ${formatNumber(chartTotals.totalCompletion, 0)}`,
-                                    `Output/Input ratio: ${formatNumber(
-                                        chartTotals.totalPrompt > 0
-                                            ? chartTotals.totalCompletion / chartTotals.totalPrompt
-                                            : 0
-                                    )}x`,
-                                ]}
-                            />
+                                    <ResponsiveContainer width="100%" height={260}>
+                                        <AreaChart data={chartData}>
+                                            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                                            <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
+                                            <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Area
+                                                type="monotone"
+                                                dataKey="prompt_tokens"
+                                                stackId="tokens"
+                                                stroke="#16a34a"
+                                                fill="#16a34a"
+                                                fillOpacity={0.35}
+                                                name="Prompt"
+                                            />
+                                            <Area
+                                                type="monotone"
+                                                dataKey="completion_tokens"
+                                                stackId="tokens"
+                                                stroke="#3b82f6"
+                                                fill="#3b82f6"
+                                                fillOpacity={0.35}
+                                                name="Completion"
+                                            />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                    <ChartSummary
+                                        items={[
+                                            `Prompt: ${formatNumber(chartTotals.totalPrompt, 0)}`,
+                                            `Completion: ${formatNumber(chartTotals.totalCompletion, 0)}`,
+                                            `Output/Input ratio: ${formatNumber(
+                                                chartTotals.totalPrompt > 0
+                                                    ? chartTotals.totalCompletion / chartTotals.totalPrompt
+                                                    : 0
+                                            )}x`,
+                                        ]}
+                                    />
+                                </>
+                            )}
                         </ChartCard>
                     </div>
 
@@ -748,8 +848,11 @@ export default function Insights() {
                         </ChartCard>
                     </div>
 
-                    <ChartCard title="Average Latency Trend" subtitle="Average TTFT over time (fallback: total latency when TTFT missing)">
-                        <ChartLegend items={[{ label: "Avg Latency (TTFT, ms)", colorClass: "bg-sky-500" }]} />
+                    <ChartCard 
+                        title="Average Latency Trend" 
+                        subtitle={isEmbedding ? "Average response latency over time" : "Average TTFT over time (fallback: total latency when TTFT missing)"}
+                    >
+                        <ChartLegend items={[{ label: isEmbedding ? "Avg Latency (ms)" : "Avg Latency (TTFT, ms)", colorClass: "bg-sky-500" }]} />
                         <ResponsiveContainer width="100%" height={300}>
                             <LineChart data={chartData}>
                                 <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
@@ -763,7 +866,7 @@ export default function Insights() {
                                     stroke="#0ea5e9"
                                     strokeWidth={2}
                                     dot={false}
-                                    name="Avg Latency (TTFT, ms)"
+                                    name={isEmbedding ? "Avg Latency (ms)" : "Avg Latency (TTFT, ms)"}
                                 />
                             </LineChart>
                         </ResponsiveContainer>
@@ -824,10 +927,12 @@ export default function Insights() {
             <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
                 <div className="border-b px-4 py-3 flex items-start justify-between">
                     <div>
-                        <h3 className="font-semibold">Detailed Inference Logs</h3>
+                        <h3 className="font-semibold">Detailed {isEmbedding ? "Embedding" : "Inference"} Logs</h3>
                         <p className="text-xs text-muted-foreground">
-                            Avg token speed: {formatNumber(summary?.throughput.avg_tokens_per_second || 0)} tok/s |
-                            Overall token speed: {formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s
+                            {isEmbedding 
+                                ? `${formatNumber(summary?.throughput.requests_per_minute || 0, 0)} req/min avg`
+                                : `Avg token speed: ${formatNumber(summary?.throughput.avg_tokens_per_second || 0)} tok/s | Overall token speed: ${formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s`
+                            }
                         </p>
                     </div>
                     {logs?.items.length ? (
@@ -850,8 +955,8 @@ export default function Insights() {
                                 <th className="px-4 py-3 text-left font-medium">Deployment</th>
                                 <th className="px-4 py-3 text-left font-medium">Model</th>
                                 <th className="px-4 py-3 text-left font-medium">IP</th>
-                                <th className="px-4 py-3 text-left font-medium">Tokens</th>
-                                <th className="px-4 py-3 text-left font-medium">Latency (TTFT)</th>
+                                <th className="px-4 py-3 text-left font-medium">{isEmbedding ? "Tokens" : "Tokens (In/Out)"}</th>
+                                <th className="px-4 py-3 text-left font-medium">{isEmbedding ? "Latency" : "Latency (TTFT)"}</th>
                                 <th className="px-4 py-3 text-left font-medium">Status</th>
                             </tr>
                         </thead>
@@ -867,7 +972,10 @@ export default function Insights() {
                                     <td className="px-4 py-3">{log.model}</td>
                                     <td className="px-4 py-3 font-mono text-xs">{log.ip_address || "-"}</td>
                                     <td className="px-4 py-3 font-mono text-xs">
-                                        {formatNumber(log.total_tokens, 0)} ({formatNumber(log.prompt_tokens, 0)}/{formatNumber(log.completion_tokens, 0)})
+                                        {isEmbedding 
+                                            ? formatNumber(log.total_tokens, 0)
+                                            : `${formatNumber(log.total_tokens, 0)} (${formatNumber(log.prompt_tokens, 0)}/${formatNumber(log.completion_tokens, 0)})`
+                                        }
                                     </td>
                                     <td className="px-4 py-3 font-mono text-xs">
                                         {log.ttft_ms !== null && log.ttft_ms !== undefined

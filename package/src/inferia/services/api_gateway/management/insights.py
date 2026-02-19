@@ -11,11 +11,14 @@ from inferia.services.api_gateway.db.models import (
     Deployment as DBDeployment,
     InferenceLog as DBInferenceLog,
 )
-from inferia.services.api_gateway.management.dependencies import get_current_user_context
+from inferia.services.api_gateway.management.dependencies import (
+    get_current_user_context,
+)
 from inferia.services.api_gateway.rbac.authorization import authz_service
 from inferia.services.api_gateway.schemas.auth import PermissionEnum
 from inferia.services.api_gateway.schemas.insights import (
     InsightsDeploymentFilterOption,
+    InsightsDeploymentTypeFilter,
     InsightsFiltersResponse,
     InsightsGranularity,
     InsightsLogsResponse,
@@ -75,6 +78,7 @@ def _build_filters(
     model: str | None,
     ip_address: str | None,
     status: InsightsStatusFilter,
+    deployment_type: InsightsDeploymentTypeFilter,
 ) -> List[Any]:
     conditions: List[Any] = [
         DBDeployment.org_id == org_id,
@@ -101,6 +105,9 @@ def _build_filters(
         conditions.append(DBInferenceLog.status_code < 400)
     elif status == "error":
         conditions.append(DBInferenceLog.status_code >= 400)
+
+    if deployment_type != "all":
+        conditions.append(DBDeployment.model_type == deployment_type)
 
     return conditions
 
@@ -132,6 +139,7 @@ async def get_insights_summary(
     model: str | None = Query(None),
     ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
+    deployment_type: InsightsDeploymentTypeFilter = Query("all"),
     db: AsyncSession = Depends(get_db),
 ):
     user_ctx = get_current_user_context(request)
@@ -151,6 +159,7 @@ async def get_insights_summary(
         model,
         ip_address,
         status,
+        deployment_type,
     )
 
     success_condition = DBInferenceLog.status_code < 400
@@ -239,6 +248,7 @@ async def get_insights_timeseries(
     model: str | None = Query(None),
     ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
+    deployment_type: InsightsDeploymentTypeFilter = Query("all"),
     granularity: InsightsGranularity = Query("day"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -259,6 +269,7 @@ async def get_insights_timeseries(
         model,
         ip_address,
         status,
+        deployment_type,
     )
 
     success_condition = DBInferenceLog.status_code < 400
@@ -333,6 +344,7 @@ async def get_insights_top_ips(
     model: str | None = Query(None),
     ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
+    deployment_type: InsightsDeploymentTypeFilter = Query("all"),
     limit: int = Query(12, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
@@ -353,6 +365,7 @@ async def get_insights_top_ips(
         model,
         ip_address,
         status,
+        deployment_type,
     )
 
     success_condition = DBInferenceLog.status_code < 400
@@ -411,6 +424,7 @@ async def get_insights_top_models(
     model: str | None = Query(None),
     ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
+    deployment_type: InsightsDeploymentTypeFilter = Query("all"),
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
 ):
@@ -431,6 +445,7 @@ async def get_insights_top_models(
         model,
         ip_address,
         status,
+        deployment_type,
     )
 
     success_condition = DBInferenceLog.status_code < 400
@@ -484,6 +499,7 @@ async def get_insights_logs(
     model: str | None = Query(None),
     ip_address: str | None = Query(None),
     status: InsightsStatusFilter = Query("all"),
+    deployment_type: InsightsDeploymentTypeFilter = Query("all"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -505,6 +521,7 @@ async def get_insights_logs(
         model,
         ip_address,
         status,
+        deployment_type,
     )
 
     clamped_limit = min(max(limit, 1), 200)
@@ -540,6 +557,7 @@ async def get_insights_filters(
     request: Request,
     start_time: datetime = Query(..., description="Start datetime (ISO-8601)"),
     end_time: datetime = Query(..., description="End datetime (ISO-8601)"),
+    deployment_type: InsightsDeploymentTypeFilter = Query("all"),
     db: AsyncSession = Depends(get_db),
 ):
     user_ctx = get_current_user_context(request)
@@ -552,43 +570,53 @@ async def get_insights_filters(
 
     normalized_start, normalized_end = _normalize_time_window(start_time, end_time)
 
+    deployment_conditions = [DBDeployment.org_id == user_ctx.org_id]
+    if deployment_type != "all":
+        deployment_conditions.append(DBDeployment.model_type == deployment_type)
+
     deployments_stmt = (
-        select(DBDeployment.id, DBDeployment.model_name)
-        .where(DBDeployment.org_id == user_ctx.org_id)
+        select(DBDeployment.id, DBDeployment.model_name, DBDeployment.model_type)
+        .where(*deployment_conditions)
         .order_by(DBDeployment.model_name.asc())
     )
     deployments_result = await db.execute(deployments_stmt)
     deployments = [
-        InsightsDeploymentFilterOption(id=str(row.id), model_name=row.model_name)
+        InsightsDeploymentFilterOption(
+            id=str(row.id),
+            model_name=row.model_name,
+            model_type=row.model_type,
+        )
         for row in deployments_result.all()
     ]
+
+    log_conditions = [
+        DBDeployment.org_id == user_ctx.org_id,
+        DBInferenceLog.created_at >= normalized_start,
+        DBInferenceLog.created_at <= normalized_end,
+    ]
+    if deployment_type != "all":
+        log_conditions.append(DBDeployment.model_type == deployment_type)
 
     models_stmt = (
         select(DBInferenceLog.model)
         .select_from(DBInferenceLog)
         .join(DBDeployment, DBInferenceLog.deployment_id == DBDeployment.id)
-        .where(
-            DBDeployment.org_id == user_ctx.org_id,
-            DBInferenceLog.created_at >= normalized_start,
-            DBInferenceLog.created_at <= normalized_end,
-        )
+        .where(*log_conditions)
         .distinct()
         .order_by(DBInferenceLog.model.asc())
     )
     models_result = await db.execute(models_stmt)
     models = [row.model for row in models_result.all() if row.model]
 
+    ip_conditions = list(log_conditions)
+    ip_conditions.append(DBInferenceLog.ip_address.isnot(None))
+    ip_conditions.append(DBInferenceLog.ip_address != "")
+
     ip_addresses_stmt = (
         select(DBInferenceLog.ip_address)
         .select_from(DBInferenceLog)
         .join(DBDeployment, DBInferenceLog.deployment_id == DBDeployment.id)
-        .where(
-            DBDeployment.org_id == user_ctx.org_id,
-            DBInferenceLog.created_at >= normalized_start,
-            DBInferenceLog.created_at <= normalized_end,
-            DBInferenceLog.ip_address.isnot(None),
-            DBInferenceLog.ip_address != "",
-        )
+        .where(*ip_conditions)
         .distinct()
         .order_by(DBInferenceLog.ip_address.asc())
     )
@@ -602,4 +630,5 @@ async def get_insights_filters(
         models=models,
         ip_addresses=ip_addresses,
         status_options=["all", "success", "error"],
+        deployment_types=["all", "inference", "embedding"],
     )
