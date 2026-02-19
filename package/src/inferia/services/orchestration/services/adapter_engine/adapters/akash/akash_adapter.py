@@ -124,6 +124,7 @@ class AkashAdapter(ProviderAdapter):
         region: Optional[str] = None,
         use_spot: bool = False,
         metadata: Optional[Dict] = None,
+        provider_credential_name: Optional[str] = None,
     ) -> Dict:
         metadata = metadata or {}
 

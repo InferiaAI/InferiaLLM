@@ -36,12 +36,19 @@ class SkyPilotAdapter(ProviderAdapter):
         try:
             loop = asyncio.get_running_loop()
             # Get enabled clouds
-            enabled_clouds = await loop.run_in_executor(None, sky.check.get_cloud_credential_file_mounts)
-            
+            enabled_clouds = await loop.run_in_executor(
+                None, sky.check.get_cloud_credential_file_mounts
+            )
+
             # Return common GPU resources available across clouds
             common_gpus = [
                 {"gpu_type": "A100", "gpu_memory_gb": 80, "vcpu": 12, "ram_gb": 85},
-                {"gpu_type": "A100-80GB", "gpu_memory_gb": 80, "vcpu": 12, "ram_gb": 85},
+                {
+                    "gpu_type": "A100-80GB",
+                    "gpu_memory_gb": 80,
+                    "vcpu": 12,
+                    "ram_gb": 85,
+                },
                 {"gpu_type": "A10G", "gpu_memory_gb": 24, "vcpu": 4, "ram_gb": 16},
                 {"gpu_type": "V100", "gpu_memory_gb": 16, "vcpu": 8, "ram_gb": 61},
                 {"gpu_type": "T4", "gpu_memory_gb": 16, "vcpu": 4, "ram_gb": 16},
@@ -51,21 +58,23 @@ class SkyPilotAdapter(ProviderAdapter):
 
             resources = []
             for gpu in common_gpus:
-                resources.append({
-                    "provider": "skypilot",
-                    "provider_resource_id": gpu["gpu_type"],
-                    "gpu_type": gpu["gpu_type"],
-                    "gpu_count": 1,
-                    "gpu_memory_gb": gpu["gpu_memory_gb"],
-                    "vcpu": gpu["vcpu"],
-                    "ram_gb": gpu["ram_gb"],
-                    "region": "auto",  # SkyPilot auto-selects region
-                    "pricing_model": "on_demand",
-                    "price_per_hour": 0.0,  # Varies by cloud/region
-                    "metadata": {
-                        "clouds": ["aws", "gcp", "azure"],
-                    },
-                })
+                resources.append(
+                    {
+                        "provider": "skypilot",
+                        "provider_resource_id": gpu["gpu_type"],
+                        "gpu_type": gpu["gpu_type"],
+                        "gpu_count": 1,
+                        "gpu_memory_gb": gpu["gpu_memory_gb"],
+                        "vcpu": gpu["vcpu"],
+                        "ram_gb": gpu["ram_gb"],
+                        "region": "auto",  # SkyPilot auto-selects region
+                        "pricing_model": "on_demand",
+                        "price_per_hour": 0.0,  # Varies by cloud/region
+                        "metadata": {
+                            "clouds": ["aws", "gcp", "azure"],
+                        },
+                    }
+                )
 
             return resources
 
@@ -84,25 +93,23 @@ class SkyPilotAdapter(ProviderAdapter):
         region: Optional[str] = None,
         use_spot: bool = False,
         metadata: Optional[Dict] = None,
+        provider_credential_name: Optional[str] = None,
     ) -> Dict:
         """
         Provision a compute node via SkyPilot.
         """
         task_name = f"skypilot-{uuid.uuid4().hex[:8]}"
 
-        task = (
-            Task(
-                name=task_name,
-                run="echo READY",
-                workdir=self.workdir,
-            )
-            .set_resources(
-                Resources(
-                    cloud="aws",
-                    accelerators={provider_resource_id: 1},
-                    use_spot=use_spot,
-                    region=region,
-                )
+        task = Task(
+            name=task_name,
+            run="echo READY",
+            workdir=self.workdir,
+        ).set_resources(
+            Resources(
+                cloud="aws",
+                accelerators={provider_resource_id: 1},
+                use_spot=use_spot,
+                region=region,
             )
         )
 
@@ -184,7 +191,12 @@ class SkyPilotAdapter(ProviderAdapter):
         Fetch logs from a SkyPilot cluster.
         """
         # In actual SkyPilot, this usually requires 'sky.logs cluster_name'
-        return {"logs": ["SkyPilot logs are currently available via CLI: sky logs " + provider_instance_id]}
+        return {
+            "logs": [
+                "SkyPilot logs are currently available via CLI: sky logs "
+                + provider_instance_id
+            ]
+        }
 
     async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
         """
@@ -193,7 +205,5 @@ class SkyPilotAdapter(ProviderAdapter):
         return {
             "ws_url": None,
             "provider": "skypilot",
-            "subscription": {
-                "cluster_name": provider_instance_id
-            }
+            "subscription": {"cluster_name": provider_instance_id},
         }

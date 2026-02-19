@@ -20,6 +20,7 @@ message ProvisionNodeRequest {
   string region = 4;
   bool use_spot = 5;
   map<string, string> metadata = 6;
+  string provider_credential_name = 7;  // Which credential to use for this provider
 }
 
 message ProvisionNodeResponse {

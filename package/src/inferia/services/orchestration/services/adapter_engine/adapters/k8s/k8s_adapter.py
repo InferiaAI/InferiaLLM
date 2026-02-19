@@ -121,6 +121,7 @@ class KubernetesAdapter(ProviderAdapter):
         region: Optional[str] = None,
         use_spot: bool = False,
         metadata: Optional[Dict] = None,
+        provider_credential_name: Optional[str] = None,
     ) -> Dict:
         """
         Provision a compute node by creating a Kubernetes pod.

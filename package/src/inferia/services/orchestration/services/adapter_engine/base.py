@@ -124,10 +124,19 @@ class ProviderAdapter(ABC):
         region: Optional[str] = None,
         use_spot: bool = False,
         metadata: Optional[Dict] = None,
+        provider_credential_name: Optional[str] = None,
     ) -> Dict:
         """
         Provision a single compute node.
         Must return inventory-compatible fields.
+
+        Args:
+            provider_resource_id: Provider-specific resource identifier
+            pool_id: Pool ID for this deployment
+            region: Optional region constraint
+            use_spot: Whether to use spot instances
+            metadata: Additional metadata for the deployment
+            provider_credential_name: Which named credential to use for this provider
 
         Standard return format:
         {

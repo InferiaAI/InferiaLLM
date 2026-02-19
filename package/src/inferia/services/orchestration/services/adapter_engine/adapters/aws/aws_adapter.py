@@ -1,5 +1,6 @@
 import secrets
 import string
+from typing import Optional, Dict
 from inferia.services.orchestration.services.adapter_engine.base import ProviderAdapter
 import boto3
 
@@ -37,7 +38,16 @@ class AWSAdapter(ProviderAdapter):
 
         return resources
 
-    async def provision_node(self, resource_id: str):
+    async def provision_node(
+        self,
+        *,
+        provider_resource_id: str,
+        pool_id: str,
+        region: Optional[str] = None,
+        use_spot: bool = False,
+        metadata: Optional[Dict] = None,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         # Launch EC2 instance
         # generating cryptographically secure random instance ID for placeholder
         # Using secrets module instead of random for security-sensitive operations
@@ -48,8 +58,15 @@ class AWSAdapter(ProviderAdapter):
         instance_id = f"i-0{random_suffix}"
 
         return {
+            "provider": "aws",
             "provider_instance_id": instance_id,
             "hostname": "ip-10-0-1-16",
+            "gpu_total": 0,
+            "vcpu_total": 4,
+            "ram_gb_total": 16,
+            "region": region or "us-east-1",
+            "node_class": "on_demand",
+            "metadata": {},
         }
 
     async def deprovision_node(self, instance_id: str):

@@ -137,6 +137,7 @@ class NosanaAdapter(ProviderAdapter):
         region: Optional[str] = None,
         use_spot: bool = False,
         metadata: Optional[Dict] = None,
+        provider_credential_name: Optional[str] = None,
     ) -> Dict:
         if not metadata:
             raise ValueError("NosanaAdapter requires deployment metadata")
@@ -275,6 +276,11 @@ class NosanaAdapter(ProviderAdapter):
                 "ram_gb_allocated": ram_gb_allocated,
             },
         }
+
+        # Include credential name if specified (for multi-credential support)
+        if provider_credential_name:
+            payload["credentialName"] = provider_credential_name
+            logger.info(f"Using named credential: {provider_credential_name}")
 
         try:
             async with aiohttp.ClientSession() as session:

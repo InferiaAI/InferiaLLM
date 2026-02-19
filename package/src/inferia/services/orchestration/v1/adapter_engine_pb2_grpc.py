@@ -3,8 +3,8 @@
 import grpc
 import warnings
 
+import adapter_engine_pb2 as adapter__engine__pb2
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-from inferia.services.orchestration.v1 import adapter_engine_pb2 as v1_dot_adapter__engine__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -19,7 +19,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in v1/adapter_engine_pb2_grpc.py depends on'
+        + ' but the generated code in adapter_engine_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -37,13 +37,13 @@ class AdapterEngineStub(object):
         """
         self.DiscoverProviderResources = channel.unary_unary(
                 '/orchestration.v1.AdapterEngine/DiscoverProviderResources',
-                request_serializer=v1_dot_adapter__engine__pb2.DiscoverRequest.SerializeToString,
+                request_serializer=adapter__engine__pb2.DiscoverRequest.SerializeToString,
                 response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 _registered_method=True)
         self.ProvisionNode = channel.unary_unary(
                 '/orchestration.v1.AdapterEngine/ProvisionNode',
-                request_serializer=v1_dot_adapter__engine__pb2.ProvisionNodeRequest.SerializeToString,
-                response_deserializer=v1_dot_adapter__engine__pb2.ProvisionNodeResponse.FromString,
+                request_serializer=adapter__engine__pb2.ProvisionNodeRequest.SerializeToString,
+                response_deserializer=adapter__engine__pb2.ProvisionNodeResponse.FromString,
                 _registered_method=True)
 
 
@@ -67,13 +67,13 @@ def add_AdapterEngineServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'DiscoverProviderResources': grpc.unary_unary_rpc_method_handler(
                     servicer.DiscoverProviderResources,
-                    request_deserializer=v1_dot_adapter__engine__pb2.DiscoverRequest.FromString,
+                    request_deserializer=adapter__engine__pb2.DiscoverRequest.FromString,
                     response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'ProvisionNode': grpc.unary_unary_rpc_method_handler(
                     servicer.ProvisionNode,
-                    request_deserializer=v1_dot_adapter__engine__pb2.ProvisionNodeRequest.FromString,
-                    response_serializer=v1_dot_adapter__engine__pb2.ProvisionNodeResponse.SerializeToString,
+                    request_deserializer=adapter__engine__pb2.ProvisionNodeRequest.FromString,
+                    response_serializer=adapter__engine__pb2.ProvisionNodeResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -101,7 +101,7 @@ class AdapterEngine(object):
             request,
             target,
             '/orchestration.v1.AdapterEngine/DiscoverProviderResources',
-            v1_dot_adapter__engine__pb2.DiscoverRequest.SerializeToString,
+            adapter__engine__pb2.DiscoverRequest.SerializeToString,
             google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options,
             channel_credentials,
@@ -128,8 +128,8 @@ class AdapterEngine(object):
             request,
             target,
             '/orchestration.v1.AdapterEngine/ProvisionNode',
-            v1_dot_adapter__engine__pb2.ProvisionNodeRequest.SerializeToString,
-            v1_dot_adapter__engine__pb2.ProvisionNodeResponse.FromString,
+            adapter__engine__pb2.ProvisionNodeRequest.SerializeToString,
+            adapter__engine__pb2.ProvisionNodeResponse.FromString,
             options,
             channel_credentials,
             insecure,
