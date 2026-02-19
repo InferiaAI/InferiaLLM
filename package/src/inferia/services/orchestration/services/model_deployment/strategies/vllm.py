@@ -40,12 +40,13 @@ class VLLMDeploymentStrategy:
             )
 
         allocation_id = uuid.uuid4()
+        allocated = False
 
         try:
             # ------------------------------------------------
             # ATOMIC RESOURCE ACQUISITION (NO PLACEMENT CALL)
             # ------------------------------------------------
-            allocation = await self.scheduler.allocate(
+            ok, reason, _ = await self.scheduler.allocate(
                 allocation_id=allocation_id,
                 node_id=node_id,
                 gpu=gpu_per_replica,
@@ -56,13 +57,18 @@ class VLLMDeploymentStrategy:
                 priority=100,
             )
 
+            if not ok:
+                raise RuntimeError(f"Allocation failed: {reason} (node: {node_id})")
+
+            allocated = True
+
             # ------------------------------------------------
             # RETURN *DESIRED STATE ONLY*
             # Runtime execution happens in WORKER
             # ------------------------------------------------
             return {
-                "node_ids": node_id,
-                "allocation_ids": allocation_id,
+                "node_ids": [node_id],
+                "allocation_ids": [allocation_id],
                 "runtime": "vllm",
                 "desired_state": "DEPLOY",
                 "model": model,
@@ -72,7 +78,7 @@ class VLLMDeploymentStrategy:
             # ------------------------------------------------
             # ROLLBACK GUARANTEE (NO ZOMBIES)
             # ------------------------------------------------
-            if allocation_id:
+            if allocated:
                 await self.scheduler.release(
                     allocation_id=allocation_id
                 )

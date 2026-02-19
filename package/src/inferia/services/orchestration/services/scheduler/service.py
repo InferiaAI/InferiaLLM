@@ -10,20 +10,20 @@ class SchedulerService(scheduler_pb2_grpc.SchedulerServicer):
 
     async def Allocate(self, request, context):
         ok, reason, pool_id = await self.repo.allocate_with_preemption(
-            UUID(request.allocation_id),
-            UUID(request.node_id),
-            request.gpu,
-            request.vcpu,
-            request.ram_gb,
-            request.priority,
-            request.owner_type,
-            request.owner_id,
+            allocation_id=UUID(request.allocation_id),
+            node_id=UUID(request.node_id),
+            gpu=request.gpu,
+            vcpu=request.vcpu,
+            ram_gb=request.ram_gb,
+            priority=request.priority,
+            owner_type=request.owner_type,
+            owner_id=request.owner_id,
         )
 
-        if not ok and pool_id:
+        if self.autoscaler_repo and (not ok and pool_id):
             await self.autoscaler_repo.incr_failures(pool_id)
 
-        if ok and pool_id:
+        if self.autoscaler_repo and (ok and pool_id):
             await self.autoscaler_repo.reset_failures(pool_id)
 
         return scheduler_pb2.AllocateResponse(success=ok, reason=reason)

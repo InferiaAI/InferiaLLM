@@ -25,6 +25,7 @@ class AdapterEngineService(
 
         node = await adapter.provision_node(
             provider_resource_id=request.provider_resource_id,
+            pool_id=request.pool_id,
             region=request.region,
             use_spot=request.use_spot,
             metadata=dict(request.metadata),

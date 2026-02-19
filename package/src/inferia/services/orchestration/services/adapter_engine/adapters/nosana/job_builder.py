@@ -8,6 +8,7 @@ Supports vLLM, Ollama, and vLLM-Omni engines.
 from typing import Dict, Any, Optional, List
 import json
 import os
+import shlex
 from inferia.services.orchestration.config import settings
 
 # Internal API key used for service-to-service auth and vLLM security
@@ -175,6 +176,7 @@ def create_ollama_job(
     effective_api_key = api_key or INTERNAL_API_KEY
 
     ollama_image = image if "ollama" in image else "docker.io/ollama/ollama:latest"
+    safe_model_id = shlex.quote(model_id)
 
     final_cmd: List[str]
     exposed_port: int
@@ -193,7 +195,7 @@ def create_ollama_job(
             'printf ":8080 {\\n  @auth {\\n    not header Authorization \\"Bearer %s\\"\\n  }\\n  respond @auth \\"Unauthorized\\" 401\\n  reverse_proxy localhost:11434 {\\n    flush_interval -1\\n  }\\n}" "$MY_API_KEY" > Caddyfile && '
             "ollama serve & echo 'Waiting for Ollama...' && "
             "while ! curl -s http://localhost:11434 > /dev/null; do sleep 2; done && "
-            f"echo 'Ollama is ready!' && ollama pull {model_id} && "
+            f"echo 'Ollama is ready!' && ollama pull {safe_model_id} && "
             "caddy run --config Caddyfile"
         )
         final_cmd = ["-c", secure_script]
@@ -202,8 +204,21 @@ def create_ollama_job(
         exposed_port = 11434
         final_cmd = [
             "-c",
-            f"ollama serve & sleep 5 && ollama pull {model_id} && tail -f /dev/null",
+            f"ollama serve & sleep 5 && ollama pull {safe_model_id} && tail -f /dev/null",
         ]
+
+    health_headers: Dict[str, str] = {}
+    if effective_api_key:
+        health_headers["Authorization"] = f"Bearer {effective_api_key}"
+
+    health_check = {
+        "path": "/api/tags",
+        "type": "http",
+        "method": "GET",
+        "headers": health_headers,
+        "continuous": False,
+        "expected_status": 200,
+    }
 
     container_op = {
         "type": "container/run",
@@ -214,7 +229,12 @@ def create_ollama_job(
             "cmd": final_cmd,
             "env": envs,
             "gpu": True,
-            "expose": exposed_port,
+            "expose": [
+                {
+                    "port": exposed_port,
+                    "health_checks": [health_check],
+                }
+            ],
         },
     }
 
