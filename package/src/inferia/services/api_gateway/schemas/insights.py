@@ -7,6 +7,7 @@ from inferia.services.api_gateway.schemas.logging import InferenceLogResponse
 
 InsightsStatusFilter = Literal["all", "success", "error"]
 InsightsGranularity = Literal["hour", "day"]
+InsightsDeploymentTypeFilter = Literal["all", "inference", "embedding"]
 
 
 class InsightsFilterParams(BaseModel):
@@ -16,6 +17,7 @@ class InsightsFilterParams(BaseModel):
     model: Optional[str] = None
     ip_address: Optional[str] = None
     status: InsightsStatusFilter = "all"
+    deployment_type: InsightsDeploymentTypeFilter = "all"
 
 
 class InsightsTotals(BaseModel):
@@ -96,6 +98,7 @@ class InsightsTopModelsResponse(BaseModel):
 class InsightsDeploymentFilterOption(BaseModel):
     id: str
     model_name: str
+    model_type: Optional[str] = None
 
 
 class InsightsFiltersResponse(BaseModel):
@@ -104,4 +107,7 @@ class InsightsFiltersResponse(BaseModel):
     ip_addresses: List[str] = Field(default_factory=list)
     status_options: List[InsightsStatusFilter] = Field(
         default_factory=lambda: ["all", "success", "error"]
+    )
+    deployment_types: List[InsightsDeploymentTypeFilter] = Field(
+        default_factory=lambda: ["all", "inference", "embedding"]
     )

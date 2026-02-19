@@ -164,7 +164,7 @@ const router = createBrowserRouter([
           },
           {
             path: "compute",
-            element: <Navigate to="instances" replace />,
+            element: <Navigate to="pools" replace />,
           },
           {
             path: "settings",

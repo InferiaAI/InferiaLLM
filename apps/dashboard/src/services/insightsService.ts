@@ -2,6 +2,7 @@ import api from "@/lib/api";
 
 export type InsightsStatus = "all" | "success" | "error";
 export type InsightsGranularity = "hour" | "day";
+export type InsightsDeploymentType = "all" | "inference" | "embedding";
 
 export interface InsightsQueryParams {
     start_time: string;
@@ -10,6 +11,7 @@ export interface InsightsQueryParams {
     model?: string;
     ip_address?: string;
     status?: InsightsStatus;
+    deployment_type?: InsightsDeploymentType;
 }
 
 export interface InsightsTotals {
@@ -88,13 +90,15 @@ export interface InsightsLogsResponse {
 export interface InsightsDeploymentFilterOption {
     id: string;
     model_name: string;
+    model_type?: string;
 }
 
 export interface InsightsFiltersResponse {
     deployments: InsightsDeploymentFilterOption[];
     models: string[];
     ip_addresses: string[];
-    status_options: InsightsStatusFilter[];
+    status_options: InsightsStatus[];
+    deployment_types: InsightsDeploymentType[];
 }
 
 export interface InsightsTopIp {
@@ -144,7 +148,7 @@ export const insightsService = {
         return data;
     },
 
-    async getFilters(params: Pick<InsightsQueryParams, "start_time" | "end_time">): Promise<InsightsFiltersResponse> {
+    async getFilters(params: Pick<InsightsQueryParams, "start_time" | "end_time" | "deployment_type">): Promise<InsightsFiltersResponse> {
         const { data } = await api.get<InsightsFiltersResponse>("/management/insights/filters", { params });
         return data;
     },

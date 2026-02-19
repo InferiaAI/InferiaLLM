@@ -20,9 +20,7 @@ def parse_uuid(value: str, field: str, context):
         )
 
 
-class ModelDeploymentService(
-    model_deployment_pb2_grpc.ModelDeploymentServiceServicer
-):
+class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceServicer):
     def __init__(self, controller):
         self.controller = controller
 
@@ -46,7 +44,10 @@ class ModelDeploymentService(
             endpoint=request.endpoint if request.endpoint else None,
             org_id=request.org_id if request.org_id else None,
             policies=request.policies if request.policies else None,
-            inference_model=request.inference_model if request.inference_model else None,
+            inference_model=request.inference_model
+            if request.inference_model
+            else None,
+            model_type=request.model_type if request.model_type else "inference",
         )
 
         return model_deployment_pb2.DeployModelResponse(
@@ -56,9 +57,7 @@ class ModelDeploymentService(
 
     async def GetDeployment(self, request, context):
         logger.info(f"GetDeployment requested: {request.deployment_id}")
-        deployment_id = parse_uuid(
-            request.deployment_id, "deployment_id", context
-        )
+        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
 
         logger.info(f"Fetching deployment {deployment_id} from controller")
         d = await self.controller.get_deployment(deployment_id)
@@ -79,24 +78,37 @@ class ModelDeploymentService(
             pool_id=str(d["pool_id"]) if d.get("pool_id") else "",
             state=d["state"],
             engine=d.get("engine") or "",
-            configuration=json.dumps(d.get("configuration")) if isinstance(d.get("configuration"), (dict, list)) else (d.get("configuration") or "{}"),
+            configuration=json.dumps(d.get("configuration"))
+            if isinstance(d.get("configuration"), (dict, list))
+            else (d.get("configuration") or "{}"),
             owner_id=d.get("owner_id") or "",
             endpoint=d.get("endpoint") or "",
             org_id=d.get("org_id") or "",
-            policies=json.dumps(d.get("policies")) if isinstance(d.get("policies"), (dict, list)) else (d.get("policies") or "{}"),
+            policies=json.dumps(d.get("policies"))
+            if isinstance(d.get("policies"), (dict, list))
+            else (d.get("policies") or "{}"),
             inference_model=d.get("inference_model") or "",
+            model_type=d.get("model_type") or "inference",
         )
 
     # -------------------------------------------------
     # LIST
     # -------------------------------------------------
     async def ListDeployments(self, request, context):
-        logger.info(f"ListDeployments requested: pool_id='{request.pool_id}', org_id='{request.org_id}'")
+        logger.info(
+            f"ListDeployments requested: pool_id='{request.pool_id}', org_id='{request.org_id}'"
+        )
         try:
-            pool_id = parse_uuid(request.pool_id, "pool_id", context) if request.pool_id else None
+            pool_id = (
+                parse_uuid(request.pool_id, "pool_id", context)
+                if request.pool_id
+                else None
+            )
             org_id = request.org_id if request.org_id else None
-            
-            logger.info(f"Calling controller.list_deployments(pool_id={pool_id}, org_id={org_id})")
+
+            logger.info(
+                f"Calling controller.list_deployments(pool_id={pool_id}, org_id={org_id})"
+            )
             deployments = await self.controller.list_deployments(
                 pool_id=pool_id,
                 org_id=org_id,
@@ -118,12 +130,17 @@ class ModelDeploymentService(
                     pool_id=str(d["pool_id"]) if d.get("pool_id") else "",
                     state=d["state"],
                     engine=d.get("engine") or "",
-                    configuration=json.dumps(d.get("configuration")) if isinstance(d.get("configuration"), (dict, list)) else (d.get("configuration") or "{}"),
+                    configuration=json.dumps(d.get("configuration"))
+                    if isinstance(d.get("configuration"), (dict, list))
+                    else (d.get("configuration") or "{}"),
                     owner_id=d.get("owner_id") or "",
                     endpoint=d.get("endpoint") or "",
                     org_id=d.get("org_id") or "",
-                    policies=json.dumps(d.get("policies")) if isinstance(d.get("policies"), (dict, list)) else (d.get("policies") or "{}"),
+                    policies=json.dumps(d.get("policies"))
+                    if isinstance(d.get("policies"), (dict, list))
+                    else (d.get("policies") or "{}"),
                     inference_model=d.get("inference_model") or "",
+                    model_type=d.get("model_type") or "inference",
                 )
                 for d in deployments
             ]
@@ -133,14 +150,13 @@ class ModelDeploymentService(
     # START
     # -------------------------------------------------
     async def StartDeployment(self, request, context):
-        deployment_id = parse_uuid(
-            request.deployment_id, "deployment_id", context
-        )
+        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
 
         try:
             next_state = await self.controller.start_deployment(deployment_id)
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).exception("Failed to start deployment")
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
@@ -153,12 +169,8 @@ class ModelDeploymentService(
     # DELETE
     # -------------------------------------------------
     async def DeleteDeployment(self, request, context):
-        deployment_id = parse_uuid(
-            request.deployment_id, "deployment_id", context
-        )
+        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
 
         await self.controller.request_delete(deployment_id)
 
-        return model_deployment_pb2.DeleteDeploymentResponse(
-            accepted=True
-        )
+        return model_deployment_pb2.DeleteDeploymentResponse(accepted=True)

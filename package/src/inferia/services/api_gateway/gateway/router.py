@@ -29,6 +29,7 @@ from sqlalchemy.future import select
 from inferia.services.api_gateway.db.models import Deployment
 
 from inferia.services.api_gateway.gateway.rate_limiter import rate_limiter
+from inferia.services.api_gateway.gateway.http_client import gateway_http_client
 from inferia.services.api_gateway.security.encryption import LogEncryption
 from inferia.services.api_gateway.config import settings
 import httpx
@@ -195,20 +196,21 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
     # GuardrailScanRequest has 'text'. Service expects 'text'.
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{settings.guardrail_service_url}/scan",
-                json=payload,
-                timeout=settings.guardrail_settings_timeout
-                if hasattr(settings, "guardrail_settings_timeout")
-                else 10.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        client = gateway_http_client.get_service_client()
+        response = await client.post(
+            f"{settings.guardrail_service_url}/scan",
+            json=payload,
+            timeout=settings.guardrail_settings_timeout
+            if hasattr(settings, "guardrail_settings_timeout")
+            else 10.0,
+        )
+        response.raise_for_status()
+        return response.json()
     except Exception as e:
         logger.error(f"Guardrail Service call failed: {e}")
         # Fail open or closed? Usually closed for security.
         raise HTTPException(status_code=500, detail=f"Guardrail check failed: {str(e)}")
+
 
 # In-memory cache for models list (30s TTL)
 models_cache = cachetools.TTLCache(maxsize=100, ttl=30)
@@ -247,7 +249,7 @@ async def list_models(
             detail="Invalid API Key",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Check cache after authentication
     cache_key = (skip, limit)
     if cache_key in models_cache:
@@ -264,7 +266,9 @@ async def list_models(
     all_deployments = result.scalars().all()
 
     # Health Check for Nosana deployments
-    async def check_health(client: httpx.AsyncClient, d: Deployment) -> Optional[Deployment]:
+    async def check_health(
+        client: httpx.AsyncClient, d: Deployment
+    ) -> Optional[Deployment]:
         # Perform health check for Nosana and various inference engines
         # Often Nosana deployments use vllm, ollama, etc.
         is_nosana_link = d.endpoint and "nos.ci" in d.endpoint
@@ -272,7 +276,11 @@ async def list_models(
         if d.engine not in supported_engines and not is_nosana_link:
             return d
 
-        if not d.endpoint or not d.endpoint.startswith("http") or d.endpoint == "job-running-confidential":
+        if (
+            not d.endpoint
+            or not d.endpoint.startswith("http")
+            or d.endpoint == "job-running-confidential"
+        ):
             return None
 
         try:
@@ -296,7 +304,7 @@ async def list_models(
             # 2. Perform health check to /v1/models as requested
             health_url = f"{d.endpoint.rstrip('/')}/v1/models"
             resp = await client.get(health_url, headers=headers, timeout=5.0)
-            
+
             # Validate status code AND that response is valid JSON
             if resp.status_code == 200:
                 try:
@@ -323,15 +331,13 @@ async def list_models(
         return None
 
     # Run health checks in parallel
-    async with httpx.AsyncClient() as client:
-        health_results = await asyncio.gather(
-            *(check_health(client, d) for d in all_deployments),
-            return_exceptions=True
-        )
-    
+    client = gateway_http_client.get_service_client()
+    health_results = await asyncio.gather(
+        *(check_health(client, d) for d in all_deployments), return_exceptions=True
+    )
+
     deployments = [
-        d for d in health_results 
-        if isinstance(d, Deployment) and d is not None
+        d for d in health_results if isinstance(d, Deployment) and d is not None
     ]
 
     mock_models = [
@@ -346,10 +352,10 @@ async def list_models(
     ]
 
     response = ModelsListResponse(data=mock_models)
-    
+
     # Cache the response
     models_cache[cache_key] = response
-    
+
     return response
 
 
@@ -364,6 +370,7 @@ from sqlalchemy.future import select
 class ResolveContextRequest(BaseModel):
     api_key: str
     model: str
+    model_type: str = "inference"
 
 
 from typing import Any, Dict, Optional
@@ -391,7 +398,9 @@ async def resolve_inference_context(
     Used by Inference Gateway to fetch config.
     """
     # Delegate to Policy Engine
-    result = await policy_engine.resolve_context(db, request.api_key, request.model)
+    result = await policy_engine.resolve_context(
+        db, request.api_key, request.model, request.model_type
+    )
 
     if not result["valid"]:
         return ResolveContextResponse(valid=False, error=result["error"])
@@ -487,101 +496,95 @@ async def process_prompt(
             template_config.get("variable_mapping", {}) if template_enabled else {}
         )
 
-        async with httpx.AsyncClient() as client:
-            # Resolve mapped variables
-            for var_name, config in variable_mapping.items():
-                source = config.get("source")
-                if source == "rag":
-                    collection = config.get("collection_id") or "default"
-                    top_k = config.get("top_k", 3)
-                    # Fetch RAG context for this variable via Data Service (Prompt Engine)
-                    try:
-                        resp = await client.post(
-                            f"{settings.data_service_url}/context/assemble",
-                            json={
-                                "query": processed_query,
-                                "collection_name": collection,
-                                "org_id": org_id or "default",
-                                "n_results": top_k,
-                            },
-                            timeout=5.0,
-                        )
-                        if resp.status_code == 200:
-                            rag_val = resp.json().get("context", "")
-                            if rag_val:
-                                variables[var_name] = rag_val
-                                rag_used = True
-                    except Exception as e:
-                        logger.error(f"Failed to fetch RAG context: {e}")
-
-                elif source == "static":
-                    variables[var_name] = config.get("value", "")
-                elif source == "request":
-                    # Key alias, e.g. map "user_name" var to "user" payload key
-                    key = config.get("key", var_name)
-                    # If key exists in request vars, use it. Otherwise keep existing or ignore.
-                    if key in variables:
-                        variables[var_name] = variables[key]
-
-            # Always inject standard vars if not mapped (backward compat)
-            if "query" not in variables:
-                variables["query"] = processed_query
-
-            # Legacy RAG support (if rag_config passed but no mapping used)
-            if (
-                request.rag_config
-                and request.rag_config.get("enabled")
-                and not rag_used
-            ):
-                if "context" not in variables:
-                    collection = (
-                        request.rag_config.get("default_collection") or "default"
+        client = gateway_http_client.get_service_client()
+        # Resolve mapped variables
+        for var_name, config in variable_mapping.items():
+            source = config.get("source")
+            if source == "rag":
+                collection = config.get("collection_id") or "default"
+                top_k = config.get("top_k", 3)
+                # Fetch RAG context for this variable via Data Service (Prompt Engine)
+                try:
+                    resp = await client.post(
+                        f"{settings.data_service_url}/context/assemble",
+                        json={
+                            "query": processed_query,
+                            "collection_name": collection,
+                            "org_id": org_id or "default",
+                            "n_results": top_k,
+                        },
+                        timeout=5.0,
                     )
-                    top_k = request.rag_config.get("top_k", 3)
-                    try:
-                        resp = await client.post(
-                            f"{settings.data_service_url}/context/assemble",
-                            json={
-                                "query": processed_query,
-                                "collection_name": collection,
-                                "org_id": org_id or "default",
-                                "n_results": top_k,
-                            },
-                            timeout=5.0,
-                        )
-                        if resp.status_code == 200:
-                            rag_ctx = resp.json().get("context", "")
-                            if rag_ctx:
-                                variables["context"] = rag_ctx
-                                rag_used = True
-                    except Exception as e:
-                        logger.error(f"Failed to fetch legacy RAG context: {e}")
+                    if resp.status_code == 200:
+                        rag_val = resp.json().get("context", "")
+                        if rag_val:
+                            variables[var_name] = rag_val
+                            rag_used = True
+                except Exception as e:
+                    logger.error(f"Failed to fetch RAG context: {e}")
 
-            # Render Template via Data Service (Prompt Engine)
-            try:
-                process_payload = {
-                    "variables": variables,
-                    "template_id": used_template_id if not template_content else None,
-                    "template_content": template_content,
-                }
+            elif source == "static":
+                variables[var_name] = config.get("value", "")
+            elif source == "request":
+                # Key alias, e.g. map "user_name" var to "user" payload key
+                key = config.get("key", var_name)
+                # If key exists in request vars, use it. Otherwise keep existing or ignore.
+                if key in variables:
+                    variables[var_name] = variables[key]
 
-                resp = await client.post(
-                    f"{settings.data_service_url}/process",
-                    json=process_payload,
-                    timeout=2.0,
-                )
+        # Always inject standard vars if not mapped (backward compat)
+        if "query" not in variables:
+            variables["query"] = processed_query
 
-                if resp.status_code == 200:
-                    system_content = resp.json().get("content", "")
+        # Legacy RAG support (if rag_config passed but no mapping used)
+        if request.rag_config and request.rag_config.get("enabled") and not rag_used:
+            if "context" not in variables:
+                collection = request.rag_config.get("default_collection") or "default"
+                top_k = request.rag_config.get("top_k", 3)
+                try:
+                    resp = await client.post(
+                        f"{settings.data_service_url}/context/assemble",
+                        json={
+                            "query": processed_query,
+                            "collection_name": collection,
+                            "org_id": org_id or "default",
+                            "n_results": top_k,
+                        },
+                        timeout=5.0,
+                    )
+                    if resp.status_code == 200:
+                        rag_ctx = resp.json().get("context", "")
+                        if rag_ctx:
+                            variables["context"] = rag_ctx
+                            rag_used = True
+                except Exception as e:
+                    logger.error(f"Failed to fetch legacy RAG context: {e}")
 
-                    # Replace or Insert System Message
-                    messages = [m for m in messages if m.role != "system"]
-                    messages.insert(0, Message(role="system", content=system_content))
-                else:
-                    logger.error(f"Data Service Process failed: {resp.text}")
+        # Render Template via Data Service (Prompt Engine)
+        try:
+            process_payload = {
+                "variables": variables,
+                "template_id": used_template_id if not template_content else None,
+                "template_content": template_content,
+            }
 
-            except Exception as e:
-                logger.error(f"Failed to call Data Service Process: {e}")
+            resp = await client.post(
+                f"{settings.data_service_url}/process",
+                json=process_payload,
+                timeout=2.0,
+            )
+
+            if resp.status_code == 200:
+                system_content = resp.json().get("content", "")
+
+                # Replace or Insert System Message
+                messages = [m for m in messages if m.role != "system"]
+                messages.insert(0, Message(role="system", content=system_content))
+            else:
+                logger.error(f"Data Service Process failed: {resp.text}")
+
+        except Exception as e:
+            logger.error(f"Failed to call Data Service Process: {e}")
 
     # Fallback RAG Logic (No Template, but RAG Enabled)
     elif not rag_used and request.rag_config and request.rag_config.get("enabled"):
@@ -589,24 +592,24 @@ async def process_prompt(
         top_k = request.rag_config.get("top_k", 3)
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{settings.data_service_url}/context/assemble",
-                    json={
-                        "query": processed_query,
-                        "collection_name": collection,
-                        "org_id": org_id or "default",
-                        "n_results": top_k,
-                    },
-                    timeout=5.0,
-                )
-                if resp.status_code == 200:
-                    rag_context = resp.json().get("context", "")
-                    if rag_context:
-                        rag_used = True
-                        # Strategy: Append to User Message (easiest for non-template flows)
-                        context_msg = f"Context Information:\n{rag_context}\n\n"
-                        messages[user_msg_idx].content = context_msg + processed_query
+            client = gateway_http_client.get_service_client()
+            resp = await client.post(
+                f"{settings.data_service_url}/context/assemble",
+                json={
+                    "query": processed_query,
+                    "collection_name": collection,
+                    "org_id": org_id or "default",
+                    "n_results": top_k,
+                },
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                rag_context = resp.json().get("context", "")
+                if rag_context:
+                    rag_used = True
+                    # Strategy: Append to User Message (easiest for non-template flows)
+                    context_msg = f"Context Information:\n{rag_context}\n\n"
+                    messages[user_msg_idx].content = context_msg + processed_query
         except Exception as e:
             logger.error(f"Failed to fetch fallback RAG context: {e}")
 

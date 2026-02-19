@@ -5,15 +5,18 @@ import logging
 import httpx
 from .http_client import http_client
 from .providers import get_adapter
+from .concurrency_limiter import upstream_concurrency_limiter
 
 logger = logging.getLogger(__name__)
 
 
 class GatewayService:
     @staticmethod
-    async def resolve_context(api_key: str, model: str) -> Dict[str, Any]:
+    async def resolve_context(
+        api_key: str, model: str, model_type: str = "inference"
+    ) -> Dict[str, Any]:
         """Resolves deployment context via Filtration Gateway."""
-        context = await api_gateway_client.resolve_context(api_key, model)
+        context = await api_gateway_client.resolve_context(api_key, model, model_type)
 
         if not context.get("valid"):
             raise HTTPException(
@@ -222,7 +225,11 @@ class GatewayService:
 
     @staticmethod
     async def stream_upstream(
-        endpoint_url: str, payload: Dict, headers: Dict, engine: str = "vllm"
+        endpoint_url: str,
+        payload: Dict,
+        headers: Dict,
+        engine: str = "vllm",
+        concurrency_key: str = "default",
     ) -> AsyncGenerator[bytes, None]:
         adapter = get_adapter(engine)
         chat_path = adapter.get_chat_path()
@@ -231,13 +238,14 @@ class GatewayService:
 
         client = http_client.get_client()
         try:
-            async with client.stream(
-                "POST", full_url, json=transformed_payload, headers=headers
-            ) as response:
-                response.raise_for_status()
-                # Use aiter_raw() for unbuffered streaming (important for SSE)
-                async for chunk in response.aiter_raw():
-                    yield chunk
+            async with upstream_concurrency_limiter.limit(concurrency_key):
+                async with client.stream(
+                    "POST", full_url, json=transformed_payload, headers=headers
+                ) as response:
+                    response.raise_for_status()
+                    # Use aiter_raw() for unbuffered streaming (important for SSE)
+                    async for chunk in response.aiter_raw():
+                        yield chunk
         except httpx.HTTPStatusError as e:
             logger.error(f"Upstream Error {e.response.status_code}")
             yield f'data: {{"error": "Upstream Error: {e.response.status_code}"}}\n\n'.encode()
@@ -247,23 +255,34 @@ class GatewayService:
 
     @staticmethod
     async def call_upstream(
-        endpoint_url: str, payload: Dict, headers: Dict, engine: str = "vllm"
+        endpoint_url: str,
+        payload: Dict,
+        headers: Dict,
+        engine: str = "vllm",
+        path: str = None,
+        concurrency_key: str = "default",
     ) -> Dict:
         adapter = get_adapter(engine)
-        chat_path = adapter.get_chat_path()
+        # Use custom path if provided, otherwise use adapter's chat path
+        if path:
+            full_url = GatewayService._build_full_url(endpoint_url, path)
+        else:
+            chat_path = adapter.get_chat_path()
+            full_url = GatewayService._build_full_url(endpoint_url, chat_path)
+
         transformed_payload = adapter.transform_request(payload)
-        full_url = GatewayService._build_full_url(endpoint_url, chat_path)
 
         client = http_client.get_client()
         try:
-            resp = await client.post(
-                full_url, json=transformed_payload, headers=headers
-            )
-            resp.raise_for_status()
-            raw_response = resp.json()
+            async with upstream_concurrency_limiter.limit(concurrency_key):
+                resp = await client.post(
+                    full_url, json=transformed_payload, headers=headers
+                )
+                resp.raise_for_status()
+                raw_response = resp.json()
 
-            # Transform response back to OpenAI format
-            return adapter.transform_response(raw_response)
+                # Transform response back to OpenAI format
+                return adapter.transform_response(raw_response)
         except httpx.HTTPStatusError as e:
             logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
             raise HTTPException(

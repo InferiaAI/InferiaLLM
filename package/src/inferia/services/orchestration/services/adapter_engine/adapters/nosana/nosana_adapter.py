@@ -14,11 +14,13 @@ from inferia.services.orchestration.services.adapter_engine.base import (
 from inferia.services.orchestration.services.adapter_engine.adapters.nosana.job_builder import (
     build_job_definition,
     create_training_job,
-    NOSANA_INTERNAL_API_KEY,
+    INTERNAL_API_KEY,
 )
 from inferia.services.orchestration.config import settings
 
 logger = logging.getLogger(__name__)
+
+TERMINAL_JOB_STATES = {2, 3, 4, "COMPLETED", "STOPPED", "FAILED", "QUIT"}
 
 
 # Configuration with defaults
@@ -136,10 +138,10 @@ class NosanaAdapter(ProviderAdapter):
         use_spot: bool = False,
         metadata: Optional[Dict] = None,
     ) -> Dict:
-        if not metadata or "image" not in metadata:
-            raise ValueError("NosanaAdapter requires metadata['image'] (docker image)")
+        if not metadata:
+            raise ValueError("NosanaAdapter requires deployment metadata")
 
-        image = metadata["image"]
+        image = metadata.get("image")
         gpu_allocated = metadata.get("gpu_allocated", 1)
         vcpu_allocated = metadata.get("vcpu_allocated", 8)
         ram_gb_allocated = metadata.get("ram_gb_allocated", 32)
@@ -175,6 +177,9 @@ class NosanaAdapter(ProviderAdapter):
         # ---------- BUILD JOB DEFINITION ----------
         workload_type = metadata.get("workload_type", "inference")
 
+        if workload_type == "training" and not image:
+            raise ValueError("Nosana training deployments require metadata['image']")
+
         if workload_type == "training":
             logger.info(f"Building TRAINING job for pool {pool_id}")
             job_definition = create_training_job(
@@ -184,7 +189,7 @@ class NosanaAdapter(ProviderAdapter):
                 dataset_url=metadata.get("dataset_url"),
                 base_model=metadata.get("base_model"),
                 hf_token=hf_token,
-                api_key=NOSANA_INTERNAL_API_KEY,
+                api_key=INTERNAL_API_KEY,
                 min_vram=metadata.get("min_vram", 24),
                 gpu_count=gpu_allocated,
             )
@@ -209,13 +214,17 @@ class NosanaAdapter(ProviderAdapter):
                 model_id=model_id,
                 image=image,
                 hf_token=hf_token,
-                api_key=NOSANA_INTERNAL_API_KEY,
+                api_key=INTERNAL_API_KEY,
                 **job_config,
             )
         else:
             logger.warning(
                 "No model_id in metadata, using legacy job definition without API key"
             )
+            if not image:
+                raise ValueError(
+                    "Nosana legacy job definition requires metadata['image']"
+                )
             cmd = metadata.get("cmd", [])
             expose = metadata.get("expose", [])
             env = metadata.get("env", {})
@@ -311,16 +320,23 @@ class NosanaAdapter(ProviderAdapter):
         start = asyncio.get_event_loop().time()
         poll_interval = capabilities.polling_interval_seconds
 
-        while True:
-            try:
-                async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
                     async with session.get(
                         f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}"
                     ) as resp:
                         if resp.status == 200:
                             job = await resp.json()
+                            job_state = job.get("jobState")
+
+                            if job_state in TERMINAL_JOB_STATES:
+                                raise RuntimeError(
+                                    f"Nosana job {provider_instance_id} entered terminal state: {job_state}"
+                                )
+
                             # 1 = RUNNING
-                            if job.get("jobState") == 1:
+                            if job_state == 1:
                                 url = job.get("serviceUrl")
                                 if url:
                                     return url
@@ -328,13 +344,15 @@ class NosanaAdapter(ProviderAdapter):
                                     f"Job {provider_instance_id} is RUNNING. Marking ready."
                                 )
                                 return "job-running-confidential"
-            except Exception as e:
-                logger.warning(f"Error polling Nosana readiness: {e}")
+                except RuntimeError:
+                    raise
+                except Exception as e:
+                    logger.warning(f"Error polling Nosana readiness: {e}")
 
-            if asyncio.get_event_loop().time() - start > timeout:
-                raise RuntimeError(f"Nosana job {provider_instance_id} timed out")
+                if asyncio.get_event_loop().time() - start > timeout:
+                    raise RuntimeError(f"Nosana job {provider_instance_id} timed out")
 
-            await asyncio.sleep(poll_interval)
+                await asyncio.sleep(poll_interval)
 
     async def deprovision_node(self, *, provider_instance_id: str) -> None:
         try:

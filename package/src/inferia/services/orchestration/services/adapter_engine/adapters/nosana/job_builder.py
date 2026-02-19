@@ -8,10 +8,11 @@ Supports vLLM, Ollama, and vLLM-Omni engines.
 from typing import Dict, Any, Optional, List
 import json
 import os
+import shlex
 from inferia.services.orchestration.config import settings
 
 # Internal API key used for service-to-service auth and vLLM security
-NOSANA_INTERNAL_API_KEY = settings.internal_api_key or os.getenv("NOSANA_INTERNAL_API_KEY", "")
+INTERNAL_API_KEY = settings.internal_api_key or os.getenv("INTERNAL_API_KEY", "")
 
 
 def create_vllm_job(
@@ -23,7 +24,7 @@ def create_vllm_job(
     gpu_util: float = 0.95,
     dtype: str = "auto",
     enforce_eager: bool = False,
-    min_vram: int = 6,
+    min_vram: int = 8,
     # Advanced Tuning
     max_model_len: int = 8192,
     max_num_seqs: int = 256,
@@ -51,7 +52,7 @@ def create_vllm_job(
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
     # Use provided key or fall back to global
-    effective_api_key = api_key or NOSANA_INTERNAL_API_KEY
+    effective_api_key = api_key or INTERNAL_API_KEY
 
     # Construct the Health Check Body
     health_body = json.dumps(
@@ -70,7 +71,11 @@ def create_vllm_job(
         health_headers["Authorization"] = f"Bearer {effective_api_key}"
 
     # Prepare Environment Variables
-    envs: Dict[str, str] = {}
+    envs: Dict[str, str] = {
+            "CUDA_MODULE_LOADING": "LAZY",
+            "NVIDIA_DISABLE_CUDA_COMPAT": "1"  # Force bypass of the forward compatibility layer
+        }
+        
     token_to_use = hf_token or os.getenv("HF_TOKEN")
     if token_to_use:
         envs["HF_TOKEN"] = token_to_use
@@ -91,6 +96,7 @@ def create_vllm_job(
         "--dtype",
         dtype,
         "--trust-remote-code",
+        "--kv-cache-dtype", "auto",
     ]
 
     # Add quantization flag if provided
@@ -102,12 +108,10 @@ def create_vllm_job(
         cmd_args.extend(["--api-key", effective_api_key])
 
     # Eager execution
-    if enforce_eager:
-        cmd_args.append("--enforce-eager")
+    cmd_args.append("--enforce-eager")
 
     # Chunked Prefill
-    if enable_chunked_prefill:
-        cmd_args.append("--enable-chunked-prefill")
+    cmd_args.append("--enable-chunked-prefill")
 
     container_op = {
         "id": model_id,
@@ -140,9 +144,11 @@ def create_vllm_job(
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": [
-                "12.6",
                 "12.8",
                 "12.9",
+                "13.0",
+                "13.1",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -172,9 +178,10 @@ def create_ollama_job(
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
     # Use provided key or fall back to global
-    effective_api_key = api_key or NOSANA_INTERNAL_API_KEY
+    effective_api_key = api_key or INTERNAL_API_KEY
 
     ollama_image = image if "ollama" in image else "docker.io/ollama/ollama:latest"
+    safe_model_id = shlex.quote(model_id)
 
     final_cmd: List[str]
     exposed_port: int
@@ -193,7 +200,7 @@ def create_ollama_job(
             'printf ":8080 {\\n  @auth {\\n    not header Authorization \\"Bearer %s\\"\\n  }\\n  respond @auth \\"Unauthorized\\" 401\\n  reverse_proxy localhost:11434 {\\n    flush_interval -1\\n  }\\n}" "$MY_API_KEY" > Caddyfile && '
             "ollama serve & echo 'Waiting for Ollama...' && "
             "while ! curl -s http://localhost:11434 > /dev/null; do sleep 2; done && "
-            f"echo 'Ollama is ready!' && ollama pull {model_id} && "
+            f"echo 'Ollama is ready!' && ollama pull {safe_model_id} && "
             "caddy run --config Caddyfile"
         )
         final_cmd = ["-c", secure_script]
@@ -202,8 +209,21 @@ def create_ollama_job(
         exposed_port = 11434
         final_cmd = [
             "-c",
-            f"ollama serve & sleep 5 && ollama pull {model_id} && tail -f /dev/null",
+            f"ollama serve & sleep 5 && ollama pull {safe_model_id} && tail -f /dev/null",
         ]
+
+    health_headers: Dict[str, str] = {}
+    if effective_api_key:
+        health_headers["Authorization"] = f"Bearer {effective_api_key}"
+
+    health_check = {
+        "path": "/api/tags",
+        "type": "http",
+        "method": "GET",
+        "headers": health_headers,
+        "continuous": False,
+        "expected_status": 200,
+    }
 
     container_op = {
         "type": "container/run",
@@ -214,7 +234,12 @@ def create_ollama_job(
             "cmd": final_cmd,
             "env": envs,
             "gpu": True,
-            "expose": exposed_port,
+            "expose": [
+                {
+                    "port": exposed_port,
+                    "health_checks": [health_check],
+                }
+            ],
         },
     }
 
@@ -268,7 +293,7 @@ def create_vllm_omni_job(
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
     # Use provided key or fall back to global
-    effective_api_key = api_key or NOSANA_INTERNAL_API_KEY
+    effective_api_key = api_key or INTERNAL_API_KEY
 
     health_body = json.dumps(
         {
@@ -348,7 +373,7 @@ def create_triton_job(
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
-    effective_api_key = api_key or NOSANA_INTERNAL_API_KEY
+    effective_api_key = api_key or INTERNAL_API_KEY
 
     # Triton default ports
     http_port = 8000
@@ -420,6 +445,148 @@ def create_triton_job(
     return {"op": container_op, "meta": meta_data}
 
 
+def create_infinity_job(
+    model_id: str,
+    image: str = "michaelf34/infinity:latest",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 7997,
+    batch_size: int = 32,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for Infinity embedding server.
+    Infinity is a high-performance embedding server for sentence-transformers.
+
+    Args:
+        model_id: HuggingFace model ID (e.g., "sentence-transformers/all-MiniLM-L6-v2")
+        image: Docker image for Infinity
+        hf_token: HuggingFace token for gated models
+        api_key: API key for authentication
+        port: Port to expose
+        batch_size: Batch size for embedding requests
+
+    Returns:
+        Dict with 'op' (container operation) and 'meta' (job metadata)
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    # Prepare Environment Variables
+    envs: Dict[str, str] = {
+        "INFINITY_MODEL_ID": model_id,
+        "INFINITY_PORT": str(port),
+    }
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+
+    # Construct command for Infinity v2 using shell to ensure proper execution
+    # The infinity_emb CLI needs to be called with 'v2' subcommand
+    cmd_str = (
+        f"infinity_emb v2 --model-id {model_id} --port {port} --batch-size {batch_size}"
+    )
+
+    if effective_api_key:
+        cmd_str += f" --api-key {effective_api_key}"
+
+    # Keep container alive
+    cmd_str += " && tail -f /dev/null"
+
+    container_op = {
+        "type": "container/run",
+        "id": "infinity-service",
+        "args": {
+            "image": image,
+            "entrypoint": ["/bin/sh"],
+            "cmd": ["-c", cmd_str],
+            "env": envs,
+            "gpu": False,  # Infinity runs on CPU
+            "expose": port,  # Simple port number format for Nosana
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {
+            "required_cpu": 2,
+            "required_ram": 4096,  # 4GB RAM for embeddings
+        },
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
+def create_tei_job(
+    model_id: str,
+    image: str = "ghcr.io/huggingface/text-embeddings-inference:latest",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 8080,
+    max_batch_tokens: int = 16384,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for Hugging Face Text Embeddings Inference (TEI) server.
+    TEI is Hugging Face's official high-performance embedding server.
+
+    Args:
+        model_id: HuggingFace model ID (e.g., "sentence-transformers/all-MiniLM-L6-v2")
+        image: Docker image for TEI
+        hf_token: HuggingFace token for gated models
+        api_key: API key for authentication
+        port: Port to expose
+        max_batch_tokens: Maximum number of tokens per batch
+
+    Returns:
+        Dict with 'op' (container operation) and 'meta' (job metadata)
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    # Prepare Environment Variables
+    envs: Dict[str, str] = {}
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+
+    # Construct command for TEI
+    cmd_args = [
+        "--model-id",
+        model_id,
+        "--port",
+        str(port),
+        "--max-batch-tokens",
+        str(max_batch_tokens),
+        "--pooling",
+        "cls",  # Default pooling strategy
+    ]
+
+    # Add API key if provided
+    if effective_api_key:
+        envs["API_KEY"] = effective_api_key
+        cmd_args.extend(["--api-key", effective_api_key])
+
+    container_op = {
+        "type": "container/run",
+        "id": "tei-service",
+        "args": {
+            "image": image,
+            "cmd": cmd_args,
+            "env": envs,
+            "gpu": False,  # TEI can run on CPU
+            "expose": port,  # Simple port number format for Nosana
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {
+            "required_cpu": 2,
+            "required_ram": 4096,  # 4GB RAM for embeddings
+        },
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
 def build_job_definition(
     engine: str,
     model_id: str,
@@ -432,7 +599,7 @@ def build_job_definition(
     High-level factory function to build job definitions based on engine type.
 
     Args:
-        engine: Engine type ("vllm", "ollama", "vllm-omni")
+        engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton")
         model_id: Model identifier
         image: Optional custom docker image
         hf_token: HuggingFace token
@@ -471,6 +638,22 @@ def build_job_definition(
             image=image or "nvcr.io/nvidia/tritonserver:23.10-py3",
             api_key=api_key,
             **{k: v for k, v in kwargs.items() if k in ["min_vram"]},
+        )
+    elif engine == "infinity":
+        job = create_infinity_job(
+            model_id=model_id,
+            image=image or "michaelf34/infinity:latest",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{k: v for k, v in kwargs.items() if k in ["port", "batch_size"]},
+        )
+    elif engine == "tei":
+        job = create_tei_job(
+            model_id=model_id,
+            image=image or "ghcr.io/huggingface/text-embeddings-inference:latest",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{k: v for k, v in kwargs.items() if k in ["port", "max_batch_tokens"]},
         )
     else:
         raise ValueError(f"Unsupported engine: {engine}")
@@ -513,7 +696,7 @@ def create_training_job(
     Returns:
         Dict with 'op' and 'meta'
     """
-    effective_api_key = api_key or NOSANA_INTERNAL_API_KEY
+    effective_api_key = api_key or INTERNAL_API_KEY
 
     envs: Dict[str, str] = {}
     token_to_use = hf_token or os.getenv("HF_TOKEN")

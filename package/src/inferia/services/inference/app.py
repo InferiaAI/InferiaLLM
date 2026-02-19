@@ -132,3 +132,25 @@ async def create_completion(
         background_tasks=background_tasks,
         ip_address=client_ip,
     )
+
+
+@app.post("/v1/embeddings")
+async def create_embeddings(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Embeddings endpoint - OpenAI compatible.
+    Supports text embedding models deployed via Infinity or TEI.
+    """
+    api_key = extract_api_key(authorization)
+    body = await request.json()
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_embeddings(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )

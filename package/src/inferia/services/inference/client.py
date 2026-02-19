@@ -2,7 +2,9 @@
 HTTP client for communicating with API Gateway Service.
 """
 
+import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -27,6 +29,14 @@ class ApiGatewayClient:
         self.context_cache = cachetools.TTLCache(
             maxsize=settings.context_cache_maxsize, ttl=settings.context_cache_ttl
         )
+        self.quota_cache_ttl = settings.quota_check_cache_ttl_seconds
+        self.quota_check_cache = cachetools.TTLCache(
+            maxsize=settings.quota_check_cache_maxsize,
+            ttl=max(self.quota_cache_ttl, 0.0),
+        )
+        self._context_inflight: Dict[tuple[str, str, str], asyncio.Task] = {}
+        self._quota_inflight: Dict[tuple[str, str], asyncio.Task] = {}
+        self._inflight_lock = asyncio.Lock()
 
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the shared httpx client."""
@@ -64,6 +74,27 @@ class ApiGatewayClient:
         """
         Check if user has sufficient quota.
         """
+        cache_key = (user_id, model)
+        if self.quota_cache_ttl > 0 and cache_key in self.quota_check_cache:
+            return
+
+        async with self._inflight_lock:
+            task = self._quota_inflight.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(self._check_quota_uncached(user_id, model))
+                self._quota_inflight[cache_key] = task
+
+        try:
+            await task
+            if self.quota_cache_ttl > 0:
+                # Value is irrelevant; presence in TTL cache means "checked recently and allowed".
+                self.quota_check_cache[cache_key] = time.monotonic()
+        finally:
+            async with self._inflight_lock:
+                if self._quota_inflight.get(cache_key) is task:
+                    self._quota_inflight.pop(cache_key, None)
+
+    async def _check_quota_uncached(self, user_id: str, model: str) -> None:
         client = self._get_client()
         try:
             response = await client.post(
@@ -116,37 +147,48 @@ class ApiGatewayClient:
         is_streaming: bool = False,
         applied_policies: Optional[List[str]] = None,
         ip_address: Optional[str] = None,
+        request_type: str = "llm",
+        input_count: Optional[int] = None,
     ) -> None:
         """
         Log inference request details (fire and forget).
         Uses asyncio.create_task to avoid blocking the response.
+
+        Args:
+            request_type: "llm" for chat completions, "embedding" for embedding requests
+            input_count: Number of inputs (for embeddings - number of texts embedded)
         """
         client = self._get_client()
 
         # Define the task function
         async def _send_log():
             try:
-                # Need to use the client carefully here.
-                # Since ApiGatewayClient manages a shared client, it should be fine.
+                log_data = {
+                    "deployment_id": deployment_id,
+                    "user_id": user_id,
+                    "model": model,
+                    "request_payload": request_payload,
+                    "latency_ms": latency_ms,
+                    "ttft_ms": ttft_ms,
+                    "tokens_per_second": tokens_per_second,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "status_code": status_code,
+                    "error_message": error_message,
+                    "is_streaming": is_streaming,
+                    "applied_policies": applied_policies,
+                    "ip_address": ip_address,
+                    "request_type": request_type,
+                }
+
+                # Add embedding-specific fields
+                if request_type == "embedding" and input_count is not None:
+                    log_data["input_count"] = input_count
+
                 await client.post(
                     "/internal/logs/create",
-                    json={
-                        "deployment_id": deployment_id,
-                        "user_id": user_id,
-                        "model": model,
-                        "request_payload": request_payload,
-                        "latency_ms": latency_ms,
-                        "ttft_ms": ttft_ms,
-                        "tokens_per_second": tokens_per_second,
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": total_tokens,
-                        "status_code": status_code,
-                        "error_message": error_message,
-                        "is_streaming": is_streaming,
-                        "applied_policies": applied_policies,
-                        "ip_address": ip_address,
-                    },
+                    json=log_data,
                     headers=self._get_headers(),
                 )
             except Exception as e:
@@ -272,18 +314,40 @@ class ApiGatewayClient:
                 detail="API Gateway unavailable",
             )
 
-    async def resolve_context(self, api_key: str, model: str) -> Dict[str, Any]:
+    async def resolve_context(
+        self, api_key: str, model: str, model_type: str = "inference"
+    ) -> Dict[str, Any]:
         """
         Resolve deployment context and config from API Gateway.
         Cached locally for 60s.
         """
-        cache_key = (api_key, model)
+        cache_key = (api_key, model, model_type)
         if cache_key in self.context_cache:
             return self.context_cache[cache_key]
 
+        async with self._inflight_lock:
+            task = self._context_inflight.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._resolve_context_uncached(api_key, model, model_type)
+                )
+                self._context_inflight[cache_key] = task
+
+        try:
+            data = await task
+            return data
+        finally:
+            async with self._inflight_lock:
+                if self._context_inflight.get(cache_key) is task:
+                    self._context_inflight.pop(cache_key, None)
+
+    async def _resolve_context_uncached(
+        self, api_key: str, model: str, model_type: str
+    ) -> Dict[str, Any]:
+        cache_key = (api_key, model, model_type)
         client = self._get_client()
         headers = self._get_headers()  # Use internal key
-        payload = {"api_key": api_key, "model": model}
+        payload = {"api_key": api_key, "model": model, "model_type": model_type}
 
         try:
             response = await client.post(
@@ -304,8 +368,7 @@ class ApiGatewayClient:
                     "detail", "Failed to resolve deployment context"
                 ),
             )
-        except Exception as e:
-            # logger.error(f"Failed context resolve: {e}")
+        except Exception:
             raise HTTPException(
                 status_code=500, detail="Failed to resolve deployment context"
             )

@@ -73,6 +73,12 @@ async def lifespan(app: FastAPI):
     logger.info(f"Shutting down {settings.app_name}")
     config_manager.stop_polling()
 
+    from inferia.services.api_gateway.gateway.http_client import gateway_http_client
+    from inferia.services.api_gateway.gateway.rate_limiter import rate_limiter
+
+    await gateway_http_client.close_all()
+    await rate_limiter.close()
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -183,5 +189,6 @@ if __name__ == "__main__":
         host=settings.host,
         port=settings.port,
         reload=settings.reload,
+        workers=settings.workers,
         log_level=settings.log_level.lower(),
     )

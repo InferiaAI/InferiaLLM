@@ -45,6 +45,7 @@ message DeployModelRequest {
   string org_id = 11;
   string policies = 12; // JSON string for filtration policies
   string inference_model = 13; // backend model slug (e.g. meta-llama/Llama-2-7b)
+  string model_type = 14; // inference, embedding, image_generation, etc.
 }
 
 message DeployModelResponse {
@@ -78,6 +79,7 @@ message GetDeploymentResponse {
   string org_id = 12;
   string policies = 13;
   string inference_model = 14;
+  string model_type = 15;
 }
 
 /* -------------------------

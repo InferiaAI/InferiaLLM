@@ -1,4 +1,3 @@
-import uuid
 import asyncio
 import logging
 from uuid import UUID
@@ -244,25 +243,7 @@ class ModelDeploymentWorker:
 
             await self.deployments.update_state(deployment_id, "SCHEDULING")
 
-            allocation_ids = []
-
             try:
-                for _ in range(d["replicas"]):
-                    alloc_id = uuid.uuid4()
-                    ok, reason, _ = await self.scheduler.allocate(
-                        allocation_id=alloc_id,
-                        node_id=node_id,
-                        gpu=d["gpu_per_replica"],
-                        vcpu=vcpu_req,
-                        ram_gb=ram_gb_req,
-                        priority=100,
-                        owner_type="deployment",
-                        owner_id=str(deployment_id),
-                    )
-                    if not ok:
-                        raise RuntimeError(f"{reason} (Node: {node_id})")
-                    allocation_ids.append(alloc_id)
-
                 await self.deployments.update_state(deployment_id, "DEPLOYING")
 
                 runtime = self.runtime_resolver.resolve(
@@ -270,7 +251,12 @@ class ModelDeploymentWorker:
                     gpu_per_replica=d["gpu_per_replica"],
                 )
 
-                strategy = self.strategies[runtime]
+                strategy = self.strategies.get(runtime)
+                if not strategy:
+                    raise RuntimeError(
+                        f"No deployment strategy registered for runtime '{runtime}'"
+                    )
+
                 result = await strategy.deploy(
                     deployment_id=deployment_id,
                     model=model,
@@ -284,16 +270,22 @@ class ModelDeploymentWorker:
                 )
 
             except Exception:
-                for alloc in allocation_ids:
-                    await self.scheduler.release(allocation_id=alloc)
-
                 await self.deployments.update_state(deployment_id, "FAILED")
                 raise
 
+            # Normalize strategy outputs to UUID list shape expected by repository
+            allocation_ids = result.get("allocation_ids") or result.get("allocations")
+            node_ids = result.get("node_ids")
+
+            if allocation_ids and not isinstance(allocation_ids, list):
+                allocation_ids = [allocation_ids]
+            if node_ids and not isinstance(node_ids, list):
+                node_ids = [node_ids]
+
             await self.deployments.attach_runtime(
                 deployment_id=deployment_id,
-                allocation_ids=[result["allocation_ids"]],
-                node_ids=[result["node_ids"]],
+                allocation_ids=allocation_ids,
+                node_ids=node_ids,
                 runtime=result["runtime"],
                 # **result,
             )

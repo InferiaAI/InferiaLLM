@@ -48,6 +48,7 @@ class DeployModelRequest(BaseModel):
     org_id: str | None = None
     policies: dict | None = None
     inference_model: str | None = None
+    model_type: str = "inference"  # inference, embedding, image_generation, etc.
 
 
 class TerminateDeploymentRequest(BaseModel):
@@ -144,6 +145,7 @@ async def deploy_model(req: DeployModelRequest):
                     org_id=req.org_id,
                     policies=json.dumps(req.policies) if req.policies else None,
                     inference_model=req.inference_model,
+                    model_type=req.model_type,
                 )
             )
 
@@ -288,10 +290,24 @@ async def delete_deployment(deployment_id: str):
                     detail=f"Cannot delete deployment in state '{row['state']}'. Stop it first.",
                 )
 
-            # Delete the deployment
-            await conn.execute(
-                "DELETE FROM model_deployments WHERE deployment_id = $1", dep_uuid
-            )
+            # Clean up dependent records explicitly so deletion works even when
+            # DB constraints were created without ON DELETE behaviors.
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE policies SET deployment_id = NULL WHERE deployment_id = $1",
+                    dep_uuid,
+                )
+                await conn.execute(
+                    "UPDATE api_keys SET deployment_id = NULL WHERE deployment_id = $1",
+                    dep_uuid,
+                )
+                await conn.execute(
+                    "DELETE FROM inference_logs WHERE deployment_id = $1",
+                    dep_uuid,
+                )
+                await conn.execute(
+                    "DELETE FROM model_deployments WHERE deployment_id = $1", dep_uuid
+                )
         finally:
             await conn.close()
     except HTTPException:

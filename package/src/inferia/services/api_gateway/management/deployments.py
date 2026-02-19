@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, update
 from sqlalchemy.future import select
 from typing import List
 
 from inferia.services.api_gateway.db.database import get_db
 from inferia.services.api_gateway.db.models import (
+    ApiKey as DBApiKey,
     Deployment as DBDeployment,
     InferenceLog as DBInferenceLog,
+    Policy as DBPolicy,
 )
 from inferia.services.api_gateway.schemas.management import (
     DeploymentCreate,
@@ -194,6 +197,21 @@ async def delete_deployment(
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
+    # Defensively clean dependent rows for databases where FK actions were not
+    # created with ON DELETE behavior.
+    await db.execute(
+        update(DBPolicy)
+        .where(DBPolicy.deployment_id == deployment.id)
+        .values(deployment_id=None)
+    )
+    await db.execute(
+        update(DBApiKey)
+        .where(DBApiKey.deployment_id == deployment.id)
+        .values(deployment_id=None)
+    )
+    await db.execute(
+        delete(DBInferenceLog).where(DBInferenceLog.deployment_id == deployment.id)
+    )
     await db.delete(deployment)
     await db.commit()
 

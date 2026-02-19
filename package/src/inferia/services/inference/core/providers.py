@@ -274,6 +274,16 @@ class ComputeAdapter(OpenAIAdapter):
         return False
 
 
+class EmbeddingAdapter(OpenAIAdapter):
+    """
+    Adapter for embedding models (Infinity, TEI).
+    These are OpenAI-compatible for embeddings, so we inherit from OpenAIAdapter.
+    """
+
+    def is_external(self) -> bool:
+        return False
+
+
 def get_adapter(engine: str) -> ProviderAdapter:
     """
     Factory function to get the appropriate adapter for an engine.
@@ -302,6 +312,9 @@ def get_adapter(engine: str) -> ProviderAdapter:
         "vllm": ComputeAdapter(),
         "ollama": ComputeAdapter(),
         "generic": ComputeAdapter(),
+        # Embedding engines (OpenAI-compatible for embeddings)
+        "infinity": EmbeddingAdapter(),
+        "tei": EmbeddingAdapter(),
     }
 
     adapter = adapters.get(engine_lower)

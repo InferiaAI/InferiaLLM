@@ -21,7 +21,11 @@ class ApiKey(Base):
     org_id = Column(String, nullable=False)
 
     # Optional: Scope to a specific deployment
-    deployment_id = Column(UUID(as_uuid=True), ForeignKey("model_deployments.deployment_id"), nullable=True)
+    deployment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("model_deployments.deployment_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     deployment = relationship("Deployment", backref="api_keys")
     
     is_active = Column(Boolean, default=True)

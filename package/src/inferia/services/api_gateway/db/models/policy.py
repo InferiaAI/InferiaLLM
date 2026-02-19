@@ -19,12 +19,15 @@ class Policy(Base):
     org_id = Column(String, ForeignKey("organizations.id"), nullable=False)
     
     # Optional: Deployment Specific
-    deployment_id = Column(UUID(as_uuid=True), ForeignKey("model_deployments.deployment_id"), nullable=True)
+    deployment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("model_deployments.deployment_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     
     # Relationships
     organization = relationship("Organization", backref="policies", lazy="selectin")
     
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-
 
