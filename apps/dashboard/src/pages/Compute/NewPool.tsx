@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react"
-import { Cpu, Server, Check, Zap, Globe, AlertCircle, ArrowRight, Search, Filter } from "lucide-react"
+import { Cpu, Server, Check, Zap, Globe, AlertCircle, ArrowRight, Search, Filter, Key } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/context/AuthContext"
 import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
-import { ConfigService } from "@/services/configService"
+import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
 
 // Provider icons mapping
 const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -48,6 +48,11 @@ export default function NewPool() {
     const [searchQuery, setSearchQuery] = useState("")
     const [minVram, setMinVram] = useState<number>(0)
     const [sortBy, setSortBy] = useState<"price_asc" | "price_desc" | "memory">("price_asc")
+    
+    // Provider Credentials state (Universal - works for ANY provider)
+    const [providerCredentials, setProviderCredentials] = useState<NosanaApiKeyResponse[]>([])
+    const [selectedCredential, setSelectedCredential] = useState<string>("")
+    const [loadingCredentials, setLoadingCredentials] = useState(false)
 
     // Fetch provider configuration
     const { data: config, isLoading: loadingConfig } = useQuery({
@@ -132,7 +137,7 @@ export default function NewPool() {
 
         switch (pid) {
             case "nosana":
-                return !!(depin.nosana?.wallet_private_key || depin.nosana?.api_key);
+                return !!(depin.nosana?.wallet_private_key || depin.nosana?.api_key || (depin.nosana?.api_keys && depin.nosana.api_keys.length > 0));
             case "akash":
                 return !!depin.akash?.mnemonic;
             case "aws":
@@ -154,8 +159,36 @@ export default function NewPool() {
     useEffect(() => {
         if (selectedProvider && step === 2) {
             fetchResources(selectedProvider)
+            // Load provider credentials if supported (nosana, akash, etc.)
+            if (["nosana", "akash"].includes(selectedProvider)) {
+                loadProviderCredentials(selectedProvider)
+            }
         }
     }, [selectedProvider, step])
+
+    const loadProviderCredentials = async (provider: string) => {
+        try {
+            setLoadingCredentials(true)
+            // Use universal credential API - works for ANY provider
+            const credentials = await ConfigService.listProviderCredentials(provider)
+            // Map to UI format (showing name and is_active)
+            const mapped = credentials.map(c => ({
+                name: c.name,
+                is_active: c.is_active,
+                created_at: c.created_at
+            }))
+            setProviderCredentials(mapped)
+            // Auto-select first active credential if available
+            const active = mapped.find(k => k.is_active)
+            if (active) {
+                setSelectedCredential(active.name)
+            }
+        } catch (error) {
+            console.error(`Failed to load ${selectedProvider} credentials:`, error)
+        } finally {
+            setLoadingCredentials(false)
+        }
+    }
 
     const fetchResources = async (provider: string) => {
         setLoadingResources(true)
@@ -194,7 +227,7 @@ export default function NewPool() {
         setIsCreating(true)
 
         try {
-            const payload = {
+            const payload: any = {
                 pool_name: poolName,
                 owner_type: "user",
                 owner_id: targetOrgId,
@@ -204,6 +237,11 @@ export default function NewPool() {
                 is_dedicated: false,
                 provider_pool_id: selectedResource.metadata?.market_address || selectedResource.provider_resource_id,
                 scheduling_policy_json: JSON.stringify({ strategy: "best_fit" })
+            }
+
+            // Include provider_credential_name if credential selected
+            if (selectedCredential) {
+                payload.provider_credential_name = selectedCredential
             }
 
             await computeApi.post("/deployment/createpool", payload)
@@ -473,6 +511,40 @@ export default function NewPool() {
                                 </div>
                             )}
                         </div>
+
+                        {/* Provider Credential Selection (Universal - works for nosana, akash, etc.) */}
+                        {providerCredentials.length > 0 && (
+                            <div className="pt-4 border-t border-slate-200/60 dark:border-zinc-800/60 space-y-3">
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium flex items-center gap-2">
+                                        <Key className="w-4 h-4" />
+                                        {selectedProvider === "nosana" ? "Nosana API Key" : 
+                                         selectedProvider === "akash" ? "Akash Wallet" : "Provider Credential"}
+                                    </label>
+                                    {loadingCredentials ? (
+                                        <div className="text-sm text-muted-foreground">Loading credentials...</div>
+                                    ) : (
+                                        <select
+                                            value={selectedCredential}
+                                            onChange={(e) => setSelectedCredential(e.target.value)}
+                                            className="w-full px-3 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-700 focus:ring-2 focus:ring-blue-500/20 outline-none dark:text-zinc-100 text-sm"
+                                        >
+                                            <option value="">Select a credential...</option>
+                                            {providerCredentials
+                                                .filter(key => key.is_active)
+                                                .map((key) => (
+                                                    <option key={key.name} value={key.name}>
+                                                        {key.name}
+                                                    </option>
+                                                ))}
+                                        </select>
+                                    )}
+                                    <p className="text-xs text-muted-foreground">
+                                        Choose which credential to use for this pool
+                                    </p>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex gap-3">

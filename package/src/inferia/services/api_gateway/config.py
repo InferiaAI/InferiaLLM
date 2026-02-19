@@ -3,7 +3,7 @@ Configuration management for the Filtration Layer.
 Uses Pydantic Settings for environment-based configuration.
 """
 
-from typing import Literal, Optional, Any, Dict
+from typing import Literal, Optional, Any, Dict, List
 from pydantic import Field, BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,9 +32,26 @@ class LakeraConfig(BaseModel):
     api_key: Optional[str] = None
 
 
+class ProviderCredential(BaseModel):
+    """Generic provider credential that works for any provider (nosana, akash, etc.)
+
+    Examples:
+    - provider="nosana", credential_type="api_key", name="Piyush"
+    - provider="akash", credential_type="mnemonic", name="Main Wallet"
+    - provider="aws", credential_type="access_key", name="Production"
+    """
+
+    provider: str  # e.g., 'nosana', 'akash', 'aws'
+    name: str
+    credential_type: str  # e.g., 'api_key', 'wallet', 'mnemonic', 'access_key'
+    value: str
+    is_active: bool = True
+
+
 class NosanaConfig(BaseModel):
     wallet_private_key: Optional[str] = None
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None  # Deprecated: kept for migration
+    # Note: api_keys moved to generic provider_credentials system
 
 
 class AkashConfig(BaseModel):

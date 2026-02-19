@@ -78,6 +78,7 @@ message RegisterPoolRequest {
   bool is_dedicated = 7;
   string scheduling_policy_json = 8; // NEW
   string provider_pool_id = 9;
+  string provider_credential_name = 10;  // Generic: which credential to use for this provider
 }
 
 message GetPoolRequest {

@@ -65,6 +65,9 @@ class CreatePoolRequest(BaseModel):
     is_dedicated: bool
     provider_pool_id: str
     scheduling_policy_json: str
+    provider_credential_name: str | None = (
+        None  # Generic: which credential to use for this provider
+    )
 
 
 class ModelRegistryRequest(BaseModel):
@@ -349,6 +352,9 @@ async def create_pool(req: CreatePoolRequest):
                     is_dedicated=req.is_dedicated,
                     provider_pool_id=req.provider_pool_id,
                     scheduling_policy_json=req.scheduling_policy_json,
+                    provider_credential_name=req.provider_credential_name
+                    if req.provider_credential_name
+                    else "",
                 )
             )
 

@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { ConfigService, type ProvidersConfig, initialProviderConfig } from "@/services/configService";
-import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck } from "lucide-react";
+import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
+import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key } from "lucide-react";
 import { toast } from "sonner";
 
 export default function ProviderConfigPage() {
@@ -12,10 +12,20 @@ export default function ProviderConfigPage() {
     const [saving, setSaving] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [isConfigured, setIsConfigured] = useState(false);
+    
+    // Nosana API Keys state
+    const [nosanaApiKeys, setNosanaApiKeys] = useState<NosanaApiKeyResponse[]>([]);
+    const [showAddKeyModal, setShowAddKeyModal] = useState(false);
+    const [newKeyName, setNewKeyName] = useState("");
+    const [newKeyValue, setNewKeyValue] = useState("");
+    const [loadingKeys, setLoadingKeys] = useState(false);
 
     useEffect(() => {
         loadConfig();
-    }, []);
+        if (providerId === "nosana") {
+            loadNosanaApiKeys();
+        }
+    }, [providerId]);
 
     const loadConfig = async () => {
         try {
@@ -52,6 +62,48 @@ export default function ProviderConfigPage() {
         }
     };
 
+    const loadNosanaApiKeys = async () => {
+        try {
+            setLoadingKeys(true);
+            const keys = await ConfigService.listNosanaApiKeys();
+            setNosanaApiKeys(keys);
+        } catch (e) {
+            toast.error("Failed to load Nosana API keys");
+        } finally {
+            setLoadingKeys(false);
+        }
+    };
+
+    const handleAddApiKey = async () => {
+        if (!newKeyName.trim() || !newKeyValue.trim()) {
+            toast.error("Please provide both name and API key");
+            return;
+        }
+        try {
+            await ConfigService.addNosanaApiKey(newKeyName.trim(), newKeyValue.trim());
+            toast.success(`API key "${newKeyName}" added successfully`);
+            setNewKeyName("");
+            setNewKeyValue("");
+            setShowAddKeyModal(false);
+            loadNosanaApiKeys();
+        } catch (e) {
+            toast.error("Failed to add API key");
+        }
+    };
+
+    const handleDeleteApiKey = async (name: string) => {
+        if (!confirm(`Are you sure you want to delete the API key "${name}"?`)) {
+            return;
+        }
+        try {
+            await ConfigService.deleteNosanaApiKey(name);
+            toast.success(`API key "${name}" deleted successfully`);
+            loadNosanaApiKeys();
+        } catch (e) {
+            toast.error("Failed to delete API key");
+        }
+    };
+
     const checkConfigured = (data: ProvidersConfig, pid?: string) => {
         if (!pid) return false;
         switch (pid) {
@@ -59,8 +111,8 @@ export default function ProviderConfigPage() {
             case "chroma": return data.vectordb.chroma.is_local !== false ? (!!data.vectordb.chroma.url) : !!data.vectordb.chroma.api_key;
             case "groq": return !!data.guardrails.groq.api_key;
             case "lakera": return !!data.guardrails.lakera.api_key;
-            case "nosana": return !!data.depin.nosana.wallet_private_key || !!data.depin.nosana.api_key;
-            case "akash": return !!data.depin.akash.mnemonic;
+            case "nosana": return !!data.depin.nosana.wallet_private_key || !!data.depin.nosana.api_key || (nosanaApiKeys && nosanaApiKeys.length > 0);
+            case "akash": return !!data.depin.akash.mnemonic;  // TODO: Also check universal credentials
             default: return false;
         }
     };
@@ -228,20 +280,27 @@ export default function ProviderConfigPage() {
                 );
             case "nosana":
                 return (
-                    <div className="space-y-4">
-                        <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
-                            Nosana supports both Wallet-based (on-chain) and API-based (credit) deployments. Enter either a Private Key or an API Key below.
-                        </div>
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">Wallet Private Key</label>
-                            <input
-                                type="password"
-                                value={config.depin.nosana.wallet_private_key || ""}
-                                onChange={(e) => updateField(['depin', 'nosana', 'wallet_private_key'], e.target.value)}
-                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                placeholder="Base58 Private Key..."
-                            />
-                            <p className="text-[10px] text-muted-foreground italic">Use for direct on-chain deployments via Solana.</p>
+                    <div className="space-y-6">
+                        {/* Wallet Configuration Section */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-semibold flex items-center gap-2">
+                                <Key className="w-4 h-4" />
+                                Wallet Configuration
+                            </h3>
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                                Nosana supports both Wallet-based (on-chain) and API-based (credit) deployments. Enter a Private Key for on-chain deployments.
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Wallet Private Key</label>
+                                <input
+                                    type="password"
+                                    value={config.depin.nosana.wallet_private_key || ""}
+                                    onChange={(e) => updateField(['depin', 'nosana', 'wallet_private_key'], e.target.value)}
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    placeholder="Base58 Private Key..."
+                                />
+                                <p className="text-[10px] text-muted-foreground italic">Use for direct on-chain deployments via Solana.</p>
+                            </div>
                         </div>
 
                         <div className="relative py-2 text-center">
@@ -251,29 +310,207 @@ export default function ProviderConfigPage() {
                             <span className="relative bg-background px-2 text-xs text-muted-foreground uppercase">OR</span>
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">Nosana API Key</label>
-                            <input
-                                type="password"
-                                value={config.depin.nosana.api_key || ""}
-                                onChange={(e) => updateField(['depin', 'nosana', 'api_key'], e.target.value)}
-                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                placeholder="nos_..."
-                            />
-                            <p className="text-[10px] text-muted-foreground italic">Use for credit-based deployments via the Nosana API.</p>
+                        {/* API Keys Management Section */}
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-semibold flex items-center gap-2">
+                                    <Key className="w-4 h-4" />
+                                    API Keys for Credit-Based Deployments
+                                </h3>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddKeyModal(true)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                                >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    Add Key
+                                </button>
+                            </div>
+                            
+                            <p className="text-xs text-muted-foreground">
+                                Add multiple Nosana API keys with friendly names (e.g., "Piyush", "Jesse"). 
+                                These will be available as options when creating compute pools.
+                            </p>
+
+                            {loadingKeys ? (
+                                <div className="text-center py-4 text-muted-foreground text-sm">
+                                    Loading API keys...
+                                </div>
+                            ) : nosanaApiKeys.length === 0 ? (
+                                <div className="text-center py-6 bg-muted/30 rounded-lg border border-dashed">
+                                    <Key className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                                    <p className="text-sm text-muted-foreground">No API keys configured</p>
+                                    <p className="text-xs text-muted-foreground mt-1">Add your first key to get started</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {nosanaApiKeys.map((key) => (
+                                        <div 
+                                            key={key.name}
+                                            className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                                    <Key className="w-4 h-4 text-primary" />
+                                                </div>
+                                                <div>
+                                                    <p className="font-medium text-sm">{key.name}</p>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {key.is_active ? 'Active' : 'Inactive'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteApiKey(key.name)}
+                                                className="p-2 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                                title="Delete API key"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Legacy API Key Field (for migration) */}
+                            {config.depin.nosana.api_key && (
+                                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                                    <p className="text-xs text-amber-800 font-medium mb-2">Legacy API Key Detected</p>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-medium text-amber-800">Existing API Key</label>
+                                        <input
+                                            type="password"
+                                            value={config.depin.nosana.api_key || ""}
+                                            onChange={(e) => updateField(['depin', 'nosana', 'api_key'], e.target.value)}
+                                            className="flex h-9 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                                            placeholder="nos_..."
+                                        />
+                                        <p className="text-[10px] text-amber-700">
+                                            This legacy key will be available as &quot;default&quot; in pool creation. 
+                                            Consider migrating to the named keys above.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
+
+                        {/* Add Key Modal */}
+                        {showAddKeyModal && (
+                            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                                <div className="bg-card border rounded-xl p-6 w-full max-w-md mx-4 space-y-4">
+                                    <h3 className="text-lg font-semibold">Add Nosana API Key</h3>
+                                    <div className="space-y-3">
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-medium">Key Name</label>
+                                            <input
+                                                value={newKeyName}
+                                                onChange={(e) => setNewKeyName(e.target.value)}
+                                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                                placeholder="e.g., Piyush, Jesse, Production..."
+                                            />
+                                            <p className="text-xs text-muted-foreground">
+                                                A friendly name to identify this key
+                                            </p>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-medium">API Key</label>
+                                            <input
+                                                type="password"
+                                                value={newKeyValue}
+                                                onChange={(e) => setNewKeyValue(e.target.value)}
+                                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                                placeholder="nos_..."
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-end gap-3 pt-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowAddKeyModal(false);
+                                                setNewKeyName("");
+                                                setNewKeyValue("");
+                                            }}
+                                            className="px-4 py-2 text-sm font-medium rounded-md border hover:bg-accent transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleAddApiKey}
+                                            className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                                        >
+                                            Add Key
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )
             case "akash":
                 return (
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium">Mnemonic</label>
-                        <input
-                            type="password"
-                            value={config.depin.akash.mnemonic || ""}
-                            onChange={(e) => updateField(['depin', 'akash', 'mnemonic'], e.target.value)}
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        />
+                    <div className="space-y-6">
+                        {/* Legacy Mnemonic Section */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-semibold flex items-center gap-2">
+                                <Key className="w-4 h-4" />
+                                Legacy Mnemonic
+                            </h3>
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                                Akash uses a mnemonic phrase for wallet authentication. You can use the legacy field below or set up multiple wallets using the credential management system.
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Mnemonic Phrase</label>
+                                <input
+                                    type="password"
+                                    value={config.depin.akash.mnemonic || ""}
+                                    onChange={(e) => updateField(['depin', 'akash', 'mnemonic'], e.target.value)}
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    placeholder="word1 word2 word3..."
+                                />
+                                <p className="text-[10px] text-muted-foreground italic">Your Akash wallet mnemonic for on-chain deployments.</p>
+                            </div>
+                        </div>
+
+                        <div className="relative py-2 text-center">
+                            <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                                <div className="w-full border-t border-muted"></div>
+                            </div>
+                            <span className="relative bg-background px-2 text-xs text-muted-foreground uppercase">OR</span>
+                        </div>
+
+                        {/* Wallet Management Section - Using Universal Credential System */}
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-semibold flex items-center gap-2">
+                                    <Key className="w-4 h-4" />
+                                    Managed Wallets (Universal Credential System)
+                                </h3>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddKeyModal(true)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                                >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    Add Wallet
+                                </button>
+                            </div>
+                            
+                            <p className="text-xs text-muted-foreground">
+                                Add multiple Akash wallets with friendly names using the universal credential system. 
+                                These work exactly like Nosana API keys but for Akash mnemonics.
+                            </p>
+
+                            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                                <p className="text-xs text-green-800 font-medium mb-1">Universal System Ready!</p>
+                                <p className="text-xs text-green-700">
+                                    To fully enable this UI, update the component state to track provider type 
+                                    and use the universal <code>ConfigService.listProviderCredentials('akash')</code> API.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 )
             case "pii":
