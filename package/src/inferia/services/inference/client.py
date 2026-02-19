@@ -2,7 +2,9 @@
 HTTP client for communicating with API Gateway Service.
 """
 
+import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -27,6 +29,14 @@ class ApiGatewayClient:
         self.context_cache = cachetools.TTLCache(
             maxsize=settings.context_cache_maxsize, ttl=settings.context_cache_ttl
         )
+        self.quota_cache_ttl = settings.quota_check_cache_ttl_seconds
+        self.quota_check_cache = cachetools.TTLCache(
+            maxsize=settings.quota_check_cache_maxsize,
+            ttl=max(self.quota_cache_ttl, 0.0),
+        )
+        self._context_inflight: Dict[tuple[str, str, str], asyncio.Task] = {}
+        self._quota_inflight: Dict[tuple[str, str], asyncio.Task] = {}
+        self._inflight_lock = asyncio.Lock()
 
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the shared httpx client."""
@@ -64,6 +74,27 @@ class ApiGatewayClient:
         """
         Check if user has sufficient quota.
         """
+        cache_key = (user_id, model)
+        if self.quota_cache_ttl > 0 and cache_key in self.quota_check_cache:
+            return
+
+        async with self._inflight_lock:
+            task = self._quota_inflight.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(self._check_quota_uncached(user_id, model))
+                self._quota_inflight[cache_key] = task
+
+        try:
+            await task
+            if self.quota_cache_ttl > 0:
+                # Value is irrelevant; presence in TTL cache means "checked recently and allowed".
+                self.quota_check_cache[cache_key] = time.monotonic()
+        finally:
+            async with self._inflight_lock:
+                if self._quota_inflight.get(cache_key) is task:
+                    self._quota_inflight.pop(cache_key, None)
+
+    async def _check_quota_uncached(self, user_id: str, model: str) -> None:
         client = self._get_client()
         try:
             response = await client.post(
@@ -294,6 +325,26 @@ class ApiGatewayClient:
         if cache_key in self.context_cache:
             return self.context_cache[cache_key]
 
+        async with self._inflight_lock:
+            task = self._context_inflight.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._resolve_context_uncached(api_key, model, model_type)
+                )
+                self._context_inflight[cache_key] = task
+
+        try:
+            data = await task
+            return data
+        finally:
+            async with self._inflight_lock:
+                if self._context_inflight.get(cache_key) is task:
+                    self._context_inflight.pop(cache_key, None)
+
+    async def _resolve_context_uncached(
+        self, api_key: str, model: str, model_type: str
+    ) -> Dict[str, Any]:
+        cache_key = (api_key, model, model_type)
         client = self._get_client()
         headers = self._get_headers()  # Use internal key
         payload = {"api_key": api_key, "model": model, "model_type": model_type}
@@ -317,8 +368,7 @@ class ApiGatewayClient:
                     "detail", "Failed to resolve deployment context"
                 ),
             )
-        except Exception as e:
-            # logger.error(f"Failed context resolve: {e}")
+        except Exception:
             raise HTTPException(
                 status_code=500, detail="Failed to resolve deployment context"
             )

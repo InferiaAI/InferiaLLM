@@ -15,6 +15,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 
 from inferia.services.api_gateway.config import settings
+from inferia.services.api_gateway.gateway.http_client import gateway_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +39,23 @@ async def check_service(name: str, url: str, timeout: float = 5.0) -> ServiceHea
     """Check health of a single service."""
     start = time.time()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url)
-            latency = (time.time() - start) * 1000
+        client = gateway_http_client.get_service_client()
+        response = await client.get(url, timeout=timeout)
+        latency = (time.time() - start) * 1000
 
-            if response.status_code == 200:
-                return ServiceHealth(
-                    name=name,
-                    status="online",
-                    latency_ms=round(latency, 2),
-                )
-            else:
-                return ServiceHealth(
-                    name=name,
-                    status="degraded",
-                    latency_ms=round(latency, 2),
-                    error=f"HTTP {response.status_code}",
-                )
+        if response.status_code == 200:
+            return ServiceHealth(
+                name=name,
+                status="online",
+                latency_ms=round(latency, 2),
+            )
+        else:
+            return ServiceHealth(
+                name=name,
+                status="degraded",
+                latency_ms=round(latency, 2),
+                error=f"HTTP {response.status_code}",
+            )
     except httpx.TimeoutException:
         return ServiceHealth(
             name=name,

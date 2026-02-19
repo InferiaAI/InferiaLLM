@@ -24,7 +24,7 @@ def create_vllm_job(
     gpu_util: float = 0.95,
     dtype: str = "auto",
     enforce_eager: bool = False,
-    min_vram: int = 6,
+    min_vram: int = 8,
     # Advanced Tuning
     max_model_len: int = 8192,
     max_num_seqs: int = 256,
@@ -71,7 +71,11 @@ def create_vllm_job(
         health_headers["Authorization"] = f"Bearer {effective_api_key}"
 
     # Prepare Environment Variables
-    envs: Dict[str, str] = {}
+    envs: Dict[str, str] = {
+            "CUDA_MODULE_LOADING": "LAZY",
+            "NVIDIA_DISABLE_CUDA_COMPAT": "1"  # Force bypass of the forward compatibility layer
+        }
+        
     token_to_use = hf_token or os.getenv("HF_TOKEN")
     if token_to_use:
         envs["HF_TOKEN"] = token_to_use
@@ -92,6 +96,7 @@ def create_vllm_job(
         "--dtype",
         dtype,
         "--trust-remote-code",
+        "--kv-cache-dtype", "auto",
     ]
 
     # Add quantization flag if provided
@@ -103,12 +108,10 @@ def create_vllm_job(
         cmd_args.extend(["--api-key", effective_api_key])
 
     # Eager execution
-    if enforce_eager:
-        cmd_args.append("--enforce-eager")
+    cmd_args.append("--enforce-eager")
 
     # Chunked Prefill
-    if enable_chunked_prefill:
-        cmd_args.append("--enable-chunked-prefill")
+    cmd_args.append("--enable-chunked-prefill")
 
     container_op = {
         "id": model_id,
@@ -141,9 +144,11 @@ def create_vllm_job(
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": [
-                "12.6",
                 "12.8",
                 "12.9",
+                "13.0",
+                "13.1",
+                "13.2",
             ],
             "required_vram": min_vram,
         },

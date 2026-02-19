@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8001
     reload: bool = False
+    workers: int = Field(
+        default=1,
+        alias="INFERENCE_WORKERS",
+        validation_alias="INFERENCE_WORKERS",
+    )
     log_level: str = "INFO"
 
     # API Gateway Settings
@@ -55,6 +60,46 @@ class Settings(BaseSettings):
     # Timeouts
     request_timeout: int = 30
 
+    # Upstream HTTP Client Tuning
+    upstream_http_timeout_seconds: float = Field(
+        default=60.0,
+        alias="UPSTREAM_HTTP_TIMEOUT_SECONDS",
+        validation_alias="UPSTREAM_HTTP_TIMEOUT_SECONDS",
+    )
+    upstream_http_connect_timeout_seconds: float = Field(
+        default=10.0,
+        alias="UPSTREAM_HTTP_CONNECT_TIMEOUT_SECONDS",
+        validation_alias="UPSTREAM_HTTP_CONNECT_TIMEOUT_SECONDS",
+    )
+    upstream_http_max_connections: int = Field(
+        default=500,
+        alias="UPSTREAM_HTTP_MAX_CONNECTIONS",
+        validation_alias="UPSTREAM_HTTP_MAX_CONNECTIONS",
+    )
+    upstream_http_max_keepalive_connections: int = Field(
+        default=100,
+        alias="UPSTREAM_HTTP_MAX_KEEPALIVE_CONNECTIONS",
+        validation_alias="UPSTREAM_HTTP_MAX_KEEPALIVE_CONNECTIONS",
+    )
+
+    # Upstream Concurrency Guards
+    upstream_global_max_in_flight: int = Field(
+        default=0,
+        alias="UPSTREAM_GLOBAL_MAX_IN_FLIGHT",
+        validation_alias="UPSTREAM_GLOBAL_MAX_IN_FLIGHT",
+        description="0 disables global limit",
+    )
+    upstream_per_deployment_max_in_flight: int = Field(
+        default=64,
+        alias="UPSTREAM_PER_DEPLOYMENT_MAX_IN_FLIGHT",
+        validation_alias="UPSTREAM_PER_DEPLOYMENT_MAX_IN_FLIGHT",
+    )
+    upstream_slot_acquire_timeout_seconds: float = Field(
+        default=1.0,
+        alias="UPSTREAM_SLOT_ACQUIRE_TIMEOUT_SECONDS",
+        validation_alias="UPSTREAM_SLOT_ACQUIRE_TIMEOUT_SECONDS",
+    )
+
     # Context Cache Settings
     # Cache duration for resolved API key contexts (deployment, guardrails, etc.)
     context_cache_ttl: int = Field(
@@ -68,6 +113,21 @@ class Settings(BaseSettings):
         alias="CONTEXT_CACHE_MAXSIZE",
         validation_alias="CONTEXT_CACHE_MAXSIZE",
         description="Maximum number of entries in API key context cache",
+    )
+
+    # Quota Check Cache Settings
+    # A short positive-cache reduces internal gateway pressure under concurrency spikes.
+    quota_check_cache_ttl_seconds: float = Field(
+        default=1.0,
+        alias="QUOTA_CHECK_CACHE_TTL_SECONDS",
+        validation_alias="QUOTA_CHECK_CACHE_TTL_SECONDS",
+        description="TTL in seconds for successful quota checks",
+    )
+    quota_check_cache_maxsize: int = Field(
+        default=10000,
+        alias="QUOTA_CHECK_CACHE_MAXSIZE",
+        validation_alias="QUOTA_CHECK_CACHE_MAXSIZE",
+        description="Maximum number of entries in successful quota check cache",
     )
 
     model_config = SettingsConfigDict(

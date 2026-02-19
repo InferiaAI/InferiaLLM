@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { managementApi, computeApi } from "@/lib/api";
+import { computeApi } from "@/lib/api";
 import { toast } from "sonner";
 import {
   Plus,
@@ -115,12 +115,10 @@ export default function Deployments() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async ({ id, provider }: { id: string; provider: string }) => {
-      if (provider === "compute" || provider === "vllm") {
-        await computeApi.delete(`/deployment/delete/${id}`);
-      } else {
-        await managementApi.delete(`/management/deployments/${id}`);
-      }
+    mutationFn: async ({ id }: { id: string }) => {
+      // This page is backed by orchestration deployments, so deletion should
+      // go through orchestration as well.
+      await computeApi.delete(`/deployment/delete/${id}`);
     },
     onSuccess: () => {
       toast.success("Deployment deleted successfully");
@@ -172,9 +170,9 @@ export default function Deployments() {
     }
   };
 
-  const handleDelete = (id: string, provider: string) => {
+  const handleDelete = (id: string) => {
     if (confirm("Are you sure you want to permanently delete this deployment? This action cannot be undone.")) {
-      deleteMutation.mutate({ id, provider });
+      deleteMutation.mutate({ id });
     }
   };
 
@@ -321,7 +319,7 @@ export default function Deployments() {
                             <button
                               type="button"
                               disabled={isMutating}
-                              onClick={() => handleDelete(deployment.id, deployment.provider)}
+                              onClick={() => handleDelete(deployment.id)}
                               className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-900/25 dark:text-red-300 dark:hover:bg-red-900/40 disabled:opacity-60"
                             >
                               <Trash2 className="w-3.5 h-3.5" /> Delete

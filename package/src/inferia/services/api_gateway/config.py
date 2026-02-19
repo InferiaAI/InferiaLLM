@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = Field(default=False, validation_alias="DEBUG_RELOAD")
+    workers: int = Field(default=1, validation_alias="API_GATEWAY_WORKERS")
 
     # Multi-tenancy / Organization Settings
     default_org_name: str = "Default Organization"
@@ -114,6 +115,16 @@ class Settings(BaseSettings):
     rate_limit_burst_size: int = 10
     redis_url: str = "redis://localhost:6379/0"
     use_redis_rate_limit: bool = False
+
+    # Internal HTTP Client Tuning
+    service_http_timeout_seconds: float = 10.0
+    service_http_connect_timeout_seconds: float = 3.0
+    service_http_max_connections: int = 500
+    service_http_max_keepalive_connections: int = 100
+
+    proxy_http_timeout_seconds: float = 300.0
+    proxy_http_max_connections: int = 500
+    proxy_http_max_keepalive_connections: int = 100
 
     # Database Settings
     # In production, use strong credentials and enable SSL

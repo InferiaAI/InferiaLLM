@@ -59,6 +59,7 @@ class OrchestrationService:
 
         deployment = context["deployment"]
         deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
         user_context_id = context["user_id_context"]
         rate_limit_config = context.get("rate_limit_config")
         log_payloads = context.get("log_payloads", True)
@@ -105,6 +106,7 @@ class OrchestrationService:
             provider_headers,
             engine,
             path="/embeddings",
+            concurrency_key=concurrency_key,
         )
 
         # 5. Log embedding usage (simplified logging for embeddings)
@@ -153,6 +155,7 @@ class OrchestrationService:
 
         deployment = context["deployment"]
         deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
         user_context_id = context["user_id_context"]
         org_id = context.get("org_id")
         guardrail_cfg = context["guardrail_config"] or {}
@@ -283,6 +286,7 @@ class OrchestrationService:
                 applied_policies,
                 log_payloads,
                 ip_address,
+                concurrency_key,
             )
         else:
             return await OrchestrationService._handle_standard(
@@ -300,6 +304,7 @@ class OrchestrationService:
                 applied_policies,
                 log_payloads,
                 ip_address,
+                concurrency_key,
             )
 
     @staticmethod
@@ -317,6 +322,7 @@ class OrchestrationService:
         applied_policies,
         log_payloads,
         ip_address,
+        concurrency_key,
     ):
         # Calculate prompt tokens from messages upfront
         tokenizer_model = provider_payload.get("model") or model
@@ -334,7 +340,11 @@ class OrchestrationService:
         }
 
         stream_gen = GatewayService.stream_upstream(
-            endpoint_url, provider_payload, provider_headers, engine
+            endpoint_url,
+            provider_payload,
+            provider_headers,
+            engine,
+            concurrency_key=concurrency_key,
         )
 
         # Wrap stream with processor
@@ -392,9 +402,14 @@ class OrchestrationService:
         applied_policies,
         log_payloads,
         ip_address,
+        concurrency_key,
     ):
         response_data = await GatewayService.call_upstream(
-            endpoint_url, provider_payload, provider_headers, engine
+            endpoint_url,
+            provider_payload,
+            provider_headers,
+            engine,
+            concurrency_key=concurrency_key,
         )
 
         # Output Guardrails

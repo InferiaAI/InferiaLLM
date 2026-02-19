@@ -9,6 +9,7 @@ def start_api():
         host=settings.host,
         port=settings.port,
         reload=settings.reload,
+        workers=settings.workers,
         log_level=settings.log_level.lower(),
     )
 

@@ -4,15 +4,15 @@ Supports both in-memory and Redis-based rate limiting.
 """
 
 import time
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 from fastapi import HTTPException, status, Request
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncio
 
 from inferia.services.api_gateway.config import settings
 
 try:
-    import redis
+    import redis.asyncio as redis
 
     REDIS_AVAILABLE = True
 except ImportError:
@@ -75,7 +75,7 @@ class InMemoryRateLimiter:
             )
         return self.buckets[key]
 
-    async def is_allowed(self, key: str) -> Tuple[bool, Dict[str, any]]:
+    async def is_allowed(self, key: str) -> Tuple[bool, Dict[str, Any]]:
         """
         Check if request is allowed.
         Returns (is_allowed, metadata)
@@ -104,7 +104,7 @@ class RedisRateLimiter:
         self.requests_per_minute = settings.rate_limit_requests_per_minute
         self.window_seconds = 60
 
-    async def is_allowed(self, key: str) -> Tuple[bool, Dict[str, any]]:
+    async def is_allowed(self, key: str) -> Tuple[bool, Dict[str, Any]]:
         """
         Check if request is allowed using sliding window algorithm.
         Returns (is_allowed, metadata)
@@ -116,19 +116,19 @@ class RedisRateLimiter:
         redis_key = f"rate_limit:{key}"
 
         # Remove old entries
-        self.redis_client.zremrangebyscore(redis_key, 0, window_start)
+        await self.redis_client.zremrangebyscore(redis_key, 0, window_start)
 
         # Count requests in current window
-        current_count = self.redis_client.zcard(redis_key)
+        current_count = await self.redis_client.zcard(redis_key)
 
         # Check if allowed
         allowed = current_count < self.requests_per_minute
 
         if allowed:
             # Add new request timestamp
-            self.redis_client.zadd(redis_key, {str(now): now})
+            await self.redis_client.zadd(redis_key, {str(now): now})
             # Set expiry on key
-            self.redis_client.expire(redis_key, self.window_seconds * 2)
+            await self.redis_client.expire(redis_key, self.window_seconds * 2)
 
         metadata = {
             "limit": self.requests_per_minute,
@@ -137,6 +137,9 @@ class RedisRateLimiter:
         }
 
         return allowed, metadata
+
+    async def close(self):
+        await self.redis_client.aclose()
 
 
 import logging
@@ -196,6 +199,15 @@ class RateLimiter:
 
         # Add rate limit info to request state
         request.state.rate_limit_metadata = metadata
+
+    async def close(self):
+        close_method = getattr(self.limiter, "close", None)
+        if close_method is None:
+            return
+        try:
+            await close_method()
+        except Exception as e:
+            logger.warning(f"Failed to close rate limiter backend: {e}")
 
 
 # Global rate limiter instance

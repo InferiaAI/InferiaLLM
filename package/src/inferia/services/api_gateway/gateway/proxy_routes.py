@@ -11,14 +11,13 @@ from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from inferia.services.api_gateway.rbac.middleware import get_current_user_from_request
 from inferia.services.api_gateway.models import UserContext
 from inferia.services.api_gateway.config import settings
+from inferia.services.api_gateway.gateway.http_client import gateway_http_client
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Proxy API"])
 
 ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
-
-http_client = httpx.AsyncClient(timeout=300.0)
 
 
 async def proxy_request(
@@ -43,7 +42,8 @@ async def proxy_request(
     content = await request.body()
 
     try:
-        response = await http_client.request(
+        client = gateway_http_client.get_proxy_client()
+        response = await client.request(
             method=method,
             url=url,
             headers=headers,
