@@ -871,6 +871,7 @@ export class NosanaService {
                 vcpu_allocated: number;
                 ram_gb_allocated: number;
             };
+            credentialName?: string;
         }
     ) {
         const now = Date.now();

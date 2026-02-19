@@ -48,10 +48,18 @@ class ProviderCredential(BaseModel):
     is_active: bool = True
 
 
+class NosanaApiKeyEntry(BaseModel):
+    """A single named Nosana API key credential."""
+    name: str
+    key: str
+    is_active: bool = True
+
+
 class NosanaConfig(BaseModel):
     wallet_private_key: Optional[str] = None
     api_key: Optional[str] = None  # Deprecated: kept for migration
-    # Note: api_keys moved to generic provider_credentials system
+    api_keys: List[NosanaApiKeyEntry] = Field(default_factory=list)  # Named credentials
+
 
 
 class AkashConfig(BaseModel):

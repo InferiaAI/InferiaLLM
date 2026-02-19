@@ -4,7 +4,7 @@ import grpc
 import warnings
 
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-from inferia.services.orchestration.v1 import inventory_manager_pb2 as v1_dot_inventory__manager__pb2
+import inventory_manager_pb2 as inventory__manager__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -19,7 +19,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in v1/inventory_manager_pb2_grpc.py depends on'
+        + ' but the generated code in inventory_manager_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -37,12 +37,12 @@ class InventoryManagerStub(object):
         """
         self.InvenRegisterNode = channel.unary_unary(
                 '/orchestration.v1.InventoryManager/InvenRegisterNode',
-                request_serializer=v1_dot_inventory__manager__pb2.InvenRegisterNodeRequest.SerializeToString,
+                request_serializer=inventory__manager__pb2.InvenRegisterNodeRequest.SerializeToString,
                 response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 _registered_method=True)
         self.InvenHeartbeat = channel.unary_unary(
                 '/orchestration.v1.InventoryManager/InvenHeartbeat',
-                request_serializer=v1_dot_inventory__manager__pb2.InvenHeartbeatRequest.SerializeToString,
+                request_serializer=inventory__manager__pb2.InvenHeartbeatRequest.SerializeToString,
                 response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 _registered_method=True)
 
@@ -67,12 +67,12 @@ def add_InventoryManagerServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'InvenRegisterNode': grpc.unary_unary_rpc_method_handler(
                     servicer.InvenRegisterNode,
-                    request_deserializer=v1_dot_inventory__manager__pb2.InvenRegisterNodeRequest.FromString,
+                    request_deserializer=inventory__manager__pb2.InvenRegisterNodeRequest.FromString,
                     response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'InvenHeartbeat': grpc.unary_unary_rpc_method_handler(
                     servicer.InvenHeartbeat,
-                    request_deserializer=v1_dot_inventory__manager__pb2.InvenHeartbeatRequest.FromString,
+                    request_deserializer=inventory__manager__pb2.InvenHeartbeatRequest.FromString,
                     response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
     }
@@ -101,7 +101,7 @@ class InventoryManager(object):
             request,
             target,
             '/orchestration.v1.InventoryManager/InvenRegisterNode',
-            v1_dot_inventory__manager__pb2.InvenRegisterNodeRequest.SerializeToString,
+            inventory__manager__pb2.InvenRegisterNodeRequest.SerializeToString,
             google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options,
             channel_credentials,
@@ -128,7 +128,7 @@ class InventoryManager(object):
             request,
             target,
             '/orchestration.v1.InventoryManager/InvenHeartbeat',
-            v1_dot_inventory__manager__pb2.InvenHeartbeatRequest.SerializeToString,
+            inventory__manager__pb2.InvenHeartbeatRequest.SerializeToString,
             google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options,
             channel_credentials,

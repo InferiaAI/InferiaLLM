@@ -4,7 +4,7 @@ import grpc
 import warnings
 
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-from inferia.services.orchestration.v1 import scheduler_pb2 as v1_dot_scheduler__pb2
+import scheduler_pb2 as scheduler__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -19,7 +19,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in v1/scheduler_pb2_grpc.py depends on'
+        + ' but the generated code in scheduler_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -37,38 +37,38 @@ class SchedulerStub(object):
         """
         self.Allocate = channel.unary_unary(
                 '/orchestration.v1.Scheduler/Allocate',
-                request_serializer=v1_dot_scheduler__pb2.AllocateRequest.SerializeToString,
-                response_deserializer=v1_dot_scheduler__pb2.AllocateResponse.FromString,
+                request_serializer=scheduler__pb2.AllocateRequest.SerializeToString,
+                response_deserializer=scheduler__pb2.AllocateResponse.FromString,
                 _registered_method=True)
         self.Release = channel.unary_unary(
                 '/orchestration.v1.Scheduler/Release',
-                request_serializer=v1_dot_scheduler__pb2.ReleaseRequest.SerializeToString,
+                request_serializer=scheduler__pb2.ReleaseRequest.SerializeToString,
                 response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 _registered_method=True)
         self.AllocateGang = channel.unary_unary(
                 '/orchestration.v1.Scheduler/AllocateGang',
-                request_serializer=v1_dot_scheduler__pb2.AllocateGangRequest.SerializeToString,
-                response_deserializer=v1_dot_scheduler__pb2.AllocateGangResponse.FromString,
+                request_serializer=scheduler__pb2.AllocateGangRequest.SerializeToString,
+                response_deserializer=scheduler__pb2.AllocateGangResponse.FromString,
                 _registered_method=True)
         self.GetJob = channel.unary_unary(
                 '/orchestration.v1.Scheduler/GetJob',
-                request_serializer=v1_dot_scheduler__pb2.GetJobRequest.SerializeToString,
-                response_deserializer=v1_dot_scheduler__pb2.GetJobResponse.FromString,
+                request_serializer=scheduler__pb2.GetJobRequest.SerializeToString,
+                response_deserializer=scheduler__pb2.GetJobResponse.FromString,
                 _registered_method=True)
         self.ListJobs = channel.unary_unary(
                 '/orchestration.v1.Scheduler/ListJobs',
-                request_serializer=v1_dot_scheduler__pb2.ListJobsRequest.SerializeToString,
-                response_deserializer=v1_dot_scheduler__pb2.ListJobsResponse.FromString,
+                request_serializer=scheduler__pb2.ListJobsRequest.SerializeToString,
+                response_deserializer=scheduler__pb2.ListJobsResponse.FromString,
                 _registered_method=True)
         self.CancelJob = channel.unary_unary(
                 '/orchestration.v1.Scheduler/CancelJob',
-                request_serializer=v1_dot_scheduler__pb2.CancelJobRequest.SerializeToString,
-                response_deserializer=v1_dot_scheduler__pb2.CancelJobResponse.FromString,
+                request_serializer=scheduler__pb2.CancelJobRequest.SerializeToString,
+                response_deserializer=scheduler__pb2.CancelJobResponse.FromString,
                 _registered_method=True)
         self.ListJobAllocations = channel.unary_unary(
                 '/orchestration.v1.Scheduler/ListJobAllocations',
-                request_serializer=v1_dot_scheduler__pb2.ListJobAllocationsRequest.SerializeToString,
-                response_deserializer=v1_dot_scheduler__pb2.ListJobAllocationsResponse.FromString,
+                request_serializer=scheduler__pb2.ListJobAllocationsRequest.SerializeToString,
+                response_deserializer=scheduler__pb2.ListJobAllocationsResponse.FromString,
                 _registered_method=True)
 
 
@@ -122,38 +122,38 @@ def add_SchedulerServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Allocate': grpc.unary_unary_rpc_method_handler(
                     servicer.Allocate,
-                    request_deserializer=v1_dot_scheduler__pb2.AllocateRequest.FromString,
-                    response_serializer=v1_dot_scheduler__pb2.AllocateResponse.SerializeToString,
+                    request_deserializer=scheduler__pb2.AllocateRequest.FromString,
+                    response_serializer=scheduler__pb2.AllocateResponse.SerializeToString,
             ),
             'Release': grpc.unary_unary_rpc_method_handler(
                     servicer.Release,
-                    request_deserializer=v1_dot_scheduler__pb2.ReleaseRequest.FromString,
+                    request_deserializer=scheduler__pb2.ReleaseRequest.FromString,
                     response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'AllocateGang': grpc.unary_unary_rpc_method_handler(
                     servicer.AllocateGang,
-                    request_deserializer=v1_dot_scheduler__pb2.AllocateGangRequest.FromString,
-                    response_serializer=v1_dot_scheduler__pb2.AllocateGangResponse.SerializeToString,
+                    request_deserializer=scheduler__pb2.AllocateGangRequest.FromString,
+                    response_serializer=scheduler__pb2.AllocateGangResponse.SerializeToString,
             ),
             'GetJob': grpc.unary_unary_rpc_method_handler(
                     servicer.GetJob,
-                    request_deserializer=v1_dot_scheduler__pb2.GetJobRequest.FromString,
-                    response_serializer=v1_dot_scheduler__pb2.GetJobResponse.SerializeToString,
+                    request_deserializer=scheduler__pb2.GetJobRequest.FromString,
+                    response_serializer=scheduler__pb2.GetJobResponse.SerializeToString,
             ),
             'ListJobs': grpc.unary_unary_rpc_method_handler(
                     servicer.ListJobs,
-                    request_deserializer=v1_dot_scheduler__pb2.ListJobsRequest.FromString,
-                    response_serializer=v1_dot_scheduler__pb2.ListJobsResponse.SerializeToString,
+                    request_deserializer=scheduler__pb2.ListJobsRequest.FromString,
+                    response_serializer=scheduler__pb2.ListJobsResponse.SerializeToString,
             ),
             'CancelJob': grpc.unary_unary_rpc_method_handler(
                     servicer.CancelJob,
-                    request_deserializer=v1_dot_scheduler__pb2.CancelJobRequest.FromString,
-                    response_serializer=v1_dot_scheduler__pb2.CancelJobResponse.SerializeToString,
+                    request_deserializer=scheduler__pb2.CancelJobRequest.FromString,
+                    response_serializer=scheduler__pb2.CancelJobResponse.SerializeToString,
             ),
             'ListJobAllocations': grpc.unary_unary_rpc_method_handler(
                     servicer.ListJobAllocations,
-                    request_deserializer=v1_dot_scheduler__pb2.ListJobAllocationsRequest.FromString,
-                    response_serializer=v1_dot_scheduler__pb2.ListJobAllocationsResponse.SerializeToString,
+                    request_deserializer=scheduler__pb2.ListJobAllocationsRequest.FromString,
+                    response_serializer=scheduler__pb2.ListJobAllocationsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -181,8 +181,8 @@ class Scheduler(object):
             request,
             target,
             '/orchestration.v1.Scheduler/Allocate',
-            v1_dot_scheduler__pb2.AllocateRequest.SerializeToString,
-            v1_dot_scheduler__pb2.AllocateResponse.FromString,
+            scheduler__pb2.AllocateRequest.SerializeToString,
+            scheduler__pb2.AllocateResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -208,7 +208,7 @@ class Scheduler(object):
             request,
             target,
             '/orchestration.v1.Scheduler/Release',
-            v1_dot_scheduler__pb2.ReleaseRequest.SerializeToString,
+            scheduler__pb2.ReleaseRequest.SerializeToString,
             google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options,
             channel_credentials,
@@ -235,8 +235,8 @@ class Scheduler(object):
             request,
             target,
             '/orchestration.v1.Scheduler/AllocateGang',
-            v1_dot_scheduler__pb2.AllocateGangRequest.SerializeToString,
-            v1_dot_scheduler__pb2.AllocateGangResponse.FromString,
+            scheduler__pb2.AllocateGangRequest.SerializeToString,
+            scheduler__pb2.AllocateGangResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -262,8 +262,8 @@ class Scheduler(object):
             request,
             target,
             '/orchestration.v1.Scheduler/GetJob',
-            v1_dot_scheduler__pb2.GetJobRequest.SerializeToString,
-            v1_dot_scheduler__pb2.GetJobResponse.FromString,
+            scheduler__pb2.GetJobRequest.SerializeToString,
+            scheduler__pb2.GetJobResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -289,8 +289,8 @@ class Scheduler(object):
             request,
             target,
             '/orchestration.v1.Scheduler/ListJobs',
-            v1_dot_scheduler__pb2.ListJobsRequest.SerializeToString,
-            v1_dot_scheduler__pb2.ListJobsResponse.FromString,
+            scheduler__pb2.ListJobsRequest.SerializeToString,
+            scheduler__pb2.ListJobsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -316,8 +316,8 @@ class Scheduler(object):
             request,
             target,
             '/orchestration.v1.Scheduler/CancelJob',
-            v1_dot_scheduler__pb2.CancelJobRequest.SerializeToString,
-            v1_dot_scheduler__pb2.CancelJobResponse.FromString,
+            scheduler__pb2.CancelJobRequest.SerializeToString,
+            scheduler__pb2.CancelJobResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -343,8 +343,8 @@ class Scheduler(object):
             request,
             target,
             '/orchestration.v1.Scheduler/ListJobAllocations',
-            v1_dot_scheduler__pb2.ListJobAllocationsRequest.SerializeToString,
-            v1_dot_scheduler__pb2.ListJobAllocationsResponse.FromString,
+            scheduler__pb2.ListJobAllocationsRequest.SerializeToString,
+            scheduler__pb2.ListJobAllocationsResponse.FromString,
             options,
             channel_credentials,
             insecure,

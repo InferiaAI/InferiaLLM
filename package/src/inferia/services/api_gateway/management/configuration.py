@@ -97,8 +97,10 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
         masked.depin.nosana.wallet_private_key = "********"
     if masked.depin.nosana.api_key:
         masked.depin.nosana.api_key = _mask_secret(masked.depin.nosana.api_key)
-    # Note: api_keys moved to generic provider_credentials system
-    # Masking handled by universal credential endpoints
+    # Mask named credentials in api_keys list
+    for entry in masked.depin.nosana.api_keys:
+        if entry.key:
+            entry.key = _mask_secret(entry.key)
     if masked.depin.akash.mnemonic:
         masked.depin.akash.mnemonic = "********"
 
