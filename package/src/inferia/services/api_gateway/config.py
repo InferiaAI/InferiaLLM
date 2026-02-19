@@ -110,9 +110,9 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
 
     # Rate Limiting Settings
-    rate_limit_enabled: bool = True
-    rate_limit_requests_per_minute: int = 60
-    rate_limit_burst_size: int = 10
+    rate_limit_enabled: bool = False
+    rate_limit_requests_per_minute: int = 10000
+    rate_limit_burst_size: int = 1000
     redis_url: str = "redis://localhost:6379/0"
     use_redis_rate_limit: bool = False
 
