@@ -126,13 +126,13 @@ const computeEngines = [
 ]
 
 const externalProviders = [
-  { id: "openai", name: "OpenAI", desc: "GPT-4, GPT-3.5 Turbo", icon: Globe, defaultEndpoint: "https://api.openai.com" },
-  { id: "anthropic", name: "Anthropic", desc: "Claude 3 Opus, Sonnet, Haiku", icon: Globe, defaultEndpoint: "https://api.anthropic.com" },
-  { id: "cohere", name: "Cohere", desc: "Command R, R+", icon: Globe, defaultEndpoint: "https://api.cohere.ai" },
-  { id: "groq", name: "Groq", desc: "LPU Inference Engine", icon: Globe, defaultEndpoint: "https://api.groq.com/openai/v1" },
-  { id: "openrouter", name: "OpenRouter", desc: "Unified API for top models", icon: Globe, defaultEndpoint: "https://openrouter.ai/api/v1" },
-  { id: "cerebras", name: "Cerebras", desc: "Wafer-Scale AI Inference", icon: Cpu, defaultEndpoint: "https://api.cerebras.ai/v1" },
-  { id: "custom", name: "Custom OpenAI", desc: "Compatible with any OpenAI SDK provider", icon: Server, defaultEndpoint: "" },
+  { id: "openai", name: "OpenAI", desc: "GPT + text-embedding models", icon: Globe, defaultEndpoint: "https://api.openai.com", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
+  { id: "anthropic", name: "Anthropic", desc: "Claude chat/completion models", icon: Globe, defaultEndpoint: "https://api.anthropic.com", modelTypes: ["inference"] as ModelTypeKey[] },
+  { id: "cohere", name: "Cohere", desc: "Command + embedding models", icon: Globe, defaultEndpoint: "https://api.cohere.ai", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
+  { id: "groq", name: "Groq", desc: "Fast inference via OpenAI-compatible API", icon: Globe, defaultEndpoint: "https://api.groq.com/openai/v1", modelTypes: ["inference"] as ModelTypeKey[] },
+  { id: "openrouter", name: "OpenRouter", desc: "Unified API for LLMs and embeddings", icon: Globe, defaultEndpoint: "https://openrouter.ai/api/v1", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
+  { id: "cerebras", name: "Cerebras", desc: "Wafer-scale inference models", icon: Cpu, defaultEndpoint: "https://api.cerebras.ai/v1", modelTypes: ["inference"] as ModelTypeKey[] },
+  { id: "custom", name: "Custom OpenAI", desc: "Compatible provider for inference or embeddings", icon: Server, defaultEndpoint: "", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
 ]
 
 // Hugging Face Model Browser Component
@@ -344,6 +344,8 @@ export default function NewDeployment() {
   const [externalModelName, setExternalModelName] = useState("")
   const [endpointUrl, setEndpointUrl] = useState("")
   const [apiKey, setApiKey] = useState("")
+  const externalModelType = modelType === "embedding" ? "embedding" : "inference"
+  const filteredExternalProviders = externalProviders.filter((provider) => provider.modelTypes.includes(externalModelType))
 
   // --- Effects & Queries ---
 
@@ -390,6 +392,18 @@ export default function NewDeployment() {
       }
     }
   }, [selectedProvider, mode])
+
+  // Ensure external provider remains valid when external model type changes
+  useEffect(() => {
+    if (mode !== "external") return
+    const providerStillValid = externalProviders.some(
+      provider => provider.id === selectedProvider && provider.modelTypes.includes(externalModelType)
+    )
+    if (!providerStillValid) {
+      setSelectedProvider("")
+      setEndpointUrl("")
+    }
+  }, [externalModelType, mode, selectedProvider])
 
   // Auto-update modelId when HF model is selected
   useEffect(() => {
@@ -1025,7 +1039,7 @@ export default function NewDeployment() {
       {mode === "external" && (
         <>
           <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-zinc-800 pb-4">
-            <StepIndicator step={step} current={1} label="Select Provider" />
+            <StepIndicator step={step} current={1} label="Type & Provider" />
             <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />
             <StepIndicator step={step} current={2} label="API Configuration" />
             <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />
@@ -1033,25 +1047,54 @@ export default function NewDeployment() {
           </div>
 
           {step === 1 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {externalProviders.map(p => (
-                <div
-                  key={p.id}
-                  onClick={() => setSelectedProvider(p.id)}
-                  className={cn(
-                    "cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-all",
-                    selectedProvider === p.id ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm"
-                  )}
-                >
-                  <div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg">
-                    <p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-lg">{p.name}</h3>
-                    <p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p>
-                  </div>
+            <div className="space-y-6">
+              <div className="flex justify-center">
+                <div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner">
+                  <button
+                    onClick={() => setModelType("inference")}
+                    className={cn(
+                      "px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
+                      externalModelType === "inference"
+                        ? "bg-white dark:bg-zinc-800 shadow-sm text-blue-600 dark:text-blue-400 ring-1 ring-black/5 dark:ring-white/5"
+                        : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                    )}
+                  >
+                    <MessageSquare className="w-4 h-4" /> Inference
+                  </button>
+                  <button
+                    onClick={() => setModelType("embedding")}
+                    className={cn(
+                      "px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
+                      externalModelType === "embedding"
+                        ? "bg-white dark:bg-zinc-800 shadow-sm text-blue-600 dark:text-blue-400 ring-1 ring-black/5 dark:ring-white/5"
+                        : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                    )}
+                  >
+                    <Database className="w-4 h-4" /> Embeddings
+                  </button>
                 </div>
-              ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {filteredExternalProviders.map(p => (
+                  <div
+                    key={p.id}
+                    onClick={() => setSelectedProvider(p.id)}
+                    className={cn(
+                      "cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-all",
+                      selectedProvider === p.id ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm"
+                    )}
+                  >
+                    <div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg">
+                      <p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg">{p.name}</h3>
+                      <p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
               <div className="col-span-full flex justify-end pt-4">
                 <button onClick={() => selectedProvider && setStep(2)} disabled={!selectedProvider} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium">Continue</button>
               </div>
@@ -1078,7 +1121,7 @@ export default function NewDeployment() {
                   value={externalModelName}
                   onChange={e => setExternalModelName(e.target.value)}
                   className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none dark:bg-zinc-900 dark:text-white"
-                  placeholder="e.g. gpt-4-turbo"
+                  placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3-large" : "e.g. gpt-4o-mini"}
                 />
                 <p className="text-xs text-slate-500 dark:text-zinc-400">Check provider docs for exact model identifier.</p>
               </div>
@@ -1133,6 +1176,7 @@ export default function NewDeployment() {
                   />
                 </div>
                 <div className="pt-4 border-t dark:border-zinc-800 space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-slate-500 dark:text-zinc-400">Type</span> <span className="font-medium capitalize">{externalModelType}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500 dark:text-zinc-400">Provider</span> <span className="font-medium capitalize">{selectedProvider === 'custom' ? customProviderName : selectedProvider}</span></div>
                   <div className="flex justify-between"><span className="text-slate-500 dark:text-zinc-400">Model</span> <span className="font-medium">{externalModelName}</span></div>
                 </div>

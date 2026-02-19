@@ -2,6 +2,7 @@ import { CheckCircle2, Loader2, AlertCircle, StopCircle, Eye, EyeOff, Copy, Data
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
+import { INFERENCE_URL } from "@/lib/api"
 
 interface DeploymentOverviewProps {
     deployment: any
@@ -9,12 +10,15 @@ interface DeploymentOverviewProps {
 
 export default function DeploymentOverview({ deployment }: DeploymentOverviewProps) {
     const [showRawEndpoint, setShowRawEndpoint] = useState(false)
+    const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "")
+    const publicInferenceEndpoint = `${inferenceBaseUrl}/v1/chat/completions`
+    const publicEmbeddingEndpoint = `${inferenceBaseUrl}/v1/embeddings`
     
     // Check if this is an embedding deployment
     const isEmbedding = deployment?.model_type === "embedding" || 
-                       deployment?.model_type === "embedding" ||
                        deployment?.engine === "infinity" || 
                        deployment?.engine === "tei"
+    const state = deployment?.state || deployment?.status || "Unknown"
     
     // Check if this is a training deployment
     const isTraining = deployment?.workload_type === "training"
@@ -39,34 +43,34 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                         <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Status</div>
                         <div className={cn(
                             "flex items-center gap-2 font-medium",
-                            (deployment.state === "READY" || deployment.state === "RUNNING") ? "text-green-600 dark:text-green-500" :
-                                deployment.state === "STOPPED" ? "text-slate-500" :
-                                    deployment.state === "FAILED" ? "text-red-600" :
+                            (state === "READY" || state === "RUNNING") ? "text-green-600 dark:text-green-500" :
+                                state === "STOPPED" ? "text-slate-500" :
+                                    state === "FAILED" ? "text-red-600" :
                                         "text-yellow-600"
                         )}>
-                            {(deployment.state === "READY" || deployment.state === "RUNNING") ? <CheckCircle2 className="w-5 h-5" /> :
-                                deployment.state === "STOPPED" || deployment.state === "TERMINATED" ? <StopCircle className="w-5 h-5" /> :
-                                    deployment.state === "FAILED" ? <AlertCircle className="w-5 h-5" /> :
+                            {(state === "READY" || state === "RUNNING") ? <CheckCircle2 className="w-5 h-5" /> :
+                                state === "STOPPED" || state === "TERMINATED" ? <StopCircle className="w-5 h-5" /> :
+                                    state === "FAILED" ? <AlertCircle className="w-5 h-5" /> :
                                         <Loader2 className="w-5 h-5 animate-spin" />}
-                            {deployment.state || "Unknown"}
+                            {state}
                         </div>
                     </div>
                     <div>
-                        <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Ready Replicas</div>
-                        <div className="text-lg font-medium">
-                            {(deployment.state === "READY" || deployment.state === "RUNNING") ? "1 / 1" : "0 / 1"}
+                            <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Ready Replicas</div>
+                            <div className="text-lg font-medium">
+                                {(state === "READY" || state === "RUNNING") ? "1 / 1" : "0 / 1"}
+                            </div>
                         </div>
-                    </div>
                     <div>
                         <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Updated Replicas</div>
                         <div className="text-lg font-medium">1</div>
                     </div>
                     <div>
-                        <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Available Replicas</div>
-                        <div className="text-lg font-medium">
-                            {(deployment.state === "READY" || deployment.state === "RUNNING") ? "1" : "0"}
+                            <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Available Replicas</div>
+                            <div className="text-lg font-medium">
+                                {(state === "READY" || state === "RUNNING") ? "1" : "0"}
+                            </div>
                         </div>
-                    </div>
                 </div>
             </div>
 
@@ -218,12 +222,12 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                             <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden">
                                 <div className="flex flex-col gap-1 w-full">
                                     <span className="text-primary break-all">
-                                        http://localhost:8001/v1/embeddings
+                                        {publicEmbeddingEndpoint}
                                     </span>
                                 </div>
                                 <button
                                     onClick={() => {
-                                        navigator.clipboard.writeText("http://localhost:8001/v1/embeddings");
+                                        navigator.clipboard.writeText(publicEmbeddingEndpoint);
                                         toast.success("Endpoint copied to clipboard");
                                     }}
                                     className="ml-4 p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
@@ -246,7 +250,9 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                     <div className="text-xs text-muted-foreground font-mono mb-1 uppercase">Model Type</div>
                                     <div className="flex items-center gap-2 p-3 bg-muted rounded border">
                                         <Database className="w-4 h-4 text-purple-500" />
-                                        <span className="font-mono text-sm">Embedding (CPU)</span>
+                                        <span className="font-mono text-sm">
+                                            Embedding ({deployment.gpu_per_replica && deployment.gpu_per_replica > 0 ? "GPU" : "CPU"})
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -312,12 +318,12 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                             <div className="bg-muted p-4 rounded-lg border font-mono text-sm flex justify-between items-center group relative overflow-hidden">
                                 <div className="flex flex-col gap-1 w-full">
                                     <span className="text-primary break-all">
-                                        http://localhost:8001/v1/chat/completions
+                                        {publicInferenceEndpoint}
                                     </span>
                                 </div>
                                 <button
                                     onClick={() => {
-                                        navigator.clipboard.writeText("http://localhost:8001/v1/chat/completions");
+                                        navigator.clipboard.writeText(publicInferenceEndpoint);
                                         toast.success("Endpoint copied to clipboard");
                                     }}
                                     className="ml-4 p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"

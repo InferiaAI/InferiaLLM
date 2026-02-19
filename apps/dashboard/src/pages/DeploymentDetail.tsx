@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
-import { useParams, Link, useNavigate } from "react-router-dom"
+import { useParams, useNavigate } from "react-router-dom"
 import { managementApi, computeApi } from "@/lib/api"
-import { Activity, Gauge, Trash2, Play, Square, RefreshCcw } from "lucide-react"
+import { Trash2, Play, Square, RefreshCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import InferenceLogs from "@/components/InferenceLogs"
 import TrainingLogs from "@/components/deployment/TrainingLogs"
@@ -188,8 +188,14 @@ export default function DeploymentDetail() {
     }, [id])
 
 
+    const isEmbedding = deployment?.model_type === "embedding" ||
+        deployment?.engine === "infinity" ||
+        deployment?.engine === "tei"
+    const isTraining = deployment?.workload_type === "training"
+    const isCompute = isComputeDeployment()
+
     if (loading) return <LoadingScreen message="Loading deployment details..." />
-    if (!deployment && !id) return <div>Deployment not found</div>
+    if (!deployment && id) return <div>Deployment not found</div>
 
     return (
         <div className="space-y-6">
@@ -249,16 +255,9 @@ export default function DeploymentDetail() {
             {/* Tabs */}
             <div className="flex gap-1 border-b pb-0">
                 {(() => {
-                    // Determine model type
-                    const isEmbedding = deployment?.model_type === "embedding" || 
-                                       deployment?.engine === "infinity" || 
-                                       deployment?.engine === "tei"
-                    const isTraining = deployment?.workload_type === 'training'
-                    const isCompute = isComputeDeployment()
-
                     const baseTabs = [
                         { id: "overview", label: "Overview" },
-                        { id: "logs", label: "Inference Logs" },
+                        { id: "logs", label: isTraining ? "Training Logs" : (isEmbedding ? "Embedding Logs" : "Inference Logs") },
                         { id: "terminal", label: "Terminal Logs" },
                         { id: "rate_limit", label: "Rate Limits" },
                     ]
@@ -353,4 +352,3 @@ export default function DeploymentDetail() {
         </div >
     )
 }
-
