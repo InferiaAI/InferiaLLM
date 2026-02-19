@@ -98,9 +98,13 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     if masked.depin.nosana.api_key:
         masked.depin.nosana.api_key = _mask_secret(masked.depin.nosana.api_key)
     # Mask named credentials in api_keys list
-    for entry in masked.depin.nosana.api_keys:
-        if entry.key:
-            entry.key = _mask_secret(entry.key)
+    for i, entry in enumerate(masked.depin.nosana.api_keys):
+        if isinstance(entry, dict):
+            if entry.get("key"):
+                entry["key"] = _mask_secret(entry["key"])
+        else:
+            if entry.key:
+                entry.key = _mask_secret(entry.key)
     if masked.depin.akash.mnemonic:
         masked.depin.akash.mnemonic = "********"
 
