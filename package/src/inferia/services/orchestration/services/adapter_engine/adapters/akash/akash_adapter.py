@@ -236,8 +236,10 @@ class AkashAdapter(ProviderAdapter):
         """
         Poll Akash sidecar until the deployment is ready.
         """
+        import time
+
         capabilities = self.get_capabilities()
-        start = asyncio.get_event_loop().time()
+        start = time.monotonic()
         poll_interval = capabilities.polling_interval_seconds
 
         while True:
@@ -276,7 +278,7 @@ class AkashAdapter(ProviderAdapter):
             except Exception as e:
                 logger.warning(f"Error polling Akash readiness: {e}")
 
-            if asyncio.get_event_loop().time() - start > timeout:
+            if time.monotonic() - start > timeout:
                 raise RuntimeError(
                     f"Akash deployment {provider_instance_id} timed out after {timeout}s"
                 )

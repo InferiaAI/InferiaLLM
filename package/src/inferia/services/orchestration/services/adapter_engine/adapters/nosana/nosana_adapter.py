@@ -83,7 +83,10 @@ class NosanaAdapter(ProviderAdapter):
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(NOSANA_DISCOVERY_URL) as resp:
+                async with session.get(
+                    NOSANA_DISCOVERY_URL,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
                     if resp.status != 200:
                         logger.error("Nosana discovery failed: %s", resp.status)
                         return []
@@ -287,6 +290,7 @@ class NosanaAdapter(ProviderAdapter):
                 async with session.post(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/launch",
                     json=payload,
+                    timeout=aiohttp.ClientTimeout(total=60),
                 ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
@@ -320,17 +324,18 @@ class NosanaAdapter(ProviderAdapter):
         self, *, provider_instance_id: str, timeout: int = 300
     ) -> str:
         """Polls Nosana sidecar until the job is RUNNING."""
-        import asyncio
+        import time
 
         capabilities = self.get_capabilities()
-        start = asyncio.get_event_loop().time()
+        start = time.monotonic()
         poll_interval = capabilities.polling_interval_seconds
 
         async with aiohttp.ClientSession() as session:
             while True:
                 try:
                     async with session.get(
-                        f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}"
+                        f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                        timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
                         if resp.status == 200:
                             job = await resp.json()
@@ -355,7 +360,7 @@ class NosanaAdapter(ProviderAdapter):
                 except Exception as e:
                     logger.warning(f"Error polling Nosana readiness: {e}")
 
-                if asyncio.get_event_loop().time() - start > timeout:
+                if time.monotonic() - start > timeout:
                     raise RuntimeError(f"Nosana job {provider_instance_id} timed out")
 
                 await asyncio.sleep(poll_interval)
@@ -366,6 +371,7 @@ class NosanaAdapter(ProviderAdapter):
                 await session.post(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/stop",
                     json={"jobAddress": provider_instance_id},
+                    timeout=aiohttp.ClientTimeout(total=30),
                 )
         except Exception:
             logger.exception("Nosana deprovision error")
@@ -375,7 +381,8 @@ class NosanaAdapter(ProviderAdapter):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs"
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs",
+                    timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
                         return {"logs": ["Failed to fetch logs"]}
@@ -398,7 +405,8 @@ class NosanaAdapter(ProviderAdapter):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}"
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
                         raise RuntimeError(f"Failed to fetch job details")

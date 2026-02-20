@@ -1,5 +1,8 @@
 from uuid import UUID, uuid4
 from typing import Optional, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ModelDeploymentController:
@@ -100,7 +103,7 @@ class ModelDeploymentController:
             model = await self.models.get_model(model_name, model_version)
             if not model:
                 # Auto-register logic for smoother UX in this phase
-                print(
+                logger.info(
                     f"Model {model_name}:{model_version} not found, auto-registering..."
                 )
                 model_id_val = await self.models.register_model(

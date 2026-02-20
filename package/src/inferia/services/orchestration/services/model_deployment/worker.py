@@ -326,7 +326,7 @@ class ModelDeploymentWorker:
                         provider_instance_id=node["provider_instance_id"]
                     )
 
-        print(f"Stopped runtime for deployment {deployment_id}")
+        log.info(f"Stopped runtime for deployment {deployment_id}")
 
         # ------------------------------------
         # 2. RELEASE SCHEDULER ALLOCATIONS
@@ -335,7 +335,7 @@ class ModelDeploymentWorker:
             for alloc_id in d["allocation_ids"]:
                 await self.scheduler.release(allocation_id=alloc_id)
 
-        print(f"Released scheduler allocations for deployment {deployment_id}")
+        log.info(f"Released scheduler allocations for deployment {deployment_id}")
 
         # ------------------------------------
         # 3. HANDLE INVENTORY
@@ -361,14 +361,14 @@ class ModelDeploymentWorker:
 
                 if is_ephemeral:
                     await self.inventory.mark_terminated(node_id)
-                    print(f"Terminated ephemeral node {node_id}")
+                    log.info(f"Terminated ephemeral node {node_id}")
                 else:
                     await self.inventory.recycle_node(node_id)
-                    print(f"Recycled inventory node {node_id}")
+                    log.info(f"Recycled inventory node {node_id}")
 
         # ------------------------------------
         # 4. FINAL STATE
         # ------------------------------------
         await self.deployments.update_state(deployment_id, "STOPPED")
 
-        print(f"Deployment {deployment_id} stopped")
+        log.info(f"Deployment {deployment_id} stopped")

@@ -1,5 +1,6 @@
 from uuid import UUID
 import json
+from inferia.services.orchestration.constants import NodeState
 
 
 class InventoryRepository:
@@ -62,11 +63,7 @@ class InventoryRepository:
 
         # Map incoming states to valid DB enum values
         # Valid enum: ordered, provisioning, ready, busy, unhealthy, terminated, offline
-        incoming_state = data["state"]
-        if incoming_state == "failed":
-            incoming_state = "unhealthy"  # Map failed -> unhealthy so it shows as warning/error (yellow)
-        elif incoming_state == "completed":
-            incoming_state = "terminated"
+        incoming_state = NodeState.from_incoming(data["state"])
 
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(
