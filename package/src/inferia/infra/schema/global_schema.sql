@@ -158,6 +158,8 @@ CREATE TABLE IF NOT EXISTS public.compute_pools
     CONSTRAINT compute_pools_pkey PRIMARY KEY (id),
     CONSTRAINT compute_pools_pool_name_owner_type_owner_id_key UNIQUE (pool_name, owner_type, owner_id)
 );
+-- Note: provider_credential_name validation is enforced at application level
+-- in ComputePoolManagerService to allow flexible credential lifecycle management
 CREATE INDEX IF NOT EXISTS idx_compute_pools_provider
     ON public.compute_pools USING btree
     (provider ASC NULLS LAST);

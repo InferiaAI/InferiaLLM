@@ -26,6 +26,15 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
 
             # Include provider_credential_name if provided (works for any provider: nosana, akash, etc.)
             if request.provider_credential_name:
+                # Validate that the credential exists
+                credential_exists = await self.repo.credential_exists(
+                    request.provider, request.provider_credential_name
+                )
+                if not credential_exists:
+                    context.abort(
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        f"Credential '{request.provider_credential_name}' not found or inactive for provider '{request.provider}'",
+                    )
                 pool_data["provider_credential_name"] = request.provider_credential_name
 
             pool_id = await self.repo.create_pool(pool_data)

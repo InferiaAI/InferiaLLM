@@ -5,6 +5,20 @@ class ComputePoolRepository:
     def __init__(self, db):
         self.db = db
 
+    async def credential_exists(self, provider: str, credential_name: str) -> bool:
+        """
+        Check if a credential exists for the given provider.
+        This validates against the provider_credentials table.
+        """
+        query = """
+        SELECT EXISTS(
+            SELECT 1 FROM provider_credentials 
+            WHERE provider = $1 AND name = $2 AND is_active = TRUE
+        )
+        """
+        async with self.db.acquire() as conn:
+            return await conn.fetchval(query, provider, credential_name)
+
     async def create_pool(self, data: dict):
         query = """
         INSERT INTO compute_pools (

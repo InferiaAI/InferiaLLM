@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import axios from 'axios';
+import crypto from 'crypto';
 import { AkashService } from './modules/akash/akash_service';
 import { NosanaService } from './modules/nosana/nosana_service';
 
@@ -75,15 +76,8 @@ let configFetchedOnce = false;
 const credentialFingerprints: Map<string, string> = new Map();
 
 const computeFingerprint = (key?: string, apiKey?: string): string => {
-    // Simple hash to detect if credential values changed
     const raw = `${key || ''}:${apiKey || ''}`;
-    let hash = 0;
-    for (let i = 0; i < raw.length; i++) {
-        const chr = raw.charCodeAt(i);
-        hash = ((hash << 5) - hash) + chr;
-        hash |= 0;
-    }
-    return hash.toString();
+    return crypto.createHash('sha256').update(raw).digest('hex');
 };
 
 const fetchConfigFromGateway = async () => {
@@ -121,10 +115,27 @@ const fetchConfigFromGateway = async () => {
         const apiKeysList: Array<{ name: string; key: string; is_active?: boolean }> = nosanaConfig.api_keys || [];
         for (const entry of apiKeysList) {
             if (entry.is_active === false) continue; // Skip disabled credentials
-            const credName = entry.name || 'unnamed';
 
-            // Don't overwrite "default" if this key matches the legacy one
-            if (credName === 'default' && desiredCredentials.has('default')) {
+            // Validate credential name
+            if (!entry.name || entry.name.trim() === '') {
+                console.warn(`[Sidecar] Skipping Nosana credential with empty name`);
+                continue;
+            }
+
+            const credName = entry.name.trim();
+
+            // Warn about reserved name collision
+            if (credName === 'default') {
+                if (desiredCredentials.has('default')) {
+                    console.warn(`[Sidecar] Credential named 'default' conflicts with legacy config. Skipping api_keys entry.`);
+                    continue;
+                }
+                console.warn(`[Sidecar] Using api_keys entry 'default' (no legacy config found).`);
+            }
+
+            // Skip duplicates within the api_keys list
+            if (desiredCredentials.has(credName)) {
+                console.warn(`[Sidecar] Duplicate credential name '${credName}' in api_keys. Keeping first occurrence.`);
                 continue;
             }
 
@@ -137,8 +148,19 @@ const fetchConfigFromGateway = async () => {
         const activeCredNames = new Set(desiredCredentials.keys());
 
         // Remove services for credentials that no longer exist
-        for (const [name] of nosanaServices) {
+        for (const [name, service] of nosanaServices) {
             if (!activeCredNames.has(name)) {
+                // Check for running jobs using this credential before removing
+                const runningJobs = service.getWatchedJobsByCredential(name);
+                if (runningJobs.length > 0) {
+                    console.warn(`[Sidecar] WARNING: Removing Nosana Service '${name}' with ${runningJobs.length} running job(s): ${runningJobs.join(', ')}`);
+                    console.warn(`[Sidecar] These jobs will continue but will not auto-redeploy. Consider stopping them manually.`);
+                    // Mark jobs to skip auto-redeploy since credential is gone
+                    for (const jobAddress of runningJobs) {
+                        service.markJobForNoRedeploy(jobAddress);
+                    }
+                }
+
                 console.log(`[Sidecar] Removing Nosana Service '${name}' (credential removed from config)`);
                 nosanaServices.delete(name);
                 credentialFingerprints.delete(name);
@@ -158,6 +180,9 @@ const fetchConfigFromGateway = async () => {
                 continue;
             }
 
+            // Keep reference to old service in case init fails
+            const oldService = nosanaServices.get(name);
+
             // Initialize (or re-initialize) this credential's service
             const service = await initNosanaService(
                 name,
@@ -171,6 +196,12 @@ const fetchConfigFromGateway = async () => {
                 credentialFingerprints.set(name, newFingerprint);
                 if (name === 'default') {
                     defaultNosanaService = service;
+                }
+            } else {
+                // Init failed - log error and keep old service if it exists
+                console.error(`[Sidecar] Failed to init Nosana Service '${name}'. ${oldService ? 'Keeping existing service.' : 'No fallback available.'}`);
+                if (oldService) {
+                    console.warn(`[Sidecar] Service '${name}' may be using stale credentials until next successful init.`);
                 }
             }
         }
@@ -377,6 +408,15 @@ wss.on('connection', (ws: WebSocket) => {
 
             if (data.type === 'subscribe_logs') {
                 const { provider, jobId, nodeAddress, credentialName } = data;
+
+                // Validate credentialName is a string if provided
+                if (credentialName !== undefined && typeof credentialName !== 'string') {
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Invalid credentialName: must be a string'
+                    }));
+                    return;
+                }
 
                 if (provider === 'nosana') {
                     const service = getNosanaService(credentialName);
