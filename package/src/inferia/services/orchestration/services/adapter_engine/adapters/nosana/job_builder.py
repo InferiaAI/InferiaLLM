@@ -30,6 +30,11 @@ def create_vllm_job(
     max_num_seqs: int = 256,
     enable_chunked_prefill: bool = False,
     quantization: Optional[str] = None,
+    # Additional config
+    trust_remote_code: bool = True,
+    cuda_module_loading: str = "LAZY",
+    nvidia_disable_cuda_compat: str = "1",
+    kv_cache_dtype: str = "auto",
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for vLLM inference server.
@@ -47,6 +52,10 @@ def create_vllm_job(
         max_num_seqs: Maximum concurrent sequences
         enable_chunked_prefill: Enable chunked prefill for long contexts
         quantization: Quantization method (awq, gptq, etc.)
+        trust_remote_code: Trust remote code when loading models
+        cuda_module_loading: CUDA module loading strategy (LAZY, EAGER)
+        nvidia_disable_cuda_compat: Disable CUDA compatibility layer
+        kv_cache_dtype: KV cache data type
 
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
@@ -71,11 +80,14 @@ def create_vllm_job(
         health_headers["Authorization"] = f"Bearer {effective_api_key}"
 
     # Prepare Environment Variables
-    envs: Dict[str, str] = {
-            "CUDA_MODULE_LOADING": "LAZY",
-            "NVIDIA_DISABLE_CUDA_COMPAT": "1"  # Force bypass of the forward compatibility layer
-        }
-        
+    envs: Dict[str, str] = {}
+
+    if cuda_module_loading:
+        envs["CUDA_MODULE_LOADING"] = cuda_module_loading
+
+    if nvidia_disable_cuda_compat:
+        envs["NVIDIA_DISABLE_CUDA_COMPAT"] = nvidia_disable_cuda_compat
+
     token_to_use = hf_token or os.getenv("HF_TOKEN")
     if token_to_use:
         envs["HF_TOKEN"] = token_to_use
@@ -95,9 +107,12 @@ def create_vllm_job(
         str(max_num_seqs),
         "--dtype",
         dtype,
-        "--trust-remote-code",
-        "--kv-cache-dtype", "auto",
     ]
+
+    if trust_remote_code:
+        cmd_args.append("--trust-remote-code")
+
+    cmd_args.extend(["--kv-cache-dtype", kv_cache_dtype])
 
     # Add quantization flag if provided
     if quantization:
@@ -108,10 +123,12 @@ def create_vllm_job(
         cmd_args.extend(["--api-key", effective_api_key])
 
     # Eager execution
-    cmd_args.append("--enforce-eager")
+    if enforce_eager:
+        cmd_args.append("--enforce-eager")
 
     # Chunked Prefill
-    cmd_args.append("--enable-chunked-prefill")
+    if enable_chunked_prefill:
+        cmd_args.append("--enable-chunked-prefill")
 
     container_op = {
         "id": model_id,
@@ -322,8 +339,19 @@ def create_vllm_omni_job(
         "--port",
         "9000",
         "--omni",
+        "--max-model-len",
+        str(max_model_len),
+        "--gpu-memory-utilization",
+        str(gpu_util),
+        "--max-num-seqs",
+        str(max_num_seqs),
+        "--dtype",
+        dtype,
         "--trust-remote-code",
     ]
+
+    if enforce_eager:
+        cmd_args.append("--enforce-eager")
 
     if effective_api_key:
         cmd_args.extend(["--api-key", effective_api_key])

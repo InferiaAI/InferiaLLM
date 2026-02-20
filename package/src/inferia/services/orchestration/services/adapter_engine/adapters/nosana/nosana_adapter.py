@@ -211,6 +211,13 @@ class NosanaAdapter(ProviderAdapter):
                 "enable_chunked_prefill": metadata.get("enable_chunked_prefill", False),
                 "quantization": metadata.get("quantization"),
                 "min_vram": metadata.get("min_vram", 12),
+                # Additional config
+                "trust_remote_code": metadata.get("trust_remote_code", True),
+                "cuda_module_loading": metadata.get("cuda_module_loading", "LAZY"),
+                "nvidia_disable_cuda_compat": metadata.get(
+                    "nvidia_disable_cuda_compat", "1"
+                ),
+                "kv_cache_dtype": metadata.get("kv_cache_dtype", "auto"),
             }
 
             job_definition = build_job_definition(
@@ -218,7 +225,7 @@ class NosanaAdapter(ProviderAdapter):
                 model_id=model_id,
                 image=image,
                 hf_token=hf_token,
-                api_key=INTERNAL_API_KEY,
+                api_key=metadata.get("api_key") or INTERNAL_API_KEY,
                 **job_config,
             )
         else:
