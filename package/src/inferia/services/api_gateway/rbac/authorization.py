@@ -32,6 +32,11 @@ class AuthorizationService:
     def has_permission(self, user: UserContext, permission: PermissionEnum) -> bool:
         """Check if user has a specific permission."""
         user_permissions = self.get_user_permissions(user)
+        
+        # Super-admin check: admin:all bypasses everything
+        if PermissionEnum.ADMIN_ALL.value in user_permissions:
+            return True
+            
         return permission.value in user_permissions
     
     def require_permission(self, user: UserContext, permission: PermissionEnum) -> None:

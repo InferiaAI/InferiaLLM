@@ -35,6 +35,7 @@ import NewPool from "@/pages/Compute/NewPool";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
+import { PermissionGuard } from "@/components/PermissionGuard";
 
 function RequireAuth() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -86,81 +87,102 @@ const router = createBrowserRouter([
             element: <Insights />,
           },
           {
-            path: "deployments",
-            element: <Deployments />,
+            element: <PermissionGuard permission="deployment:list" />,
+            children: [
+              {
+                path: "deployments",
+                element: <Deployments />,
+              },
+              {
+                path: "deployments/:id",
+                element: <DeploymentDetail />,
+              },
+              {
+                path: "compute/pools",
+                element: <Instances />,
+              },
+              {
+                path: "compute/pools/:id",
+                element: <InstanceDetail />,
+              },
+            ]
           },
           {
-            path: "deployments/new",
-            element: <NewDeployment />,
+            element: <PermissionGuard permission="deployment:create" />,
+            children: [
+              {
+                path: "deployments/new",
+                element: <NewDeployment />,
+              },
+              {
+                path: "compute/new",
+                element: <NewDeployment />,
+              },
+              {
+                path: "compute/pools/new",
+                element: <NewPool />,
+              },
+            ]
           },
           {
-            path: "deployments/:id",
-            element: <DeploymentDetail />,
+            element: <PermissionGuard permission="api_key:list" />,
+            children: [
+              {
+                path: "api-keys",
+                element: <ApiKeys />,
+              },
+            ]
           },
           {
-            path: "api-keys",
-            element: <ApiKeys />,
+            element: <PermissionGuard permission="knowledge_base:list" />,
+            children: [
+              {
+                path: "knowledge-base",
+                element: <KnowledgeBase />,
+              },
+            ]
           },
           {
-            path: "knowledge-base",
-            element: <KnowledgeBase />,
-          },
-          {
-            path: "templates",
-            element: <Templates />,
-          },
-          {
-            path: "compute/new",
-            element: <NewDeployment />,
-          },
-          {
-            path: "compute/pools",
-            element: <Instances />,
-          },
-          {
-            path: "compute/pools/new",
-            element: <NewPool />,
-          },
-          {
-            path: "compute/pools/:id",
-            element: <InstanceDetail />,
-          },
-          {
-            // Legacy / Alias
-            path: "compute/instances",
-            element: <Instances />,
+            element: <PermissionGuard permission="prompt_template:list" />,
+            children: [
+              {
+                path: "templates",
+                element: <Templates />,
+              },
+            ]
           },
           {
             path: "settings/roles",
-            element: <Roles />,
+            element: <PermissionGuard permission="role:list" />,
+            children: [{ index: true, element: <Roles /> }]
           },
           {
             path: "settings/users",
-            element: <Users />,
+            element: <PermissionGuard permission="member:list" />,
+            children: [{ index: true, element: <Users /> }]
           },
           {
             path: "settings/organization",
-            element: <Organization />,
+            element: <PermissionGuard permission="organization:view" />,
+            children: [{ index: true, element: <Organization /> }]
           },
           {
             path: "settings/audit-logs",
-            element: <AuditLogs />,
+            element: <PermissionGuard permission="audit_log:list" />,
+            children: [{ index: true, element: <AuditLogs /> }]
+          },
+          {
+            path: "settings/providers",
+            element: <PermissionGuard permission="admin:all" />,
+            children: [
+              { index: true, element: <ProviderCategories /> },
+              { path: ":category", element: <ProviderList /> },
+              { path: ":category/:providerId", element: <ProviderConfigPage /> },
+            ]
           },
           {
             path: "settings/security",
             element: <Security />,
-          },
-          {
-            path: "settings/providers",
-            element: <ProviderCategories />,
-          },
-          {
-            path: "settings/providers/:category",
-            element: <ProviderList />,
-          },
-          {
-            path: "settings/providers/:category/:providerId",
-            element: <ProviderConfigPage />,
           },
           {
             path: "compute",

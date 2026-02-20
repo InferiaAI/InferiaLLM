@@ -26,7 +26,6 @@ class PermissionEnum(str, Enum):
     # Prompt Templates
     PROMPT_CREATE = "prompt_template:create"
     PROMPT_LIST = "prompt_template:list"
-    PROMPT_COOKIE_Create = "prompt_template:create"  # wait, duplicate?
     PROMPT_VIEW = "prompt_template:view"
     PROMPT_UPDATE = "prompt_template:update"
     PROMPT_DELETE = "prompt_template:delete"
@@ -145,6 +144,7 @@ class UserInfoResponse(BaseModel):
     username: str
     email: str
     roles: List[str]
+    permissions: List[str] = []
     org_id: Optional[str] = None
     created_at: Optional[datetime] = None
     is_active: bool

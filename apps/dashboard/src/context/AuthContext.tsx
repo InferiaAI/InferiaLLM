@@ -9,6 +9,7 @@ interface User {
     username: string;
     email: string;
     roles: string[];
+    permissions: string[];
     org_id?: string;
     totp_enabled: boolean;
 }
@@ -20,7 +21,7 @@ interface AuthContextType {
     logout: () => void;
     isAuthenticated: boolean;
     organizations: OrganizationBasicInfo[];
-
+    hasPermission: (permission: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -69,6 +70,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         toast.info("Logged out");
     };
 
+    const hasPermission = (permission: string) => {
+        if (!user) return false;
+        if (user.permissions.includes("admin:all")) return true;
+        return user.permissions.includes(permission);
+    };
+
     return (
         <AuthContext.Provider
             value={{
@@ -78,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 logout,
                 isAuthenticated: !!user,
                 organizations,
-
+                hasPermission,
             }}
         >
             {children}
