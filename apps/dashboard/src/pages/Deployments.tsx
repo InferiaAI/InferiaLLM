@@ -86,8 +86,8 @@ export default function Deployments() {
       const res = await computeApi.get<DeploymentResponse>("/deployment/deployments", {
         params: { org_id: targetOrgId },
       });
-      return (res.data.deployments || []).map((d) => ({
-        id: d.deployment_id || "",
+      return (res.data.deployments || []).map((d, index) => ({
+        id: d.deployment_id || `temp-${index}`,
         name: d.model_name || `Deployment-${(d.deployment_id || "").slice(0, 8)}`,
         modelName: d.model_name || "-",
         provider: d.engine || "compute",
@@ -98,6 +98,7 @@ export default function Deployments() {
       }));
     },
     enabled: !!targetOrgId,
+    refetchOnMount: "always",
   });
 
   const stopMutation = useMutation({
@@ -245,9 +246,9 @@ function DeploymentRow({ deployment: d, isMutating, onStart, onStop, onDelete }:
       <td className="px-4 py-3">
         <div className="flex items-center justify-end gap-2">
           <Link to={`/dashboard/deployments/${d.id}`} className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted"><Settings className="w-3.5 h-3.5" /> Settings</Link>
-          {canStart && <button type="button" disabled={isMutating} onClick={() => onStart(d.id)} className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"><Play className="w-3.5 h-3.5" /> Start</button>}
-          {isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(d.id)} className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700 hover:bg-amber-100 disabled:opacity-60"><Square className="w-3.5 h-3.5" /> Stop</button>}
-          {canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(d.id)} className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-100 disabled:opacity-60"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
+          {canStart && <button type="button" disabled={isMutating} onClick={() => onStart(d.id)} className="inline-flex items-center gap-1 rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900 disabled:opacity-60"><Play className="w-3.5 h-3.5" /> Start</button>}
+          {isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(d.id)} className="inline-flex items-center gap-1 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900 disabled:opacity-60"><Square className="w-3.5 h-3.5" /> Stop</button>}
+          {canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(d.id)} className="inline-flex items-center gap-1 rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900 disabled:opacity-60"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
         </div>
       </td>
     </tr>

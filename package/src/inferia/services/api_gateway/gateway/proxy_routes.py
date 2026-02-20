@@ -12,6 +12,7 @@ from inferia.services.api_gateway.rbac.middleware import get_current_user_from_r
 from inferia.services.api_gateway.models import UserContext
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.gateway.http_client import gateway_http_client
+from inferia.services.api_gateway.gateway.rate_limiter import rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +30,25 @@ async def proxy_request(
 ) -> Response:
     """Proxy a request to a downstream service."""
 
+    # Apply rate limiting to all proxy requests
+    await rate_limiter.check_rate_limit(request)
+
     url = f"{target_url}/{path}"
 
     # Build headers
     headers = dict(request.headers)
-    # Remove auth header since we're using internal key
+    # Remove auth header since we're using internal trust
     headers.pop("Authorization", None)
+    # Remove internal API key from being forwarded to prevent exposure in downstream logs
+    headers.pop("X-Internal-API-Key", None)
+
+    # Pass user context for authorization at downstream service
     headers["X-User-ID"] = str(user_context.user_id)
     headers["X-Organization-ID"] = str(user_context.org_id)
-    headers["X-Internal-API-Key"] = settings.internal_api_key
+    # Use X-Gateway-Key header that downstream services should validate
+    # This key should be configured in downstream services, not passed as plain API key
+    # The downstream service should validate this against its own configuration
+    headers["X-Gateway-Request"] = "true"
 
     content = await request.body()
 

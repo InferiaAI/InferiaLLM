@@ -189,7 +189,7 @@ export default function DashboardLayout() {
           )}
         >
           <div className="flex items-center gap-2 overflow-hidden">
-            <img src="/logo.svg" alt="InferiaLLM" className="h-10 w-auto shrink-0 object-contain" />
+            <img src="/logo.svg" alt="InferiaLLM" className="h-14 w-auto shrink-0 object-contain" />
           </div>
         </div>
 

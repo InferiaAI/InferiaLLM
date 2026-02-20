@@ -212,13 +212,13 @@ function DeploymentHeader({ deployment, isRunning, processing, deleting, onRefre
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={onRefresh} disabled={processing} className="px-4 py-1.5 bg-zinc-900 border border-zinc-700 text-zinc-300 rounded-md text-sm font-medium hover:bg-zinc-800 flex items-center gap-2 disabled:opacity-50"><RefreshCcw className={cn("w-4 h-4", processing && "animate-spin")} /> {processing ? "..." : "Refresh"}</button>
+        <button onClick={onRefresh} disabled={processing} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-300 rounded-md text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 flex items-center gap-2 disabled:opacity-50 transition-colors"><RefreshCcw className={cn("w-4 h-4", processing && "animate-spin")} /> {processing ? "..." : "Refresh"}</button>
         {isRunning ? (
-          <button onClick={() => onAction('stop')} disabled={processing} className="px-4 py-1.5 bg-zinc-900 border border-amber-500/20 text-amber-500 rounded-md text-sm font-medium hover:bg-amber-500/10 flex items-center gap-2 disabled:opacity-50"><Square className="w-4 h-4" /> Stop</button>
+          <button onClick={() => onAction('stop')} disabled={processing} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-amber-500/20 text-amber-600 dark:text-amber-500 rounded-md text-sm font-medium hover:bg-amber-50 dark:hover:bg-amber-500/10 flex items-center gap-2 disabled:opacity-50 transition-colors"><Square className="w-4 h-4" /> Stop</button>
         ) : (
           <div className="flex gap-2">
             <button onClick={() => onAction('start')} disabled={processing} className="px-5 py-1.5 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-500 flex items-center gap-2 disabled:opacity-50"><Play className="w-4 h-4 fill-current" /> Start</button>
-            <button onClick={() => onAction('delete')} disabled={deleting} className="px-4 py-1.5 bg-zinc-900 border border-red-500/20 text-red-400 rounded-md text-sm font-medium hover:bg-red-500/10 flex items-center gap-2 disabled:opacity-50"><Trash2 className="w-4 h-4" /> Delete</button>
+            <button onClick={() => onAction('delete')} disabled={deleting} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-red-500/20 text-red-600 dark:text-red-400 rounded-md text-sm font-medium hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-2 disabled:opacity-50 transition-colors"><Trash2 className="w-4 h-4" /> Delete</button>
           </div>
         )}
       </div>

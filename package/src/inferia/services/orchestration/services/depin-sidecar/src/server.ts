@@ -82,10 +82,11 @@ const computeFingerprint = (key?: string, apiKey?: string): string => {
 
 const fetchConfigFromGateway = async () => {
     try {
-        const url = `${API_GATEWAY_URL}/internal/config/provider`;
+        // Use /config/credentials endpoint for unmasked credentials
+        const url = `${API_GATEWAY_URL}/internal/config/credentials`;
         const response = await axios.get(url, {
             headers: {
-                "X-Internal-Key": INTERNAL_API_KEY
+                "X-Internal-API-Key": INTERNAL_API_KEY
             },
             timeout: 5000
         });

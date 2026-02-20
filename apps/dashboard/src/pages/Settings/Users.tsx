@@ -186,7 +186,7 @@ export default function Users() {
           </div>
           <button
             type="button"
-            onClick={() => setShowInviteModal(true)}
+            onClick={() => dispatch({ type: 'SET_SHOW_MODAL', payload: true })}
             className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
             <UserPlus className="w-4 h-4" />

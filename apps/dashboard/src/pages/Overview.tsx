@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import api, { computeApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { auditService } from "@/services/auditService";
 import {
   Activity,
   AlertCircle,
@@ -180,10 +181,10 @@ export default function Overview() {
     queryKey: ["audit-logs", orgId],
     queryFn: async () => {
       try {
-        const { data } = await api.get<AuditLog[]>("/management/audit/logs?limit=5");
+        const data = await auditService.getLogs(undefined, { limit: 5 });
         return data;
       } catch {
-        return [] as AuditLog[];
+        return [];
       }
     },
     enabled: !!orgId,

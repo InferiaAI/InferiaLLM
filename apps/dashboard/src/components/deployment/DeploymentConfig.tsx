@@ -176,7 +176,7 @@ function Header({ loading, onSave }: { loading: boolean; onSave: () => void }) {
                 <div><h2 className="text-xl font-bold tracking-tight">Deployment Configuration</h2><p className="text-sm text-muted-foreground font-mono">Customize engine parameters and runtime settings</p></div>
             </div>
             <div className="flex items-center gap-2">
-                <button onClick={() => window.location.reload()} className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-all"><RotateCcw className="w-5 h-5" /></button>
+                <button onClick={() => window.location.reload()} className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-all"><RotateCcw className="w-5 h-5" /></button>
                 <button onClick={onSave} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 active:scale-95 disabled:opacity-50">{loading ? <Zap className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes</button>
             </div>
         </div>
@@ -185,11 +185,11 @@ function Header({ loading, onSave }: { loading: boolean; onSave: () => void }) {
 
 function GeneralSettings({ replicas, inferenceModel, dispatch }: { replicas: number; inferenceModel: string; dispatch: React.Dispatch<Action> }) {
     return (
-        <div className="bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-2xl p-6 hover:border-blue-500/30 transition-all duration-300">
-            <div className="flex items-center gap-2 mb-6 text-zinc-100"><Server className="w-4 h-4 text-blue-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">General Settings</h3></div>
+        <div className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-blue-500/30 transition-all duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Server className="w-4 h-4 text-blue-500 dark:text-blue-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">General Settings</h3></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2"><label htmlFor="replicas" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Replicas</label><div className="relative group/input"><input id="replicas" type="number" min="1" value={replicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'replicas', value: parseInt(e.target.value) })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" /><div className="absolute right-3 top-3.5 text-zinc-600 pointer-events-none group-focus-within/input:text-blue-500"><Layers className="w-4 h-4" /></div></div></div>
-                <div className="space-y-2"><label htmlFor="inference-model" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Inference Model</label><div className="relative group/input"><input id="inference-model" value={inferenceModel} onChange={e => dispatch({ type: 'SET_FIELD', field: 'inferenceModel', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" placeholder="e.g. meta-llama/Llama-3-8B" /><div className="absolute right-3 top-3.5 text-zinc-600 pointer-events-none group-focus-within/input:text-blue-500"><Cloud className="w-4 h-4" /></div></div></div>
+                <div className="space-y-2"><label htmlFor="replicas" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Replicas</label><div className="relative group/input"><input id="replicas" type="number" min="1" value={replicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'replicas', value: parseInt(e.target.value) })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-blue-500"><Layers className="w-4 h-4" /></div></div></div>
+                <div className="space-y-2"><label htmlFor="inference-model" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Inference Model</label><div className="relative group/input"><input id="inference-model" value={inferenceModel} onChange={e => dispatch({ type: 'SET_FIELD', field: 'inferenceModel', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" placeholder="e.g. meta-llama/Llama-3-8B" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-blue-500"><Cloud className="w-4 h-4" /></div></div></div>
             </div>
         </div>
     );
@@ -197,13 +197,13 @@ function GeneralSettings({ replicas, inferenceModel, dispatch }: { replicas: num
 
 function VllmSettings({ vllmImage, maxModelLen, gpuUtil, dispatch }: { vllmImage: string; maxModelLen: string; gpuUtil: string; dispatch: React.Dispatch<Action> }) {
     return (
-        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-2xl p-6 hover:border-emerald-500/30 transition-all duration-300">
-            <div className="flex items-center gap-2 mb-6 text-zinc-100"><Zap className="w-4 h-4 text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">vLLM Optimization</h3></div>
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-all duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Zap className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">vLLM Optimization</h3></div>
             <div className="space-y-6">
-                <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
-                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
                 </div>
             </div>
         </m.div>
@@ -212,12 +212,12 @@ function VllmSettings({ vllmImage, maxModelLen, gpuUtil, dispatch }: { vllmImage
 
 function TrainingSettings({ gitRepo, trainingScript, datasetUrl, dispatch }: { gitRepo: string; trainingScript: string; datasetUrl: string; dispatch: React.Dispatch<Action> }) {
     return (
-        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-2xl p-6 hover:border-amber-500/30 transition-all duration-300">
-            <div className="flex items-center gap-2 mb-6 text-zinc-100"><Terminal className="w-4 h-4 text-amber-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Training Orchestration</h3></div>
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-amber-500/30 transition-all duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Terminal className="w-4 h-4 text-amber-500 focus:text-amber-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Training Orchestration</h3></div>
             <div className="space-y-6">
-                <div className="space-y-2"><label htmlFor="git-repo" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Git Repository</label><input id="git-repo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" placeholder="https://..." /></div>
-                <div className="space-y-2"><label htmlFor="training-script" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Training Command</label><textarea id="training-script" rows={3} value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm resize-none" /></div>
-                <div className="space-y-2"><label htmlFor="dataset-url" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Dataset URL</label><input id="dataset-url" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2"><label htmlFor="git-repo" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Git Repository</label><input id="git-repo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" placeholder="https://..." /></div>
+                <div className="space-y-2"><label htmlFor="training-script" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Training Command</label><textarea id="training-script" rows={3} value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm resize-none" /></div>
+                <div className="space-y-2"><label htmlFor="dataset-url" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Dataset URL</label><input id="dataset-url" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" /></div>
             </div>
         </m.div>
     );
@@ -225,9 +225,9 @@ function TrainingSettings({ gitRepo, trainingScript, datasetUrl, dispatch }: { g
 
 function EnvironmentSecrets({ hfToken, dispatch }: { hfToken: string; dispatch: React.Dispatch<Action> }) {
     return (
-        <div className="bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-2xl p-6">
-            <div className="flex items-center gap-2 mb-6 text-zinc-100"><ShieldCheck className="w-4 h-4 text-purple-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Environment Secrets</h3></div>
-            <div className="space-y-2"><label htmlFor="hf-token" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Hugging Face Token</label><input id="hf-token" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono text-sm" placeholder="hf_••••••••" /><p className="text-[10px] text-zinc-500 font-mono mt-2">Required for gated models.</p></div>
+        <div className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Environment Secrets</h3></div>
+            <div className="space-y-2"><label htmlFor="hf-token" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Hugging Face Token</label><input id="hf-token" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono text-sm" placeholder="hf_••••••••" /><p className="text-[10px] text-muted-foreground font-mono mt-2">Required for gated models.</p></div>
         </div>
     );
 }
@@ -235,8 +235,8 @@ function EnvironmentSecrets({ hfToken, dispatch }: { hfToken: string; dispatch: 
 function ProTip() {
     return (
         <div className="bg-blue-600/10 border border-blue-500/20 rounded-2xl p-6">
-            <h4 className="text-sm font-bold text-blue-400 mb-2">Pro Tip</h4>
-            <p className="text-xs text-blue-300/70 leading-relaxed font-mono">Wait for <span className="text-blue-400 underline">STOPPED</span> state before applying major changes.</p>
+            <h4 className="text-sm font-bold text-blue-600 dark:text-blue-400 mb-2">Pro Tip</h4>
+            <p className="text-xs text-blue-600/70 dark:text-blue-300/70 leading-relaxed font-mono">Wait for <span className="text-blue-600 dark:text-blue-400 underline">STOPPED</span> state before applying major changes.</p>
         </div>
     );
 }
