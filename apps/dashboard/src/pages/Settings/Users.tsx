@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 import { rbacService } from "@/services/rbacService";
 import type { User, Role, Invitation } from "@/services/rbacService";
 import { toast } from "sonner";
@@ -11,21 +11,80 @@ type ApiErrorResponse = {
   detail?: string;
 };
 
+type State = {
+  users: User[];
+  roles: Role[];
+  invitations: Invitation[];
+  loading: boolean;
+  showInviteModal: boolean;
+  inviteEmail: string;
+  inviteRole: string;
+  inviting: boolean;
+  currentPage: number;
+  pageSize: number;
+  totalUsers: number;
+};
+
+type Action =
+  | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'SET_INVITING'; payload: boolean }
+  | { type: 'SET_SHOW_MODAL'; payload: boolean }
+  | { type: 'SET_FIELD'; field: keyof State; value: any }
+  | { type: 'SET_USERS_DATA'; users: User[]; total: number; roles: Role[]; invitations: Invitation[] }
+  | { type: 'UPDATE_USER_ROLE'; userId: string; role: string }
+  | { type: 'ADD_INVITATION'; invitation: Invitation }
+  | { type: 'REMOVE_INVITATION'; id: string };
+
+const initialState: State = {
+  users: [],
+  roles: [],
+  invitations: [],
+  loading: true,
+  showInviteModal: false,
+  inviteEmail: "",
+  inviteRole: "member",
+  inviting: false,
+  currentPage: 1,
+  pageSize: 20,
+  totalUsers: 0,
+};
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'SET_LOADING': return { ...state, loading: action.payload };
+    case 'SET_INVITING': return { ...state, inviting: action.payload };
+    case 'SET_SHOW_MODAL': return { ...state, showInviteModal: action.payload };
+    case 'SET_FIELD': return { ...state, [action.field]: action.value };
+    case 'SET_USERS_DATA':
+      return {
+        ...state,
+        users: action.users,
+        totalUsers: action.total,
+        roles: action.roles,
+        invitations: action.invitations,
+        loading: false,
+      };
+    case 'UPDATE_USER_ROLE':
+      return {
+        ...state,
+        users: state.users.map(u => u.id === action.userId ? { ...u, role: action.role } : u)
+      };
+    case 'ADD_INVITATION':
+      return { ...state, invitations: [action.invitation, ...state.invitations] };
+    case 'REMOVE_INVITATION':
+      return { ...state, invitations: state.invitations.filter(i => i.id !== action.id) };
+    default: return state;
+  }
+}
+
 export default function Users() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const {
+    users, roles, invitations, loading, showInviteModal,
+    inviteEmail, inviteRole, inviting, currentPage, pageSize, totalUsers
+  } = state;
+
   const { user: currentUser } = useAuth();
-
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("member");
-  const [inviting, setInviting] = useState(false);
-
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [totalUsers, setTotalUsers] = useState(0);
 
   const sortedInvitations = useMemo(
     () => [...invitations].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
@@ -34,7 +93,7 @@ export default function Users() {
 
   const fetchData = useCallback(async () => {
     try {
-      setLoading(true);
+      dispatch({ type: 'SET_LOADING', payload: true });
       const skip = (currentPage - 1) * pageSize;
       const [usersData, rolesData, invitesData] = await Promise.all([
         rbacService.getUsers({ skip, limit: pageSize }),
@@ -42,15 +101,12 @@ export default function Users() {
         rbacService.getInvitations(),
       ]);
 
-      setUsers(usersData);
-      setTotalUsers(usersData.length === pageSize ? currentPage * pageSize + 1 : (currentPage - 1) * pageSize + usersData.length);
-      setRoles(rolesData);
-      setInvitations(invitesData);
+      const total = usersData.length === pageSize ? currentPage * pageSize + 1 : (currentPage - 1) * pageSize + usersData.length;
+      dispatch({ type: 'SET_USERS_DATA', users: usersData, total, roles: rolesData, invitations: invitesData });
     } catch (error) {
       console.error(error);
       toast.error("Failed to fetch users or invitations");
-    } finally {
-      setLoading(false);
+      dispatch({ type: 'SET_LOADING', payload: false });
     }
   }, [currentPage, pageSize]);
 
@@ -62,7 +118,7 @@ export default function Users() {
     try {
       await rbacService.updateUserRole(userId, newRole);
       toast.success("User role updated");
-      setUsers((prev) => prev.map((user) => (user.id === userId ? { ...user, role: newRole } : user)));
+      dispatch({ type: 'UPDATE_USER_ROLE', userId, role: newRole });
     } catch (error) {
       const apiError = error as AxiosError<ApiErrorResponse>;
       toast.error(apiError.response?.data?.detail || "Update failed");
@@ -71,19 +127,19 @@ export default function Users() {
 
   const handleInvite = async (event: React.FormEvent) => {
     event.preventDefault();
-    setInviting(true);
+    dispatch({ type: 'SET_INVITING', payload: true });
     try {
       const newInvite = await rbacService.inviteUser(inviteEmail.trim(), inviteRole);
-      setInvitations((prev) => [newInvite, ...prev]);
+      dispatch({ type: 'ADD_INVITATION', invitation: newInvite });
       toast.success("Invitation sent");
-      setShowInviteModal(false);
-      setInviteEmail("");
-      setInviteRole("member");
+      dispatch({ type: 'SET_SHOW_MODAL', payload: false });
+      dispatch({ type: 'SET_FIELD', field: 'inviteEmail', value: "" });
+      dispatch({ type: 'SET_FIELD', field: 'inviteRole', value: "member" });
     } catch (error) {
       const apiError = error as AxiosError<ApiErrorResponse>;
       toast.error(apiError.response?.data?.detail || "Invite failed");
     } finally {
-      setInviting(false);
+      dispatch({ type: 'SET_INVITING', payload: false });
     }
   };
 
@@ -91,7 +147,7 @@ export default function Users() {
     if (!confirm("Are you sure you want to revoke this invitation?")) return;
     try {
       await rbacService.revokeInvitation(id);
-      setInvitations((prev) => prev.filter((invitation) => invitation.id !== id));
+      dispatch({ type: 'REMOVE_INVITATION', id });
       toast.success("Invitation revoked");
     } catch (error) {
       const apiError = error as AxiosError<ApiErrorResponse>;
@@ -210,11 +266,11 @@ export default function Users() {
           <Pagination
             currentPage={currentPage}
             totalPages={Math.ceil(totalUsers / pageSize)}
-            onPageChange={setCurrentPage}
+            onPageChange={(p) => dispatch({ type: 'SET_FIELD', field: 'currentPage', value: p })}
             pageSize={pageSize}
             onPageSizeChange={(size) => {
-              setPageSize(size);
-              setCurrentPage(1);
+              dispatch({ type: 'SET_FIELD', field: 'pageSize', value: size });
+              dispatch({ type: 'SET_FIELD', field: 'currentPage', value: 1 });
             }}
             totalItems={totalUsers}
           />
@@ -289,29 +345,31 @@ export default function Users() {
             <h3 className="text-lg font-semibold">Invite New Member</h3>
             <form onSubmit={handleInvite} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Email Address</label>
+                <label htmlFor="invite-email" className="block text-sm font-medium mb-1">Email Address</label>
                 <input
+                  id="invite-email"
                   type="email"
                   required
                   className="w-full p-2 border rounded bg-background"
                   value={inviteEmail}
-                  onChange={(event) => setInviteEmail(event.target.value)}
+                  onChange={(event) => dispatch({ type: 'SET_FIELD', field: 'inviteEmail', value: event.target.value })}
                   placeholder="colleague@example.com"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Role</label>
+                <label htmlFor="invite-role" className="block text-sm font-medium mb-1">Role</label>
                 <select
+                  id="invite-role"
                   className="w-full p-2 border rounded bg-background"
                   value={inviteRole}
-                  onChange={(event) => setInviteRole(event.target.value)}
+                  onChange={(event) => dispatch({ type: 'SET_FIELD', field: 'inviteRole', value: event.target.value })}
                 >
                   <option value="member">Member</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowInviteModal(false)} className="px-4 py-2 text-sm font-medium">
+                <button type="button" onClick={() => dispatch({ type: 'SET_SHOW_MODAL', payload: false })} className="px-4 py-2 text-sm font-medium">
                   Cancel
                 </button>
                 <button

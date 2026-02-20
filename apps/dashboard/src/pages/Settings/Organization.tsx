@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { Scale, Save, Activity, Shield, RefreshCw } from "lucide-react";
@@ -33,21 +33,53 @@ type ApiErrorResponse = {
 const DEFAULT_REQUEST_LIMIT = 1000;
 const DEFAULT_TOKEN_LIMIT = 100000;
 
-export default function Organization() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+type State = {
+  isLoading: boolean;
+  isSaving: boolean;
+  requestLimit: number;
+  tokenLimit: number;
+  usageStats: UsageStat[];
+  orgData: OrganizationData | null;
+};
 
-  const [requestLimit, setRequestLimit] = useState(DEFAULT_REQUEST_LIMIT);
-  const [tokenLimit, setTokenLimit] = useState(DEFAULT_TOKEN_LIMIT);
-  const [usageStats, setUsageStats] = useState<UsageStat[]>([]);
-  const [orgData, setOrgData] = useState<OrganizationData | null>(null);
+type Action =
+  | { type: 'SET_FIELD'; field: keyof State; value: any };
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'SET_FIELD':
+      return { ...state, [action.field]: action.value };
+    default:
+      return state;
+  }
+}
+
+const initialState: State = {
+  isLoading: true,
+  isSaving: false,
+  requestLimit: DEFAULT_REQUEST_LIMIT,
+  tokenLimit: DEFAULT_TOKEN_LIMIT,
+  usageStats: [],
+  orgData: null,
+};
+
+export default function Organization() {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const {
+    isLoading,
+    isSaving,
+    requestLimit,
+    tokenLimit,
+    usageStats,
+    orgData,
+  } = state;
 
   const isQuotaInvalid = useMemo(() => requestLimit < 1 || tokenLimit < 1, [requestLimit, tokenLimit]);
 
   const fetchOrgData = useCallback(async () => {
     try {
       const { data } = await api.get<OrganizationData>("/management/organizations/me");
-      setOrgData(data);
+      dispatch({ type: 'SET_FIELD', field: 'orgData', value: data });
     } catch (error) {
       console.error("Failed to fetch organization data:", error);
     }
@@ -56,7 +88,7 @@ export default function Organization() {
   const fetchUsageStats = useCallback(async () => {
     try {
       const { data } = await api.get<UsageStat[]>("/management/config/quota/usage");
-      setUsageStats(data);
+      dispatch({ type: 'SET_FIELD', field: 'usageStats', value: data });
     } catch (error) {
       console.error("Failed to fetch usage stats:", error);
     }
@@ -65,25 +97,25 @@ export default function Organization() {
   const fetchConfig = useCallback(async () => {
     try {
       const { data } = await api.get<ConfigResponse>("/management/config/quota");
-      setRequestLimit(data.config_json?.request_limit ?? DEFAULT_REQUEST_LIMIT);
-      setTokenLimit(data.config_json?.token_limit ?? DEFAULT_TOKEN_LIMIT);
+      dispatch({ type: 'SET_FIELD', field: 'requestLimit', value: data.config_json?.request_limit ?? DEFAULT_REQUEST_LIMIT });
+      dispatch({ type: 'SET_FIELD', field: 'tokenLimit', value: data.config_json?.token_limit ?? DEFAULT_TOKEN_LIMIT });
     } catch (error) {
       console.error("Failed to fetch quota config:", error);
-      setRequestLimit(DEFAULT_REQUEST_LIMIT);
-      setTokenLimit(DEFAULT_TOKEN_LIMIT);
+      dispatch({ type: 'SET_FIELD', field: 'requestLimit', value: DEFAULT_REQUEST_LIMIT });
+      dispatch({ type: 'SET_FIELD', field: 'tokenLimit', value: DEFAULT_TOKEN_LIMIT });
     }
   }, []);
 
   const fetchAll = useCallback(async () => {
-    setIsLoading(true);
+    dispatch({ type: 'SET_FIELD', field: 'isLoading', value: true });
     await Promise.all([fetchConfig(), fetchUsageStats(), fetchOrgData()]);
-    setIsLoading(false);
+    dispatch({ type: 'SET_FIELD', field: 'isLoading', value: false });
   }, [fetchConfig, fetchUsageStats, fetchOrgData]);
 
   const handleUpdateLogPayloads = async (enabled: boolean) => {
     if (!orgData) return;
     try {
-      setOrgData({ ...orgData, log_payloads: enabled });
+      dispatch({ type: 'SET_FIELD', field: 'orgData', value: { ...orgData, log_payloads: enabled } });
       await api.patch("/management/organizations/me", { log_payloads: enabled });
       toast.success(`Inference payload logging ${enabled ? "enabled" : "disabled"}`);
     } catch (error) {
@@ -99,7 +131,7 @@ export default function Organization() {
       return;
     }
 
-    setIsSaving(true);
+    dispatch({ type: 'SET_FIELD', field: 'isSaving', value: true });
     try {
       await api.post("/management/config", {
         policy_type: "quota",
@@ -113,7 +145,7 @@ export default function Organization() {
       const apiError = error as AxiosError<ApiErrorResponse>;
       toast.error(apiError.response?.data?.detail || "Failed to update quota");
     } finally {
-      setIsSaving(false);
+      dispatch({ type: 'SET_FIELD', field: 'isSaving', value: false });
     }
   };
 
@@ -166,25 +198,27 @@ export default function Organization() {
 
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-3">
-              <label className="text-sm font-medium">Daily Request Limit</label>
+              <label htmlFor="request-limit" className="text-sm font-medium">Daily Request Limit</label>
               <input
+                id="request-limit"
                 type="number"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 min={1}
                 value={requestLimit}
-                onChange={(event) => setRequestLimit(Number(event.target.value))}
+                onChange={(event) => dispatch({ type: 'SET_FIELD', field: 'requestLimit', value: Number(event.target.value) })}
               />
               <p className="text-xs text-muted-foreground">Maximum number of inference requests per day across the organization.</p>
             </div>
 
             <div className="space-y-3">
-              <label className="text-sm font-medium">Daily Token Limit</label>
+              <label htmlFor="token-limit" className="text-sm font-medium">Daily Token Limit</label>
               <input
+                id="token-limit"
                 type="number"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 min={1}
                 value={tokenLimit}
-                onChange={(event) => setTokenLimit(Number(event.target.value))}
+                onChange={(event) => dispatch({ type: 'SET_FIELD', field: 'tokenLimit', value: Number(event.target.value) })}
               />
               <p className="text-xs text-muted-foreground">Maximum total tokens (prompt + completion) per day.</p>
             </div>
@@ -212,15 +246,13 @@ export default function Organization() {
             <button
               type="button"
               onClick={() => void handleUpdateLogPayloads(!orgData?.log_payloads)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
-                orgData?.log_payloads ? "bg-primary" : "bg-muted"
-              }`}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${orgData?.log_payloads ? "bg-primary" : "bg-muted"
+                }`}
               aria-label="Toggle inference payload logging"
             >
               <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  orgData?.log_payloads ? "translate-x-6" : "translate-x-1"
-                }`}
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${orgData?.log_payloads ? "translate-x-6" : "translate-x-1"
+                  }`}
               />
             </button>
           </div>

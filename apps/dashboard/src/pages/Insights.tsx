@@ -1,4 +1,4 @@
-import { type ComponentType, type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ComponentType, type ReactNode, useCallback, useMemo, useReducer } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
     Activity,
@@ -63,19 +63,57 @@ function formatBucketLabel(value: string, granularity: InsightsGranularity): str
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+type State = {
+    deploymentType: InsightsDeploymentType;
+    timePreset: TimePreset;
+    customStart: string;
+    customEnd: string;
+    deploymentId: string;
+    ipAddress: string;
+    status: InsightsStatus;
+    page: number;
+    pageSize: number;
+};
+
+type Action =
+    | { type: 'SET_FIELD'; field: keyof State; value: any }
+    | { type: 'SET_DEPLOYMENT_TYPE'; payload: InsightsDeploymentType }
+    | { type: 'CLEAR_FILTERS' };
+
+const createInitialState = (defaultStart: Date, now: Date): State => ({
+    deploymentType: "inference",
+    timePreset: "7d",
+    customStart: toLocalDateTimeInputValue(defaultStart),
+    customEnd: toLocalDateTimeInputValue(now),
+    deploymentId: "",
+    ipAddress: "",
+    status: "all",
+    page: 1,
+    pageSize: 20,
+});
+
+function reducer(state: State, action: Action): State {
+    switch (action.type) {
+        case 'SET_FIELD':
+            return { ...state, [action.field]: action.value };
+        case 'SET_DEPLOYMENT_TYPE':
+            return { ...state, deploymentType: action.payload, deploymentId: "", page: 1 };
+        case 'CLEAR_FILTERS':
+            return { ...state, deploymentId: "", ipAddress: "", status: "all", page: 1 };
+        default:
+            return state;
+    }
+}
+
 export default function Insights() {
     const now = new Date();
     const defaultStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const [deploymentType, setDeploymentType] = useState<InsightsDeploymentType>("inference");
-    const [timePreset, setTimePreset] = useState<TimePreset>("7d");
-    const [customStart, setCustomStart] = useState<string>(() => toLocalDateTimeInputValue(defaultStart));
-    const [customEnd, setCustomEnd] = useState<string>(() => toLocalDateTimeInputValue(now));
-    const [deploymentId, setDeploymentId] = useState<string>("");
-    const [ipAddress, setIpAddress] = useState<string>("");
-    const [status, setStatus] = useState<InsightsStatus>("all");
-    const [page, setPage] = useState<number>(1);
-    const [pageSize, setPageSize] = useState<number>(20);
+    const [state, dispatch] = useReducer(reducer, createInitialState(defaultStart, now));
+    const {
+        deploymentType, timePreset, customStart, customEnd,
+        deploymentId, ipAddress, status, page, pageSize
+    } = state;
 
     const debouncedIpAddress = useDebouncedValue(ipAddress.trim(), IP_DEBOUNCE_DELAY);
 
@@ -296,10 +334,7 @@ export default function Insights() {
     const hasActiveFilters = deploymentId !== "" || ipAddress !== "" || status !== "all";
 
     const clearFilters = useCallback(() => {
-        setDeploymentId("");
-        setIpAddress("");
-        setStatus("all");
-        setPage(1);
+        dispatch({ type: 'CLEAR_FILTERS' });
     }, []);
 
     const exportLogsToCSV = useCallback(() => {
@@ -338,9 +373,7 @@ export default function Insights() {
                 <button
                     type="button"
                     onClick={() => {
-                        setDeploymentType("inference");
-                        setDeploymentId("");
-                        setPage(1);
+                        dispatch({ type: 'SET_DEPLOYMENT_TYPE', payload: "inference" });
                     }}
                     className={cn(
                         "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
@@ -355,9 +388,7 @@ export default function Insights() {
                 <button
                     type="button"
                     onClick={() => {
-                        setDeploymentType("embedding");
-                        setDeploymentId("");
-                        setPage(1);
+                        dispatch({ type: 'SET_DEPLOYMENT_TYPE', payload: "embedding" });
                     }}
                     className={cn(
                         "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
@@ -374,12 +405,13 @@ export default function Insights() {
             <div className="rounded-xl border bg-card p-4">
                 <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
                     <div className="space-y-1">
-                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Time range</label>
+                        <label htmlFor="insight-time-preset" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Time range</label>
                         <select
+                            id="insight-time-preset"
                             value={timePreset}
                             onChange={(e) => {
-                                setTimePreset(e.target.value as TimePreset);
-                                setPage(1);
+                                dispatch({ type: 'SET_FIELD', field: 'timePreset', value: e.target.value as TimePreset });
+                                dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                             }}
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         >
@@ -396,25 +428,27 @@ export default function Insights() {
                     {timePreset === "custom" && (
                         <>
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Start</label>
+                                <label htmlFor="insight-custom-start" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Start</label>
                                 <input
+                                    id="insight-custom-start"
                                     type="datetime-local"
                                     value={customStart}
                                     onChange={(e) => {
-                                        setCustomStart(e.target.value);
-                                        setPage(1);
+                                        dispatch({ type: 'SET_FIELD', field: 'customStart', value: e.target.value });
+                                        dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                                     }}
                                     className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                                 />
                             </div>
                             <div className="space-y-1">
-                                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">End</label>
+                                <label htmlFor="insight-custom-end" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">End</label>
                                 <input
+                                    id="insight-custom-end"
                                     type="datetime-local"
                                     value={customEnd}
                                     onChange={(e) => {
-                                        setCustomEnd(e.target.value);
-                                        setPage(1);
+                                        dispatch({ type: 'SET_FIELD', field: 'customEnd', value: e.target.value });
+                                        dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                                     }}
                                     className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                                 />
@@ -423,31 +457,33 @@ export default function Insights() {
                     )}
 
                     <div className="space-y-1">
-                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Deployment</label>
+                        <label htmlFor="insight-deployment-id" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Deployment</label>
                         <select
+                            id="insight-deployment-id"
                             value={deploymentId}
                             onChange={(e) => {
-                                setDeploymentId(e.target.value);
-                                setPage(1);
+                                dispatch({ type: 'SET_FIELD', field: 'deploymentId', value: e.target.value });
+                                dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                             }}
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         >
                             <option value="">All {isEmbedding ? "embedding" : "inference"} deployments</option>
                             {filteredDeployments.map((deployment) => (
                                 <option key={deployment.id} value={deployment.id}>
-                                    {deployment.model_name} ({deployment.id.slice(0, 8)})
+                                    {deployment.model_name} ({(deployment.id || "").slice(0, 8)})
                                 </option>
                             ))}
                         </select>
                     </div>
 
                     <div className="space-y-1">
-                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</label>
+                        <label htmlFor="insight-status" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</label>
                         <select
+                            id="insight-status"
                             value={status}
                             onChange={(e) => {
-                                setStatus(e.target.value as InsightsStatus);
-                                setPage(1);
+                                dispatch({ type: 'SET_FIELD', field: 'status', value: e.target.value as InsightsStatus });
+                                dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                             }}
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         >
@@ -460,14 +496,15 @@ export default function Insights() {
                     </div>
 
                     <div className="space-y-1">
-                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Address</label>
+                        <label htmlFor="insight-ip-address" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Address</label>
                         <input
+                            id="insight-ip-address"
                             type="text"
                             list="insights-ip-options"
                             value={ipAddress}
                             onChange={(e) => {
-                                setIpAddress(e.target.value);
-                                setPage(1);
+                                dispatch({ type: 'SET_FIELD', field: 'ipAddress', value: e.target.value });
+                                dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                             }}
                             placeholder="All IPs"
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
@@ -799,11 +836,11 @@ export default function Insights() {
                     <Pagination
                         currentPage={page}
                         totalPages={totalPages}
-                        onPageChange={setPage}
+                        onPageChange={(p) => dispatch({ type: 'SET_FIELD', field: 'page', value: p })}
                         pageSize={pageSize}
                         onPageSizeChange={(size) => {
-                            setPageSize(size);
-                            setPage(1);
+                            dispatch({ type: 'SET_FIELD', field: 'pageSize', value: size });
+                            dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                         }}
                         totalItems={totalItems}
                     />
