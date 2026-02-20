@@ -325,6 +325,7 @@ class NosanaAdapter(ProviderAdapter):
                             "job_address": job_address,
                             "image": image,
                             "tx": data.get("txSignature"),
+                            "provider_credential_name": provider_credential_name,
                         },
                     }
 
@@ -333,7 +334,11 @@ class NosanaAdapter(ProviderAdapter):
             raise
 
     async def wait_for_ready(
-        self, *, provider_instance_id: str, timeout: int = 300
+        self,
+        *,
+        provider_instance_id: str,
+        timeout: int = 300,
+        provider_credential_name: Optional[str] = None,
     ) -> str:
         """Polls Nosana sidecar until the job is RUNNING."""
         import time
@@ -345,8 +350,13 @@ class NosanaAdapter(ProviderAdapter):
         async with aiohttp.ClientSession() as session:
             while True:
                 try:
+                    params = {}
+                    if provider_credential_name:
+                        params["credentialName"] = provider_credential_name
+
                     async with session.get(
                         f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                        params=params,
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
                         if resp.status == 200:
@@ -377,23 +387,42 @@ class NosanaAdapter(ProviderAdapter):
 
                 await asyncio.sleep(poll_interval)
 
-    async def deprovision_node(self, *, provider_instance_id: str) -> None:
+    async def deprovision_node(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
         try:
+            payload = {"jobAddress": provider_instance_id}
+            if provider_credential_name:
+                payload["credentialName"] = provider_credential_name
+
             async with aiohttp.ClientSession() as session:
                 await session.post(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/stop",
-                    json={"jobAddress": provider_instance_id},
+                    json=payload,
                     timeout=aiohttp.ClientTimeout(total=30),
                 )
         except Exception:
             logger.exception("Nosana deprovision error")
             raise
 
-    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+    async def get_logs(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs",
+                    params=params,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
@@ -413,11 +442,21 @@ class NosanaAdapter(ProviderAdapter):
             logger.exception("Nosana get_logs error")
             return {"logs": ["Internal error fetching logs"]}
 
-    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+    async def get_log_streaming_info(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    params=params,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
@@ -433,7 +472,7 @@ class NosanaAdapter(ProviderAdapter):
             ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
                 "https://", "wss://"
             )
-            return {
+            info = {
                 "ws_url": ws_url,
                 "provider": "nosana",
                 "subscription": {
@@ -443,6 +482,9 @@ class NosanaAdapter(ProviderAdapter):
                     "nodeAddress": node_address or "none",
                 },
             }
+            if provider_credential_name:
+                info["subscription"]["credentialName"] = provider_credential_name
+            return info
         except Exception as e:
             logger.warning(f"Nosana get_log_streaming_info warning: {e}")
             return {"error": str(e)}

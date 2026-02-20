@@ -134,10 +134,28 @@ class SkyPilotAdapter(ProviderAdapter):
             },
         }
 
+    async def wait_for_ready(
+        self,
+        *,
+        provider_instance_id: str,
+        timeout: int = 600,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """
+        Wait until the SkyPilot cluster is UP.
+        """
+        await self._wait_for_instance(provider_instance_id, timeout=timeout)
+        return provider_instance_id
+
     # -------------------------------------------------
     # DEPROVISION
     # -------------------------------------------------
-    async def deprovision_node(self, *, provider_instance_id: str) -> None:
+    async def deprovision_node(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
         """
         Deprovision a SkyPilot cluster.
         """
@@ -186,7 +204,12 @@ class SkyPilotAdapter(ProviderAdapter):
     # -------------------------------------------------
     # LOGS
     # -------------------------------------------------
-    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+    async def get_logs(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         """
         Fetch logs from a SkyPilot cluster.
         """
@@ -198,7 +221,12 @@ class SkyPilotAdapter(ProviderAdapter):
             ]
         }
 
-    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+    async def get_log_streaming_info(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         """
         Returns info for SkyPilot log streaming.
         """

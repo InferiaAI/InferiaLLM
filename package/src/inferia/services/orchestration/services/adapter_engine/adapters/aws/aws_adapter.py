@@ -69,5 +69,35 @@ class AWSAdapter(ProviderAdapter):
             "metadata": {},
         }
 
-    async def deprovision_node(self, instance_id: str):
+    async def wait_for_ready(
+        self,
+        *,
+        provider_instance_id: str,
+        timeout: int = 300,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        return "aws-ready"
+
+    async def deprovision_node(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
         pass
+
+    async def get_logs(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
+        return {"logs": []}
+
+    async def get_log_streaming_info(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
+        return {"supported": False}

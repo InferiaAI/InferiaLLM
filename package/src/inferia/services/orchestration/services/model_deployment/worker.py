@@ -151,6 +151,7 @@ class ModelDeploymentWorker:
                     provider_resource_id=pool["allowed_gpu_types"][0],
                     pool_id=pool["provider_pool_id"],
                     metadata=metadata,
+                    provider_credential_name=pool.get("provider_credential_name"),
                 )
 
                 # Handle simulation mode (provider-agnostic)
@@ -171,6 +172,7 @@ class ModelDeploymentWorker:
                 expose_url = await adapter.wait_for_ready(
                     provider_instance_id=node_spec["provider_instance_id"],
                     timeout=timeout,
+                    provider_credential_name=pool.get("provider_credential_name"),
                 )
 
                 # SAFETY CHECK: Verify that the deployment hasn't been terminated while we were waiting
@@ -323,7 +325,10 @@ class ModelDeploymentWorker:
                     adapter = get_adapter(node["provider"])
                     log.info(f"Deprovisioning {node['provider']} node {node_id}")
                     await adapter.deprovision_node(
-                        provider_instance_id=node["provider_instance_id"]
+                        provider_instance_id=node["provider_instance_id"],
+                        provider_credential_name=node.get("metadata", {}).get(
+                            "provider_credential_name"
+                        ),
                     )
 
         log.info(f"Stopped runtime for deployment {deployment_id}")

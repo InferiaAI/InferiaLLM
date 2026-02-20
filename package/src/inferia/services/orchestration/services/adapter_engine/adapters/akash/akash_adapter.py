@@ -231,7 +231,11 @@ class AkashAdapter(ProviderAdapter):
             raise e
 
     async def wait_for_ready(
-        self, *, provider_instance_id: str, timeout: int = 600
+        self,
+        *,
+        provider_instance_id: str,
+        timeout: int = 600,
+        provider_credential_name: Optional[str] = None,
     ) -> str:
         """
         Poll Akash sidecar until the deployment is ready.
@@ -285,7 +289,12 @@ class AkashAdapter(ProviderAdapter):
 
             await asyncio.sleep(poll_interval)
 
-    async def deprovision_node(self, *, provider_instance_id: str) -> None:
+    async def deprovision_node(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -300,7 +309,12 @@ class AkashAdapter(ProviderAdapter):
             logger.exception("Akash deprovision error")
             raise
 
-    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+    async def get_logs(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         """
         Fetch logs from Akash deployment.
         """
@@ -324,7 +338,12 @@ class AkashAdapter(ProviderAdapter):
             logger.exception("Akash get_logs error")
             return {"logs": [f"Error fetching logs: {str(e)}"]}
 
-    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+    async def get_log_streaming_info(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         """
         Returns connection details for WebSocket log streaming.
         TODO: Implement when Akash sidecar supports WebSocket streaming.

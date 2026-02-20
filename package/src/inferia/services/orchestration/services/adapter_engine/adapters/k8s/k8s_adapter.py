@@ -192,7 +192,11 @@ class KubernetesAdapter(ProviderAdapter):
     # WAIT FOR READY
     # -----------------------------------------------------
     async def wait_for_ready(
-        self, *, provider_instance_id: str, timeout: int = 120
+        self,
+        *,
+        provider_instance_id: str,
+        timeout: int = 120,
+        provider_credential_name: Optional[str] = None,
     ) -> str:
         """
         Wait until the Kubernetes pod is running.
@@ -242,7 +246,12 @@ class KubernetesAdapter(ProviderAdapter):
     # -----------------------------------------------------
     # DEPROVISION NODE
     # -----------------------------------------------------
-    async def deprovision_node(self, *, provider_instance_id: str) -> None:
+    async def deprovision_node(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
         """
         Deprovision a compute node by deleting the Kubernetes pod.
         """
@@ -269,7 +278,12 @@ class KubernetesAdapter(ProviderAdapter):
     # -----------------------------------------------------
     # LOGS
     # -----------------------------------------------------
-    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+    async def get_logs(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         """
         Fetch logs from a Kubernetes pod.
         """
@@ -293,7 +307,13 @@ class KubernetesAdapter(ProviderAdapter):
             logger.exception("Kubernetes get_logs error")
             return {"logs": [f"Error fetching logs: {str(e)}"]}
 
-    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+    async def get_log_streaming_info(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
+    # -----------------------------------------------------
         """
         Returns info for K8s log streaming.
         TODO: Implement WebSocket streaming via K8s API.

@@ -156,7 +156,11 @@ class ProviderAdapter(ABC):
 
     @abstractmethod
     async def wait_for_ready(
-        self, *, provider_instance_id: str, timeout: int = 300
+        self,
+        *,
+        provider_instance_id: str,
+        timeout: int = 300,
+        provider_credential_name: Optional[str] = None,
     ) -> str:
         """
         Wait until the node is ready and return its access endpoint (e.g. URL).
@@ -171,7 +175,12 @@ class ProviderAdapter(ABC):
     # DEPROVISION
     # -------------------------------------------------
     @abstractmethod
-    async def deprovision_node(self, *, provider_instance_id: str) -> None:
+    async def deprovision_node(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
         """Deprovision and clean up the compute node."""
         raise NotImplementedError
 
@@ -179,7 +188,12 @@ class ProviderAdapter(ABC):
     # LOGS
     # -------------------------------------------------
     @abstractmethod
-    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+    async def get_logs(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         """
         Fetch logs for a specific instance.
 
@@ -189,7 +203,12 @@ class ProviderAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+    async def get_log_streaming_info(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         """
         Returns connection details for WebSocket log streaming.
 
