@@ -159,10 +159,11 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
 
         try:
             next_state = await self.controller.start_deployment(deployment_id)
+        except ValueError as e:
+            await context.abort(grpc.StatusCode.NOT_FOUND, str(e))
         except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).exception("Failed to start deployment")
+            logger = logging.getLogger(__name__)
+            logger.exception("Failed to start deployment")
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
         return model_deployment_pb2.StartDeploymentResponse(

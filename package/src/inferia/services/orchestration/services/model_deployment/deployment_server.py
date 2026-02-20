@@ -23,7 +23,7 @@ import os
 POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia"
 )
-GRPC_ADDR = "127.0.0.1:50051"
+GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
 
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
 
@@ -99,28 +99,29 @@ async def log_audit_event(
 ):
     import uuid
 
+    conn = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
-        try:
-            # Manually insert since we don't have the AuditLog model here
-            await conn.execute(
-                """
-                INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             """,
-                str(uuid.uuid4()),
-                utcnow_naive(),
-                user_id,
-                action,
-                resource_type,
-                resource_id,
-                json.dumps(details) if details else None,
-                status,
-            )
-        finally:
-            await conn.close()
+        # Manually insert since we don't have the AuditLog model here
+        await conn.execute(
+            """
+            INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         """,
+            str(uuid.uuid4()),
+            utcnow_naive(),
+            user_id,
+            action,
+            resource_type,
+            resource_id,
+            json.dumps(details) if details else None,
+            status,
+        )
     except Exception as e:
         print(f"Failed to write audit log: {e}")
+    finally:
+        if conn:
+            await conn.close()
 
 
 @router.post("/deploy")

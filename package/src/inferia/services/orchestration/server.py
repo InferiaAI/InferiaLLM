@@ -9,6 +9,7 @@ This is the main entry point for the orchestration layer that includes:
 
 import asyncio
 import logging
+import os
 import asyncpg
 import grpc
 from fastapi import FastAPI
@@ -117,10 +118,16 @@ async def serve():
         description="Orchestration Gateway - Compute Pool and Model Deployment Management",
     )
 
+    allowed_origins = (
+        os.getenv("ALLOWED_ORIGINS", "").split(",")
+        if os.getenv("ALLOWED_ORIGINS")
+        else ["*"]
+    )
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        allow_credentials=True if allowed_origins != ["*"] else False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
