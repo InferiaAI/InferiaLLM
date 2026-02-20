@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useEffect, useReducer } from "react"
 import { computeApi } from "@/lib/api"
 import { toast } from "sonner"
 import {
@@ -35,24 +35,67 @@ interface DeploymentConfigProps {
     onUpdate?: () => void
 }
 
+type State = {
+    loading: boolean;
+    config: any;
+    replicas: number;
+    inferenceModel: string;
+    vllmImage: string;
+    maxModelLen: string;
+    gpuUtil: string;
+    gitRepo: string;
+    trainingScript: string;
+    datasetUrl: string;
+    hfToken: string;
+};
+
+type Action =
+    | { type: 'SET_LOADING'; payload: boolean }
+    | { type: 'SET_FIELD'; field: keyof State; value: any }
+    | { type: 'INIT_CONFIG'; payload: Partial<State> };
+
+const initialState = (deployment: DeploymentData): State => ({
+    loading: false,
+    config: {},
+    replicas: deployment?.replicas || 1,
+    inferenceModel: deployment?.inference_model || "",
+    vllmImage: "",
+    maxModelLen: "",
+    gpuUtil: "",
+    gitRepo: "",
+    trainingScript: "",
+    datasetUrl: "",
+    hfToken: "",
+});
+
+function reducer(state: State, action: Action): State {
+    switch (action.type) {
+        case 'SET_LOADING':
+            return { ...state, loading: action.payload };
+        case 'SET_FIELD':
+            return { ...state, [action.field]: action.value };
+        case 'INIT_CONFIG':
+            return { ...state, ...action.payload };
+        default:
+            return state;
+    }
+}
+
 export default function DeploymentConfig({ deployment, onUpdate }: DeploymentConfigProps) {
-    const [loading, setLoading] = useState(false)
-    const [config, setConfig] = useState<any>({})
-    const [replicas, setReplicas] = useState(deployment?.replicas || 1)
-    const [inferenceModel, setInferenceModel] = useState(deployment?.inference_model || "")
-
-    // vLLM specific
-    const [vllmImage, setVllmImage] = useState("")
-    const [maxModelLen, setMaxModelLen] = useState("")
-    const [gpuUtil, setGpuUtil] = useState("")
-
-    // Training specific
-    const [gitRepo, setGitRepo] = useState("")
-    const [trainingScript, setTrainingScript] = useState("")
-    const [datasetUrl, setDatasetUrl] = useState("")
-
-    // Common
-    const [hfToken, setHfToken] = useState("")
+    const [state, dispatch] = useReducer(reducer, deployment, initialState);
+    const {
+        loading,
+        config,
+        replicas,
+        inferenceModel,
+        vllmImage,
+        maxModelLen,
+        gpuUtil,
+        gitRepo,
+        trainingScript,
+        datasetUrl,
+        hfToken
+    } = state;
 
     const isTraining = deployment?.workload_type === "training"
     const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
@@ -61,31 +104,33 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
     useEffect(() => {
         if (deployment?.configuration) {
             const c = deployment.configuration
-            setConfig(c)
+            const updates: Partial<State> = { config: c };
 
             if (isVllm) {
-                setVllmImage(c.image || "vllm/vllm-openai:latest")
+                updates.vllmImage = c.image || "vllm/vllm-openai:latest";
                 if (c.cmd) {
                     const mLenIdx = c.cmd.indexOf("--max-model-len")
-                    if (mLenIdx !== -1) setMaxModelLen(c.cmd[mLenIdx + 1])
+                    if (mLenIdx !== -1) updates.maxModelLen = c.cmd[mLenIdx + 1]
 
                     const gUtilIdx = c.cmd.indexOf("--gpu-memory-utilization")
-                    if (gUtilIdx !== -1) setGpuUtil(c.cmd[gUtilIdx + 1])
+                    if (gUtilIdx !== -1) updates.gpuUtil = c.cmd[gUtilIdx + 1]
                 }
-                if (c.env?.HF_TOKEN) setHfToken(c.env.HF_TOKEN)
+                if (c.env?.HF_TOKEN) updates.hfToken = c.env.HF_TOKEN
             }
 
             if (isTraining) {
-                setGitRepo(c.git_repo || "")
-                setTrainingScript(c.training_script || "")
-                setDatasetUrl(c.dataset_url || "")
-                setHfToken(c.hf_token || "")
+                updates.gitRepo = c.git_repo || "";
+                updates.trainingScript = c.training_script || "";
+                updates.datasetUrl = c.dataset_url || "";
+                updates.hfToken = c.hf_token || "";
             }
+
+            dispatch({ type: 'INIT_CONFIG', payload: updates });
         }
     }, [deployment, isVllm, isTraining])
 
     const handleSave = async () => {
-        setLoading(true)
+        dispatch({ type: 'SET_LOADING', payload: true });
         try {
             let updatedConfig = { ...config }
 
@@ -122,7 +167,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
         } catch (error: any) {
             toast.error(error.response?.data?.detail || "Failed to update configuration")
         } finally {
-            setLoading(false)
+            dispatch({ type: 'SET_LOADING', payload: false });
         }
     }
 
@@ -174,13 +219,14 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Replicas</label>
+                                    <label htmlFor="replicas" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Replicas</label>
                                     <div className="relative group/input">
                                         <input
+                                            id="replicas"
                                             type="number"
                                             min="1"
                                             value={replicas}
-                                            onChange={e => setReplicas(parseInt(e.target.value))}
+                                            onChange={e => dispatch({ type: 'SET_FIELD', field: 'replicas', value: parseInt(e.target.value) })}
                                             className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all font-mono"
                                         />
                                         <div className="absolute right-3 top-3.5 text-zinc-600 pointer-events-none group-focus-within/input:text-blue-500 transition-colors">
@@ -190,11 +236,12 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Inference Model</label>
+                                    <label htmlFor="inference-model" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Inference Model</label>
                                     <div className="relative group/input">
                                         <input
+                                            id="inference-model"
                                             value={inferenceModel}
-                                            onChange={e => setInferenceModel(e.target.value)}
+                                            onChange={e => dispatch({ type: 'SET_FIELD', field: 'inferenceModel', value: e.target.value })}
                                             className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all font-mono"
                                             placeholder="e.g. meta-llama/Llama-2-7b"
                                         />
@@ -222,28 +269,31 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
 
                                     <div className="space-y-6">
                                         <div className="space-y-2">
-                                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Container Image</label>
+                                            <label htmlFor="vllm-image" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Container Image</label>
                                             <input
+                                                id="vllm-image"
                                                 value={vllmImage}
-                                                onChange={e => setVllmImage(e.target.value)}
+                                                onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })}
                                                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-mono text-sm"
                                             />
                                         </div>
 
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                             <div className="space-y-2">
-                                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Max Model Length</label>
+                                                <label htmlFor="max-model-len" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Max Model Length</label>
                                                 <input
+                                                    id="max-model-len"
                                                     value={maxModelLen}
-                                                    onChange={e => setMaxModelLen(e.target.value)}
+                                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })}
                                                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-mono"
                                                 />
                                             </div>
                                             <div className="space-y-2">
-                                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">GPU Util</label>
+                                                <label htmlFor="gpu-util" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">GPU Util</label>
                                                 <input
+                                                    id="gpu-util"
                                                     value={gpuUtil}
-                                                    onChange={e => setGpuUtil(e.target.value)}
+                                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })}
                                                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-mono"
                                                 />
                                             </div>
@@ -266,31 +316,34 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
 
                                     <div className="space-y-6">
                                         <div className="space-y-2">
-                                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Git Repository</label>
+                                            <label htmlFor="git-repo" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Git Repository</label>
                                             <input
+                                                id="git-repo"
                                                 value={gitRepo}
-                                                onChange={e => setGitRepo(e.target.value)}
+                                                onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })}
                                                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all font-mono text-sm"
                                                 placeholder="https://github.com/tenant/repo.git"
                                             />
                                         </div>
 
                                         <div className="space-y-2">
-                                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Training Command</label>
+                                            <label htmlFor="training-script" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Training Command</label>
                                             <textarea
+                                                id="training-script"
                                                 rows={3}
                                                 value={trainingScript}
-                                                onChange={e => setTrainingScript(e.target.value)}
+                                                onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })}
                                                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all font-mono text-sm resize-none"
                                                 placeholder="python3 train.py --config config.yaml"
                                             />
                                         </div>
 
                                         <div className="space-y-2">
-                                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Dataset URL</label>
+                                            <label htmlFor="dataset-url" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Dataset URL</label>
                                             <input
+                                                id="dataset-url"
                                                 value={datasetUrl}
-                                                onChange={e => setDatasetUrl(e.target.value)}
+                                                onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })}
                                                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all font-mono text-sm"
                                             />
                                         </div>
@@ -309,11 +362,12 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                             </div>
 
                             <div className="space-y-2">
-                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Hugging Face Token</label>
+                                <label htmlFor="hf-token" className="text-xs font-bold text-zinc-500 uppercase tracking-tighter ml-1">Hugging Face Token</label>
                                 <input
+                                    id="hf-token"
                                     type="password"
                                     value={hfToken}
-                                    onChange={e => setHfToken(e.target.value)}
+                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })}
                                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-all font-mono text-sm"
                                     placeholder="hf_••••••••••••••••"
                                 />

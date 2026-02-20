@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useReducer } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { managementApi, computeApi } from "@/lib/api"
 import { Trash2, Play, Square, RefreshCcw, AlertTriangle } from "lucide-react"
@@ -45,16 +45,47 @@ type ProviderCapabilities = {
 
 const providerCapabilitiesCache: Record<string, ProviderCapabilities> = {}
 
+type State = {
+  loading: boolean;
+  deleting: boolean;
+  processing: boolean;
+  deployment: DeploymentData | null;
+  actionModal: ActionModalType;
+};
+
+type Action =
+  | { type: 'SET_LOADING', payload: boolean }
+  | { type: 'SET_DELETING', payload: boolean }
+  | { type: 'SET_PROCESSING', payload: boolean }
+  | { type: 'SET_DEPLOYMENT', payload: DeploymentData | null }
+  | { type: 'SET_ACTION_MODAL', payload: ActionModalType };
+
+const initialState: State = {
+  loading: true,
+  deleting: false,
+  processing: false,
+  deployment: null,
+  actionModal: null,
+};
+
+function deploymentReducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'SET_LOADING': return { ...state, loading: action.payload };
+    case 'SET_DELETING': return { ...state, deleting: action.payload };
+    case 'SET_PROCESSING': return { ...state, processing: action.payload };
+    case 'SET_DEPLOYMENT': return { ...state, deployment: action.payload };
+    case 'SET_ACTION_MODAL': return { ...state, actionModal: action.payload };
+    default: return state;
+  }
+}
+
 export default function DeploymentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const [loading, setLoading] = useState(true)
-  const [deleting, setDeleting] = useState(false)
-  const [processing, setProcessing] = useState(false)
-  const [deployment, setDeployment] = useState<DeploymentData | null>(null)
-  const [actionModal, setActionModal] = useState<ActionModalType>(null)
+  const [state, dispatch] = useReducer(deploymentReducer, initialState);
+  const { loading, deleting, processing, deployment, actionModal } = state;
 
   const getErrorMessage = (error: unknown, fallback: string) => {
     if (typeof error === "object" && error && "response" in error) {
@@ -65,25 +96,28 @@ export default function DeploymentDetail() {
   }
 
   const fetchDeployment = useCallback(async (showOverlay = false) => {
-    if (showOverlay) setLoading(true)
-    setProcessing(true)
+    if (showOverlay) dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({ type: 'SET_PROCESSING', payload: true });
 
     try {
       try {
         const { data } = await computeApi.get(`/deployment/status/${id}`)
         if (data && data.deployment_id) {
-          setDeployment({
-            ...data,
-            id: data.deployment_id,
-            name: data.model_name || `Compute-${data.deployment_id.slice(0, 8)}`,
-            provider: data.engine === "vllm" ? "vLLM (Compute)" : "Compute",
-            endpoint_url: data.endpoint,
-            model_name: data.model_name,
-            workload_type: data.configuration?.workload_type || (data.configuration?.git_repo ? "training" : "inference"),
-            git_repo: data.configuration?.git_repo,
-            training_script: data.configuration?.training_script,
-            dataset_url: data.configuration?.dataset_url,
-          })
+          dispatch({
+            type: 'SET_DEPLOYMENT',
+            payload: {
+              ...data,
+              id: data.deployment_id,
+              name: data.model_name || `Compute-${data.deployment_id.slice(0, 8)}`,
+              provider: data.engine === "vllm" ? "vLLM (Compute)" : "Compute",
+              endpoint_url: data.endpoint,
+              model_name: data.model_name,
+              workload_type: data.configuration?.workload_type || (data.configuration?.git_repo ? "training" : "inference"),
+              git_repo: data.configuration?.git_repo,
+              training_script: data.configuration?.training_script,
+              dataset_url: data.configuration?.dataset_url,
+            }
+          });
           return
         }
       } catch {
@@ -91,13 +125,13 @@ export default function DeploymentDetail() {
       }
 
       const { data } = await managementApi.get<DeploymentData[]>("/management/deployments")
-      const found = data.find((d) => d.id === id)
-      setDeployment(found)
+      const found = data.find((d) => d.id === id) || null
+      dispatch({ type: 'SET_DEPLOYMENT', payload: found });
     } catch (error) {
       console.error(error)
     } finally {
-      setLoading(false)
-      setProcessing(false)
+      dispatch({ type: 'SET_LOADING', payload: false });
+      dispatch({ type: 'SET_PROCESSING', payload: false });
     }
   }, [id])
 
@@ -141,8 +175,8 @@ export default function DeploymentDetail() {
     return provider.includes("compute") || provider.includes("nosana") || provider.includes("akash") || provider.includes("depin")
   }
 
-  const state = (deployment?.state || deployment?.status || "").toUpperCase()
-  const isStopped = ["STOPPED", "TERMINATED", "FAILED", "UNKNOWN"].includes(state)
+  const deploymentState = (deployment?.state || deployment?.status || "").toUpperCase()
+  const isStopped = ["STOPPED", "TERMINATED", "FAILED", "UNKNOWN"].includes(deploymentState)
   const isRunning = !isStopped
 
   const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
@@ -190,7 +224,7 @@ export default function DeploymentDetail() {
 
   const handleStop = async () => {
     if (!id) return
-    setProcessing(true)
+    dispatch({ type: 'SET_PROCESSING', payload: true });
     try {
       await computeApi.post("/deployment/terminate", { deployment_id: id })
       toast.success("Deployment stopping...")
@@ -198,13 +232,13 @@ export default function DeploymentDetail() {
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Failed to stop deployment"))
     } finally {
-      setProcessing(false)
+      dispatch({ type: 'SET_PROCESSING', payload: false });
     }
   }
 
   const handleStart = async () => {
     if (!id) return
-    setProcessing(true)
+    dispatch({ type: 'SET_PROCESSING', payload: true });
     try {
       await computeApi.post("/deployment/start", { deployment_id: id })
       toast.success("Deployment starting...")
@@ -212,13 +246,13 @@ export default function DeploymentDetail() {
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Failed to start deployment"))
     } finally {
-      setProcessing(false)
+      dispatch({ type: 'SET_PROCESSING', payload: false });
     }
   }
 
   const handleDelete = async () => {
     if (!id) return
-    setDeleting(true)
+    dispatch({ type: 'SET_DELETING', payload: true });
     try {
       const isCompute = deployment?.provider?.includes("Compute") || deployment?.engine === "vllm"
       if (isCompute) {
@@ -231,13 +265,13 @@ export default function DeploymentDetail() {
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Failed to delete deployment"))
     } finally {
-      setDeleting(false)
+      dispatch({ type: 'SET_DELETING', payload: false });
     }
   }
 
   const handleConfirmAction = async () => {
     const selectedAction = actionModal
-    setActionModal(null)
+    dispatch({ type: 'SET_ACTION_MODAL', payload: null });
 
     if (selectedAction === "start") {
       await handleStart()
@@ -270,7 +304,7 @@ export default function DeploymentDetail() {
               )}
             >
               <div className={cn("w-1.5 h-1.5 rounded-full", isRunning ? "bg-green-500 animate-pulse" : "bg-red-500")} />
-              {state || "Unknown"}
+              {deploymentState || "Unknown"}
             </div>
           </div>
         </div>
@@ -286,7 +320,7 @@ export default function DeploymentDetail() {
 
           {isRunning ? (
             <button
-              onClick={() => setActionModal("stop")}
+              onClick={() => dispatch({ type: 'SET_ACTION_MODAL', payload: 'stop' })}
               disabled={processing}
               className="px-4 py-1.5 bg-zinc-900 border border-amber-500/20 text-amber-500 rounded-md text-sm font-medium hover:bg-amber-500/10 hover:border-amber-500/40 flex items-center gap-2 transition-all disabled:opacity-50"
             >
@@ -295,14 +329,14 @@ export default function DeploymentDetail() {
           ) : (
             <>
               <button
-                onClick={() => setActionModal("start")}
+                onClick={() => dispatch({ type: 'SET_ACTION_MODAL', payload: 'start' })}
                 disabled={processing}
                 className="px-5 py-1.5 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-500 active:scale-95 flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 <Play className="w-4 h-4 fill-current" /> {processing ? "Starting..." : "Start"}
               </button>
               <button
-                onClick={() => setActionModal("delete")}
+                onClick={() => dispatch({ type: 'SET_ACTION_MODAL', payload: 'delete' })}
                 disabled={deleting}
                 className="px-4 py-1.5 bg-zinc-900 border border-red-500/20 text-red-400 rounded-md text-sm font-medium hover:bg-red-500/10 hover:border-red-500/40 flex items-center gap-2 transition-all disabled:opacity-50"
               >
@@ -385,7 +419,7 @@ export default function DeploymentDetail() {
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setActionModal(null)}
+                onClick={() => dispatch({ type: 'SET_ACTION_MODAL', payload: null })}
                 className="px-3 py-1.5 text-sm rounded-md border hover:bg-muted"
               >
                 Cancel

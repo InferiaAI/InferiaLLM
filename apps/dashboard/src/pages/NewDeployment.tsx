@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { 
+import {
   Cpu, Server, Check, Zap, Globe, Layers, Terminal, Box, Rocket, Brain, Wrench,
   Database, Image, Eye, Volume2, Search, X, ChevronDown, Star, Download, Loader2,
   MessageSquare, ExternalLink
@@ -10,9 +10,9 @@ import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/context/AuthContext"
-import { 
-  searchHFModels, 
-  getPopularModels, 
+import {
+  searchHFModels,
+  getPopularModels,
   EMBEDDING_MODELS,
   MODEL_TYPES,
   inferModelType,
@@ -24,102 +24,102 @@ import {
 // --- Constants ---
 
 const deploymentTypes = [
-  { 
-    id: "inference", 
-    name: "Inference", 
-    desc: "Deploy LLMs for real-time text generation.", 
-    icon: MessageSquare, 
+  {
+    id: "inference",
+    name: "Inference",
+    desc: "Deploy LLMs for real-time text generation.",
+    icon: MessageSquare,
     modelType: "inference" as ModelTypeKey,
-    active: true 
+    active: true
   },
-  { 
-    id: "embedding", 
-    name: "Embeddings", 
-    desc: "Deploy embedding models for semantic search and RAG.", 
-    icon: Database, 
+  {
+    id: "embedding",
+    name: "Embeddings",
+    desc: "Deploy embedding models for semantic search and RAG.",
+    icon: Database,
     modelType: "embedding" as ModelTypeKey,
-    active: true 
+    active: true
   },
-  { 
-    id: "training", 
-    name: "Training", 
-    desc: "Fine-tune models on your custom datasets.", 
-    icon: Brain, 
+  {
+    id: "training",
+    name: "Training",
+    desc: "Fine-tune models on your custom datasets.",
+    icon: Brain,
     modelType: "training" as ModelTypeKey,
-    active: true 
+    active: true
   },
-  { 
-    id: "image", 
-    name: "Image Generation", 
-    desc: "Deploy Stable Diffusion and image generation models.", 
-    icon: Image, 
+  {
+    id: "image",
+    name: "Image Generation",
+    desc: "Deploy Stable Diffusion and image generation models.",
+    icon: Image,
     modelType: "image_generation" as ModelTypeKey,
-    active: false, 
-    badge: "Soon" 
+    active: false,
+    badge: "Soon"
   },
-  { 
-    id: "multimodal", 
-    name: "Multimodal", 
-    desc: "Deploy vision-language models.", 
-    icon: Eye, 
+  {
+    id: "multimodal",
+    name: "Multimodal",
+    desc: "Deploy vision-language models.",
+    icon: Eye,
     modelType: "multimodal" as ModelTypeKey,
-    active: false, 
-    badge: "Soon" 
+    active: false,
+    badge: "Soon"
   },
-  { 
-    id: "audio", 
-    name: "Audio", 
-    desc: "Deploy speech recognition and TTS models.", 
-    icon: Volume2, 
+  {
+    id: "audio",
+    name: "Audio",
+    desc: "Deploy speech recognition and TTS models.",
+    icon: Volume2,
     modelType: "audio" as ModelTypeKey,
-    active: false, 
-    badge: "Soon" 
+    active: false,
+    badge: "Soon"
   },
 ]
 
 const computeEngines = [
-  { 
-    id: "vllm", 
-    name: "vLLM", 
-    desc: "High-throughput and memory-efficient LLM serving engine.", 
-    image: "docker.io/vllm/vllm-openai:v0.14.0", 
-    icon: Cpu, 
+  {
+    id: "vllm",
+    name: "vLLM",
+    desc: "High-throughput and memory-efficient LLM serving engine.",
+    image: "docker.io/vllm/vllm-openai:v0.14.0",
+    icon: Cpu,
     types: ["inference", "multimodal"],
     modelTypes: ["inference", "multimodal"]
   },
-  { 
-    id: "ollama", 
-    name: "Ollama", 
-    desc: "Run huge models locally with ease.", 
-    image: "ollama/ollama:latest", 
-    icon: Terminal, 
+  {
+    id: "ollama",
+    name: "Ollama",
+    desc: "Run huge models locally with ease.",
+    image: "ollama/ollama:latest",
+    icon: Terminal,
     types: ["inference"],
     modelTypes: ["inference", "multimodal"]
   },
-  { 
-    id: "infinity", 
-    name: "Infinity (Embeddings)", 
-    desc: "High-performance embedding server for sentence-transformers.", 
-    image: "michaelf34/infinity:latest", 
-    icon: Database, 
+  {
+    id: "infinity",
+    name: "Infinity (Embeddings)",
+    desc: "High-performance embedding server for sentence-transformers.",
+    image: "michaelf34/infinity:latest",
+    icon: Database,
     types: ["inference"],
     modelTypes: ["embedding"]
   },
-  { 
-    id: "tei", 
-    name: "Text Embeddings Inference", 
-    desc: "Hugging Face's official embedding server.", 
-    image: "ghcr.io/huggingface/text-embeddings-inference:latest", 
-    icon: Database, 
+  {
+    id: "tei",
+    name: "Text Embeddings Inference",
+    desc: "Hugging Face's official embedding server.",
+    image: "ghcr.io/huggingface/text-embeddings-inference:latest",
+    icon: Database,
     types: ["inference"],
     modelTypes: ["embedding"]
   },
-  { 
-    id: "pytorch", 
-    name: "PyTorch", 
-    desc: "Standard deep learning container for training.", 
-    image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", 
-    icon: Brain, 
+  {
+    id: "pytorch",
+    name: "PyTorch",
+    desc: "Standard deep learning container for training.",
+    image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime",
+    icon: Brain,
     types: ["training"],
     modelTypes: ["training"]
   },
@@ -147,29 +147,29 @@ function HuggingFaceModelBrowser({
 }) {
   const [searchQuery, setSearchQuery] = useState("")
   const [showBrowser, setShowBrowser] = useState(false)
-  
+
   const { data: popularModels, isLoading: loadingPopular } = useQuery({
     queryKey: ["hf-popular", modelType],
     queryFn: () => getPopularModels(modelType, 10),
     enabled: showBrowser && modelType !== "embedding",
   })
-  
+
   const { data: searchResults, isLoading: loadingSearch } = useQuery({
     queryKey: ["hf-search", searchQuery, modelType],
-    queryFn: () => searchHFModels({ 
+    queryFn: () => searchHFModels({
       search: searchQuery,
       pipeline_tag: MODEL_TYPES[modelType]?.pipeline_tags[0],
-      limit: 20 
+      limit: 20
     }),
     enabled: showBrowser && searchQuery.length > 2,
   })
-  
+
   const displayModels = searchQuery.length > 2 ? searchResults : popularModels
   const isLoading = searchQuery.length > 2 ? loadingSearch : loadingPopular
-  
+
   // Show curated embedding models for embedding type
   const embeddingModels = modelType === "embedding" ? EMBEDDING_MODELS : []
-  
+
   if (!showBrowser) {
     return (
       <button
@@ -181,7 +181,7 @@ function HuggingFaceModelBrowser({
       </button>
     )
   }
-  
+
   return (
     <div className="border rounded-lg overflow-hidden bg-white dark:bg-zinc-900">
       <div className="p-3 border-b dark:border-zinc-700 flex items-center gap-2">
@@ -201,7 +201,7 @@ function HuggingFaceModelBrowser({
           <X className="w-4 h-4 text-slate-400" />
         </button>
       </div>
-      
+
       <div className="max-h-64 overflow-y-auto">
         {isLoading ? (
           <div className="p-8 text-center text-slate-500">
@@ -285,7 +285,7 @@ function HuggingFaceModelBrowser({
           </div>
         ) : (
           <div className="p-8 text-center text-slate-500 text-sm">
-            {searchQuery.length > 2 
+            {searchQuery.length > 2
               ? "No models found. Try a different search term."
               : "Type to search for models on Hugging Face"
             }
@@ -296,54 +296,123 @@ function HuggingFaceModelBrowser({
   )
 }
 
+type State = {
+  mode: "managed" | "external";
+  step: number;
+  deploymentType: string;
+  modelType: ModelTypeKey;
+  instanceName: string;
+  selectedEngine: string;
+  selectedPool: any;
+  userPools: any[];
+  selectedHFModel: HFModel | null;
+  jobDescription: string;
+  modelId: string;
+  gitRepo: string;
+  trainingScript: string;
+  datasetUrl: string;
+  baseModel: string;
+  embeddingDimensions: string;
+  maxSequenceLength: string;
+  batchSize: string;
+  maxModelLen: string;
+  gpuUtil: string;
+  hfToken: string;
+  vllmImage: string;
+  selectedProvider: string;
+  customProviderName: string;
+  externalModelName: string;
+  endpointUrl: string;
+  apiKey: string;
+};
+
+type Action =
+  | { type: 'SET_MODE'; payload: "managed" | "external" }
+  | { type: 'SET_STEP'; payload: number }
+  | { type: 'SET_FIELD'; field: keyof State; value: any }
+  | { type: 'INIT_POOLS'; payload: any[] };
+
+const initialState: State = {
+  mode: "managed",
+  step: 1,
+  deploymentType: "inference",
+  modelType: "inference",
+  instanceName: "",
+  selectedEngine: "vllm",
+  selectedPool: null,
+  userPools: [],
+  selectedHFModel: null,
+  jobDescription: "",
+  modelId: "",
+  gitRepo: "",
+  trainingScript: "python train.py",
+  datasetUrl: "",
+  baseModel: "",
+  embeddingDimensions: "384",
+  maxSequenceLength: "512",
+  batchSize: "32",
+  maxModelLen: "8192",
+  gpuUtil: "0.95",
+  hfToken: "",
+  vllmImage: "docker.io/vllm/vllm-openai:v0.14.0",
+  selectedProvider: "",
+  customProviderName: "",
+  externalModelName: "",
+  endpointUrl: "",
+  apiKey: "",
+};
+
+function deploymentReducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'SET_MODE':
+      return { ...initialState, mode: action.payload, step: 1 };
+    case 'SET_STEP':
+      return { ...state, step: action.payload };
+    case 'SET_FIELD':
+      return { ...state, [action.field]: action.value };
+    case 'INIT_POOLS':
+      return { ...state, userPools: action.payload };
+    default:
+      return state;
+  }
+}
+
 export default function NewDeployment() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { user, organizations } = useAuth()
 
-  // --- State ---
-  const [mode, setMode] = useState<"managed" | "external">("managed")
-  const [step, setStep] = useState(1) // 1: Type, 2: Engine, 3: Pool, 4: Config
-  const [deploymentType, setDeploymentType] = useState("inference")
-  const [modelType, setModelType] = useState<ModelTypeKey>("inference")
+  const [state, dispatch] = useReducer(deploymentReducer, initialState);
+  const {
+    mode,
+    step,
+    deploymentType,
+    modelType,
+    instanceName,
+    selectedEngine,
+    selectedPool,
+    userPools,
+    selectedHFModel,
+    jobDescription,
+    modelId,
+    gitRepo,
+    trainingScript,
+    datasetUrl,
+    baseModel,
+    embeddingDimensions,
+    maxSequenceLength,
+    batchSize,
+    maxModelLen,
+    gpuUtil,
+    hfToken,
+    vllmImage,
+    selectedProvider,
+    customProviderName,
+    externalModelName,
+    endpointUrl,
+    apiKey,
+  } = state;
 
-  // Common State
-  const [instanceName, setInstanceName] = useState("")
-
-  // Managed Flow State (Pools)
-  const [selectedEngine, setSelectedEngine] = useState("vllm")
-  const [selectedPool, setSelectedPool] = useState<any>(null)
-  const [userPools, setUserPools] = useState<any[]>([])
-
-  // Model Selection State
-  const [selectedHFModel, setSelectedHFModel] = useState<HFModel | null>(null)
-
-  // vLLM / Job Config State
-  const [jobDescription, setJobDescription] = useState("")
-  const [modelId, setModelId] = useState("") // HF Repo ID for vLLM
-
-  // Training State
-  const [gitRepo, setGitRepo] = useState("")
-  const [trainingScript, setTrainingScript] = useState("python train.py")
-  const [datasetUrl, setDatasetUrl] = useState("")
-  const [baseModel, setBaseModel] = useState("")
-
-  // Embedding-specific State
-  const [embeddingDimensions, setEmbeddingDimensions] = useState("384")
-  const [maxSequenceLength, setMaxSequenceLength] = useState("512")
-  const [batchSize, setBatchSize] = useState("32")
-
-  const [maxModelLen, setMaxModelLen] = useState("8192")
-  const [gpuUtil, setGpuUtil] = useState("0.95")
-  const [hfToken, setHfToken] = useState("")
-  const [vllmImage, setVllmImage] = useState("docker.io/vllm/vllm-openai:v0.14.0")
-
-  // External Flow State (Direct API)
-  const [selectedProvider, setSelectedProvider] = useState("")
-  const [customProviderName, setCustomProviderName] = useState("")
-  const [externalModelName, setExternalModelName] = useState("")
-  const [endpointUrl, setEndpointUrl] = useState("")
-  const [apiKey, setApiKey] = useState("")
   const externalModelType = modelType === "embedding" ? "embedding" : "inference"
   const filteredExternalProviders = externalProviders.filter((provider) => provider.modelTypes.includes(externalModelType))
 
@@ -351,13 +420,17 @@ export default function NewDeployment() {
 
   // Update selected engine when model type changes
   useEffect(() => {
-    const availableEngines = computeEngines.filter(e => 
+    const availableEngines = computeEngines.filter(e =>
       e.modelTypes.includes(modelType)
     )
     if (availableEngines.length > 0) {
-      setSelectedEngine(availableEngines[0].id)
+      dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: availableEngines[0].id });
     }
   }, [modelType])
+
+  const setJobDescription = useCallback((value: string) => {
+    dispatch({ type: 'SET_FIELD', field: 'jobDescription', value });
+  }, [])
 
   // Fetch Pools when entering Step 3 of Managed
   useEffect(() => {
@@ -372,7 +445,7 @@ export default function NewDeployment() {
 
           const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`)
           if (res.data?.pools) {
-            setUserPools(res.data.pools)
+            dispatch({ type: 'INIT_POOLS', payload: res.data.pools });
           }
         } catch (e) {
           console.error("Failed to fetch pools", e)
@@ -388,10 +461,10 @@ export default function NewDeployment() {
     if (mode === "external" && selectedProvider) {
       const provider = externalProviders.find(p => p.id === selectedProvider)
       if (provider?.defaultEndpoint && !endpointUrl) {
-        setEndpointUrl(provider.defaultEndpoint)
+        dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: provider.defaultEndpoint });
       }
     }
-  }, [selectedProvider, mode])
+  }, [selectedProvider, mode, endpointUrl])
 
   // Ensure external provider remains valid when external model type changes
   useEffect(() => {
@@ -400,15 +473,15 @@ export default function NewDeployment() {
       provider => provider.id === selectedProvider && provider.modelTypes.includes(externalModelType)
     )
     if (!providerStillValid) {
-      setSelectedProvider("")
-      setEndpointUrl("")
+      dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: "" });
+      dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: "" });
     }
   }, [externalModelType, mode, selectedProvider])
 
   // Auto-update modelId when HF model is selected
   useEffect(() => {
     if (selectedHFModel) {
-      setModelId(selectedHFModel.id)
+      dispatch({ type: 'SET_FIELD', field: 'modelId', value: selectedHFModel.id });
     }
   }, [selectedHFModel])
 
@@ -471,11 +544,11 @@ export default function NewDeployment() {
     } else if (selectedEngine === "infinity") {
       // Infinity embedding server
       const cmd = [
-        "v2", 
+        "v2",
         "--model-id", modelId || "sentence-transformers/all-MiniLM-L6-v2",
         "--port", "7997"
       ]
-      
+
       const env: any = {
         "INFINITY_MODEL_ID": modelId || "sentence-transformers/all-MiniLM-L6-v2",
         "INFINITY_PORT": "7997"
@@ -505,7 +578,7 @@ export default function NewDeployment() {
         "--model-id", modelId || "sentence-transformers/all-MiniLM-L6-v2",
         "--port", "8080"
       ]
-      
+
       const env: any = {}
       if (hfToken) env["HF_TOKEN"] = hfToken
 
@@ -650,7 +723,7 @@ export default function NewDeployment() {
       <div className="flex justify-center">
         <div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner">
           <button
-            onClick={() => { setMode("managed"); setStep(1); }}
+            onClick={() => { dispatch({ type: 'SET_MODE', payload: "managed" }); }}
             className={cn(
               "px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2",
               mode === "managed"
@@ -661,7 +734,7 @@ export default function NewDeployment() {
             <Layers className="w-4 h-4" /> Deploy on Compute
           </button>
           <button
-            onClick={() => { setMode("external"); setStep(1); }}
+            onClick={() => { dispatch({ type: 'SET_MODE', payload: "external" }); }}
             className={cn(
               "px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2",
               mode === "external"
@@ -694,17 +767,26 @@ export default function NewDeployment() {
               {deploymentTypes.map(type => (
                 <div
                   key={type.id}
+                  role="button"
+                  tabIndex={type.active ? 0 : -1}
+                  onKeyDown={(e) => {
+                    if (type.active && (e.key === 'Enter' || e.key === ' ')) {
+                      dispatch({ type: 'SET_FIELD', field: 'deploymentType', value: type.id });
+                      dispatch({ type: 'SET_FIELD', field: 'modelType', value: type.modelType });
+                      dispatch({ type: 'SET_STEP', payload: 2 });
+                    }
+                  }}
                   onClick={() => {
                     if (type.active) {
-                      setDeploymentType(type.id)
-                      setModelType(type.modelType)
-                      setStep(2)
+                      dispatch({ type: 'SET_FIELD', field: 'deploymentType', value: type.id });
+                      dispatch({ type: 'SET_FIELD', field: 'modelType', value: type.modelType });
+                      dispatch({ type: 'SET_STEP', payload: 2 });
                     }
                   }}
                   className={cn(
-                    "p-5 rounded-xl border relative transition-all",
+                    "p-5 rounded-xl border relative transition-all outline-none",
                     type.active
-                      ? "cursor-pointer bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm"
+                      ? "cursor-pointer bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm focus:ring-2 focus:ring-blue-500/40"
                       : "opacity-50 cursor-not-allowed bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800",
                     deploymentType === type.id && type.active ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : ""
                   )}
@@ -730,16 +812,29 @@ export default function NewDeployment() {
           {step === 2 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="col-span-full">
-                <button onClick={() => setStep(1)} className="text-sm text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium mb-4 flex items-center gap-1">← Back to Type</button>
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })}
+                  className="text-sm text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium mb-4 flex items-center gap-1"
+                >
+                  ← Back to Type
+                </button>
               </div>
               {computeEngines
                 .filter(e => e.modelTypes.includes(modelType))
                 .map(e => (
                   <div
                     key={e.id}
-                    onClick={() => setSelectedEngine(e.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(evt) => {
+                      if (evt.key === 'Enter' || evt.key === ' ') {
+                        dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id });
+                      }
+                    }}
+                    onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id })}
                     className={cn(
-                      "cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all",
+                      "cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-blue-500/40",
                       selectedEngine === e.id ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm"
                     )}
                   >
@@ -754,7 +849,13 @@ export default function NewDeployment() {
                   </div>
                 ))}
               <div className="col-span-full flex justify-end pt-4">
-                <button onClick={() => setStep(3)} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium">Continue</button>
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 dark:focus:ring-offset-black"
+                >
+                  Continue
+                </button>
               </div>
             </div>
           )}
@@ -767,7 +868,10 @@ export default function NewDeployment() {
                   <Server className="w-12 h-12 text-slate-300 dark:text-zinc-600 mb-4" />
                   <h3 className="text-lg font-medium text-slate-900 dark:text-zinc-100">No Compute Pools Found</h3>
                   <p className="text-slate-500 dark:text-zinc-400 mt-1 mb-6 max-w-sm">You need active compute resources to deploy this model.</p>
-                  <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md text-sm font-medium text-slate-700 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 shadow-sm flex items-center gap-2">
+                  <Link
+                    to="/dashboard/compute/pools/new"
+                    className="px-4 py-2 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md text-sm font-medium text-slate-700 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 shadow-sm flex items-center gap-2"
+                  >
                     <Zap className="w-4 h-4 text-amber-500" /> Create New Pool
                   </Link>
                 </div>
@@ -776,9 +880,16 @@ export default function NewDeployment() {
                   {userPools.map(pool => (
                     <div
                       key={pool.pool_id}
-                      onClick={() => setSelectedPool(pool)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(evt) => {
+                        if (evt.key === 'Enter' || evt.key === ' ') {
+                          dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool });
+                        }
+                      }}
+                      onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })}
                       className={cn(
-                        "cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all",
+                        "cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-blue-500/40",
                         selectedPool?.pool_id === pool.pool_id ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "hover:border-blue-300 dark:hover:border-blue-700"
                       )}
                     >
@@ -802,11 +913,18 @@ export default function NewDeployment() {
               )}
 
               <div className="flex justify-between pt-6 border-t dark:border-zinc-800">
-                <button onClick={() => setStep(2)} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button>
                 <button
-                  onClick={() => selectedPool && setStep(4)}
+                  type="button"
+                  onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })}
+                  className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectedPool && dispatch({ type: 'SET_STEP', payload: 4 })}
                   disabled={!selectedPool}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 dark:focus:ring-offset-black"
                 >
                   Continue
                 </button>
@@ -818,10 +936,11 @@ export default function NewDeployment() {
           {step === 4 && (
             <div className="max-w-2xl mx-auto space-y-8">
               <div className="space-y-4">
-                <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Deployment Name</label>
+                <label htmlFor="instanceName" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Deployment Name</label>
                 <input
+                  id="instanceName"
                   value={instanceName}
-                  onChange={e => setInstanceName(e.target.value)}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })}
                   className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none transition-all dark:bg-zinc-900 dark:text-white"
                   placeholder="e.g. Production Llama 3"
                   autoFocus
@@ -833,7 +952,7 @@ export default function NewDeployment() {
                 <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">
                   {modelType === "embedding" ? "Embedding Model" : "Model"}
                 </label>
-                
+
                 {selectedHFModel ? (
                   <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
                     <div className="flex items-start justify-between">
@@ -844,9 +963,10 @@ export default function NewDeployment() {
                         </div>
                       </div>
                       <button
+                        type="button"
                         onClick={() => {
-                          setSelectedHFModel(null)
-                          setModelId("")
+                          dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: null });
+                          dispatch({ type: 'SET_FIELD', field: 'modelId', value: "" });
                         }}
                         className="p-1 hover:bg-blue-100 dark:hover:bg-blue-800 rounded"
                       >
@@ -858,19 +978,20 @@ export default function NewDeployment() {
                   <HuggingFaceModelBrowser
                     modelType={modelType}
                     onSelect={(model) => {
-                      setSelectedHFModel(model)
-                      setModelId(model.id)
+                      dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: model });
+                      dispatch({ type: 'SET_FIELD', field: 'modelId', value: model.id });
                     }}
                     selectedModelId={modelId}
                   />
                 )}
-                
+
                 <input
+                  id="modelId"
                   value={modelId}
-                  onChange={e => setModelId(e.target.value)}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })}
                   className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
-                  placeholder={modelType === "embedding" 
-                    ? "e.g. sentence-transformers/all-MiniLM-L6-v2" 
+                  placeholder={modelType === "embedding"
+                    ? "e.g. sentence-transformers/all-MiniLM-L6-v2"
                     : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"
                   }
                 />
@@ -885,10 +1006,11 @@ export default function NewDeployment() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">vLLM Image</label>
+                    <label htmlFor="vllmImage" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">vLLM Image</label>
                     <input
+                      id="vllmImage"
                       value={vllmImage}
-                      onChange={e => setVllmImage(e.target.value)}
+                      onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })}
                       className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       placeholder="e.g. docker.io/vllm/vllm-openai:v0.14.0"
                     />
@@ -897,33 +1019,35 @@ export default function NewDeployment() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Model Length</label>
+                      <label htmlFor="maxModelLen" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Model Length</label>
                       <input
+                        id="maxModelLen"
                         value={maxModelLen}
-                        onChange={e => setMaxModelLen(e.target.value)}
+                        onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })}
                         className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">GPU Memory Util</label>
+                      <label htmlFor="gpuUtil" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">GPU Memory Util</label>
                       <input
+                        id="gpuUtil"
                         value={gpuUtil}
-                        onChange={e => setGpuUtil(e.target.value)}
+                        onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })}
                         className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (Optional)</label>
+                    <label htmlFor="hfTokenVllm" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (Optional)</label>
                     <input
+                      id="hfTokenVllm"
                       type="password"
                       value={hfToken}
-                      onChange={e => setHfToken(e.target.value)}
+                      onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })}
                       className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       placeholder="hf_..."
                     />
                   </div>
-
                 </div>
               )}
 
@@ -937,31 +1061,34 @@ export default function NewDeployment() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Batch Size</label>
+                      <label htmlFor="batchSize" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Batch Size</label>
                       <input
+                        id="batchSize"
                         value={batchSize}
-                        onChange={e => setBatchSize(e.target.value)}
+                        onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })}
                         className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                         placeholder="32"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Sequence Length</label>
+                      <label htmlFor="maxSequenceLength" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Sequence Length</label>
                       <input
+                        id="maxSequenceLength"
                         value={maxSequenceLength}
-                        onChange={e => setMaxSequenceLength(e.target.value)}
+                        onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxSequenceLength', value: e.target.value })}
                         className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                         placeholder="512"
                       />
                     </div>
                   </div>
-                  
+
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (Optional)</label>
+                    <label htmlFor="hfTokenEmb" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (Optional)</label>
                     <input
+                      id="hfTokenEmb"
                       type="password"
                       value={hfToken}
-                      onChange={e => setHfToken(e.target.value)}
+                      onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })}
                       className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       placeholder="hf_..."
                     />
@@ -978,41 +1105,45 @@ export default function NewDeployment() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Git Repository URL</label>
+                    <label htmlFor="gitRepo" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Git Repository URL</label>
                     <input
+                      id="gitRepo"
                       value={gitRepo}
-                      onChange={e => setGitRepo(e.target.value)}
+                      onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })}
                       className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-green-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       placeholder="https://github.com/org/repo.git"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Training Command / Script</label>
+                    <label htmlFor="trainingScript" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Training Command / Script</label>
                     <input
+                      id="trainingScript"
                       value={trainingScript}
-                      onChange={e => setTrainingScript(e.target.value)}
+                      onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })}
                       className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-green-500/20 outline-none font-mono bg-white dark:bg-zinc-900 dark:text-white"
                       placeholder="python train.py --epochs 3"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Dataset URL (Optional)</label>
+                    <label htmlFor="datasetUrl" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Dataset URL (Optional)</label>
                     <input
+                      id="datasetUrl"
                       value={datasetUrl}
-                      onChange={e => setDatasetUrl(e.target.value)}
+                      onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })}
                       className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-green-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       placeholder="https://.../dataset.tar.gz"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (Optional)</label>
+                    <label htmlFor="hfTokenTrain" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (Optional)</label>
                     <input
+                      id="hfTokenTrain"
                       type="password"
                       value={hfToken}
-                      onChange={e => setHfToken(e.target.value)}
+                      onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })}
                       className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-green-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white"
                       placeholder="hf_..."
                     />
@@ -1021,11 +1152,18 @@ export default function NewDeployment() {
               )}
 
               <div className="flex gap-4 pt-6 border-t dark:border-zinc-800">
-                <button onClick={() => setStep(3)} className="flex-1 py-2.5 border dark:border-zinc-700 rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium text-slate-700 dark:text-zinc-300 transition-colors">Back</button>
                 <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })}
+                  className="flex-1 py-2.5 border dark:border-zinc-700 rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium text-slate-700 dark:text-zinc-300 transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
                   onClick={handleManagedLaunch}
                   disabled={createMutation.isPending}
-                  className="flex-[2] py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-70 font-medium shadow-sm transition-all flex justify-center items-center gap-2"
+                  className="flex-[2] py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-70 font-medium shadow-sm transition-all flex justify-center items-center gap-2 outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 dark:focus:ring-offset-black"
                 >
                   {createMutation.isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}
                 </button>
@@ -1051,7 +1189,8 @@ export default function NewDeployment() {
               <div className="flex justify-center">
                 <div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner">
                   <button
-                    onClick={() => setModelType("inference")}
+                    type="button"
+                    onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })}
                     className={cn(
                       "px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
                       externalModelType === "inference"
@@ -1062,7 +1201,8 @@ export default function NewDeployment() {
                     <MessageSquare className="w-4 h-4" /> Inference
                   </button>
                   <button
-                    onClick={() => setModelType("embedding")}
+                    type="button"
+                    onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })}
                     className={cn(
                       "px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2",
                       externalModelType === "embedding"
@@ -1079,9 +1219,16 @@ export default function NewDeployment() {
                 {filteredExternalProviders.map(p => (
                   <div
                     key={p.id}
-                    onClick={() => setSelectedProvider(p.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(evt) => {
+                      if (evt.key === 'Enter' || evt.key === ' ') {
+                        dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id });
+                      }
+                    }}
+                    onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })}
                     className={cn(
-                      "cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-all",
+                      "cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-all outline-none focus:ring-2 focus:ring-blue-500/40",
                       selectedProvider === p.id ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm"
                     )}
                   >
@@ -1096,7 +1243,14 @@ export default function NewDeployment() {
                 ))}
               </div>
               <div className="col-span-full flex justify-end pt-4">
-                <button onClick={() => selectedProvider && setStep(2)} disabled={!selectedProvider} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium">Continue</button>
+                <button
+                  type="button"
+                  onClick={() => selectedProvider && dispatch({ type: 'SET_STEP', payload: 2 })}
+                  disabled={!selectedProvider}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 dark:focus:ring-offset-black"
+                >
+                  Continue
+                </button>
               </div>
             </div>
           )}
@@ -1105,10 +1259,11 @@ export default function NewDeployment() {
             <div className="max-w-2xl mx-auto space-y-6 bg-white dark:bg-zinc-900 p-8 rounded-xl border dark:border-zinc-800 shadow-sm">
               {selectedProvider === 'custom' && (
                 <div className="space-y-4">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Provider Name</label>
+                  <label htmlFor="customProviderName" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Provider Name</label>
                   <input
+                    id="customProviderName"
                     value={customProviderName}
-                    onChange={e => setCustomProviderName(e.target.value)}
+                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'customProviderName', value: e.target.value })}
                     className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none dark:bg-zinc-900 dark:text-white"
                     placeholder="e.g. My Custom Provider"
                   />
@@ -1116,10 +1271,11 @@ export default function NewDeployment() {
               )}
 
               <div className="space-y-4">
-                <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Model Name</label>
+                <label htmlFor="externalModelName" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Model Name</label>
                 <input
+                  id="externalModelName"
                   value={externalModelName}
-                  onChange={e => setExternalModelName(e.target.value)}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })}
                   className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none dark:bg-zinc-900 dark:text-white"
                   placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3-large" : "e.g. gpt-4o-mini"}
                 />
@@ -1127,11 +1283,12 @@ export default function NewDeployment() {
               </div>
 
               <div className="space-y-4">
-                <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">API Key</label>
+                <label htmlFor="apiKey" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">API Key</label>
                 <input
+                  id="apiKey"
                   type="password"
                   value={apiKey}
-                  onChange={e => setApiKey(e.target.value)}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })}
                   className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none font-mono text-sm dark:bg-zinc-900 dark:text-white"
                   placeholder="sk-..."
                 />
@@ -1139,10 +1296,11 @@ export default function NewDeployment() {
 
               {selectedProvider === 'custom' && (
                 <div className="space-y-4">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Endpoint URL</label>
+                  <label htmlFor="endpointUrl" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Endpoint URL</label>
                   <input
+                    id="endpointUrl"
                     value={endpointUrl}
-                    onChange={e => setEndpointUrl(e.target.value)}
+                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })}
                     className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none dark:bg-zinc-900 dark:text-white"
                     placeholder="https://api.openai.com/v1"
                   />
@@ -1150,11 +1308,18 @@ export default function NewDeployment() {
               )}
 
               <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6">
-                <button onClick={() => setStep(1)} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button>
                 <button
-                  onClick={() => setStep(3)}
+                  type="button"
+                  onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })}
+                  className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })}
                   disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && (!customProviderName || !endpointUrl))}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium"
+                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2 dark:focus:ring-offset-black"
                 >
                   Continue
                 </button>
