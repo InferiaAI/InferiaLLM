@@ -124,6 +124,7 @@ class OutboxRepository(BaseRepository):
         """
         Mark event as failed but retryable.
         """
+        error_str = str(error)[:1024] if error else ""
 
         await self.db.execute(
             """
@@ -134,7 +135,7 @@ class OutboxRepository(BaseRepository):
             WHERE id = $1
             """,
             event_id,
-            error[:1024],
+            error_str,
         )
 
     # -------------------------------------------------
@@ -149,6 +150,7 @@ class OutboxRepository(BaseRepository):
         """
         Mark event as dead (manual intervention required).
         """
+        error_str = str(error)[:1024] if error else ""
 
         await self.db.execute(
             """
@@ -159,5 +161,5 @@ class OutboxRepository(BaseRepository):
             WHERE id = $1
             """,
             event_id,
-            error[:1024],
+            error_str,
         )

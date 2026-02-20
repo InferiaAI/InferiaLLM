@@ -136,6 +136,41 @@ class ModelDeploymentRepository(BaseRepository):
             },
         )
 
+    async def update_state_if(
+        self,
+        deployment_id: UUID,
+        expected_state: str,
+        new_state: str,
+        tx=None,
+    ) -> bool:
+        """
+        Atomically update state only if_state.
+        Returns current state matches expected True if update was successful, False otherwise.
+        """
+        q = """
+        UPDATE model_deployments
+        SET state=$3, updated_at=now()
+        WHERE deployment_id=$1 AND state=$2
+        """
+        if tx:
+            result = await tx.execute(q, deployment_id, expected_state, new_state)
+        else:
+            async with self.db.acquire() as c:
+                result = await c.execute(q, deployment_id, expected_state, new_state)
+
+        updated = result != "UPDATE 0"
+
+        if updated:
+            await self.event_bus.publish(
+                "deployment.state_changed",
+                {
+                    "deployment_id": str(deployment_id),
+                    "state": new_state,
+                },
+            )
+
+        return updated
+
     async def attach_runtime(
         self,
         *,

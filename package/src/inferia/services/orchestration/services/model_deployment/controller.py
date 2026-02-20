@@ -17,11 +17,13 @@ class ModelDeploymentController:
         deployment_repo,
         outbox_repo,
         event_bus,
+        pool_repo=None,
     ):
         self.models = model_registry_repo
         self.deployments = deployment_repo
         self.outbox = outbox_repo
         self.event_bus = event_bus
+        self.pool_repo = pool_repo
 
     def _inject_workload_type(
         self, configuration: Optional[str], workload_type: str
@@ -84,6 +86,13 @@ class ModelDeploymentController:
         model_type: Optional[str] = "inference",
     ) -> UUID:
         model_id = None
+
+        if self.pool_repo:
+            pool = await self.pool_repo.get(pool_id)
+            if not pool:
+                raise ValueError(f"Pool {pool_id} not found")
+            if not pool.get("is_active", True):
+                raise ValueError(f"Pool {pool_id} is not active")
 
         # If engine is NOT provided, assume legacy flow via Model Registry
         if not engine:

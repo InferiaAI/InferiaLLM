@@ -50,6 +50,15 @@ class ModelDeploymentWorker:
             )
             return
 
+        updated = await self.deployments.update_state_if(
+            deployment_id, expected_state="PENDING", new_state="PROVISIONING"
+        )
+        if not updated:
+            log.warning(
+                f"Could not acquire deployment {deployment_id} - state may have changed"
+            )
+            return
+
         model = None
         if d.get("model_id"):
             try:
@@ -62,8 +71,6 @@ class ModelDeploymentWorker:
         resources_required = await self.inventory.get_resource_requirement(d["pool_id"])
 
         try:
-            await self.deployments.update_state(deployment_id, "PROVISIONING")
-
             # Determine resource needs (default to full node if not specified, or hardcoded fallback)
             vcpu_req = resources_required["vcpu_total"] if resources_required else 8
             ram_gb_req = (
