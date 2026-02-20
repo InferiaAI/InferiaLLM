@@ -14,23 +14,12 @@ import {
     VectorSquare,
 } from "lucide-react";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import {
-    Area,
-    AreaChart,
-    Bar,
-    BarChart,
-    CartesianGrid,
-    Cell,
-    Legend,
-    Line,
-    LineChart,
-    Pie,
-    PieChart,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
-} from "recharts";
+import { Suspense, lazy } from "react";
+
+const RequestVolumeChart = lazy(() => import("@/components/insights/InsightsCharts").then(m => ({ default: m.RequestVolumeChart })));
+const TokenUsageChart = lazy(() => import("@/components/insights/InsightsCharts").then(m => ({ default: m.TokenUsageChart })));
+const ModelDistributionChart = lazy(() => import("@/components/insights/InsightsCharts").then(m => ({ default: m.ModelDistributionChart })));
+const TrafficByIpChart = lazy(() => import("@/components/insights/InsightsCharts").then(m => ({ default: m.TrafficByIpChart })));
 
 import { Pagination } from "@/components/ui/Pagination";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -80,8 +69,8 @@ export default function Insights() {
 
     const [deploymentType, setDeploymentType] = useState<InsightsDeploymentType>("inference");
     const [timePreset, setTimePreset] = useState<TimePreset>("7d");
-    const [customStart, setCustomStart] = useState<string>(toLocalDateTimeInputValue(defaultStart));
-    const [customEnd, setCustomEnd] = useState<string>(toLocalDateTimeInputValue(now));
+    const [customStart, setCustomStart] = useState<string>(() => toLocalDateTimeInputValue(defaultStart));
+    const [customEnd, setCustomEnd] = useState<string>(() => toLocalDateTimeInputValue(now));
     const [deploymentId, setDeploymentId] = useState<string>("");
     const [ipAddress, setIpAddress] = useState<string>("");
     const [status, setStatus] = useState<InsightsStatus>("all");
@@ -521,7 +510,7 @@ export default function Insights() {
                     icon={Layers3}
                     title={isEmbedding ? "Total Tokens" : "Total Tokens"}
                     value={isInitialLoading ? "..." : formatNumber(summary?.totals.total_tokens || 0, 0)}
-                    subtitle={isEmbedding 
+                    subtitle={isEmbedding
                         ? `${formatNumber(summary?.totals.prompt_tokens || 0, 0)} tokens processed`
                         : `In ${formatNumber(summary?.totals.prompt_tokens || 0, 0)} / Out ${formatNumber(summary?.totals.completion_tokens || 0, 0)}`
                     }
@@ -535,11 +524,11 @@ export default function Insights() {
                 <MetricCard
                     icon={Zap}
                     title={isEmbedding ? "Avg Req/min" : "Avg Token/s"}
-                    value={isInitialLoading ? "..." : isEmbedding 
+                    value={isInitialLoading ? "..." : isEmbedding
                         ? formatNumber(summary?.throughput.requests_per_minute || 0, 0)
                         : formatNumber(summary?.throughput.avg_tokens_per_second || 0)
                     }
-                    subtitle={isEmbedding 
+                    subtitle={isEmbedding
                         ? `${formatNumber(summary?.totals.requests || 0, 0)} total requests`
                         : `${formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s overall`
                     }
@@ -587,22 +576,9 @@ export default function Insights() {
 
                         <ChartCard title="Request Volume" subtitle={`${granularity === "hour" ? "Hourly" : "Daily"} requests`}>
                             <ChartLegend items={[{ label: "Requests", colorClass: "bg-blue-600" }]} />
-                            <ResponsiveContainer width="100%" height={260}>
-                                <LineChart data={chartData}>
-                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                                    <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
-                                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                                    <Tooltip />
-                                    <Line
-                                        type="monotone"
-                                        dataKey="requests"
-                                        stroke="#2563eb"
-                                        strokeWidth={2}
-                                        dot={false}
-                                        name="Requests"
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
+                            <Suspense fallback={<Skeleton className="h-[260px] w-full" />}>
+                                <RequestVolumeChart data={chartData} />
+                            </Suspense>
                             <ChartSummary
                                 items={[
                                     `Total: ${formatNumber(chartTotals.totalRequests, 0)}`,
@@ -615,146 +591,25 @@ export default function Insights() {
                             />
                         </ChartCard>
 
-                        <ChartCard 
-                            title={isEmbedding ? "Tokens Processed" : "Token Usage"} 
+                        <ChartCard
+                            title={isEmbedding ? "Tokens Processed" : "Token Usage"}
                             subtitle={isEmbedding ? "Total tokens processed over time" : "Prompt vs completion tokens"}
                         >
-                            {isEmbedding ? (
-                                <>
-                                    <ChartLegend items={[{ label: "Tokens", colorClass: "bg-green-600" }]} />
-                                    <ResponsiveContainer width="100%" height={260}>
-                                        <AreaChart data={chartData}>
-                                            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                                            <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
-                                            <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                                            <Tooltip />
-                                            <Area
-                                                type="monotone"
-                                                dataKey="total_tokens"
-                                                stroke="#16a34a"
-                                                fill="#16a34a"
-                                                fillOpacity={0.35}
-                                                name="Tokens"
-                                            />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                    <ChartSummary
-                                        items={[
-                                            `Total: ${formatNumber(chartTotals.totalPrompt, 0)}`,
-                                            `Avg per bucket: ${formatNumber(chartTotals.totalBuckets > 0 ? chartTotals.totalPrompt / chartTotals.totalBuckets : 0, 0)}`,
-                                        ]}
-                                    />
-                                </>
-                            ) : (
-                                <>
-                                    <ChartLegend
-                                        items={[
-                                            { label: "Prompt", colorClass: "bg-green-600" },
-                                            { label: "Completion", colorClass: "bg-blue-500" },
-                                        ]}
-                                    />
-                                    <ResponsiveContainer width="100%" height={260}>
-                                        <AreaChart data={chartData}>
-                                            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                                            <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
-                                            <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                                            <Tooltip />
-                                            <Legend />
-                                            <Area
-                                                type="monotone"
-                                                dataKey="prompt_tokens"
-                                                stackId="tokens"
-                                                stroke="#16a34a"
-                                                fill="#16a34a"
-                                                fillOpacity={0.35}
-                                                name="Prompt"
-                                            />
-                                            <Area
-                                                type="monotone"
-                                                dataKey="completion_tokens"
-                                                stackId="tokens"
-                                                stroke="#3b82f6"
-                                                fill="#3b82f6"
-                                                fillOpacity={0.35}
-                                                name="Completion"
-                                            />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                    <ChartSummary
-                                        items={[
-                                            `Prompt: ${formatNumber(chartTotals.totalPrompt, 0)}`,
-                                            `Completion: ${formatNumber(chartTotals.totalCompletion, 0)}`,
-                                            `Output/Input ratio: ${formatNumber(
-                                                chartTotals.totalPrompt > 0
-                                                    ? chartTotals.totalCompletion / chartTotals.totalPrompt
-                                                    : 0
-                                            )}x`,
-                                        ]}
-                                    />
-                                </>
-                            )}
+                            <Suspense fallback={<Skeleton className="h-[260px] w-full" />}>
+                                <TokenUsageChart data={chartData} isEmbedding={isEmbedding} />
+                            </Suspense>
                         </ChartCard>
                     </div>
 
                     <div className="grid gap-4 lg:grid-cols-2">
                         <ChartCard title="Requests by Model" subtitle="Distribution of traffic across models">
-                            <ResponsiveContainer width="100%" height={260}>
-                                <PieChart>
-                                    <Pie
-                                        data={topModelsQuery.data?.items || []}
-                                        dataKey="requests"
-                                        nameKey="model"
-                                        cx="50%"
-                                        cy="50%"
-                                        innerRadius={60}
-                                        outerRadius={80}
-                                        paddingAngle={2}
-                                        label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
-                                        labelLine={false}
-                                    >
-                                        {(topModelsQuery.data?.items || []).map((entry, index) => (
-                                            <Cell
-                                                key={entry.model}
-                                                fill={PIE_COLORS[index % PIE_COLORS.length]}
-                                            />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip
-                                        content={({ active, payload }) => {
-                                            if (active && payload && payload.length) {
-                                                const data = payload[0].payload;
-                                                return (
-                                                    <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                                        <div className="flex flex-col gap-1">
-                                                            <span className="font-bold text-muted-foreground">
-                                                                {data.model}
-                                                            </span>
-                                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                                                                <span className="text-muted-foreground">Requests:</span>
-                                                                <span className="font-mono">{formatNumber(data.requests, 0)}</span>
-                                                                <span className="text-muted-foreground">Tokens:</span>
-                                                                <span className="font-mono">{formatNumber(data.total_tokens, 0)}</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        }}
-                                    />
-                                    <Legend
-                                        layout="vertical"
-                                        verticalAlign="middle"
-                                        align="right"
-                                        wrapperStyle={{ fontSize: "11px", maxWidth: "120px" }}
-                                    />
-                                </PieChart>
-                            </ResponsiveContainer>
+                            <Suspense fallback={<Skeleton className="h-[260px] w-full" />}>
+                                <ModelDistributionChart data={topModelsQuery.data?.items || []} />
+                            </Suspense>
                             <ChartSummary
                                 items={[
                                     `Models active: ${topModelsQuery.data?.items.length || 0}`,
-                                    `Top model: ${
-                                        topModelsQuery.data?.items[0]?.model || "-"
+                                    `Top model: ${topModelsQuery.data?.items[0]?.model || "-"
                                     }`,
                                 ]}
                             />
@@ -762,94 +617,25 @@ export default function Insights() {
 
                         <ChartCard title="Top IPs by Traffic" subtitle="Top active clients by request volume">
                             <ChartLegend items={[{ label: "Requests", colorClass: "bg-purple-600" }]} />
-                            <ResponsiveContainer width="100%" height={260}>
-                                <BarChart
-                                    data={topIpsQuery.data?.items || []}
-                                    layout="vertical"
-                                    margin={{ top: 0, right: 30, left: 30, bottom: 0 }}
-                                >
-                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} horizontal={true} vertical={false} />
-                                    <XAxis type="number" hide />
-                                    <YAxis
-                                        dataKey="ip_address"
-                                        type="category"
-                                        tick={{ fontSize: 11 }}
-                                        width={100}
-                                        tickFormatter={(ip) => (ip ? ip.slice(0, 15) : "Unknown")}
-                                        interval={0}
-                                    />
-                                    <Tooltip
-                                        cursor={{ fill: "transparent" }}
-                                        content={({ active, payload }) => {
-                                            if (active && payload && payload.length) {
-                                                const data = payload[0].payload;
-                                                return (
-                                                    <div className="rounded-lg border bg-background p-2 shadow-sm z-50 relative">
-                                                        <div className="grid grid-cols-2 gap-2">
-                                                            <div className="flex flex-col">
-                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
-                                                                    IP Address
-                                                                </span>
-                                                                <span className="font-bold text-muted-foreground">
-                                                                    {data.ip_address}
-                                                                </span>
-                                                            </div>
-                                                            <div className="flex flex-col">
-                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
-                                                                    Requests
-                                                                </span>
-                                                                <span className="font-bold">{data.requests}</span>
-                                                            </div>
-                                                            <div className="flex flex-col">
-                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
-                                                                    Success Rate
-                                                                </span>
-                                                                <span className="font-bold">
-                                                                    {data.success_rate.toFixed(1)}%
-                                                                </span>
-                                                            </div>
-                                                            <div className="flex flex-col">
-                                                                <span className="text-[0.70rem] uppercase text-muted-foreground">
-                                                                    Tokens
-                                                                </span>
-                                                                <span className="font-bold">
-                                                                    {formatNumber(data.total_tokens, 0)}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        }}
-                                    />
-                                    <Bar
-                                        dataKey="requests"
-                                        fill="#9333ea"
-                                        radius={[0, 4, 4, 0]}
-                                        name="Requests"
-                                        barSize={16}
-                                        animationDuration={1000}
-                                    />
-                                </BarChart>
-                            </ResponsiveContainer>
+                            <Suspense fallback={<Skeleton className="h-[260px] w-full" />}>
+                                <TrafficByIpChart data={topIpsQuery.data?.items || []} />
+                            </Suspense>
                             <ChartSummary
                                 items={[
                                     `Unique IPs: ${topIpsQuery.data?.items.length || 0}`,
-                                    `Top IP: ${
-                                        topIpsQuery.data?.items[0]
-                                            ? `${topIpsQuery.data.items[0].ip_address} (${formatNumber(
-                                                  topIpsQuery.data.items[0].requests
-                                              )})`
-                                            : "-"
+                                    `Top IP: ${topIpsQuery.data?.items[0]
+                                        ? `${topIpsQuery.data.items[0].ip_address} (${formatNumber(
+                                            topIpsQuery.data.items[0].requests
+                                        )})`
+                                        : "-"
                                     }`,
                                 ]}
                             />
                         </ChartCard>
                     </div>
 
-                    <ChartCard 
-                        title="Average Latency Trend" 
+                    <ChartCard
+                        title="Average Latency Trend"
                         subtitle={isEmbedding ? "Average response latency over time" : "Average TTFT over time (fallback: total latency when TTFT missing)"}
                     >
                         <ChartLegend items={[{ label: isEmbedding ? "Avg Latency (ms)" : "Avg Latency (TTFT, ms)", colorClass: "bg-sky-500" }]} />
@@ -929,7 +715,7 @@ export default function Insights() {
                     <div>
                         <h3 className="font-semibold">Detailed {isEmbedding ? "Embedding" : "Inference"} Logs</h3>
                         <p className="text-xs text-muted-foreground">
-                            {isEmbedding 
+                            {isEmbedding
                                 ? `${formatNumber(summary?.throughput.requests_per_minute || 0, 0)} req/min avg`
                                 : `Avg token speed: ${formatNumber(summary?.throughput.avg_tokens_per_second || 0)} tok/s | Overall token speed: ${formatNumber(summary?.throughput.tokens_per_second || 0)} tok/s`
                             }
@@ -972,7 +758,7 @@ export default function Insights() {
                                     <td className="px-4 py-3">{log.model}</td>
                                     <td className="px-4 py-3 font-mono text-xs">{log.ip_address || "-"}</td>
                                     <td className="px-4 py-3 font-mono text-xs">
-                                        {isEmbedding 
+                                        {isEmbedding
                                             ? formatNumber(log.total_tokens, 0)
                                             : `${formatNumber(log.total_tokens, 0)} (${formatNumber(log.prompt_tokens, 0)}/${formatNumber(log.completion_tokens, 0)})`
                                         }
