@@ -29,29 +29,22 @@ import { useMemo, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { SpotlightSearch, useSpotlight } from "@/components/SpotlightSearch";
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  exact?: boolean;
-};
-
-const navItems: NavItem[] = [
+const navItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
-  { href: "/dashboard/insights", label: "Insights", icon: BarChart3 },
-  { href: "/dashboard/deployments", label: "Deployments", icon: Rocket },
-  { href: "/dashboard/compute/pools", label: "Compute Pools", icon: Box },
-  { href: "/dashboard/templates", label: "Templates", icon: FileText },
-  { href: "/dashboard/knowledge-base", label: "Knowledge Base", icon: Database },
-  { href: "/dashboard/api-keys", label: "API Keys", icon: Key },
+  { href: "/dashboard/insights", label: "Insights", icon: BarChart3, permission: "audit_log:list" }, // Or similar
+  { href: "/dashboard/deployments", label: "Deployments", icon: Rocket, permission: "deployment:list" },
+  { href: "/dashboard/compute/pools", label: "Compute Pools", icon: Box, permission: "deployment:list" }, // Reusing deployment list for now
+  { href: "/dashboard/templates", label: "Templates", icon: FileText, permission: "prompt_template:list" },
+  { href: "/dashboard/knowledge-base", label: "Knowledge Base", icon: Database, permission: "knowledge_base:list" },
+  { href: "/dashboard/api-keys", label: "API Keys", icon: Key, permission: "api_key:list" },
 ];
 
-const settingsItems: NavItem[] = [
-  { href: "/dashboard/settings/organization", label: "Organization", icon: Building2 },
-  { href: "/dashboard/settings/users", label: "Users", icon: Users },
-  { href: "/dashboard/settings/roles", label: "Roles", icon: Shield },
-  { href: "/dashboard/settings/audit-logs", label: "Audit Logs", icon: Clock },
-  { href: "/dashboard/settings/providers", label: "Providers", icon: Database },
+const settingsItems: (NavItem & { permission?: string })[] = [
+  { href: "/dashboard/settings/organization", label: "Organization", icon: Building2, permission: "organization:view" },
+  { href: "/dashboard/settings/users", label: "Users", icon: Users, permission: "member:list" },
+  { href: "/dashboard/settings/roles", label: "Roles", icon: Shield, permission: "role:list" },
+  { href: "/dashboard/settings/audit-logs", label: "Audit Logs", icon: Clock, permission: "audit_log:list" },
+  { href: "/dashboard/settings/providers", label: "Providers", icon: Database, permission: "admin:all" },
   { href: "/dashboard/settings/security", label: "Security", icon: Shield },
   { href: "/dashboard/status", label: "System Status", icon: Activity },
 ];
@@ -122,7 +115,7 @@ function SidebarItem({
 }
 
 export default function DashboardLayout() {
-  const { logout, user, isLoading } = useAuth();
+  const { logout, user, isLoading, hasPermission } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -132,6 +125,14 @@ export default function DashboardLayout() {
     const stored = localStorage.getItem("sidebarCollapsed");
     return stored === "true";
   });
+
+  const filteredNavItems = useMemo(() => {
+    return navItems.filter(item => !item.permission || hasPermission(item.permission));
+  }, [user, hasPermission]);
+
+  const filteredSettingsItems = useMemo(() => {
+    return settingsItems.filter(item => !item.permission || hasPermission(item.permission));
+  }, [user, hasPermission]);
 
   const breadcrumbItems = useMemo(() => {
     const segments = location.pathname.split("/").filter(Boolean);
@@ -189,31 +190,33 @@ export default function DashboardLayout() {
           )}
         >
           <div className="flex items-center gap-2 overflow-hidden">
-            <img src="/logo.svg" alt="InferiaLLM" className="h-10 w-auto shrink-0 object-contain" />
+            <img src="/logo.svg" alt="InferiaLLM" className="h-14 w-auto shrink-0 object-contain" />
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-7 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-zinc-800">
-          <button
-            type="button"
-            onClick={() => {
-              navigate("/dashboard/deployments/new");
-              setMobileMenuOpen(false);
-            }}
-            className={cn(
-              "w-full h-9 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors",
-              isCollapsed && "px-0"
-            )}
-            aria-label="Create new deployment"
-          >
-            <Plus className="w-4 h-4" />
-            {!isCollapsed && <span>New Deployment</span>}
-          </button>
+          {hasPermission("deployment:create") && (
+            <button
+              type="button"
+              onClick={() => {
+                navigate("/dashboard/deployments/new");
+                setMobileMenuOpen(false);
+              }}
+              className={cn(
+                "w-full h-9 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors",
+                isCollapsed && "px-0"
+              )}
+              aria-label="Create new deployment"
+            >
+              <Plus className="w-4 h-4" />
+              {!isCollapsed && <span>New Deployment</span>}
+            </button>
+          )}
 
           <div>
             {!isCollapsed && <div className="px-3 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Monitor</div>}
             <nav className="space-y-0.5" aria-label="Primary navigation">
-              {navItems.slice(0, 3).map((item) => (
+              {filteredNavItems.slice(0, 3).map((item) => (
                 <SidebarItem key={item.href} item={item} isCollapsed={isCollapsed} closeMobile={() => setMobileMenuOpen(false)} />
               ))}
             </nav>
@@ -222,7 +225,7 @@ export default function DashboardLayout() {
           <div>
             {!isCollapsed && <div className="px-3 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Build</div>}
             <nav className="space-y-0.5" aria-label="Build navigation">
-              {navItems.slice(3).map((item) => (
+              {filteredNavItems.slice(3).map((item) => (
                 <SidebarItem key={item.href} item={item} isCollapsed={isCollapsed} closeMobile={() => setMobileMenuOpen(false)} />
               ))}
             </nav>
@@ -231,7 +234,7 @@ export default function DashboardLayout() {
           <div>
             {!isCollapsed && <div className="px-3 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Admin</div>}
             <nav className="space-y-0.5" aria-label="Settings navigation">
-              {settingsItems.map((item) => (
+              {filteredSettingsItems.map((item) => (
                 <SidebarItem key={item.href} item={item} isCollapsed={isCollapsed} closeMobile={() => setMobileMenuOpen(false)} />
               ))}
             </nav>

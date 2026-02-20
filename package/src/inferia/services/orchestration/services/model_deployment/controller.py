@@ -1,5 +1,8 @@
 from uuid import UUID, uuid4
 from typing import Optional, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ModelDeploymentController:
@@ -17,11 +20,13 @@ class ModelDeploymentController:
         deployment_repo,
         outbox_repo,
         event_bus,
+        pool_repo=None,
     ):
         self.models = model_registry_repo
         self.deployments = deployment_repo
         self.outbox = outbox_repo
         self.event_bus = event_bus
+        self.pool_repo = pool_repo
 
     def _inject_workload_type(
         self, configuration: Optional[str], workload_type: str
@@ -85,13 +90,20 @@ class ModelDeploymentController:
     ) -> UUID:
         model_id = None
 
+        if self.pool_repo:
+            pool = await self.pool_repo.get(pool_id)
+            if not pool:
+                raise ValueError(f"Pool {pool_id} not found")
+            if not pool.get("is_active", True):
+                raise ValueError(f"Pool {pool_id} is not active")
+
         # If engine is NOT provided, assume legacy flow via Model Registry
         if not engine:
             # Validate model or auto-register
             model = await self.models.get_model(model_name, model_version)
             if not model:
                 # Auto-register logic for smoother UX in this phase
-                print(
+                logger.info(
                     f"Model {model_name}:{model_version} not found, auto-registering..."
                 )
                 model_id_val = await self.models.register_model(
@@ -201,13 +213,6 @@ class ModelDeploymentController:
         self,
         deployment_id: UUID,
     ) -> None:
-        # async with self.deployments.transaction() as tx:
-        #     await self.deployments.update_state(
-        #         deployment_id,
-        #         "DELETING",
-        #         tx=tx,
-        #     )
-
         d = await self.deployments.get(deployment_id)
         if not d:
             raise ValueError("Deployment not found")
@@ -215,17 +220,18 @@ class ModelDeploymentController:
         if d["state"] in ("TERMINATED", "TERMINATING"):
             return
 
-        await self.deployments.update_state(deployment_id, "TERMINATING")
+        async with self.deployments.transaction() as tx:
+            await self.deployments.update_state(deployment_id, "TERMINATING", tx=tx)
 
-        await self.outbox.enqueue(
-            aggregate_type="model_deployment",
-            aggregate_id=deployment_id,
-            event_type="model.deployment.terminate",
-            payload={
-                "deployment_id": str(deployment_id),
-            },
-            # tx=tx,
-        )
+            await self.outbox.enqueue(
+                aggregate_type="model_deployment",
+                aggregate_id=deployment_id,
+                event_type="model.deployment.terminate",
+                payload={
+                    "deployment_id": str(deployment_id),
+                },
+                tx=tx,
+            )
 
         await self.event_bus.publish(
             "model.terminate.requested",
@@ -276,3 +282,39 @@ class ModelDeploymentController:
         )
 
         return "PENDING"
+
+    async def update_deployment(
+        self,
+        *,
+        deployment_id: UUID,
+        configuration: Optional[str] = None,
+        inference_model: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        replicas: Optional[int] = None,
+    ) -> None:
+        """
+        Update an existing deployment.
+        """
+        d = await self.deployments.get(deployment_id)
+        if not d:
+            raise ValueError("Deployment not found")
+
+        await self.deployments.update(
+            deployment_id=deployment_id,
+            configuration=configuration,
+            inference_model=inference_model,
+            endpoint=endpoint,
+            replicas=replicas,
+        )
+
+        # Emit event for tracking
+        await self.event_bus.publish(
+            "model.deployment.updated",
+            {
+                "deployment_id": str(deployment_id),
+                "configuration": configuration,
+                "inference_model": inference_model,
+                "endpoint": endpoint,
+                "replicas": replicas,
+            },
+        )

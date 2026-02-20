@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import axios from 'axios';
+import crypto from 'crypto';
 import { AkashService } from './modules/akash/akash_service';
 import { NosanaService } from './modules/nosana/nosana_service';
 
@@ -25,36 +26,44 @@ console.log(`[Sidecar] Configured to fetch settings from: ${API_GATEWAY_URL}`);
 
 // --- Initialize Services ---
 const akashService = new AkashService();
-let nosanaService: NosanaService | null = null;
 
-// Helper to initialize/refresh Nosana
-const initNosana = async (privateKey: string | undefined, apiKey: string | undefined, rpc?: string) => {
-    if (!privateKey && !apiKey) {
-        nosanaService = null;
-        return false;
+// Multi-credential support: Map of credential name -> NosanaService
+const nosanaServices: Map<string, NosanaService> = new Map();
+let defaultNosanaService: NosanaService | null = null;
+
+// Helper to get Nosana service by credential name
+const getNosanaService = (credentialName?: string): NosanaService | null => {
+    if (credentialName) {
+        return nosanaServices.get(credentialName) || null;
     }
+    return defaultNosanaService;
+};
 
-    // Avoid re-init if credentials haven't changed
-    const currentKey = (nosanaService as any)?.privateKey;
-    const currentApiKey = (nosanaService as any)?.apiKey;
-    if (nosanaService && currentKey === privateKey && currentApiKey === apiKey) {
-        return true;
+// Helper to initialize/refresh a single Nosana service
+const initNosanaService = async (
+    name: string,
+    privateKey: string | undefined,
+    apiKey: string | undefined,
+    rpc?: string
+): Promise<NosanaService | null> => {
+    if (!privateKey && !apiKey) {
+        return null;
     }
 
     try {
         const mode = apiKey ? "API" : "WALLET";
-        console.log(`[Sidecar] Initializing Nosana Service in ${mode} mode...`);
-        nosanaService = new NosanaService({ privateKey, apiKey, rpcUrl: rpc });
-        await nosanaService.init();
-        console.log("[Sidecar] Nosana Service Initialized");
-        await nosanaService.recoverJobs();
-        return true;
+        console.log(`[Sidecar] Initializing Nosana Service '${name}' in ${mode} mode...`);
+        const service = new NosanaService({ privateKey, apiKey, rpcUrl: rpc });
+        await service.init();
+        console.log(`[Sidecar] Nosana Service '${name}' Initialized`);
+        await service.recoverJobs();
+        return service;
     } catch (e) {
-        console.error("[Sidecar] Failed to init Nosana Service:", e);
-        nosanaService = null;
-        return false;
+        console.error(`[Sidecar] Failed to init Nosana Service '${name}':`, e);
+        return null;
     }
 };
+
 
 // Initial Load
 akashService.init().catch(err => console.error("Failed to init Akash:", err));
@@ -63,12 +72,21 @@ akashService.init().catch(err => console.error("Failed to init Akash:", err));
 // --- Polling Logic (Fetch from Gateway) ---
 let configFetchedOnce = false;
 
+// Track credential fingerprints to detect changes (avoids unnecessary re-init)
+const credentialFingerprints: Map<string, string> = new Map();
+
+const computeFingerprint = (key?: string, apiKey?: string): string => {
+    const raw = `${key || ''}:${apiKey || ''}`;
+    return crypto.createHash('sha256').update(raw).digest('hex');
+};
+
 const fetchConfigFromGateway = async () => {
     try {
-        const url = `${API_GATEWAY_URL}/internal/config/provider`;
+        // Use /config/credentials endpoint for unmasked credentials
+        const url = `${API_GATEWAY_URL}/internal/config/credentials`;
         const response = await axios.get(url, {
             headers: {
-                "X-Internal-Key": INTERNAL_API_KEY
+                "X-Internal-API-Key": INTERNAL_API_KEY
             },
             timeout: 5000
         });
@@ -78,19 +96,130 @@ const fetchConfigFromGateway = async () => {
 
         const providers = data.providers;
         const depin = providers.depin || {};
+        const nosanaConfig = depin.nosana || {};
 
-        // Refresh Nosana with credentials from gateway
-        const nosanaKey = depin.nosana?.wallet_private_key;
-        const nosanaApiKey = depin.nosana?.api_key;
+        // --- Build the full credential map from config ---
+        // This collects ALL credentials: legacy single key + api_keys list
+        const desiredCredentials: Map<string, { privateKey?: string; apiKey?: string }> = new Map();
 
-        const initialized = await initNosana(
-            nosanaKey,
-            nosanaApiKey,
-            process.env.SOLANA_RPC_URL
-        );
+        // 1. Legacy single credential → "default"
+        const legacyKey = nosanaConfig.wallet_private_key;
+        const legacyApiKey = nosanaConfig.api_key;
+        if (legacyKey || legacyApiKey) {
+            desiredCredentials.set('default', {
+                privateKey: legacyKey || undefined,
+                apiKey: legacyApiKey || undefined,
+            });
+        }
 
-        if (!initialized && !configFetchedOnce) {
-            console.warn("[Sidecar] Nosana credentials not configured. Nosana module disabled.");
+        // 2. Named credentials from api_keys list
+        const apiKeysList: Array<{ name: string; key: string; is_active?: boolean }> = nosanaConfig.api_keys || [];
+        for (const entry of apiKeysList) {
+            if (entry.is_active === false) continue; // Skip disabled credentials
+
+            // Validate credential name
+            if (!entry.name || entry.name.trim() === '') {
+                console.warn(`[Sidecar] Skipping Nosana credential with empty name`);
+                continue;
+            }
+
+            const credName = entry.name.trim();
+
+            // Warn about reserved name collision
+            if (credName === 'default') {
+                if (desiredCredentials.has('default')) {
+                    console.warn(`[Sidecar] Credential named 'default' conflicts with legacy config. Skipping api_keys entry.`);
+                    continue;
+                }
+                console.warn(`[Sidecar] Using api_keys entry 'default' (no legacy config found).`);
+            }
+
+            // Skip duplicates within the api_keys list
+            if (desiredCredentials.has(credName)) {
+                console.warn(`[Sidecar] Duplicate credential name '${credName}' in api_keys. Keeping first occurrence.`);
+                continue;
+            }
+
+            desiredCredentials.set(credName, {
+                apiKey: entry.key,
+            });
+        }
+
+        // --- Reconcile: Init new, update changed, remove stale ---
+        const activeCredNames = new Set(desiredCredentials.keys());
+
+        // Remove services for credentials that no longer exist
+        for (const [name, service] of nosanaServices) {
+            if (!activeCredNames.has(name)) {
+                // Check for running jobs using this credential before removing
+                const runningJobs = service.getWatchedJobsByCredential(name);
+                if (runningJobs.length > 0) {
+                    console.warn(`[Sidecar] WARNING: Removing Nosana Service '${name}' with ${runningJobs.length} running job(s): ${runningJobs.join(', ')}`);
+                    console.warn(`[Sidecar] These jobs will continue but will not auto-redeploy. Consider stopping them manually.`);
+                    // Mark jobs to skip auto-redeploy since credential is gone
+                    for (const jobAddress of runningJobs) {
+                        service.markJobForNoRedeploy(jobAddress);
+                    }
+                }
+
+                console.log(`[Sidecar] Removing Nosana Service '${name}' (credential removed from config)`);
+                nosanaServices.delete(name);
+                credentialFingerprints.delete(name);
+                if (name === 'default') {
+                    defaultNosanaService = null;
+                }
+            }
+        }
+
+        // Initialize or update services for each credential
+        for (const [name, cred] of desiredCredentials) {
+            const newFingerprint = computeFingerprint(cred.privateKey, cred.apiKey);
+            const existingFingerprint = credentialFingerprints.get(name);
+
+            // Skip if credential hasn't changed and service already exists
+            if (existingFingerprint === newFingerprint && nosanaServices.has(name)) {
+                continue;
+            }
+
+            // Keep reference to old service in case init fails
+            const oldService = nosanaServices.get(name);
+
+            // Initialize (or re-initialize) this credential's service
+            const service = await initNosanaService(
+                name,
+                cred.privateKey,
+                cred.apiKey,
+                process.env.SOLANA_RPC_URL
+            );
+
+            if (service) {
+                nosanaServices.set(name, service);
+                credentialFingerprints.set(name, newFingerprint);
+                if (name === 'default') {
+                    defaultNosanaService = service;
+                }
+            } else {
+                // Init failed - log error and keep old service if it exists
+                console.error(`[Sidecar] Failed to init Nosana Service '${name}'. ${oldService ? 'Keeping existing service.' : 'No fallback available.'}`);
+                if (oldService) {
+                    console.warn(`[Sidecar] Service '${name}' may be using stale credentials until next successful init.`);
+                }
+            }
+        }
+
+        // If no "default" service set but we have at least one, pick the first
+        if (!defaultNosanaService && nosanaServices.size > 0) {
+            const firstName = nosanaServices.keys().next().value;
+            if (firstName) {
+                defaultNosanaService = nosanaServices.get(firstName)!;
+                console.log(`[Sidecar] No 'default' credential found. Using '${firstName}' as default service.`);
+            }
+        }
+
+        if (nosanaServices.size === 0 && !configFetchedOnce) {
+            console.warn("[Sidecar] No Nosana credentials configured. Nosana module disabled.");
+        } else if (nosanaServices.size > 0) {
+            console.log(`[Sidecar] Active Nosana credentials: [${Array.from(nosanaServices.keys()).join(', ')}]`);
         }
 
         // Refresh Akash if mnemonic changed
@@ -167,13 +296,23 @@ const isJobTerminated = (state: any): boolean => {
 
 // Middleware to check initialization
 nosanaRouter.use((req, res, next) => {
-    if (!nosanaService) return res.status(503).json({ error: "Nosana Service not initialized" });
+    const credName = req.body?.credentialName || req.query?.credentialName;
+    const service = getNosanaService(credName as string);
+    if (!service) {
+        return res.status(503).json({
+            error: credName
+                ? `Nosana Service '${credName}' not initialized`
+                : "Nosana Service not initialized"
+        });
+    }
+    (req as any).nosanaService = service;
     next();
 });
 
 nosanaRouter.get('/balance', async (req, res) => {
     try {
-        const balance = await nosanaService!.getBalance();
+        const service = (req as any).nosanaService as NosanaService;
+        const balance = await service.getBalance();
         res.json(balance);
     } catch (e: any) {
         res.status(500).json({ error: e.message });
@@ -181,14 +320,15 @@ nosanaRouter.get('/balance', async (req, res) => {
 });
 
 nosanaRouter.post('/jobs/launch', async (req, res) => {
-    const { jobDefinition, marketAddress, resources_allocated, isConfidential = true } = req.body;
+    const { jobDefinition, marketAddress, resources_allocated, isConfidential = true, credentialName } = req.body;
     if (!jobDefinition || !marketAddress) return res.status(400).json({ error: "Missing definition/market" });
 
     try {
-        const result = await nosanaService!.launchJob(jobDefinition, marketAddress, isConfidential);
+        const service = (req as any).nosanaService as NosanaService;
+        const result = await service.launchJob(jobDefinition, marketAddress, isConfidential);
 
         // Watchdog
-        nosanaService!.watchJob(
+        service.watchJob(
             result.jobAddress,
             process.env.ORCHESTRATOR_URL || "http://localhost:8080",
             {
@@ -196,7 +336,8 @@ nosanaRouter.post('/jobs/launch', async (req, res) => {
                 marketAddress,
                 isConfidential,
                 deploymentUuid: result.deploymentUuid,
-                resources_allocated: resources_allocated || { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 }
+                resources_allocated: resources_allocated || { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 },
+                credentialName,
             }
         ).catch(console.error);
 
@@ -211,8 +352,9 @@ nosanaRouter.post('/jobs/stop', async (req, res) => {
     if (!jobAddress) return res.status(400).json({ error: "Missing jobAddress" });
 
     try {
-        nosanaService!.markJobAsStopping(jobAddress);
-        const result = await nosanaService!.stopJob(jobAddress);
+        const service = (req as any).nosanaService as NosanaService;
+        service.markJobAsStopping(jobAddress);
+        const result = await service.stopJob(jobAddress);
         res.json(result);
     } catch (e: any) {
         res.status(500).json({ error: e.message });
@@ -221,7 +363,8 @@ nosanaRouter.post('/jobs/stop', async (req, res) => {
 
 nosanaRouter.get('/jobs/:address', async (req, res) => {
     try {
-        const result = await nosanaService!.getJob(req.params.address);
+        const service = (req as any).nosanaService as NosanaService;
+        const result = await service.getJob(req.params.address);
         res.json(result);
     } catch (e: any) {
         res.status(500).json({ error: e.message });
@@ -230,7 +373,8 @@ nosanaRouter.get('/jobs/:address', async (req, res) => {
 
 nosanaRouter.get('/jobs/:address/logs', async (req, res) => {
     try {
-        const result = await nosanaService!.getJobLogs(req.params.address);
+        const service = (req as any).nosanaService as NosanaService;
+        const result = await service.getJobLogs(req.params.address);
         res.json(result);
     } catch (e: any) {
         res.status(500).json({ error: e.message });
@@ -247,7 +391,8 @@ app.get('/health', (req, res) => {
         service: "depin-sidecar",
         modules: {
             akash: "loaded",
-            nosana: nosanaService ? "active" : "disabled"
+            nosana: defaultNosanaService ? "active" : "disabled",
+            credentials: Array.from(nosanaServices.keys())
         },
         config_source: "gateway-api"
     });
@@ -263,23 +408,38 @@ wss.on('connection', (ws: WebSocket) => {
             const data = JSON.parse(message);
 
             if (data.type === 'subscribe_logs') {
-                const { provider, jobId, nodeAddress } = data;
+                const { provider, jobId, nodeAddress, credentialName } = data;
+
+                // Validate credentialName is a string if provided
+                if (credentialName !== undefined && typeof credentialName !== 'string') {
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        message: 'Invalid credentialName: must be a string'
+                    }));
+                    return;
+                }
 
                 if (provider === 'nosana') {
-                    if (!nosanaService) {
-                        ws.send(JSON.stringify({ type: 'error', message: 'Nosana Service not initialized' }));
+                    const service = getNosanaService(credentialName);
+                    if (!service) {
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            message: credentialName
+                                ? `Nosana Service '${credentialName}' not initialized`
+                                : 'Nosana Service not initialized'
+                        }));
                         return;
                     }
 
                     try {
                         // 1. Check job state first
-                        const job = await nosanaService.getJob(jobId);
+                        const job = await service.getJob(jobId);
 
                         if (isJobTerminated(job.jobState)) {
                             console.log(`[WS] Job ${jobId} is finished (State: ${job.jobState}). Fetching IPFS logs...`);
                             ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] Job has finished. Retrieving historical logs from IPFS..." }));
 
-                            const logsData = await nosanaService.getJobLogs(jobId);
+                            const logsData = await service.getJobLogs(jobId);
                             if (logsData.status === 'completed') {
                                 const result = logsData.result;
 
@@ -329,7 +489,7 @@ wss.on('connection', (ws: WebSocket) => {
                         }
 
                         // 2. If running, use streamer
-                        streamer = await nosanaService.getLogStreamer();
+                        streamer = await service.getLogStreamer();
 
                         streamer.on('log', (log: any) => {
                             if (ws.readyState === WebSocket.OPEN) {

@@ -50,6 +50,15 @@ class ModelDeploymentWorker:
             )
             return
 
+        updated = await self.deployments.update_state_if(
+            deployment_id, expected_state="PENDING", new_state="PROVISIONING"
+        )
+        if not updated:
+            log.warning(
+                f"Could not acquire deployment {deployment_id} - state may have changed"
+            )
+            return
+
         model = None
         if d.get("model_id"):
             try:
@@ -62,8 +71,6 @@ class ModelDeploymentWorker:
         resources_required = await self.inventory.get_resource_requirement(d["pool_id"])
 
         try:
-            await self.deployments.update_state(deployment_id, "PROVISIONING")
-
             # Determine resource needs (default to full node if not specified, or hardcoded fallback)
             vcpu_req = resources_required["vcpu_total"] if resources_required else 8
             ram_gb_req = (
@@ -144,6 +151,7 @@ class ModelDeploymentWorker:
                     provider_resource_id=pool["allowed_gpu_types"][0],
                     pool_id=pool["provider_pool_id"],
                     metadata=metadata,
+                    provider_credential_name=pool.get("provider_credential_name"),
                 )
 
                 # Handle simulation mode (provider-agnostic)
@@ -164,6 +172,7 @@ class ModelDeploymentWorker:
                 expose_url = await adapter.wait_for_ready(
                     provider_instance_id=node_spec["provider_instance_id"],
                     timeout=timeout,
+                    provider_credential_name=pool.get("provider_credential_name"),
                 )
 
                 # SAFETY CHECK: Verify that the deployment hasn't been terminated while we were waiting
@@ -314,12 +323,22 @@ class ModelDeploymentWorker:
                 node = await self.inventory.get_node_by_id(node_id)
                 if node:
                     adapter = get_adapter(node["provider"])
+                    metadata = node.get("metadata", {})
+                    if isinstance(metadata, str):
+                        try:
+                            import json
+
+                            metadata = json.loads(metadata)
+                        except Exception:
+                            metadata = {}
+
                     log.info(f"Deprovisioning {node['provider']} node {node_id}")
                     await adapter.deprovision_node(
-                        provider_instance_id=node["provider_instance_id"]
+                        provider_instance_id=node["provider_instance_id"],
+                        provider_credential_name=metadata.get("provider_credential_name"),
                     )
 
-        print(f"Stopped runtime for deployment {deployment_id}")
+        log.info(f"Stopped runtime for deployment {deployment_id}")
 
         # ------------------------------------
         # 2. RELEASE SCHEDULER ALLOCATIONS
@@ -328,7 +347,7 @@ class ModelDeploymentWorker:
             for alloc_id in d["allocation_ids"]:
                 await self.scheduler.release(allocation_id=alloc_id)
 
-        print(f"Released scheduler allocations for deployment {deployment_id}")
+        log.info(f"Released scheduler allocations for deployment {deployment_id}")
 
         # ------------------------------------
         # 3. HANDLE INVENTORY
@@ -354,14 +373,14 @@ class ModelDeploymentWorker:
 
                 if is_ephemeral:
                     await self.inventory.mark_terminated(node_id)
-                    print(f"Terminated ephemeral node {node_id}")
+                    log.info(f"Terminated ephemeral node {node_id}")
                 else:
                     await self.inventory.recycle_node(node_id)
-                    print(f"Recycled inventory node {node_id}")
+                    log.info(f"Recycled inventory node {node_id}")
 
         # ------------------------------------
         # 4. FINAL STATE
         # ------------------------------------
         await self.deployments.update_state(deployment_id, "STOPPED")
 
-        print(f"Deployment {deployment_id} stopped")
+        log.info(f"Deployment {deployment_id} stopped")

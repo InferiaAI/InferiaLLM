@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from inferia.services.orchestration.v1 import model_registry_pb2 as v1_dot_model__registry__pb2
+from . import model_registry_pb2 as model__registry__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in v1/model_registry_pb2_grpc.py depends on'
+        + ' but the generated code in model_registry_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -36,23 +36,23 @@ class ModelRegistryStub(object):
         """
         self.RegisterModel = channel.unary_unary(
                 '/orchestration.v1.ModelRegistry/RegisterModel',
-                request_serializer=v1_dot_model__registry__pb2.RegisterModelRequest.SerializeToString,
-                response_deserializer=v1_dot_model__registry__pb2.RegisterModelResponse.FromString,
+                request_serializer=model__registry__pb2.RegisterModelRequest.SerializeToString,
+                response_deserializer=model__registry__pb2.RegisterModelResponse.FromString,
                 _registered_method=True)
         self.GetModel = channel.unary_unary(
                 '/orchestration.v1.ModelRegistry/GetModel',
-                request_serializer=v1_dot_model__registry__pb2.GetModelRequest.SerializeToString,
-                response_deserializer=v1_dot_model__registry__pb2.GetModelResponse.FromString,
+                request_serializer=model__registry__pb2.GetModelRequest.SerializeToString,
+                response_deserializer=model__registry__pb2.GetModelResponse.FromString,
                 _registered_method=True)
         self.ListModels = channel.unary_unary(
                 '/orchestration.v1.ModelRegistry/ListModels',
-                request_serializer=v1_dot_model__registry__pb2.ListModelsRequest.SerializeToString,
-                response_deserializer=v1_dot_model__registry__pb2.ListModelsResponse.FromString,
+                request_serializer=model__registry__pb2.ListModelsRequest.SerializeToString,
+                response_deserializer=model__registry__pb2.ListModelsResponse.FromString,
                 _registered_method=True)
         self.DeleteModel = channel.unary_unary(
                 '/orchestration.v1.ModelRegistry/DeleteModel',
-                request_serializer=v1_dot_model__registry__pb2.DeleteModelRequest.SerializeToString,
-                response_deserializer=v1_dot_model__registry__pb2.Empty.FromString,
+                request_serializer=model__registry__pb2.DeleteModelRequest.SerializeToString,
+                response_deserializer=model__registry__pb2.Empty.FromString,
                 _registered_method=True)
 
 
@@ -88,23 +88,23 @@ def add_ModelRegistryServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'RegisterModel': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterModel,
-                    request_deserializer=v1_dot_model__registry__pb2.RegisterModelRequest.FromString,
-                    response_serializer=v1_dot_model__registry__pb2.RegisterModelResponse.SerializeToString,
+                    request_deserializer=model__registry__pb2.RegisterModelRequest.FromString,
+                    response_serializer=model__registry__pb2.RegisterModelResponse.SerializeToString,
             ),
             'GetModel': grpc.unary_unary_rpc_method_handler(
                     servicer.GetModel,
-                    request_deserializer=v1_dot_model__registry__pb2.GetModelRequest.FromString,
-                    response_serializer=v1_dot_model__registry__pb2.GetModelResponse.SerializeToString,
+                    request_deserializer=model__registry__pb2.GetModelRequest.FromString,
+                    response_serializer=model__registry__pb2.GetModelResponse.SerializeToString,
             ),
             'ListModels': grpc.unary_unary_rpc_method_handler(
                     servicer.ListModels,
-                    request_deserializer=v1_dot_model__registry__pb2.ListModelsRequest.FromString,
-                    response_serializer=v1_dot_model__registry__pb2.ListModelsResponse.SerializeToString,
+                    request_deserializer=model__registry__pb2.ListModelsRequest.FromString,
+                    response_serializer=model__registry__pb2.ListModelsResponse.SerializeToString,
             ),
             'DeleteModel': grpc.unary_unary_rpc_method_handler(
                     servicer.DeleteModel,
-                    request_deserializer=v1_dot_model__registry__pb2.DeleteModelRequest.FromString,
-                    response_serializer=v1_dot_model__registry__pb2.Empty.SerializeToString,
+                    request_deserializer=model__registry__pb2.DeleteModelRequest.FromString,
+                    response_serializer=model__registry__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -132,8 +132,8 @@ class ModelRegistry(object):
             request,
             target,
             '/orchestration.v1.ModelRegistry/RegisterModel',
-            v1_dot_model__registry__pb2.RegisterModelRequest.SerializeToString,
-            v1_dot_model__registry__pb2.RegisterModelResponse.FromString,
+            model__registry__pb2.RegisterModelRequest.SerializeToString,
+            model__registry__pb2.RegisterModelResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -159,8 +159,8 @@ class ModelRegistry(object):
             request,
             target,
             '/orchestration.v1.ModelRegistry/GetModel',
-            v1_dot_model__registry__pb2.GetModelRequest.SerializeToString,
-            v1_dot_model__registry__pb2.GetModelResponse.FromString,
+            model__registry__pb2.GetModelRequest.SerializeToString,
+            model__registry__pb2.GetModelResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -186,8 +186,8 @@ class ModelRegistry(object):
             request,
             target,
             '/orchestration.v1.ModelRegistry/ListModels',
-            v1_dot_model__registry__pb2.ListModelsRequest.SerializeToString,
-            v1_dot_model__registry__pb2.ListModelsResponse.FromString,
+            model__registry__pb2.ListModelsRequest.SerializeToString,
+            model__registry__pb2.ListModelsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -213,8 +213,8 @@ class ModelRegistry(object):
             request,
             target,
             '/orchestration.v1.ModelRegistry/DeleteModel',
-            v1_dot_model__registry__pb2.DeleteModelRequest.SerializeToString,
-            v1_dot_model__registry__pb2.Empty.FromString,
+            model__registry__pb2.DeleteModelRequest.SerializeToString,
+            model__registry__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

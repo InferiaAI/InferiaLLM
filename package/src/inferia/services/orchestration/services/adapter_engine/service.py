@@ -1,11 +1,12 @@
 from uuid import UUID
-from inferia.services.orchestration.v1 import adapter_engine_pb2, adapter_engine_pb2_grpc
+from inferia.services.orchestration.v1 import (
+    adapter_engine_pb2,
+    adapter_engine_pb2_grpc,
+)
 from inferia.services.orchestration.services.adapter_engine.registry import get_adapter
 
-class AdapterEngineService(
-    adapter_engine_pb2_grpc.AdapterEngineServicer
-):
 
+class AdapterEngineService(adapter_engine_pb2_grpc.AdapterEngineServicer):
     def __init__(self, provider_repo, node_repo, inventory_repo):
         self.provider_repo = provider_repo
         self.node_repo = node_repo
@@ -29,6 +30,9 @@ class AdapterEngineService(
             region=request.region,
             use_spot=request.use_spot,
             metadata=dict(request.metadata),
+            provider_credential_name=request.provider_credential_name
+            if request.provider_credential_name
+            else None,
         )
 
         node_id = await self.inventory_repo.register_node(
@@ -45,10 +49,8 @@ class AdapterEngineService(
             metadata=node["metadata"],
         )
 
-        return adapter_engine_pb2.ProvisionNodeResponse(
-            node_id=str(node_id)
-        )
-    
+        return adapter_engine_pb2.ProvisionNodeResponse(node_id=str(node_id))
+
     async def DeprovisionNode(self, request, context):
         node = await self.node_repo.get_node_by_id(UUID(request.node_id))
         if not node:
@@ -61,8 +63,7 @@ class AdapterEngineService(
         )
 
         await self.inventory_repo.update_node_state(
-            UUID(request.node_id),
-            "deprovisioning"
+            UUID(request.node_id), "deprovisioning"
         )
 
         return adapter_engine_pb2.EmptyMessage()

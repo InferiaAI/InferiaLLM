@@ -3,16 +3,14 @@ from datetime import datetime, timedelta, timezone
 import grpc
 from inferia.services.orchestration.v1 import compute_pool_pb2, compute_pool_pb2_grpc
 
-class ComputePoolManagerService(
-    compute_pool_pb2_grpc.ComputePoolManagerServicer
-):
 
+class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer):
     def __init__(self, repo):
         self.repo = repo
 
     async def RegisterPool(self, request, context):
         try:
-            pool_id = await self.repo.create_pool({
+            pool_data = {
                 "pool_name": request.pool_name,
                 "owner_type": request.owner_type,
                 "owner_id": request.owner_id,
@@ -22,10 +20,24 @@ class ComputePoolManagerService(
                 "is_dedicated": request.is_dedicated,
                 "provider_pool_id": request.provider_pool_id,
                 "scheduling_policy": (
-                    request.scheduling_policy_json
-                    or '{"strategy":"best_fit"}'
+                    request.scheduling_policy_json or '{"strategy":"best_fit"}'
                 ),
-            })
+            }
+
+            # Include provider_credential_name if provided (works for any provider: nosana, akash, etc.)
+            if request.provider_credential_name:
+                # Validate that the credential exists
+                credential_exists = await self.repo.credential_exists(
+                    request.provider, request.provider_credential_name
+                )
+                if not credential_exists:
+                    context.abort(
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        f"Credential '{request.provider_credential_name}' not found or inactive for provider '{request.provider}'",
+                    )
+                pool_data["provider_credential_name"] = request.provider_credential_name
+
+            pool_id = await self.repo.create_pool(pool_data)
 
             return compute_pool_pb2.PoolResponse(
                 pool_id=str(pool_id),
@@ -39,7 +51,10 @@ class ComputePoolManagerService(
             # we can inspect the exception type name or just import it.
             # However, for stability, let's assume asyncpg is available as the repo uses it.
             if "UniqueViolationError" in type(e).__name__:
-                 context.abort(grpc.StatusCode.ALREADY_EXISTS, f"Pool '{request.pool_name}' already exists for this owner.")
+                context.abort(
+                    grpc.StatusCode.ALREADY_EXISTS,
+                    f"Pool '{request.pool_name}' already exists for this owner.",
+                )
             raise e
 
     async def UpdatePool(self, request, context):
@@ -52,10 +67,7 @@ class ComputePoolManagerService(
             },
         )
 
-        return compute_pool_pb2.PoolResponse(
-            pool_id=request.pool_id,
-            is_active=True
-        )
+        return compute_pool_pb2.PoolResponse(pool_id=request.pool_id, is_active=True)
 
     async def DeletePool(self, request, context):
         await self.repo.soft_delete_pool(UUID(request.pool_id))
@@ -90,10 +102,10 @@ class ComputePoolManagerService(
                 hb = check_time
                 if hb.tzinfo is not None:
                     hb = hb.replace(tzinfo=None)
-                
+
                 if (now - hb) > timedelta(minutes=2):
                     continue
-            
+
             if r["state"] == "terminated":
                 continue
 
@@ -111,11 +123,9 @@ class ComputePoolManagerService(
             )
 
         return compute_pool_pb2.ListPoolInventoryResponse(nodes=filtered_nodes)
-    
+
     async def ListPools(self, request, context):
-        rows = await self.repo.list_pools(
-            owner_id=request.owner_id or None
-        )
+        rows = await self.repo.list_pools(owner_id=request.owner_id or None)
 
         return compute_pool_pb2.ListPoolsResponse(
             pools=[

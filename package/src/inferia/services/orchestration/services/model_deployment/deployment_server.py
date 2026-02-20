@@ -23,7 +23,7 @@ import os
 POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia"
 )
-GRPC_ADDR = "127.0.0.1:50051"
+GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
 
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
 
@@ -55,6 +55,13 @@ class TerminateDeploymentRequest(BaseModel):
     deployment_id: str
 
 
+class UpdateDeploymentRequest(BaseModel):
+    configuration: dict | None = None
+    inference_model: str | None = None
+    endpoint: str | None = None
+    replicas: int | None = None
+
+
 class CreatePoolRequest(BaseModel):
     pool_name: str
     owner_type: str
@@ -65,6 +72,9 @@ class CreatePoolRequest(BaseModel):
     is_dedicated: bool
     provider_pool_id: str
     scheduling_policy_json: str
+    provider_credential_name: str | None = (
+        None  # Generic: which credential to use for this provider
+    )
 
 
 class ModelRegistryRequest(BaseModel):
@@ -96,28 +106,29 @@ async def log_audit_event(
 ):
     import uuid
 
+    conn = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
-        try:
-            # Manually insert since we don't have the AuditLog model here
-            await conn.execute(
-                """
-                INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             """,
-                str(uuid.uuid4()),
-                utcnow_naive(),
-                user_id,
-                action,
-                resource_type,
-                resource_id,
-                json.dumps(details) if details else None,
-                status,
-            )
-        finally:
-            await conn.close()
+        # Manually insert since we don't have the AuditLog model here
+        await conn.execute(
+            """
+            INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         """,
+            str(uuid.uuid4()),
+            utcnow_naive(),
+            user_id,
+            action,
+            resource_type,
+            resource_id,
+            json.dumps(details) if details else None,
+            status,
+        )
     except Exception as e:
         print(f"Failed to write audit log: {e}")
+    finally:
+        if conn:
+            await conn.close()
 
 
 @router.post("/deploy")
@@ -204,6 +215,44 @@ async def get_deployment_status(deployment_id: str):
         "engine": resp.engine,
         "inference_model": resp.inference_model,
     }
+
+
+@router.patch("/update/{deployment_id}")
+async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
+    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+        stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
+
+        try:
+            update_kwargs = {"deployment_id": deployment_id}
+            if req.configuration is not None:
+                update_kwargs["configuration"] = json.dumps(req.configuration)
+            if req.inference_model is not None:
+                update_kwargs["inference_model"] = req.inference_model
+            if req.endpoint is not None:
+                update_kwargs["endpoint"] = req.endpoint
+            if req.replicas is not None:
+                update_kwargs["replicas"] = req.replicas
+
+            resp = await stub.UpdateDeployment(
+                model_deployment_pb2.UpdateDeploymentRequest(**update_kwargs)
+            )
+
+            # Log Audit Event
+            await log_audit_event(
+                user_id=None,  # Need to get from context if possible
+                action="deployment.update",
+                resource_type="deployment",
+                resource_id=deployment_id,
+                details=req.model_dump(exclude_none=True),
+            )
+
+            return {"success": resp.success, "message": resp.message}
+
+        except grpc.RpcError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Update failed: {e.details()}",
+            )
 
 
 @router.post("/terminate")
@@ -349,6 +398,9 @@ async def create_pool(req: CreatePoolRequest):
                     is_dedicated=req.is_dedicated,
                     provider_pool_id=req.provider_pool_id,
                     scheduling_policy_json=req.scheduling_policy_json,
+                    provider_credential_name=req.provider_credential_name
+                    if req.provider_credential_name
+                    else "",
                 )
             )
 

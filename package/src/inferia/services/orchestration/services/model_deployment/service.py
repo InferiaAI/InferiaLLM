@@ -13,10 +13,15 @@ from inferia.services.orchestration.v1 import (
 def parse_uuid(value: str, field: str, context):
     try:
         return UUID(value)
-    except Exception:
+    except ValueError:
         context.abort(
             grpc.StatusCode.INVALID_ARGUMENT,
-            f"Invalid UUID for field '{field}'",
+            f"Invalid UUID for field '{field}': {value}",
+        )
+    except (TypeError, AttributeError):
+        context.abort(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            f"Expected string for field '{field}', got {type(value).__name__}",
         )
 
 
@@ -154,10 +159,11 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
 
         try:
             next_state = await self.controller.start_deployment(deployment_id)
+        except ValueError as e:
+            await context.abort(grpc.StatusCode.NOT_FOUND, str(e))
         except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).exception("Failed to start deployment")
+            logger = logging.getLogger(__name__)
+            logger.exception("Failed to start deployment")
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
         return model_deployment_pb2.StartDeploymentResponse(
@@ -168,9 +174,30 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
     # -------------------------------------------------
     # DELETE
     # -------------------------------------------------
+
     async def DeleteDeployment(self, request, context):
         deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
 
         await self.controller.request_delete(deployment_id)
 
         return model_deployment_pb2.DeleteDeploymentResponse(accepted=True)
+
+    async def UpdateDeployment(self, request, context):
+        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
+
+        try:
+            await self.controller.update_deployment(
+                deployment_id=deployment_id,
+                configuration=request.configuration if request.HasField("configuration") else None,
+                inference_model=request.inference_model if request.HasField("inference_model") else None,
+                endpoint=request.endpoint if request.HasField("endpoint") else None,
+                replicas=request.replicas if request.HasField("replicas") else None,
+            )
+            return model_deployment_pb2.UpdateDeploymentResponse(
+                success=True, message="Deployment updated successfully"
+            )
+        except ValueError as e:
+            await context.abort(grpc.StatusCode.NOT_FOUND, str(e))
+        except Exception as e:
+            logger.exception("Failed to update deployment")
+            await context.abort(grpc.StatusCode.INTERNAL, str(e))

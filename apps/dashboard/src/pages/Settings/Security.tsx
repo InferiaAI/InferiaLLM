@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { Shield, ShieldCheck, KeyRound } from "lucide-react";
@@ -18,23 +18,67 @@ type ApiErrorResponse = {
   detail?: string | { msg: string }[];
 };
 
+interface SecurityState {
+  isLoading: boolean;
+  userInfo: UserInfo | null;
+  setupData: TOTPSetupResponse | null;
+  verifyCode: string;
+  isSetupOpen: boolean;
+  isSubmitting: boolean;
+}
+
+type SecurityAction =
+  | { type: "SET_LOADING"; payload: boolean }
+  | { type: "SET_USER_INFO"; payload: UserInfo | null }
+  | { type: "SET_SETUP_DATA"; payload: TOTPSetupResponse | null }
+  | { type: "SET_VERIFY_CODE"; payload: string }
+  | { type: "SET_SETUP_OPEN"; payload: boolean }
+  | { type: "SET_SUBMITTING"; payload: boolean }
+  | { type: "CLOSE_MODAL" };
+
+const initialState: SecurityState = {
+  isLoading: true,
+  userInfo: null,
+  setupData: null,
+  verifyCode: "",
+  isSetupOpen: false,
+  isSubmitting: false,
+};
+
+function securityReducer(state: SecurityState, action: SecurityAction): SecurityState {
+  switch (action.type) {
+    case "SET_LOADING":
+      return { ...state, isLoading: action.payload };
+    case "SET_USER_INFO":
+      return { ...state, userInfo: action.payload };
+    case "SET_SETUP_DATA":
+      return { ...state, setupData: action.payload };
+    case "SET_VERIFY_CODE":
+      return { ...state, verifyCode: action.payload };
+    case "SET_SETUP_OPEN":
+      return { ...state, isSetupOpen: action.payload };
+    case "SET_SUBMITTING":
+      return { ...state, isSubmitting: action.payload };
+    case "CLOSE_MODAL":
+      return { ...state, isSetupOpen: false, setupData: null, verifyCode: "" };
+    default:
+      return state;
+  }
+}
+
 export default function Security() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
-  const [setupData, setSetupData] = useState<TOTPSetupResponse | null>(null);
-  const [verifyCode, setVerifyCode] = useState("");
-  const [isSetupOpen, setIsSetupOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [state, dispatch] = useReducer(securityReducer, initialState);
+  const { isLoading, userInfo, setupData, verifyCode, isSetupOpen, isSubmitting } = state;
 
   const fetchStatus = async () => {
-    setIsLoading(true);
+    dispatch({ type: "SET_LOADING", payload: true });
     try {
       const { data } = await api.get<UserInfo>("/auth/me");
-      setUserInfo(data);
+      dispatch({ type: "SET_USER_INFO", payload: data });
     } catch (error) {
       console.error("Failed to fetch user info", error);
     } finally {
-      setIsLoading(false);
+      dispatch({ type: "SET_LOADING", payload: false });
     }
   };
 
@@ -42,17 +86,13 @@ export default function Security() {
     void fetchStatus();
   }, []);
 
-  const closeModal = () => {
-    setIsSetupOpen(false);
-    setSetupData(null);
-    setVerifyCode("");
-  };
+  const closeModal = () => dispatch({ type: "CLOSE_MODAL" });
 
   const startSetup = async () => {
     try {
       const { data } = await api.post<TOTPSetupResponse>("/auth/totp/setup");
-      setSetupData(data);
-      setIsSetupOpen(true);
+      dispatch({ type: "SET_SETUP_DATA", payload: data });
+      dispatch({ type: "SET_SETUP_OPEN", payload: true });
     } catch (error) {
       console.error(error);
       toast.error("Failed to start 2FA setup");
@@ -62,7 +102,7 @@ export default function Security() {
   const verifySetup = async () => {
     if (verifyCode.length !== 6) return;
 
-    setIsSubmitting(true);
+    dispatch({ type: "SET_SUBMITTING", payload: true });
     try {
       await api.post("/auth/totp/verify", { totp_code: verifyCode });
       toast.success("2FA enabled successfully");
@@ -79,7 +119,7 @@ export default function Security() {
         toast.error("Verification failed");
       }
     } finally {
-      setIsSubmitting(false);
+      dispatch({ type: "SET_SUBMITTING", payload: false });
     }
   };
 
@@ -146,11 +186,12 @@ export default function Security() {
                 </div>
 
                 <div className="w-full space-y-2 mt-2">
-                  <label className="text-sm font-medium">Verification Code</label>
+                  <label htmlFor="verify-code" className="text-sm font-medium">Verification Code</label>
                   <input
+                    id="verify-code"
                     placeholder="000000"
                     value={verifyCode}
-                    onChange={(event) => setVerifyCode(event.target.value.replace(/\D/g, ""))}
+                    onChange={(event) => dispatch({ type: "SET_VERIFY_CODE", payload: event.target.value.replace(/\D/g, "") })}
                     maxLength={6}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-center text-lg tracking-widest placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />

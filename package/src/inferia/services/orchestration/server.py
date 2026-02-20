@@ -9,6 +9,7 @@ This is the main entry point for the orchestration layer that includes:
 
 import asyncio
 import logging
+import os
 import asyncpg
 import grpc
 from fastapi import FastAPI
@@ -71,8 +72,19 @@ async def create_db_pool():
         dsn=settings.postgres_dsn,
         min_size=10,
         max_size=50,
-        command_timeout=30,
+        command_timeout=60,
     )
+
+
+async def check_db_health(db_pool):
+    """Check database connectivity."""
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return True
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return False
 
 
 async def serve():
@@ -106,10 +118,16 @@ async def serve():
         description="Orchestration Gateway - Compute Pool and Model Deployment Management",
     )
 
+    allowed_origins = (
+        os.getenv("ALLOWED_ORIGINS", "").split(",")
+        if os.getenv("ALLOWED_ORIGINS")
+        else ["*"]
+    )
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        allow_credentials=True if allowed_origins != ["*"] else False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -141,6 +159,7 @@ async def serve():
             deployment_repo=model_deployment_repo,
             outbox_repo=outbox_repo,
             event_bus=event_bus,
+            pool_repo=pool_repo,
         )
     )
 
@@ -162,6 +181,17 @@ async def serve():
         app, host=settings.host, port=settings.http_port, log_level="info"
     )
     http_server = uvicorn.Server(config)
+
+    # Add shutdown handler
+    shutdown_event = asyncio.Event()
+
+    async def shutdown():
+        logger.info("Shutting down servers...")
+        shutdown_event.set()
+        await event_bus.close()
+        db_pool.close()
+        await http_server.shutdown()
+
     asyncio.create_task(http_server.serve())
     logger.info(f"HTTP server started on port {settings.http_port}")
 
@@ -170,7 +200,12 @@ async def serve():
     await server.start()
     logger.info(f"gRPC server started on port {settings.grpc_port}")
 
-    await server.wait_for_termination()
+    # Wait for shutdown signal
+    await shutdown_event.wait()
+
+    # Graceful shutdown
+    await server.stop(grace=5)
+    logger.info("Servers stopped gracefully")
 
 
 if __name__ == "__main__":

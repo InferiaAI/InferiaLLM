@@ -456,6 +456,7 @@ async def get_current_user_info(request: Request, db: AsyncSession = Depends(get
         username=user_context.username,
         email=user_context.email,
         roles=user_context.roles,
+        permissions=user_context.permissions,
         created_at=user.created_at,
         is_active=user_context.is_active,
         totp_enabled=user.totp_enabled,

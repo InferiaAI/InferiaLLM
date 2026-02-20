@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from inferia.services.orchestration.v1 import compute_pool_pb2 as v1_dot_compute__pool__pb2
+from . import compute_pool_pb2 as compute__pool__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in v1/compute_pool_pb2_grpc.py depends on'
+        + ' but the generated code in compute_pool_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -36,43 +36,43 @@ class ComputePoolManagerStub(object):
         """
         self.RegisterPool = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/RegisterPool',
-                request_serializer=v1_dot_compute__pool__pb2.RegisterPoolRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.PoolResponse.FromString,
+                request_serializer=compute__pool__pb2.RegisterPoolRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.PoolResponse.FromString,
                 _registered_method=True)
         self.GetPool = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/GetPool',
-                request_serializer=v1_dot_compute__pool__pb2.GetPoolRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.PoolResponse.FromString,
+                request_serializer=compute__pool__pb2.GetPoolRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.PoolResponse.FromString,
                 _registered_method=True)
         self.ListPools = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/ListPools',
-                request_serializer=v1_dot_compute__pool__pb2.ListPoolsRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.ListPoolsResponse.FromString,
+                request_serializer=compute__pool__pb2.ListPoolsRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.ListPoolsResponse.FromString,
                 _registered_method=True)
         self.UpdatePool = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/UpdatePool',
-                request_serializer=v1_dot_compute__pool__pb2.UpdatePoolRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.PoolResponse.FromString,
+                request_serializer=compute__pool__pb2.UpdatePoolRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.PoolResponse.FromString,
                 _registered_method=True)
         self.DeletePool = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/DeletePool',
-                request_serializer=v1_dot_compute__pool__pb2.DeletePoolRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.poolEmpty.FromString,
+                request_serializer=compute__pool__pb2.DeletePoolRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.poolEmpty.FromString,
                 _registered_method=True)
         self.BindProviderResource = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/BindProviderResource',
-                request_serializer=v1_dot_compute__pool__pb2.BindProviderResourceRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.poolEmpty.FromString,
+                request_serializer=compute__pool__pb2.BindProviderResourceRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.poolEmpty.FromString,
                 _registered_method=True)
         self.UnbindProviderResource = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/UnbindProviderResource',
-                request_serializer=v1_dot_compute__pool__pb2.UnbindProviderResourceRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.poolEmpty.FromString,
+                request_serializer=compute__pool__pb2.UnbindProviderResourceRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.poolEmpty.FromString,
                 _registered_method=True)
         self.ListPoolInventory = channel.unary_unary(
                 '/orchestration.v1.ComputePoolManager/ListPoolInventory',
-                request_serializer=v1_dot_compute__pool__pb2.ListPoolInventoryRequest.SerializeToString,
-                response_deserializer=v1_dot_compute__pool__pb2.ListPoolInventoryResponse.FromString,
+                request_serializer=compute__pool__pb2.ListPoolInventoryRequest.SerializeToString,
+                response_deserializer=compute__pool__pb2.ListPoolInventoryResponse.FromString,
                 _registered_method=True)
 
 
@@ -132,43 +132,43 @@ def add_ComputePoolManagerServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'RegisterPool': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterPool,
-                    request_deserializer=v1_dot_compute__pool__pb2.RegisterPoolRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.PoolResponse.SerializeToString,
+                    request_deserializer=compute__pool__pb2.RegisterPoolRequest.FromString,
+                    response_serializer=compute__pool__pb2.PoolResponse.SerializeToString,
             ),
             'GetPool': grpc.unary_unary_rpc_method_handler(
                     servicer.GetPool,
-                    request_deserializer=v1_dot_compute__pool__pb2.GetPoolRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.PoolResponse.SerializeToString,
+                    request_deserializer=compute__pool__pb2.GetPoolRequest.FromString,
+                    response_serializer=compute__pool__pb2.PoolResponse.SerializeToString,
             ),
             'ListPools': grpc.unary_unary_rpc_method_handler(
                     servicer.ListPools,
-                    request_deserializer=v1_dot_compute__pool__pb2.ListPoolsRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.ListPoolsResponse.SerializeToString,
+                    request_deserializer=compute__pool__pb2.ListPoolsRequest.FromString,
+                    response_serializer=compute__pool__pb2.ListPoolsResponse.SerializeToString,
             ),
             'UpdatePool': grpc.unary_unary_rpc_method_handler(
                     servicer.UpdatePool,
-                    request_deserializer=v1_dot_compute__pool__pb2.UpdatePoolRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.PoolResponse.SerializeToString,
+                    request_deserializer=compute__pool__pb2.UpdatePoolRequest.FromString,
+                    response_serializer=compute__pool__pb2.PoolResponse.SerializeToString,
             ),
             'DeletePool': grpc.unary_unary_rpc_method_handler(
                     servicer.DeletePool,
-                    request_deserializer=v1_dot_compute__pool__pb2.DeletePoolRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.poolEmpty.SerializeToString,
+                    request_deserializer=compute__pool__pb2.DeletePoolRequest.FromString,
+                    response_serializer=compute__pool__pb2.poolEmpty.SerializeToString,
             ),
             'BindProviderResource': grpc.unary_unary_rpc_method_handler(
                     servicer.BindProviderResource,
-                    request_deserializer=v1_dot_compute__pool__pb2.BindProviderResourceRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.poolEmpty.SerializeToString,
+                    request_deserializer=compute__pool__pb2.BindProviderResourceRequest.FromString,
+                    response_serializer=compute__pool__pb2.poolEmpty.SerializeToString,
             ),
             'UnbindProviderResource': grpc.unary_unary_rpc_method_handler(
                     servicer.UnbindProviderResource,
-                    request_deserializer=v1_dot_compute__pool__pb2.UnbindProviderResourceRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.poolEmpty.SerializeToString,
+                    request_deserializer=compute__pool__pb2.UnbindProviderResourceRequest.FromString,
+                    response_serializer=compute__pool__pb2.poolEmpty.SerializeToString,
             ),
             'ListPoolInventory': grpc.unary_unary_rpc_method_handler(
                     servicer.ListPoolInventory,
-                    request_deserializer=v1_dot_compute__pool__pb2.ListPoolInventoryRequest.FromString,
-                    response_serializer=v1_dot_compute__pool__pb2.ListPoolInventoryResponse.SerializeToString,
+                    request_deserializer=compute__pool__pb2.ListPoolInventoryRequest.FromString,
+                    response_serializer=compute__pool__pb2.ListPoolInventoryResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -196,8 +196,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/RegisterPool',
-            v1_dot_compute__pool__pb2.RegisterPoolRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.PoolResponse.FromString,
+            compute__pool__pb2.RegisterPoolRequest.SerializeToString,
+            compute__pool__pb2.PoolResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -223,8 +223,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/GetPool',
-            v1_dot_compute__pool__pb2.GetPoolRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.PoolResponse.FromString,
+            compute__pool__pb2.GetPoolRequest.SerializeToString,
+            compute__pool__pb2.PoolResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -250,8 +250,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/ListPools',
-            v1_dot_compute__pool__pb2.ListPoolsRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.ListPoolsResponse.FromString,
+            compute__pool__pb2.ListPoolsRequest.SerializeToString,
+            compute__pool__pb2.ListPoolsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -277,8 +277,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/UpdatePool',
-            v1_dot_compute__pool__pb2.UpdatePoolRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.PoolResponse.FromString,
+            compute__pool__pb2.UpdatePoolRequest.SerializeToString,
+            compute__pool__pb2.PoolResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -304,8 +304,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/DeletePool',
-            v1_dot_compute__pool__pb2.DeletePoolRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.poolEmpty.FromString,
+            compute__pool__pb2.DeletePoolRequest.SerializeToString,
+            compute__pool__pb2.poolEmpty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -331,8 +331,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/BindProviderResource',
-            v1_dot_compute__pool__pb2.BindProviderResourceRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.poolEmpty.FromString,
+            compute__pool__pb2.BindProviderResourceRequest.SerializeToString,
+            compute__pool__pb2.poolEmpty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -358,8 +358,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/UnbindProviderResource',
-            v1_dot_compute__pool__pb2.UnbindProviderResourceRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.poolEmpty.FromString,
+            compute__pool__pb2.UnbindProviderResourceRequest.SerializeToString,
+            compute__pool__pb2.poolEmpty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -385,8 +385,8 @@ class ComputePoolManager(object):
             request,
             target,
             '/orchestration.v1.ComputePoolManager/ListPoolInventory',
-            v1_dot_compute__pool__pb2.ListPoolInventoryRequest.SerializeToString,
-            v1_dot_compute__pool__pb2.ListPoolInventoryResponse.FromString,
+            compute__pool__pb2.ListPoolInventoryRequest.SerializeToString,
+            compute__pool__pb2.ListPoolInventoryResponse.FromString,
             options,
             channel_credentials,
             insecure,

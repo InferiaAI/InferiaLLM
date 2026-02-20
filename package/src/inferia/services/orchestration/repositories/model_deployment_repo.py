@@ -62,8 +62,8 @@ class ModelDeploymentRepository(BaseRepository):
             except json.JSONDecodeError:
                 policies = "{}"
 
-        async with self.db.acquire() as c:
-            await c.execute(
+        if tx:
+            await tx.execute(
                 q,
                 deployment_id,
                 model_id,
@@ -81,6 +81,26 @@ class ModelDeploymentRepository(BaseRepository):
                 inference_model,
                 model_type,
             )
+        else:
+            async with self.db.acquire() as c:
+                await c.execute(
+                    q,
+                    deployment_id,
+                    model_id,
+                    pool_id,
+                    replicas,
+                    gpu_per_replica,
+                    state,
+                    engine,
+                    configuration,
+                    endpoint,
+                    model_name,
+                    owner_id,
+                    org_id,
+                    policies,
+                    inference_model,
+                    model_type,
+                )
 
         # await self.event_bus.publish(
         #     "model.deploy.requested",
@@ -96,14 +116,17 @@ class ModelDeploymentRepository(BaseRepository):
         #     },
         # )
 
-    async def update_state(self, deployment_id: UUID, state: str):
+    async def update_state(self, deployment_id: UUID, state: str, tx=None):
         q = """
         UPDATE model_deployments
         SET state=$2, updated_at=now()
         WHERE deployment_id=$1
         """
-        async with self.db.acquire() as c:
-            await c.execute(q, deployment_id, state)
+        if tx:
+            await tx.execute(q, deployment_id, state)
+        else:
+            async with self.db.acquire() as c:
+                await c.execute(q, deployment_id, state)
 
         await self.event_bus.publish(
             "deployment.state_changed",
@@ -112,6 +135,41 @@ class ModelDeploymentRepository(BaseRepository):
                 "state": state,
             },
         )
+
+    async def update_state_if(
+        self,
+        deployment_id: UUID,
+        expected_state: str,
+        new_state: str,
+        tx=None,
+    ) -> bool:
+        """
+        Atomically update state only if_state.
+        Returns current state matches expected True if update was successful, False otherwise.
+        """
+        q = """
+        UPDATE model_deployments
+        SET state=$3, updated_at=now()
+        WHERE deployment_id=$1 AND state=$2
+        """
+        if tx:
+            result = await tx.execute(q, deployment_id, expected_state, new_state)
+        else:
+            async with self.db.acquire() as c:
+                result = await c.execute(q, deployment_id, expected_state, new_state)
+
+        updated = result != "UPDATE 0"
+
+        if updated:
+            await self.event_bus.publish(
+                "deployment.state_changed",
+                {
+                    "deployment_id": str(deployment_id),
+                    "state": new_state,
+                },
+            )
+
+        return updated
 
     async def attach_runtime(
         self,
@@ -175,6 +233,66 @@ class ModelDeploymentRepository(BaseRepository):
             },
         )
 
+    async def update(
+        self,
+        deployment_id: UUID,
+        *,
+        configuration: Optional[str] = None,
+        inference_model: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        replicas: Optional[int] = None,
+        tx=None,
+    ):
+        fields = []
+        args = [deployment_id]
+        idx = 2
+
+        if configuration is not None:
+            if isinstance(configuration, dict):
+                import json
+                configuration = json.dumps(configuration)
+            fields.append(f"configuration=${idx}")
+            args.append(configuration)
+            idx += 1
+
+        if inference_model is not None:
+            fields.append(f"inference_model=${idx}")
+            args.append(inference_model)
+            idx += 1
+
+        if endpoint is not None:
+            fields.append(f"endpoint=${idx}")
+            args.append(endpoint)
+            idx += 1
+
+        if replicas is not None:
+            fields.append(f"replicas=${idx}")
+            args.append(replicas)
+            idx += 1
+
+        if not fields:
+            return
+
+        q = f"""
+        UPDATE model_deployments
+        SET {', '.join(fields)}, updated_at=now()
+        WHERE deployment_id=$1
+        """
+
+        if tx:
+            await tx.execute(q, *args)
+        else:
+            async with self.db.acquire() as c:
+                await c.execute(q, *args)
+
+        await self.event_bus.publish(
+            "deployment.updated",
+            {
+                "deployment_id": str(deployment_id),
+                "fields": fields,
+            },
+        )
+
     async def get(self, deployment_id: UUID):
         q = "SELECT * FROM model_deployments WHERE deployment_id=$1"
         async with self.db.acquire() as c:
@@ -233,63 +351,3 @@ class ModelDeploymentRepository(BaseRepository):
                 "deployment_id": str(deployment_id),
             },
         )
-
-
-# from uuid import UUID
-# from repositories.base_repo import BaseRepository
-
-
-# class ModelDeploymentRepository(BaseRepository):
-#     async def create(
-#         self,
-#         *,
-#         deployment_id: UUID,
-#         model_id: UUID,
-#         pool_id: UUID,
-#         replicas: int,
-#         gpu_per_replica: int,
-#         state: str,
-#         tx=None,
-#     ):
-#         query = """
-#         INSERT INTO model_deployments (
-#             deployment_id,
-#             model_id,
-#             pool_id,
-#             replicas,
-#             gpu_per_replica,
-#             state
-#         )
-#         VALUES ($1, $2, $3, $4, $5, $6)
-#         """
-#         conn = tx or self.db
-#         await conn.execute(
-#             query,
-#             deployment_id,
-#             model_id,
-#             pool_id,
-#             replicas,
-#             gpu_per_replica,
-#             state,
-#         )
-
-#     async def get(self, deployment_id: UUID):
-#         query = "SELECT * FROM model_deployments WHERE deployment_id=$1"
-#         return await self.db.fetchrow(query, deployment_id)
-
-#     async def list(self, pool_id: UUID | None):
-#         if pool_id:
-#             return await self.db.fetch(
-#                 "SELECT * FROM model_deployments WHERE pool_id=$1",
-#                 pool_id,
-#             )
-#         return await self.db.fetch("SELECT * FROM model_deployments")
-
-#     async def update_state(self, deployment_id: UUID, state: str, tx=None):
-#         query = """
-#         UPDATE model_deployments
-#         SET state=$2
-#         WHERE deployment_id=$1
-#         """
-#         conn = tx or self.db
-#         await conn.execute(query, deployment_id, state)

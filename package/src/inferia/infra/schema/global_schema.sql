@@ -103,6 +103,33 @@ CREATE INDEX IF NOT EXISTS idx_provider_resources_provider_region
     (provider ASC NULLS LAST, region COLLATE pg_catalog."default" ASC NULLS LAST);
 
 -- ------------------------------------------------
+-- PROVIDER CREDENTIALS TABLE (Universal for all providers)
+-- ------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.provider_credentials
+(
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    provider text COLLATE pg_catalog."default" NOT NULL,  -- 'nosana', 'akash', 'aws', etc.
+    name text COLLATE pg_catalog."default" NOT NULL,
+    credential_type text COLLATE pg_catalog."default" NOT NULL,  -- 'api_key', 'wallet', 'mnemonic', 'access_key'
+    credential_value_encrypted text COLLATE pg_catalog."default" NOT NULL,
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT provider_credentials_pkey PRIMARY KEY (id),
+    CONSTRAINT provider_credentials_provider_name_key UNIQUE (provider, name)
+);
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider
+    ON public.provider_credentials USING btree
+    (provider COLLATE pg_catalog."default" ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_name
+    ON public.provider_credentials USING btree
+    (name COLLATE pg_catalog."default" ASC NULLS LAST);
+
+-- Migrate old nosana_api_keys table if exists (for backward compatibility)
+-- DROP TABLE IF EXISTS public.nosana_api_keys;
+
+-- ------------------------------------------------
 -- COMPUTE POOLS TABLE
 -- -----------------------------------------------
 
@@ -127,9 +154,12 @@ CREATE TABLE IF NOT EXISTS public.compute_pools
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     provider_pool_id text COLLATE pg_catalog."default",
+    provider_credential_name text COLLATE pg_catalog."default",  -- References provider_credentials.name for this pool
     CONSTRAINT compute_pools_pkey PRIMARY KEY (id),
     CONSTRAINT compute_pools_pool_name_owner_type_owner_id_key UNIQUE (pool_name, owner_type, owner_id)
 );
+-- Note: provider_credential_name validation is enforced at application level
+-- in ComputePoolManagerService to allow flexible credential lifecycle management
 CREATE INDEX IF NOT EXISTS idx_compute_pools_provider
     ON public.compute_pools USING btree
     (provider ASC NULLS LAST);

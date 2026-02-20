@@ -29,6 +29,7 @@ interface WatchedJobInfo {
     };
     userStopped: boolean;
     serviceUrl?: string;
+    credentialName?: string;        // Which credential was used for this job
 }
 
 async function retry<T>(fn: () => Promise<T>, retries = 5, delay = 500): Promise<T> {
@@ -871,6 +872,7 @@ export class NosanaService {
                 vcpu_allocated: number;
                 ram_gb_allocated: number;
             };
+            credentialName?: string;
         }
     ) {
         const now = Date.now();
@@ -891,6 +893,7 @@ export class NosanaService {
             isConfidential: options?.isConfidential !== undefined ? options.isConfidential : true,
             resources,
             userStopped: false,
+            credentialName: options?.credentialName,
         };
         this.watchedJobs.set(jobAddress, jobInfo);
 
@@ -1127,6 +1130,39 @@ export class NosanaService {
         const total = this.watchedJobs.size;
         if (total > 0) {
             console.log(`[watchdog-summary] Currently watching ${total} jobs.`);
+        }
+    }
+
+    /**
+     * Get all watched job addresses that use a specific credential.
+     * Used when a credential is deleted to warn about running jobs.
+     */
+    getWatchedJobsByCredential(credentialName: string): string[] {
+        const jobAddresses: string[] = [];
+        for (const [jobAddress, jobInfo] of this.watchedJobs.entries()) {
+            if (jobInfo.credentialName === credentialName) {
+                jobAddresses.push(jobAddress);
+            }
+        }
+        return jobAddresses;
+    }
+
+    /**
+     * Get all watched job addresses.
+     */
+    getAllWatchedJobs(): string[] {
+        return Array.from(this.watchedJobs.keys());
+    }
+
+    /**
+     * Mark a job as user-stopped to prevent auto-redeploy.
+     * Called when a credential is deleted and we want to gracefully stop jobs.
+     */
+    markJobForNoRedeploy(jobAddress: string): void {
+        const jobInfo = this.watchedJobs.get(jobAddress);
+        if (jobInfo) {
+            jobInfo.userStopped = true;
+            console.log(`[watchdog] Job ${jobAddress} marked to skip auto-redeploy`);
         }
     }
 }

@@ -42,14 +42,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 encryption_service = None
+encryption_available = False
+
 if settings.log_encryption_key:
     try:
         encryption_service = LogEncryption(settings.log_encryption_key)
+        encryption_available = True
     except Exception as e:
         logger.critical(f"Failed to initialize log encryption: {e}")
         raise RuntimeError(
             f"Log encryption key provided but initialization failed: {e}"
         )
+elif settings.is_production:
+    logger.warning(
+        "LOG_ENCRYPTION_KEY not set in production! Inference logs will NOT be encrypted. "
+        "Set LOG_ENCRYPTION_KEY environment variable to enable encryption."
+    )
 
 router = APIRouter(prefix="/internal", tags=["Internal Inference"])
 router.include_router(auth_router)
@@ -122,20 +130,32 @@ async def _persist_log_background(
 ):
     """Background task to persist inference log."""
     try:
+        # Handle encryption based on availability
+        if encryption_available and encryption_service and log_data.request_payload:
+            request_payload = {
+                "encrypted": True,
+                "ciphertext": encryption_service.encrypt(log_data.request_payload),
+            }
+        elif log_data.request_payload:
+            # Log unencrypted but mark it clearly
+            logger.warning(
+                f"Storing inference log {log_id} WITHOUT encryption - "
+                "LOG_ENCRYPTION_KEY not configured"
+            )
+            request_payload = {
+                "encrypted": False,
+                "plaintext": log_data.request_payload,
+            }
+        else:
+            request_payload = None
+
         log = InferenceLog(
             id=log_id,
             deployment_id=log_data.deployment_id,
             user_id=log_data.user_id,
             ip_address=log_data.ip_address,
             model=log_data.model,
-            request_payload=(
-                {
-                    "encrypted": True,
-                    "ciphertext": encryption_service.encrypt(log_data.request_payload),
-                }
-                if encryption_service and log_data.request_payload
-                else log_data.request_payload
-            ),
+            request_payload=request_payload,
             latency_ms=log_data.latency_ms,
             ttft_ms=log_data.ttft_ms,
             tokens_per_second=log_data.tokens_per_second,
@@ -624,8 +644,68 @@ async def process_prompt(
 @router.get("/config/provider")
 async def get_provider_config_internal(request: Request):
     """
-    Internal endpoint for sidecars to fetch UNMASKED provider config.
+    Internal endpoint for sidecars to fetch masked provider config.
     Protected by Internal API Key (via middleware).
+    Only returns non-sensitive configuration - secrets/keys are masked.
     """
-    # Return the full unmasked config from memory (decrypted by Pydantic/DB load)
+
+    def mask_credentials(config: dict) -> dict:
+        """Recursively mask sensitive fields in provider config."""
+        if not isinstance(config, dict):
+            return config
+
+        masked = {}
+        sensitive_keys = {
+            "key",
+            "api_key",
+            "secret",
+            "secret_access_key",
+            "password",
+            "mnemonic",
+            "token",
+            "credential",
+        }
+
+        for k, v in config.items():
+            if k.lower() in sensitive_keys:
+                if v and isinstance(v, str) and len(v) > 4:
+                    masked[k] = v[:4] + "****"
+                else:
+                    masked[k] = "****"
+            elif isinstance(v, dict):
+                masked[k] = mask_credentials(v)
+            elif isinstance(v, list):
+                masked[k] = [
+                    mask_credentials(item) if isinstance(item, dict) else item
+                    for item in v
+                ]
+            else:
+                masked[k] = v
+
+        return masked
+
+    providers = settings.providers.model_dump()
+    masked_providers = mask_credentials(providers)
+
+    return {"providers": masked_providers}
+
+
+@router.get("/config/credentials")
+async def get_provider_credentials_internal(request: Request):
+    """
+    Internal endpoint for sidecar services to fetch UNMASKED credentials.
+    REQUIRES valid X-Internal-API-Key header - only for service-to-service auth.
+    This endpoint should ONLY be called by trusted internal services.
+    """
+    # Double-check internal API key is present and valid
+    api_key = request.headers.get("X-Internal-API-Key") or request.headers.get(
+        "X-Internal-Key"
+    )
+    if not api_key or api_key != settings.internal_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing internal API key",
+        )
+
+    # Return unmasked credentials only to authenticated internal services
     return {"providers": settings.providers.model_dump()}

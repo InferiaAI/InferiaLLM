@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import os
 from inferia.services.orchestration.repositories.inventory_repo import (
     InventoryRepository,
@@ -14,10 +14,10 @@ router = APIRouter(prefix="/inventory", tags=["Inventory"])
 class HeartbeatPayload(BaseModel):
     provider: str
     provider_instance_id: str
-    gpu_allocated: int = 0
-    vcpu_allocated: int = 0
-    ram_gb_allocated: int = 0
-    health_score: int = 100
+    gpu_allocated: int = Field(default=0, ge=0)
+    vcpu_allocated: int = Field(default=0, ge=0)
+    ram_gb_allocated: int = Field(default=0, ge=0)
+    health_score: int = Field(default=100, ge=0, le=100)
     state: str = "READY"
     expose_url: str | None = None
 

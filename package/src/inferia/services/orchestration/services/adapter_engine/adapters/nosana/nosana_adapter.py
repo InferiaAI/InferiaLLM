@@ -83,7 +83,10 @@ class NosanaAdapter(ProviderAdapter):
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(NOSANA_DISCOVERY_URL) as resp:
+                async with session.get(
+                    NOSANA_DISCOVERY_URL,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
                     if resp.status != 200:
                         logger.error("Nosana discovery failed: %s", resp.status)
                         return []
@@ -137,6 +140,7 @@ class NosanaAdapter(ProviderAdapter):
         region: Optional[str] = None,
         use_spot: bool = False,
         metadata: Optional[Dict] = None,
+        provider_credential_name: Optional[str] = None,
     ) -> Dict:
         if not metadata:
             raise ValueError("NosanaAdapter requires deployment metadata")
@@ -147,7 +151,12 @@ class NosanaAdapter(ProviderAdapter):
         ram_gb_allocated = metadata.get("ram_gb_allocated", 32)
 
         # Extract model config for job builder
-        model_id = metadata.get("model_id") or metadata.get("model_name")
+        model_id = (
+            metadata.get("model_id")
+            or metadata.get("modelId")
+            or metadata.get("model_name")
+            or metadata.get("inference_model")
+        )
         engine = metadata.get("engine", "vllm")
         hf_token = metadata.get("hf_token") or metadata.get("env", {}).get("HF_TOKEN")
 
@@ -207,6 +216,13 @@ class NosanaAdapter(ProviderAdapter):
                 "enable_chunked_prefill": metadata.get("enable_chunked_prefill", False),
                 "quantization": metadata.get("quantization"),
                 "min_vram": metadata.get("min_vram", 12),
+                # Additional config
+                "trust_remote_code": metadata.get("trust_remote_code", True),
+                "cuda_module_loading": metadata.get("cuda_module_loading", "LAZY"),
+                "nvidia_disable_cuda_compat": metadata.get(
+                    "nvidia_disable_cuda_compat", "1"
+                ),
+                "kv_cache_dtype": metadata.get("kv_cache_dtype", "auto"),
             }
 
             job_definition = build_job_definition(
@@ -214,7 +230,7 @@ class NosanaAdapter(ProviderAdapter):
                 model_id=model_id,
                 image=image,
                 hf_token=hf_token,
-                api_key=INTERNAL_API_KEY,
+                api_key=metadata.get("api_key") or INTERNAL_API_KEY,
                 **job_config,
             )
         else:
@@ -276,11 +292,17 @@ class NosanaAdapter(ProviderAdapter):
             },
         }
 
+        # Include credential name if specified (for multi-credential support)
+        if provider_credential_name:
+            payload["credentialName"] = provider_credential_name
+            logger.info(f"Using named credential: {provider_credential_name}")
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/launch",
                     json=payload,
+                    timeout=aiohttp.ClientTimeout(total=60),
                 ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
@@ -303,6 +325,7 @@ class NosanaAdapter(ProviderAdapter):
                             "job_address": job_address,
                             "image": image,
                             "tx": data.get("txSignature"),
+                            "provider_credential_name": provider_credential_name,
                         },
                     }
 
@@ -311,20 +334,30 @@ class NosanaAdapter(ProviderAdapter):
             raise
 
     async def wait_for_ready(
-        self, *, provider_instance_id: str, timeout: int = 300
+        self,
+        *,
+        provider_instance_id: str,
+        timeout: int = 300,
+        provider_credential_name: Optional[str] = None,
     ) -> str:
         """Polls Nosana sidecar until the job is RUNNING."""
-        import asyncio
+        import time
 
         capabilities = self.get_capabilities()
-        start = asyncio.get_event_loop().time()
+        start = time.monotonic()
         poll_interval = capabilities.polling_interval_seconds
 
         async with aiohttp.ClientSession() as session:
             while True:
                 try:
+                    params = {}
+                    if provider_credential_name:
+                        params["credentialName"] = provider_credential_name
+
                     async with session.get(
-                        f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}"
+                        f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
                         if resp.status == 200:
                             job = await resp.json()
@@ -349,27 +382,48 @@ class NosanaAdapter(ProviderAdapter):
                 except Exception as e:
                     logger.warning(f"Error polling Nosana readiness: {e}")
 
-                if asyncio.get_event_loop().time() - start > timeout:
+                if time.monotonic() - start > timeout:
                     raise RuntimeError(f"Nosana job {provider_instance_id} timed out")
 
                 await asyncio.sleep(poll_interval)
 
-    async def deprovision_node(self, *, provider_instance_id: str) -> None:
+    async def deprovision_node(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
         try:
+            payload = {"jobAddress": provider_instance_id}
+            if provider_credential_name:
+                payload["credentialName"] = provider_credential_name
+
             async with aiohttp.ClientSession() as session:
                 await session.post(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/stop",
-                    json={"jobAddress": provider_instance_id},
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=30),
                 )
         except Exception:
             logger.exception("Nosana deprovision error")
             raise
 
-    async def get_logs(self, *, provider_instance_id: str) -> Dict:
+    async def get_logs(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs"
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs",
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
                         return {"logs": ["Failed to fetch logs"]}
@@ -388,11 +442,22 @@ class NosanaAdapter(ProviderAdapter):
             logger.exception("Nosana get_logs error")
             return {"logs": ["Internal error fetching logs"]}
 
-    async def get_log_streaming_info(self, *, provider_instance_id: str) -> Dict:
+    async def get_log_streaming_info(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
         try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}"
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
                         raise RuntimeError(f"Failed to fetch job details")
@@ -407,7 +472,7 @@ class NosanaAdapter(ProviderAdapter):
             ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
                 "https://", "wss://"
             )
-            return {
+            info = {
                 "ws_url": ws_url,
                 "provider": "nosana",
                 "subscription": {
@@ -417,6 +482,9 @@ class NosanaAdapter(ProviderAdapter):
                     "nodeAddress": node_address or "none",
                 },
             }
+            if provider_credential_name:
+                info["subscription"]["credentialName"] = provider_credential_name
+            return info
         except Exception as e:
             logger.warning(f"Nosana get_log_streaming_info warning: {e}")
             return {"error": str(e)}

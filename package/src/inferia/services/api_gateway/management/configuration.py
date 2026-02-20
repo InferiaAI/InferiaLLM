@@ -14,9 +14,19 @@ def utcnow_naive():
 
 
 from inferia.services.api_gateway.db.database import get_db
-from inferia.services.api_gateway.db.models import Policy as DBPolicy, Usage as DBUsage, ApiKey as DBApiKey
-from inferia.services.api_gateway.schemas.config import ConfigUpdateRequest, ConfigResponse, UsageStatsResponse
-from inferia.services.api_gateway.management.dependencies import get_current_user_context
+from inferia.services.api_gateway.db.models import (
+    Policy as DBPolicy,
+    Usage as DBUsage,
+    ApiKey as DBApiKey,
+)
+from inferia.services.api_gateway.schemas.config import (
+    ConfigUpdateRequest,
+    ConfigResponse,
+    UsageStatsResponse,
+)
+from inferia.services.api_gateway.management.dependencies import (
+    get_current_user_context,
+)
 
 # New imports for local provider config
 from pydantic import BaseModel, Field
@@ -31,6 +41,7 @@ from inferia.services.api_gateway.config import (
     GroqConfig,
     LakeraConfig,
     NosanaConfig,
+    ProviderCredential,
     AkashConfig,
     CloudConfig,
     VectorDBConfig,
@@ -86,6 +97,14 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
         masked.depin.nosana.wallet_private_key = "********"
     if masked.depin.nosana.api_key:
         masked.depin.nosana.api_key = _mask_secret(masked.depin.nosana.api_key)
+    # Mask named credentials in api_keys list
+    for i, entry in enumerate(masked.depin.nosana.api_keys):
+        if isinstance(entry, dict):
+            if entry.get("key"):
+                entry["key"] = _mask_secret(entry["key"])
+        else:
+            if entry.key:
+                entry.key = _mask_secret(entry.key)
     if masked.depin.akash.mnemonic:
         masked.depin.akash.mnemonic = "********"
 
@@ -286,3 +305,425 @@ async def get_config(
         )
 
     return policy
+
+
+# --- Universal Provider Credential Management ---
+# Works for ANY provider (nosana, akash, aws, etc.)
+
+
+class ProviderCredentialCreate(BaseModel):
+    name: str
+    credential_type: str  # e.g., 'api_key', 'wallet', 'mnemonic', 'access_key'
+    value: str
+
+
+class ProviderCredentialUpdate(BaseModel):
+    name: str
+    credential_type: Optional[str] = None
+    value: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ProviderCredentialResponse(BaseModel):
+    provider: str
+    name: str
+    credential_type: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+
+
+class ProviderCredentialListResponse(BaseModel):
+    credentials: List[ProviderCredentialResponse]
+
+
+def _mask_credential(value: str) -> str:
+    """Mask credential for display: show first 4 and last 4 chars."""
+    if not value or len(value) < 8:
+        return "****"
+    return f"{value[:4]}****{value[-4:]}"
+
+
+# Legacy migration: Convert old nosana config to new credential system
+def _get_nosana_credentials_from_config() -> List[ProviderCredential]:
+    """Extract nosana credentials from legacy config for migration."""
+    credentials = []
+    nosana_config = settings.providers.depin.nosana
+
+    # Migrate legacy api_key
+    if nosana_config.api_key:
+        credentials.append(
+            ProviderCredential(
+                provider="nosana",
+                name="default",
+                credential_type="api_key",
+                value=nosana_config.api_key,
+                is_active=True,
+            )
+        )
+
+    # Migrate api_keys list from config (using raw dict access for backward compatibility)
+    raw_config = settings.providers.model_dump()
+    api_keys = raw_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
+    for api_key_entry in api_keys:
+        # Check if this key is not the legacy one already added
+        if api_key_entry.get("key") != nosana_config.api_key:
+            credentials.append(
+                ProviderCredential(
+                    provider="nosana",
+                    name=api_key_entry.get("name", "unnamed"),
+                    credential_type="api_key",
+                    value=api_key_entry.get("key", ""),
+                    is_active=api_key_entry.get("is_active", True),
+                )
+            )
+
+    return credentials
+
+
+@router.get(
+    "/config/providers/{provider}/credentials",
+    response_model=ProviderCredentialListResponse,
+)
+async def list_provider_credentials(
+    provider: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all credentials for a provider (with masked values).
+    Requires Admin role.
+    Works for ANY provider: nosana, akash, aws, etc.
+    """
+    user_ctx = get_current_user_context(request)
+    if "admin" not in user_ctx.roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only admins can view {provider} credentials",
+        )
+
+    # TODO: In production, fetch from provider_credentials table
+    # For now, use config-based storage with migration
+    credentials = []
+
+    if provider == "nosana":
+        credentials = _get_nosana_credentials_from_config()
+    elif provider == "akash":
+        # Check for legacy mnemonic
+        mnemonic = settings.providers.depin.akash.mnemonic
+        if mnemonic:
+            credentials.append(
+                ProviderCredential(
+                    provider="akash",
+                    name="default",
+                    credential_type="mnemonic",
+                    value=mnemonic,
+                    is_active=True,
+                )
+            )
+
+    return ProviderCredentialListResponse(
+        credentials=[
+            ProviderCredentialResponse(
+                provider=c.provider,
+                name=c.name,
+                credential_type=c.credential_type,
+                is_active=c.is_active,
+                created_at=None,  # Will be added when persisted to DB
+            )
+            for c in credentials
+        ]
+    )
+
+
+@router.post("/config/providers/{provider}/credentials")
+async def add_provider_credential(
+    provider: str,
+    credential_data: ProviderCredentialCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Add a new credential for any provider.
+    Requires Admin role.
+
+    Examples:
+    - provider="nosana", credential_type="api_key"
+    - provider="akash", credential_type="mnemonic"
+    - provider="aws", credential_type="access_key"
+    """
+    user_ctx = get_current_user_context(request)
+    if "admin" not in user_ctx.roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only admins can add {provider} credentials",
+        )
+
+    from inferia.services.api_gateway.management.config_manager import config_manager
+
+    # Build new credential
+    new_credential = ProviderCredential(
+        provider=provider,
+        name=credential_data.name,
+        credential_type=credential_data.credential_type,
+        value=credential_data.value,
+        is_active=True,
+    )
+
+    # Get current config
+    current_config = settings.providers.model_dump()
+
+    # Store based on provider type
+    if provider == "nosana":
+        if "depin" not in current_config:
+            current_config["depin"] = {}
+        if "nosana" not in current_config["depin"]:
+            current_config["depin"]["nosana"] = {}
+        if "api_keys" not in current_config["depin"]["nosana"]:
+            current_config["depin"]["nosana"]["api_keys"] = []
+
+        # Check for duplicate names
+        existing_names = {
+            k["name"] for k in current_config["depin"]["nosana"]["api_keys"]
+        }
+        if credential_data.name in existing_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Credential with name '{credential_data.name}' already exists for {provider}",
+            )
+
+        current_config["depin"]["nosana"]["api_keys"].append(
+            {
+                "name": new_credential.name,
+                "key": new_credential.value,
+                "is_active": new_credential.is_active,
+            }
+        )
+    elif provider == "akash":
+        # For akash, we might store in a different structure
+        # This shows how easy it is to extend to new providers
+        if "depin" not in current_config:
+            current_config["depin"] = {}
+        if "akash" not in current_config["depin"]:
+            current_config["depin"]["akash"] = {}
+        if "wallets" not in current_config["depin"]["akash"]:
+            current_config["depin"]["akash"]["wallets"] = []
+
+        current_config["depin"]["akash"]["wallets"].append(
+            {
+                "name": new_credential.name,
+                "mnemonic": new_credential.value,
+                "is_active": new_credential.is_active,
+            }
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider}' not yet supported for credential management",
+        )
+
+    db_config = {"providers": current_config}
+
+    try:
+        await config_manager.save_config(db, db_config)
+        logger.info(f"Added new credential for {provider}: {credential_data.name}")
+    except Exception as e:
+        logger.error(f"Failed to add credential: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save credential: {e}")
+
+    return {
+        "status": "ok",
+        "message": f"Credential '{credential_data.name}' added successfully for {provider}",
+        "provider": provider,
+        "name": credential_data.name,
+    }
+
+
+@router.put("/config/providers/{provider}/credentials/{credential_name}")
+async def update_provider_credential(
+    provider: str,
+    credential_name: str,
+    credential_data: ProviderCredentialUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update a credential for any provider.
+    Requires Admin role.
+    """
+    user_ctx = get_current_user_context(request)
+    if "admin" not in user_ctx.roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only admins can update {provider} credentials",
+        )
+
+    from inferia.services.api_gateway.management.config_manager import config_manager
+
+    current_config = settings.providers.model_dump()
+    updated = False
+
+    if provider == "nosana":
+        api_keys = current_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
+        for key_config in api_keys:
+            if key_config["name"] == credential_name:
+                if credential_data.value is not None:
+                    key_config["key"] = credential_data.value
+                if credential_data.is_active is not None:
+                    key_config["is_active"] = credential_data.is_active
+                updated = True
+                break
+    elif provider == "akash":
+        wallets = current_config.get("depin", {}).get("akash", {}).get("wallets", [])
+        for wallet_config in wallets:
+            if wallet_config["name"] == credential_name:
+                if credential_data.value is not None:
+                    wallet_config["mnemonic"] = credential_data.value
+                if credential_data.is_active is not None:
+                    wallet_config["is_active"] = credential_data.is_active
+                updated = True
+                break
+
+    if not updated:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Credential '{credential_name}' not found for {provider}",
+        )
+
+    db_config = {"providers": current_config}
+
+    try:
+        await config_manager.save_config(db, db_config)
+        logger.info(f"Updated credential for {provider}: {credential_name}")
+    except Exception as e:
+        logger.error(f"Failed to update credential: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update credential: {e}")
+
+    return {
+        "status": "ok",
+        "message": f"Credential '{credential_name}' updated successfully for {provider}",
+    }
+
+
+@router.delete("/config/providers/{provider}/credentials/{credential_name}")
+async def delete_provider_credential(
+    provider: str,
+    credential_name: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a credential for any provider.
+    Requires Admin role.
+    """
+    user_ctx = get_current_user_context(request)
+    if "admin" not in user_ctx.roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only admins can delete {provider} credentials",
+        )
+
+    from inferia.services.api_gateway.management.config_manager import config_manager
+
+    current_config = settings.providers.model_dump()
+    deleted = False
+
+    if provider == "nosana":
+        api_keys = current_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
+        for i, key_config in enumerate(api_keys):
+            if key_config["name"] == credential_name:
+                api_keys.pop(i)
+                deleted = True
+                break
+    elif provider == "akash":
+        wallets = current_config.get("depin", {}).get("akash", {}).get("wallets", [])
+        for i, wallet_config in enumerate(wallets):
+            if wallet_config["name"] == credential_name:
+                wallets.pop(i)
+                deleted = True
+                break
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Credential '{credential_name}' not found for {provider}",
+        )
+
+    db_config = {"providers": current_config}
+
+    try:
+        await config_manager.save_config(db, db_config)
+        logger.info(f"Deleted credential for {provider}: {credential_name}")
+    except Exception as e:
+        logger.error(f"Failed to delete credential: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete credential: {e}")
+
+    return {
+        "status": "ok",
+        "message": f"Credential '{credential_name}' deleted successfully for {provider}",
+    }
+
+
+# Legacy endpoints for backward compatibility (redirect to new universal endpoints)
+@router.get("/config/providers/nosana/keys")
+async def list_nosana_api_keys_legacy(
+    request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Legacy endpoint - redirects to universal credential system."""
+    return await list_provider_credentials("nosana", request, db)
+
+
+@router.post("/config/providers/nosana/keys")
+async def add_nosana_api_key_legacy(
+    key_data: ProviderCredentialCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Legacy endpoint - redirects to universal credential system."""
+    return await add_provider_credential("nosana", key_data, request, db)
+
+
+@router.delete("/config/providers/nosana/keys/{key_name}")
+async def delete_nosana_api_key(
+    key_name: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a nosana API key.
+    Requires Admin role.
+    """
+    user_ctx = get_current_user_context(request)
+    if "admin" not in user_ctx.roles:
+        raise HTTPException(
+            status_code=403, detail="Only admins can delete nosana API keys"
+        )
+
+    from inferia.services.api_gateway.management.config_manager import config_manager
+
+    # Find and remove the key from raw config
+    current_config = settings.providers.model_dump()
+    api_keys = current_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
+    key_index = None
+    for i, k in enumerate(api_keys):
+        if k.get("name") == key_name:
+            key_index = i
+            break
+
+    if key_index is None:
+        raise HTTPException(
+            status_code=404, detail=f"API key with name '{key_name}' not found"
+        )
+
+    # Remove the key
+    api_keys.pop(key_index)
+
+    db_config = {"providers": current_config}
+
+    try:
+        await config_manager.save_config(db, db_config)
+        logger.info(f"Deleted nosana API key: {key_name}")
+    except Exception as e:
+        logger.error(f"Failed to delete nosana API key: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete API key: {e}")
+
+    return {"status": "ok", "message": f"API key '{key_name}' deleted successfully"}
