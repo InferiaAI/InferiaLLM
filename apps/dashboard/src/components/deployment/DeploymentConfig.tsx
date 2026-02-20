@@ -156,12 +156,44 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
             if (isVllm) {
                 updatedConfig.image = vllmImage
                 if (updatedConfig.cmd) {
-                    const mLenIdx = updatedConfig.cmd.indexOf("--max-model-len")
-                    if (mLenIdx !== -1) updatedConfig.cmd[mLenIdx + 1] = maxModelLen
-                    const gUtilIdx = updatedConfig.cmd.indexOf("--gpu-memory-utilization")
-                    if (gUtilIdx !== -1) updatedConfig.cmd[gUtilIdx + 1] = gpuUtil
+                    // Helper to update or append flag with value
+                    const updateFlag = (flag: string, value: string) => {
+                        const idx = updatedConfig.cmd.indexOf(flag)
+                        if (idx !== -1) updatedConfig.cmd[idx + 1] = value
+                        else updatedConfig.cmd.push(flag, value)
+                    }
+                    // Helper to toggle boolean flag
+                    const toggleFlag = (flag: string, enabled: boolean) => {
+                        const idx = updatedConfig.cmd.indexOf(flag)
+                        if (enabled && idx === -1) updatedConfig.cmd.push(flag)
+                        else if (!enabled && idx !== -1) updatedConfig.cmd.splice(idx, 1)
+                    }
+
+                    updateFlag("--max-model-len", maxModelLen || "8192")
+                    updateFlag("--gpu-memory-utilization", gpuUtil || "0.95")
+                    updateFlag("--max-num-seqs", maxNumSeqs || "256")
+                    updateFlag("--dtype", dtype || "auto")
+                    updateFlag("--kv-cache-dtype", kvCacheDtype || "auto")
+
+                    if (quantization) updateFlag("--quantization", quantization)
+
+                    toggleFlag("--trust-remote-code", trustRemoteCode)
+                    toggleFlag("--enforce-eager", enforceEager)
+                    toggleFlag("--enable-chunked-prefill", enableChunkedPrefill)
                 }
-                if (hfToken) updatedConfig.env = { ...updatedConfig.env, HF_TOKEN: hfToken }
+
+                if (hfToken) {
+                    updatedConfig.env = { ...updatedConfig.env, HF_TOKEN: hfToken }
+                }
+
+                if (cudaModuleLoading || nvidiaDisableCudaCompat) {
+                    updatedConfig.env = {
+                        ...updatedConfig.env,
+                        ...(cudaModuleLoading ? { CUDA_MODULE_LOADING: cudaModuleLoading } : {}),
+                        ...(nvidiaDisableCudaCompat ? { NVIDIA_DISABLE_CUDA_COMPAT: nvidiaDisableCudaCompat } : {})
+                    }
+                }
+
                 // Save advanced config as metadata
                 updatedConfig.dtype = dtype;
                 updatedConfig.enforce_eager = enforceEager;
@@ -198,10 +230,10 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                     <div className="lg:col-span-2 space-y-6">
                         <GeneralSettings replicas={replicas} inferenceModel={inferenceModel} dispatch={dispatch} />
                         <AnimatePresence mode="wait">
-                            {isVllm && <VllmSettings 
-                                vllmImage={vllmImage} 
-                                maxModelLen={maxModelLen} 
-                                gpuUtil={gpuUtil} 
+                            {isVllm && <VllmSettings
+                                vllmImage={vllmImage}
+                                maxModelLen={maxModelLen}
+                                gpuUtil={gpuUtil}
                                 dtype={dtype}
                                 enforceEager={enforceEager}
                                 maxNumSeqs={maxNumSeqs}
@@ -213,7 +245,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                                 quantization={quantization}
                                 isAdvancedOpen={isAdvancedOpen}
                                 setIsAdvancedOpen={setIsAdvancedOpen}
-                                dispatch={dispatch} 
+                                dispatch={dispatch}
                             />}
                             {isTraining && <TrainingSettings gitRepo={gitRepo} trainingScript={trainingScript} datasetUrl={datasetUrl} dispatch={dispatch} />}
                         </AnimatePresence>
@@ -255,17 +287,17 @@ function GeneralSettings({ replicas, inferenceModel, dispatch }: { replicas: num
     );
 }
 
-function VllmSettings({ 
-    vllmImage, maxModelLen, gpuUtil, 
+function VllmSettings({
+    vllmImage, maxModelLen, gpuUtil,
     dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization,
-    isAdvancedOpen, setIsAdvancedOpen, dispatch 
-}: { 
+    isAdvancedOpen, setIsAdvancedOpen, dispatch
+}: {
     vllmImage: string; maxModelLen: string; gpuUtil: string;
     dtype: string; enforceEager: boolean; maxNumSeqs: string;
     enableChunkedPrefill: boolean; kvCacheDtype: string; trustRemoteCode: boolean;
     cudaModuleLoading: string; nvidiaDisableCudaCompat: string; quantization: string;
     isAdvancedOpen: boolean; setIsAdvancedOpen: (open: boolean) => void;
-    dispatch: React.Dispatch<Action> 
+    dispatch: React.Dispatch<Action>
 }) {
     return (
         <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-all duration-300">
@@ -276,21 +308,21 @@ function VllmSettings({
                     <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
                     <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
                 </div>
-                
+
                 {/* Advanced Config Section */}
                 <div className="border-t border-border pt-4">
-                    <button 
+                    <button
                         onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
                         className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-emerald-500 transition-colors"
                     >
                         {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         Advanced Configuration
                     </button>
-                    
+
                     {isAdvancedOpen && (
-                        <m.div 
-                            initial={{ opacity: 0, height: 0 }} 
-                            animate={{ opacity: 1, height: "auto" }} 
+                        <m.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
                             exit={{ opacity: 0, height: 0 }}
                             className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4"
                         >
@@ -303,7 +335,7 @@ function VllmSettings({
                                     <option value="float32">float32</option>
                                 </select>
                             </div>
-                            
+
                             <div className="space-y-2">
                                 <label htmlFor="kv-cache-dtype" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">KV Cache dtype</label>
                                 <select id="kv-cache-dtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
@@ -313,12 +345,12 @@ function VllmSettings({
                                     <option value="fp8_e5m2">fp8_e5m2</option>
                                 </select>
                             </div>
-                            
+
                             <div className="space-y-2">
                                 <label htmlFor="max-num-seqs" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Num Sequences</label>
                                 <input id="max-num-seqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" />
                             </div>
-                            
+
                             <div className="space-y-2">
                                 <label htmlFor="quantization" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Quantization</label>
                                 <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
@@ -328,57 +360,57 @@ function VllmSettings({
                                     <option value="squeezellm">SqueezeLLM</option>
                                 </select>
                             </div>
-                            
+
                             <div className="flex items-center gap-3">
-                                <input 
-                                    id="trust-remote-code" 
-                                    type="checkbox" 
-                                    checked={trustRemoteCode} 
-                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })} 
+                                <input
+                                    id="trust-remote-code"
+                                    type="checkbox"
+                                    checked={trustRemoteCode}
+                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })}
                                     className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
                                 />
                                 <label htmlFor="trust-remote-code" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Trust Remote Code</label>
                             </div>
-                            
+
                             <div className="flex items-center gap-3">
-                                <input 
-                                    id="enforce-eager" 
-                                    type="checkbox" 
-                                    checked={enforceEager} 
-                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: e.target.checked })} 
+                                <input
+                                    id="enforce-eager"
+                                    type="checkbox"
+                                    checked={enforceEager}
+                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: e.target.checked })}
                                     className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
                                 />
                                 <label htmlFor="enforce-eager" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enforce Eager Mode</label>
                             </div>
-                            
+
                             <div className="flex items-center gap-3">
-                                <input 
-                                    id="enable-chunked-prefill" 
-                                    type="checkbox" 
-                                    checked={enableChunkedPrefill} 
-                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enableChunkedPrefill', value: e.target.checked })} 
+                                <input
+                                    id="enable-chunked-prefill"
+                                    type="checkbox"
+                                    checked={enableChunkedPrefill}
+                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enableChunkedPrefill', value: e.target.checked })}
                                     className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
                                 />
                                 <label htmlFor="enable-chunked-prefill" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enable Chunked Prefill</label>
                             </div>
-                            
+
                             <div className="flex items-center gap-3">
-                                <input 
-                                    id="cuda-module-loading" 
-                                    type="checkbox" 
-                                    checked={!!cudaModuleLoading} 
-                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'cudaModuleLoading', value: e.target.checked ? "LAZY" : "" })} 
+                                <input
+                                    id="cuda-module-loading"
+                                    type="checkbox"
+                                    checked={!!cudaModuleLoading}
+                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'cudaModuleLoading', value: e.target.checked ? "LAZY" : "" })}
                                     className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
                                 />
                                 <label htmlFor="cuda-module-loading" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">CUDA Module Loading: LAZY</label>
                             </div>
-                            
+
                             <div className="flex items-center gap-3">
-                                <input 
-                                    id="nvidia-disable-cuda-compat" 
-                                    type="checkbox" 
-                                    checked={!!nvidiaDisableCudaCompat} 
-                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'nvidiaDisableCudaCompat', value: e.target.checked ? "1" : "" })} 
+                                <input
+                                    id="nvidia-disable-cuda-compat"
+                                    type="checkbox"
+                                    checked={!!nvidiaDisableCudaCompat}
+                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'nvidiaDisableCudaCompat', value: e.target.checked ? "1" : "" })}
                                     className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
                                 />
                                 <label htmlFor="nvidia-disable-cuda-compat" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">NVIDIA Disable CUDA Compat</label>

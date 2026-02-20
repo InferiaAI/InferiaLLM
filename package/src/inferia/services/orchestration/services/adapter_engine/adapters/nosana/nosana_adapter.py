@@ -151,7 +151,12 @@ class NosanaAdapter(ProviderAdapter):
         ram_gb_allocated = metadata.get("ram_gb_allocated", 32)
 
         # Extract model config for job builder
-        model_id = metadata.get("model_id") or metadata.get("model_name")
+        model_id = (
+            metadata.get("model_id")
+            or metadata.get("modelId")
+            or metadata.get("model_name")
+            or metadata.get("inference_model")
+        )
         engine = metadata.get("engine", "vllm")
         hf_token = metadata.get("hf_token") or metadata.get("env", {}).get("HF_TOKEN")
 

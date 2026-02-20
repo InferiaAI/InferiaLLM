@@ -495,13 +495,18 @@ export default function NewDeployment() {
   // Split vLLM Logic into dedicated function to avoid multiple setState calls in one effect
   const buildJobSpec = useCallback(() => {
     if (selectedEngine === "vllm" && modelType === "inference") {
+      const finalMaxNumSeqs = maxNumSeqs || "256";
+      const finalMaxModelLen = maxModelLen || "8192";
+      const finalGpuUtil = gpuUtil || "0.95";
+      const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
+
       const cmd = [
-        "--model", modelId || "meta-llama/Meta-Llama-3-8B-Instruct",
-        "--served-model-name", modelId || "meta-llama/Meta-Llama-3-8B-Instruct",
+        "--model", finalModelId,
+        "--served-model-name", finalModelId,
         "--port", "9000",
-        "--max-model-len", maxModelLen,
-        "--gpu-memory-utilization", gpuUtil,
-        "--max-num-seqs", maxNumSeqs || "256",
+        "--max-model-len", finalMaxModelLen,
+        "--gpu-memory-utilization", finalGpuUtil,
+        "--max-num-seqs", finalMaxNumSeqs,
         "--dtype", dtype,
       ]
 
@@ -529,17 +534,18 @@ export default function NewDeployment() {
       if (nvidiaDisableCudaCompat) env["NVIDIA_DISABLE_CUDA_COMPAT"] = nvidiaDisableCudaCompat
 
       const spec = {
+        model_id: finalModelId,
+        engine: "vllm",
         image: vllmImage,
         cmd,
         env,
-        expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: modelId || "meta-llama/Meta-Llama-3-8B-Instruct", messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
+        expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
         gpu: true,
-        // Store advanced config as metadata for backend
-        gpu_util: parseFloat(gpuUtil) || 0.95,
-        max_model_len: parseInt(maxModelLen) || 8192,
+        gpu_util: parseFloat(finalGpuUtil) || 0.95,
+        max_model_len: parseInt(finalMaxModelLen) || 8192,
         dtype: dtype,
         enforce_eager: enforceEager,
-        max_num_seqs: parseInt(maxNumSeqs) || 256,
+        max_num_seqs: parseInt(finalMaxNumSeqs) || 256,
         enable_chunked_prefill: enableChunkedPrefill,
         kv_cache_dtype: kvCacheDtype,
         trust_remote_code: trustRemoteCode,
