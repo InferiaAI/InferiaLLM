@@ -62,8 +62,8 @@ class ModelDeploymentRepository(BaseRepository):
             except json.JSONDecodeError:
                 policies = "{}"
 
-        async with self.db.acquire() as c:
-            await c.execute(
+        if tx:
+            await tx.execute(
                 q,
                 deployment_id,
                 model_id,
@@ -81,6 +81,26 @@ class ModelDeploymentRepository(BaseRepository):
                 inference_model,
                 model_type,
             )
+        else:
+            async with self.db.acquire() as c:
+                await c.execute(
+                    q,
+                    deployment_id,
+                    model_id,
+                    pool_id,
+                    replicas,
+                    gpu_per_replica,
+                    state,
+                    engine,
+                    configuration,
+                    endpoint,
+                    model_name,
+                    owner_id,
+                    org_id,
+                    policies,
+                    inference_model,
+                    model_type,
+                )
 
         # await self.event_bus.publish(
         #     "model.deploy.requested",
@@ -96,14 +116,17 @@ class ModelDeploymentRepository(BaseRepository):
         #     },
         # )
 
-    async def update_state(self, deployment_id: UUID, state: str):
+    async def update_state(self, deployment_id: UUID, state: str, tx=None):
         q = """
         UPDATE model_deployments
         SET state=$2, updated_at=now()
         WHERE deployment_id=$1
         """
-        async with self.db.acquire() as c:
-            await c.execute(q, deployment_id, state)
+        if tx:
+            await tx.execute(q, deployment_id, state)
+        else:
+            async with self.db.acquire() as c:
+                await c.execute(q, deployment_id, state)
 
         await self.event_bus.publish(
             "deployment.state_changed",

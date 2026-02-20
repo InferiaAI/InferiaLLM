@@ -201,13 +201,6 @@ class ModelDeploymentController:
         self,
         deployment_id: UUID,
     ) -> None:
-        # async with self.deployments.transaction() as tx:
-        #     await self.deployments.update_state(
-        #         deployment_id,
-        #         "DELETING",
-        #         tx=tx,
-        #     )
-
         d = await self.deployments.get(deployment_id)
         if not d:
             raise ValueError("Deployment not found")
@@ -215,17 +208,18 @@ class ModelDeploymentController:
         if d["state"] in ("TERMINATED", "TERMINATING"):
             return
 
-        await self.deployments.update_state(deployment_id, "TERMINATING")
+        async with self.deployments.transaction() as tx:
+            await self.deployments.update_state(deployment_id, "TERMINATING", tx=tx)
 
-        await self.outbox.enqueue(
-            aggregate_type="model_deployment",
-            aggregate_id=deployment_id,
-            event_type="model.deployment.terminate",
-            payload={
-                "deployment_id": str(deployment_id),
-            },
-            # tx=tx,
-        )
+            await self.outbox.enqueue(
+                aggregate_type="model_deployment",
+                aggregate_id=deployment_id,
+                event_type="model.deployment.terminate",
+                payload={
+                    "deployment_id": str(deployment_id),
+                },
+                tx=tx,
+            )
 
         await self.event_bus.publish(
             "model.terminate.requested",

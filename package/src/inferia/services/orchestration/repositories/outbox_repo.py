@@ -3,6 +3,7 @@
 import json
 from typing import List
 from uuid import UUID
+
 # from datetime import datetime
 from inferia.services.orchestration.repositories.base_repo import BaseRepository
 
@@ -30,15 +31,16 @@ class OutboxRepository(BaseRepository):
         aggregate_id: UUID,
         event_type: str,
         payload: dict,
-        tx=None
+        tx=None,
     ) -> None:
         """
         Insert an event into the outbox.
 
         MUST be called inside an existing DB transaction.
+        If tx is provided, uses that connection; otherwise uses the pool.
         """
-
-        await self.db.execute(
+        conn = tx or self.db
+        await conn.execute(
             """
             INSERT INTO outbox_events (
                 aggregate_type,

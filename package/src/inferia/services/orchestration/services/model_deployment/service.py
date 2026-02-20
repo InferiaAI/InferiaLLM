@@ -13,10 +13,15 @@ from inferia.services.orchestration.v1 import (
 def parse_uuid(value: str, field: str, context):
     try:
         return UUID(value)
-    except Exception:
+    except ValueError:
         context.abort(
             grpc.StatusCode.INVALID_ARGUMENT,
-            f"Invalid UUID for field '{field}'",
+            f"Invalid UUID for field '{field}': {value}",
+        )
+    except (TypeError, AttributeError):
+        context.abort(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            f"Expected string for field '{field}', got {type(value).__name__}",
         )
 
 
