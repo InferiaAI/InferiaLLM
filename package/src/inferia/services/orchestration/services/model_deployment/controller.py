@@ -282,3 +282,39 @@ class ModelDeploymentController:
         )
 
         return "PENDING"
+
+    async def update_deployment(
+        self,
+        *,
+        deployment_id: UUID,
+        configuration: Optional[str] = None,
+        inference_model: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        replicas: Optional[int] = None,
+    ) -> None:
+        """
+        Update an existing deployment.
+        """
+        d = await self.deployments.get(deployment_id)
+        if not d:
+            raise ValueError("Deployment not found")
+
+        await self.deployments.update(
+            deployment_id=deployment_id,
+            configuration=configuration,
+            inference_model=inference_model,
+            endpoint=endpoint,
+            replicas=replicas,
+        )
+
+        # Emit event for tracking
+        await self.event_bus.publish(
+            "model.deployment.updated",
+            {
+                "deployment_id": str(deployment_id),
+                "configuration": configuration,
+                "inference_model": inference_model,
+                "endpoint": endpoint,
+                "replicas": replicas,
+            },
+        )

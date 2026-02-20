@@ -20,6 +20,9 @@ service ModelDeploymentService {
 
   rpc StartDeployment (StartDeploymentRequest)
       returns (StartDeploymentResponse);
+
+  rpc UpdateDeployment (UpdateDeploymentRequest)
+      returns (UpdateDeploymentResponse);
 }
 
 /* -------------------------
@@ -132,4 +135,23 @@ message StartDeploymentRequest {
 message StartDeploymentResponse {
   bool accepted = 1;
   string state = 2; // pending
+}
+
+/* -------------------------
+   UPDATE
+------------------------- */
+
+message UpdateDeploymentRequest {
+  string deployment_id = 1;
+
+  // Fields that can be updated
+  optional string configuration = 2;   // JSON string
+  optional string inference_model = 3; // model ID
+  optional string endpoint = 4;        // endpoint URL
+  optional int32 replicas = 5;         // replica count
+}
+
+message UpdateDeploymentResponse {
+  bool success = 1;
+  string message = 2;
 }

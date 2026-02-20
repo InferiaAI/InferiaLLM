@@ -55,6 +55,13 @@ class TerminateDeploymentRequest(BaseModel):
     deployment_id: str
 
 
+class UpdateDeploymentRequest(BaseModel):
+    configuration: dict | None = None
+    inference_model: str | None = None
+    endpoint: str | None = None
+    replicas: int | None = None
+
+
 class CreatePoolRequest(BaseModel):
     pool_name: str
     owner_type: str
@@ -208,6 +215,44 @@ async def get_deployment_status(deployment_id: str):
         "engine": resp.engine,
         "inference_model": resp.inference_model,
     }
+
+
+@router.patch("/update/{deployment_id}")
+async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
+    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+        stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
+
+        try:
+            update_kwargs = {"deployment_id": deployment_id}
+            if req.configuration is not None:
+                update_kwargs["configuration"] = json.dumps(req.configuration)
+            if req.inference_model is not None:
+                update_kwargs["inference_model"] = req.inference_model
+            if req.endpoint is not None:
+                update_kwargs["endpoint"] = req.endpoint
+            if req.replicas is not None:
+                update_kwargs["replicas"] = req.replicas
+
+            resp = await stub.UpdateDeployment(
+                model_deployment_pb2.UpdateDeploymentRequest(**update_kwargs)
+            )
+
+            # Log Audit Event
+            await log_audit_event(
+                user_id=None,  # Need to get from context if possible
+                action="deployment.update",
+                resource_type="deployment",
+                resource_id=deployment_id,
+                details=req.model_dump(exclude_none=True),
+            )
+
+            return {"success": resp.success, "message": resp.message}
+
+        except grpc.RpcError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Update failed: {e.details()}",
+            )
 
 
 @router.post("/terminate")

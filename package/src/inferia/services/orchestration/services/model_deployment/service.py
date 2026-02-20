@@ -174,9 +174,30 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
     # -------------------------------------------------
     # DELETE
     # -------------------------------------------------
+
     async def DeleteDeployment(self, request, context):
         deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
 
         await self.controller.request_delete(deployment_id)
 
         return model_deployment_pb2.DeleteDeploymentResponse(accepted=True)
+
+    async def UpdateDeployment(self, request, context):
+        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
+
+        try:
+            await self.controller.update_deployment(
+                deployment_id=deployment_id,
+                configuration=request.configuration if request.HasField("configuration") else None,
+                inference_model=request.inference_model if request.HasField("inference_model") else None,
+                endpoint=request.endpoint if request.HasField("endpoint") else None,
+                replicas=request.replicas if request.HasField("replicas") else None,
+            )
+            return model_deployment_pb2.UpdateDeploymentResponse(
+                success=True, message="Deployment updated successfully"
+            )
+        except ValueError as e:
+            await context.abort(grpc.StatusCode.NOT_FOUND, str(e))
+        except Exception as e:
+            logger.exception("Failed to update deployment")
+            await context.abort(grpc.StatusCode.INTERNAL, str(e))

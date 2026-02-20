@@ -64,6 +64,11 @@ class ModelDeploymentServiceStub(object):
                 request_serializer=model__deployment__pb2.StartDeploymentRequest.SerializeToString,
                 response_deserializer=model__deployment__pb2.StartDeploymentResponse.FromString,
                 _registered_method=True)
+        self.UpdateDeployment = channel.unary_unary(
+                '/orchestration.v1.ModelDeploymentService/UpdateDeployment',
+                request_serializer=model__deployment__pb2.UpdateDeploymentRequest.SerializeToString,
+                response_deserializer=model__deployment__pb2.UpdateDeploymentResponse.FromString,
+                _registered_method=True)
 
 
 class ModelDeploymentServiceServicer(object):
@@ -105,6 +110,12 @@ class ModelDeploymentServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def UpdateDeployment(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ModelDeploymentServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -137,6 +148,11 @@ def add_ModelDeploymentServiceServicer_to_server(servicer, server):
                     servicer.StartDeployment,
                     request_deserializer=model__deployment__pb2.StartDeploymentRequest.FromString,
                     response_serializer=model__deployment__pb2.StartDeploymentResponse.SerializeToString,
+            ),
+            'UpdateDeployment': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateDeployment,
+                    request_deserializer=model__deployment__pb2.UpdateDeploymentRequest.FromString,
+                    response_serializer=model__deployment__pb2.UpdateDeploymentResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -301,6 +317,33 @@ class ModelDeploymentService(object):
             '/orchestration.v1.ModelDeploymentService/StartDeployment',
             model__deployment__pb2.StartDeploymentRequest.SerializeToString,
             model__deployment__pb2.StartDeploymentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateDeployment(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/orchestration.v1.ModelDeploymentService/UpdateDeployment',
+            model__deployment__pb2.UpdateDeploymentRequest.SerializeToString,
+            model__deployment__pb2.UpdateDeploymentResponse.FromString,
             options,
             channel_credentials,
             insecure,

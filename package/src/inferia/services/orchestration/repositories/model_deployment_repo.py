@@ -233,6 +233,66 @@ class ModelDeploymentRepository(BaseRepository):
             },
         )
 
+    async def update(
+        self,
+        deployment_id: UUID,
+        *,
+        configuration: Optional[str] = None,
+        inference_model: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        replicas: Optional[int] = None,
+        tx=None,
+    ):
+        fields = []
+        args = [deployment_id]
+        idx = 2
+
+        if configuration is not None:
+            if isinstance(configuration, dict):
+                import json
+                configuration = json.dumps(configuration)
+            fields.append(f"configuration=${idx}")
+            args.append(configuration)
+            idx += 1
+
+        if inference_model is not None:
+            fields.append(f"inference_model=${idx}")
+            args.append(inference_model)
+            idx += 1
+
+        if endpoint is not None:
+            fields.append(f"endpoint=${idx}")
+            args.append(endpoint)
+            idx += 1
+
+        if replicas is not None:
+            fields.append(f"replicas=${idx}")
+            args.append(replicas)
+            idx += 1
+
+        if not fields:
+            return
+
+        q = f"""
+        UPDATE model_deployments
+        SET {', '.join(fields)}, updated_at=now()
+        WHERE deployment_id=$1
+        """
+
+        if tx:
+            await tx.execute(q, *args)
+        else:
+            async with self.db.acquire() as c:
+                await c.execute(q, *args)
+
+        await self.event_bus.publish(
+            "deployment.updated",
+            {
+                "deployment_id": str(deployment_id),
+                "fields": fields,
+            },
+        )
+
     async def get(self, deployment_id: UUID):
         q = "SELECT * FROM model_deployments WHERE deployment_id=$1"
         async with self.db.acquire() as c:

@@ -11,11 +11,12 @@ import DeploymentRag from "@/components/deployment/DeploymentRag"
 import DeploymentPromptTemplate from "@/components/deployment/DeploymentPromptTemplate"
 import DeploymentRateLimit from "@/components/deployment/DeploymentRateLimit"
 import TerminalLogs from "@/components/deployment/TerminalLogs"
+import DeploymentConfig from "@/components/deployment/DeploymentConfig"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { LoadingScreen } from "@/components/ui/LoadingScreen"
 
-type TabType = "overview" | "logs" | "terminal" | "guardrail" | "rag" | "prompt_template" | "rate_limit"
+type TabType = "overview" | "logs" | "terminal" | "guardrail" | "rag" | "prompt_template" | "rate_limit" | "config"
 type ActionModalType = "start" | "stop" | "delete" | null
 type DeploymentData = {
   id?: string
@@ -31,12 +32,9 @@ type DeploymentData = {
   state?: string
   status?: string
   model_type?: string
-  configuration?: {
-    workload_type?: string
-    git_repo?: string
-    training_script?: string
-    dataset_url?: string
-  }
+  replicas?: number
+  inference_model?: string
+  configuration?: any
 }
 
 type ProviderCapabilities = {
@@ -157,6 +155,7 @@ export default function DeploymentDetail() {
       { id: "logs", label: isTraining ? "Training Logs" : (isEmbedding ? "Embedding Logs" : "Inference Logs") },
       { id: "terminal", label: "Terminal Logs" },
       { id: "rate_limit", label: "Rate Limits" },
+      { id: "config", label: "Configuration" },
     ]
 
     if (!isEmbedding && !isTraining) {
@@ -348,6 +347,13 @@ export default function DeploymentDetail() {
         <div className="space-y-4">
           <TerminalLogs deploymentId={id} />
         </div>
+      )}
+
+      {activeTab === "config" && deployment && (
+        <DeploymentConfig
+          deployment={deployment}
+          onUpdate={() => void fetchDeployment(false)}
+        />
       )}
 
       {activeTab === "guardrail" && id && <DeploymentGuardrails deploymentId={id} />}
