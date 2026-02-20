@@ -323,12 +323,19 @@ class ModelDeploymentWorker:
                 node = await self.inventory.get_node_by_id(node_id)
                 if node:
                     adapter = get_adapter(node["provider"])
+                    metadata = node.get("metadata", {})
+                    if isinstance(metadata, str):
+                        try:
+                            import json
+
+                            metadata = json.loads(metadata)
+                        except Exception:
+                            metadata = {}
+
                     log.info(f"Deprovisioning {node['provider']} node {node_id}")
                     await adapter.deprovision_node(
                         provider_instance_id=node["provider_instance_id"],
-                        provider_credential_name=node.get("metadata", {}).get(
-                            "provider_credential_name"
-                        ),
+                        provider_credential_name=metadata.get("provider_credential_name"),
                     )
 
         log.info(f"Stopped runtime for deployment {deployment_id}")

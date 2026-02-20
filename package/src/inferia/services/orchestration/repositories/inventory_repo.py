@@ -311,7 +311,15 @@ class InventoryRepository:
         """
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(query, node_id)
-            return dict(row) if row else None
+            if not row:
+                return None
+            data = dict(row)
+            if data.get("metadata") and isinstance(data["metadata"], str):
+                try:
+                    data["metadata"] = json.loads(data["metadata"])
+                except Exception:
+                    pass
+            return data
 
     async def mark_terminated(self, node_id: UUID):
         query = """
