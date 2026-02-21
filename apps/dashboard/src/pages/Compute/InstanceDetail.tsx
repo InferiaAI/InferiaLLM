@@ -19,10 +19,11 @@ export default function InstanceDetail() {
   >("overview");
 
   const [nodes, setNodes] = useState<any[]>([]);
+  const [poolDetails, setPoolDetails] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [poolId, setPoolId] = useState(id);
 
-  // Fetch pool inventory
+  // Fetch pool inventory and details
   useEffect(() => {
     if (id) {
       fetchInventory();
@@ -32,10 +33,16 @@ export default function InstanceDetail() {
   const fetchInventory = async () => {
     setLoading(true);
     try {
-      const res = await computeApi.get(`/deployment/list/pool/${id}/inventory`);
-      const data = res.data;
+      const [inventoryRes, poolRes] = await Promise.all([
+        computeApi.get(`/deployment/list/pool/${id}/inventory`),
+        computeApi.get(`/deployment/pool/${id}`).catch(() => null)
+      ]);
+      const data = inventoryRes.data;
       setNodes(data.nodes || []);
       setPoolId(data.pool_id);
+      if (poolRes && poolRes.data) {
+        setPoolDetails(poolRes.data);
+      }
     } catch (error) {
       toast.error("Failed to fetch pool details");
       console.error(error);
@@ -48,8 +55,9 @@ export default function InstanceDetail() {
     return <div className="p-10 text-center text-slate-500">Loading pool details...</div>;
   }
 
-  // Fallback if no nodes found yet (empty pool)
-  const provider = nodes.length > 0 ? nodes[0].provider : "Unknown";
+  // Fallback if no pool details fetched
+  const provider = poolDetails?.provider || (nodes.length > 0 ? nodes[0].provider : "Unknown");
+  const poolName = poolDetails?.pool_name || "Compute Pool";
 
   const handleDelete = async () => {
     if (!confirm("Are you sure you want to delete this pool? This action cannot be undone.")) return;
@@ -85,7 +93,7 @@ export default function InstanceDetail() {
           </Link>
           <ChevronRight className="w-4 h-4 mx-2 opacity-50" />
           <span className="text-foreground font-medium capitalize">
-            {provider}
+            {poolName}
           </span>
           <ChevronRight className="w-4 h-4 mx-2 opacity-50" />
           <span className="font-mono text-foreground font-medium">
@@ -98,7 +106,7 @@ export default function InstanceDetail() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 border-b pb-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight mb-2">
-            Pool Details
+            {poolName}
           </h1>
           <div className="flex items-center gap-2 text-sm text-muted-foreground font-mono">
             <span>ID:</span>
@@ -146,16 +154,49 @@ export default function InstanceDetail() {
         {activeTab === "overview" && (
           <div className="grid grid-cols-1 gap-6">
             <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
-              <h3 className="font-mono text-sm font-semibold mb-4">Pool Information</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <h3 className="font-mono text-sm font-semibold mb-4 text-slate-900 dark:text-zinc-100">Pool Information</h3>
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-6">
                 <div>
-                  <div className="text-xs text-muted-foreground">Total Nodes</div>
-                  <div className="text-2xl font-bold">{nodes.length}</div>
+                  <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Total Nodes</div>
+                  <div className="text-2xl font-bold text-slate-800 dark:text-zinc-200">{nodes.length}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">Active Nodes</div>
-                  <div className="text-2xl font-bold text-green-600">{nodes.filter(n => n.state === "active" || n.state === "ready").length}</div>
+                  <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Active Nodes</div>
+                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{nodes.filter(n => n.state === "active" || n.state === "ready").length}</div>
                 </div>
+
+                {poolDetails && (
+                  <>
+                    <div>
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Provider</div>
+                      <div className="text-sm font-medium capitalize bg-slate-100 dark:bg-zinc-800 px-2 py-1 rounded inline-flex mt-1 text-slate-800 dark:text-zinc-200">
+                        {poolDetails.provider}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Allowed GPUs</div>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {poolDetails.allowed_gpu_types?.length > 0 ? (
+                          poolDetails.allowed_gpu_types.map((gpu: string) => (
+                            <span key={gpu} className="text-xs font-mono bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-1.5 py-0.5 rounded border border-blue-100 dark:border-blue-800">
+                              {gpu}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-sm text-muted-foreground">Any</span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Max Cost</div>
+                      <div className="text-sm font-medium mt-1 text-slate-800 dark:text-zinc-200">
+                        {poolDetails.max_cost_per_hour > 0
+                          ? `$${poolDetails.max_cost_per_hour.toFixed(2)} / hr`
+                          : "Uncapped"}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -190,7 +231,9 @@ export default function InstanceDetail() {
                         <td className="px-6 py-4">
                           <span className={cn(
                             "inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium",
-                            node.state === "active" || node.state === "ready" ? "border-green-200 bg-green-50 text-green-700" : "border-slate-200 bg-slate-50 text-slate-500"
+                            node.state === "active" || node.state === "ready"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
+                              : "border-slate-200 bg-slate-50 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700"
                           )}>
                             {node.state}
                           </span>

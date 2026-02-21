@@ -527,7 +527,7 @@ function NosanaFields({
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                    Add multiple Nosana API keys with friendly names (e.g., "Piyush", "Jesse").
+                    Add multiple Nosana API keys with friendly names.
                     These will be available as options when creating compute pools.
                 </p>
 

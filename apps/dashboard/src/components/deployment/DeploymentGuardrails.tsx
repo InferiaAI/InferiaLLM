@@ -146,7 +146,7 @@ export default function DeploymentGuardrails({ deploymentId }: DeploymentGuardra
                         <Cpu className="w-4 h-4" /> Guardrail Engine
                     </label>
                     <select
-                        className="w-full p-2 border rounded-md bg-background"
+                        className="w-full p-2 border rounded-md bg-white dark:bg-zinc-900 text-slate-900 dark:text-white"
                         value={config.guardrail_engine || "llm-guard"}
                         onChange={(e) => updateConfig({ ...config, guardrail_engine: e.target.value })}
                     >

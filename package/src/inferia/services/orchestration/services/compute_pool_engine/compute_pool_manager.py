@@ -69,6 +69,29 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
 
         return compute_pool_pb2.PoolResponse(pool_id=request.pool_id, is_active=True)
 
+    async def GetPool(self, request, context):
+        row = await self.repo.get(UUID(request.pool_id))
+        if not row:
+            context.abort(grpc.StatusCode.NOT_FOUND, f"Pool '{request.pool_id}' not found")
+            return
+
+        return compute_pool_pb2.PoolResponse(
+            pool_id=str(row["id"]),
+            pool_name=row["pool_name"],
+            provider=row["provider"],
+            is_active=row["is_active"],
+            owner_type=row["owner_type"],
+            owner_id=row["owner_id"],
+            allowed_gpu_types=row["allowed_gpu_types"] or [],
+            max_cost_per_hour=row["max_cost_per_hour"],
+            is_dedicated=row["is_dedicated"],
+            scheduling_policy_json=row["scheduling_policy"] or "",
+            provider_pool_id=row["provider_pool_id"] or "",
+            provider_credential_name=row["provider_credential_name"] or "",
+            created_at=row["created_at"].isoformat() if row["created_at"] else "",
+            updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
+        )
+
     async def DeletePool(self, request, context):
         await self.repo.soft_delete_pool(UUID(request.pool_id))
         return compute_pool_pb2.poolEmpty()
@@ -134,6 +157,16 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                     pool_name=row["pool_name"],
                     provider=row["provider"],
                     is_active=row["is_active"],
+                    owner_type=row["owner_type"],
+                    owner_id=row["owner_id"],
+                    allowed_gpu_types=row["allowed_gpu_types"] or [],
+                    max_cost_per_hour=row["max_cost_per_hour"],
+                    is_dedicated=row["is_dedicated"],
+                    scheduling_policy_json=row["scheduling_policy"] or "",
+                    provider_pool_id=row["provider_pool_id"] or "",
+                    provider_credential_name=row["provider_credential_name"] or "",
+                    created_at=row["created_at"].isoformat() if row["created_at"] else "",
+                    updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
                 )
                 for row in rows
             ]
