@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Suspense, lazy } from "react";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 
 const RequestVolumeChart = lazy(() => import("@/components/insights/InsightsCharts").then(m => ({ default: m.RequestVolumeChart })));
 const TokenUsageChart = lazy(() => import("@/components/insights/InsightsCharts").then(m => ({ default: m.TokenUsageChart })));
