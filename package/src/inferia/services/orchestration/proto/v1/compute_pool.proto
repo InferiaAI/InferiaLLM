@@ -94,6 +94,16 @@ message PoolResponse {
   string pool_name = 2;
   string provider = 3;
   bool is_active = 4;
+  string owner_type = 5;
+  string owner_id = 6;
+  repeated string allowed_gpu_types = 7;
+  double max_cost_per_hour = 8;
+  bool is_dedicated = 9;
+  string scheduling_policy_json = 10;
+  string provider_pool_id = 11;
+  string provider_credential_name = 12;
+  string created_at = 13;
+  string updated_at = 14;
 }
 
 message ListPoolsResponse {

@@ -652,14 +652,19 @@ def build_job_definition(
             image=image or "docker.io/vllm/vllm-openai:v0.14.0",
             hf_token=hf_token,
             api_key=api_key,
-            **kwargs,
+            **{k: v for k, v in kwargs.items() if k in [
+                "gpu_util", "dtype", "enforce_eager", "min_vram", 
+                "max_model_len", "max_num_seqs", "enable_chunked_prefill", 
+                "quantization", "trust_remote_code", "cuda_module_loading", 
+                "nvidia_disable_cuda_compat", "kv_cache_dtype"
+            ] and v is not None},
         )
     elif engine == "ollama":
         job = create_ollama_job(
             model_id=model_id,
             image=image or "docker.io/ollama/ollama:latest",
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["min_vram"]},
+            **{k: v for k, v in kwargs.items() if k in ["min_vram"] and v is not None},
         )
     elif engine == "vllm-omni":
         job = create_vllm_omni_job(
@@ -667,14 +672,17 @@ def build_job_definition(
             image=image or "docker.io/vllm/vllm-omni:v0.11.0rc1",
             hf_token=hf_token,
             api_key=api_key,
-            **kwargs,
+            **{k: v for k, v in kwargs.items() if k in [
+                "gpu_util", "dtype", "enforce_eager", "min_vram", 
+                "max_model_len", "max_num_seqs", "limit_mm_per_prompt"
+            ] and v is not None},
         )
     elif engine == "triton":
         job = create_triton_job(
             model_id=model_id,
             image=image or "nvcr.io/nvidia/tritonserver:23.10-py3",
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["min_vram"]},
+            **{k: v for k, v in kwargs.items() if k in ["min_vram"] and v is not None},
         )
     elif engine == "infinity":
         job = create_infinity_job(
@@ -682,7 +690,7 @@ def build_job_definition(
             image=image or "michaelf34/infinity:latest",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["port", "batch_size", "gpu", "required_cpu", "required_ram"]},
+            **{k: v for k, v in kwargs.items() if k in ["port", "batch_size", "gpu", "required_cpu", "required_ram"] and v is not None},
         )
     elif engine == "tei":
         job = create_tei_job(
@@ -690,7 +698,7 @@ def build_job_definition(
             image=image or "ghcr.io/huggingface/text-embeddings-inference:latest",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["port", "max_batch_tokens", "pooling", "gpu", "required_cpu", "required_ram"]},
+            **{k: v for k, v in kwargs.items() if k in ["port", "max_batch_tokens", "pooling", "gpu", "required_cpu", "required_ram"] and v is not None},
         )
     else:
         raise ValueError(f"Unsupported engine: {engine}")

@@ -139,7 +139,14 @@ class ComputePoolRepository:
             is_active,
             owner_type,
             owner_id,
-            max_cost_per_hour
+            max_cost_per_hour,
+            allowed_gpu_types,
+            is_dedicated,
+            scheduling_policy,
+            provider_pool_id,
+            provider_credential_name,
+            updated_at,
+            created_at
         FROM compute_pools
         WHERE is_active = TRUE
         """
