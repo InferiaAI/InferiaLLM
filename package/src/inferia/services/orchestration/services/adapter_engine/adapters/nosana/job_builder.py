@@ -480,6 +480,10 @@ def create_infinity_job(
     api_key: Optional[str] = None,
     port: int = 7997,
     batch_size: int = 32,
+    # Hardware
+    gpu: bool = False,
+    required_cpu: int = 2,
+    required_ram: int = 4096,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for Infinity embedding server.
@@ -528,7 +532,7 @@ def create_infinity_job(
             "entrypoint": ["/bin/sh"],
             "cmd": ["-c", cmd_str],
             "env": envs,
-            "gpu": False,  # Infinity runs on CPU
+            "gpu": gpu,
             "expose": port,  # Simple port number format for Nosana
         },
     }
@@ -536,8 +540,8 @@ def create_infinity_job(
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cpu": 2,
-            "required_ram": 4096,  # 4GB RAM for embeddings
+            "required_cpu": required_cpu,
+            "required_ram": required_ram,
         },
     }
 
@@ -551,6 +555,11 @@ def create_tei_job(
     api_key: Optional[str] = None,
     port: int = 8080,
     max_batch_tokens: int = 16384,
+    pooling: str = "cls",
+    # Hardware
+    gpu: bool = False,
+    required_cpu: int = 2,
+    required_ram: int = 4096,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for Hugging Face Text Embeddings Inference (TEI) server.
@@ -584,7 +593,7 @@ def create_tei_job(
         "--max-batch-tokens",
         str(max_batch_tokens),
         "--pooling",
-        "cls",  # Default pooling strategy
+        pooling,
     ]
 
     # Add API key if provided
@@ -599,7 +608,7 @@ def create_tei_job(
             "image": image,
             "cmd": cmd_args,
             "env": envs,
-            "gpu": False,  # TEI can run on CPU
+            "gpu": gpu,
             "expose": port,  # Simple port number format for Nosana
         },
     }
@@ -607,8 +616,8 @@ def create_tei_job(
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cpu": 2,
-            "required_ram": 4096,  # 4GB RAM for embeddings
+            "required_cpu": required_cpu,
+            "required_ram": required_ram,
         },
     }
 
@@ -673,7 +682,7 @@ def build_job_definition(
             image=image or "michaelf34/infinity:latest",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["port", "batch_size"]},
+            **{k: v for k, v in kwargs.items() if k in ["port", "batch_size", "gpu", "required_cpu", "required_ram"]},
         )
     elif engine == "tei":
         job = create_tei_job(
@@ -681,7 +690,7 @@ def build_job_definition(
             image=image or "ghcr.io/huggingface/text-embeddings-inference:latest",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["port", "max_batch_tokens"]},
+            **{k: v for k, v in kwargs.items() if k in ["port", "max_batch_tokens", "pooling", "gpu", "required_cpu", "required_ram"]},
         )
     else:
         raise ValueError(f"Unsupported engine: {engine}")

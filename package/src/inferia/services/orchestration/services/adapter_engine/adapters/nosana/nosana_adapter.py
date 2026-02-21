@@ -216,6 +216,14 @@ class NosanaAdapter(ProviderAdapter):
                 "enable_chunked_prefill": metadata.get("enable_chunked_prefill", False),
                 "quantization": metadata.get("quantization"),
                 "min_vram": metadata.get("min_vram", 12),
+                # Embedding / Generic Engine Config
+                "port": metadata.get("port"),
+                "batch_size": metadata.get("batch_size", 32),
+                "max_batch_tokens": metadata.get("max_batch_tokens", 16384),
+                "pooling": metadata.get("pooling", "cls"),
+                "gpu": metadata.get("gpu", engine not in ["infinity", "tei"]),
+                "required_cpu": metadata.get("required_cpu", 2),
+                "required_ram": metadata.get("required_ram", 4096),
                 # Additional config
                 "trust_remote_code": metadata.get("trust_remote_code", True),
                 "cuda_module_loading": metadata.get("cuda_module_loading", "LAZY"),

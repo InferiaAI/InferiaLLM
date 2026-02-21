@@ -59,6 +59,14 @@ type State = {
     cudaModuleLoading: string;
     nvidiaDisableCudaCompat: string;
     quantization: string;
+    // Embedding config
+    port: string;
+    batchSize: string;
+    maxBatchTokens: string;
+    pooling: string;
+    requiredCpu: string;
+    requiredRam: string;
+    gpuEnabled: boolean;
 };
 
 type Action =
@@ -88,6 +96,14 @@ const initialState = (deployment: DeploymentData): State => ({
     cudaModuleLoading: "LAZY",
     nvidiaDisableCudaCompat: "1",
     quantization: "",
+    // Advanced Embedding defaults
+    port: "8080",
+    batchSize: "32",
+    maxBatchTokens: "16384",
+    pooling: "cls",
+    requiredCpu: "2",
+    requiredRam: "4096",
+    gpuEnabled: false,
 });
 
 function reducer(state: State, action: Action): State {
@@ -114,6 +130,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
 
     const isTraining = deployment?.workload_type === "training"
     const isVllm = deployment?.engine === "vllm"
+    const isEmbedding = deployment?.engine === "tei" || deployment?.engine === "infinity"
 
     useEffect(() => {
         if (deployment?.configuration) {
@@ -139,6 +156,15 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updates.nvidiaDisableCudaCompat = c.nvidia_disable_cuda_compat || "1";
                 updates.quantization = c.quantization || "";
             }
+            if (isEmbedding) {
+                updates.port = String(c.port || (deployment.engine === "infinity" ? 7997 : 8080));
+                updates.batchSize = String(c.batch_size || 32);
+                updates.maxBatchTokens = String(c.max_batch_tokens || 16384);
+                updates.pooling = c.pooling || "cls";
+                updates.requiredCpu = String(c.required_cpu || 2);
+                updates.requiredRam = String(c.required_ram || 4096);
+                updates.gpuEnabled = c.gpu ?? false;
+            }
             if (isTraining) {
                 updates.gitRepo = c.git_repo || "";
                 updates.trainingScript = c.training_script || "";
@@ -147,7 +173,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
             }
             dispatch({ type: 'INIT_CONFIG', payload: updates });
         }
-    }, [deployment, isVllm, isTraining])
+    }, [deployment, isVllm, isTraining, isEmbedding])
 
     const handleSave = async () => {
         dispatch({ type: 'SET_LOADING', payload: true });
@@ -205,13 +231,25 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updatedConfig.nvidia_disable_cuda_compat = nvidiaDisableCudaCompat || null;
                 updatedConfig.quantization = quantization || null;
             }
+            if (isEmbedding) {
+                updatedConfig.port = parseInt(port) || 8080;
+                updatedConfig.batch_size = parseInt(batchSize) || 32;
+                updatedConfig.max_batch_tokens = parseInt(maxBatchTokens) || 16384;
+                updatedConfig.pooling = pooling;
+                updatedConfig.required_cpu = parseInt(requiredCpu) || 2;
+                updatedConfig.required_ram = parseInt(requiredRam) || 4096;
+                updatedConfig.gpu = gpuEnabled;
+            }
             if (isTraining) {
                 updatedConfig.git_repo = gitRepo
                 updatedConfig.training_script = trainingScript
                 updatedConfig.dataset_url = datasetUrl
                 updatedConfig.hf_token = hfToken
             }
-            const payload: any = { configuration: updatedConfig, replicas: replicas, inference_model: inferenceModel }
+            const payload: any = { configuration: updatedConfig, replicas: replicas, inference_model: inferenceModel || undefined }
+            if (isEmbedding) {
+                payload.inference_model = updatedConfig.model_id || inferenceModel;
+            }
             await computeApi.patch(`/deployment/update/${deployment.id || deployment.deployment_id}`, payload)
             toast.success("Configuration updated successfully")
             if (onUpdate) onUpdate()
@@ -243,6 +281,19 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                                 cudaModuleLoading={cudaModuleLoading}
                                 nvidiaDisableCudaCompat={nvidiaDisableCudaCompat}
                                 quantization={quantization}
+                                isAdvancedOpen={isAdvancedOpen}
+                                setIsAdvancedOpen={setIsAdvancedOpen}
+                                dispatch={dispatch}
+                            />}
+                            {isEmbedding && <EmbeddingSettings
+                                engine={deployment?.engine || ""}
+                                port={port}
+                                batchSize={batchSize}
+                                maxBatchTokens={maxBatchTokens}
+                                pooling={pooling}
+                                requiredCpu={requiredCpu}
+                                requiredRam={requiredRam}
+                                gpuEnabled={gpuEnabled}
                                 isAdvancedOpen={isAdvancedOpen}
                                 setIsAdvancedOpen={setIsAdvancedOpen}
                                 dispatch={dispatch}
@@ -280,8 +331,8 @@ function GeneralSettings({ replicas, inferenceModel, dispatch }: { replicas: num
         <div className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-blue-500/30 transition-all duration-300">
             <div className="flex items-center gap-2 mb-6 text-foreground"><Server className="w-4 h-4 text-blue-500 dark:text-blue-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">General Settings</h3></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2"><label htmlFor="replicas" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Replicas</label><div className="relative group/input"><input id="replicas" type="number" min="1" value={replicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'replicas', value: parseInt(e.target.value) })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-blue-500"><Layers className="w-4 h-4" /></div></div></div>
-                <div className="space-y-2"><label htmlFor="inference-model" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Inference Model</label><div className="relative group/input"><input id="inference-model" value={inferenceModel} onChange={e => dispatch({ type: 'SET_FIELD', field: 'inferenceModel', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" placeholder="e.g. meta-llama/Llama-3-8B" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-blue-500"><Cloud className="w-4 h-4" /></div></div></div>
+                <div className="space-y-2"><label htmlFor="replicas" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Replicas</label><div className="relative group/input"><input id="replicas" type="number" min="1" value={replicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'replicas', value: parseInt(e.target.value) })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-blue-500"><Layers className="w-4 h-4" /></div></div></div>
+                <div className="space-y-2"><label htmlFor="inference-model" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Inference Model</label><div className="relative group/input"><input id="inference-model" value={inferenceModel} onChange={e => dispatch({ type: 'SET_FIELD', field: 'inferenceModel', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" placeholder="e.g. meta-llama/Llama-3-8B" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-blue-500"><Cloud className="w-4 h-4" /></div></div></div>
             </div>
         </div>
     );
@@ -303,10 +354,10 @@ function VllmSettings({
         <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-all duration-300">
             <div className="flex items-center gap-2 mb-6 text-foreground"><Zap className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">vLLM Optimization</h3></div>
             <div className="space-y-6">
-                <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
-                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
                 </div>
 
                 {/* Advanced Config Section */}
@@ -328,7 +379,7 @@ function VllmSettings({
                         >
                             <div className="space-y-2">
                                 <label htmlFor="dtype" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Data Type (dtype)</label>
-                                <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
+                                <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
                                     <option value="auto">auto</option>
                                     <option value="float16">float16</option>
                                     <option value="bfloat16">bfloat16</option>
@@ -338,7 +389,7 @@ function VllmSettings({
 
                             <div className="space-y-2">
                                 <label htmlFor="kv-cache-dtype" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">KV Cache dtype</label>
-                                <select id="kv-cache-dtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
+                                <select id="kv-cache-dtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
                                     <option value="auto">auto</option>
                                     <option value="fp8">fp8</option>
                                     <option value="fp8_e4m3">fp8_e4m3</option>
@@ -348,12 +399,12 @@ function VllmSettings({
 
                             <div className="space-y-2">
                                 <label htmlFor="max-num-seqs" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Num Sequences</label>
-                                <input id="max-num-seqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" />
+                                <input id="max-num-seqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" />
                             </div>
 
                             <div className="space-y-2">
                                 <label htmlFor="quantization" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Quantization</label>
-                                <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
+                                <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
                                     <option value="">None</option>
                                     <option value="awq">AWQ</option>
                                     <option value="gptq">GPTQ</option>
@@ -423,14 +474,95 @@ function VllmSettings({
     );
 }
 
+function EmbeddingSettings({
+    engine, port, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
+    isAdvancedOpen, setIsAdvancedOpen, dispatch
+}: {
+    engine: string; port: string; batchSize: string; maxBatchTokens: string; pooling: string;
+    requiredCpu: string; requiredRam: string; gpuEnabled: boolean;
+    isAdvancedOpen: boolean; setIsAdvancedOpen: (open: boolean) => void;
+    dispatch: React.Dispatch<Action>
+}) {
+    return (
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-blue-500/30 transition-all duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Database className="w-4 h-4 text-blue-500 dark:text-blue-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Embedding Optimization</h3></div>
+            <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {engine === "infinity" && (
+                        <div className="space-y-2"><label htmlFor="batch-size" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Batch Size</label><input id="batch-size" type="number" value={batchSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" /></div>
+                    )}
+                    {engine === "tei" && (
+                        <div className="space-y-2"><label htmlFor="max-batch-tokens" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Batch Tokens</label><input id="max-batch-tokens" type="number" value={maxBatchTokens} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxBatchTokens', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono" /></div>
+                    )}
+                    <div className="flex items-center gap-3 pt-6">
+                        <input
+                            id="gpu-enabled"
+                            type="checkbox"
+                            checked={gpuEnabled}
+                            onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuEnabled', value: e.target.checked })}
+                            className="w-4 h-4 rounded border-border bg-background text-blue-500 focus:ring-blue-500/40"
+                        />
+                        <label htmlFor="gpu-enabled" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enable GPU Acceleration</label>
+                    </div>
+                </div>
+
+                <div className="border-t border-border pt-4">
+                    <button
+                        onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+                        className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-blue-500 transition-colors"
+                    >
+                        {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                        Advanced Hardware Configuration
+                    </button>
+
+                    {isAdvancedOpen && (
+                        <m.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4"
+                        >
+                            <div className="space-y-2">
+                                <label htmlFor="req-cpu" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">CPU Cores</label>
+                                <input id="req-cpu" type="number" value={requiredCpu} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredCpu', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono text-sm" />
+                            </div>
+
+                            <div className="space-y-2">
+                                <label htmlFor="req-ram" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">RAM (MB)</label>
+                                <input id="req-ram" type="number" value={requiredRam} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredRam', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono text-sm" />
+                            </div>
+
+                            {engine === "tei" && (
+                                <div className="space-y-2">
+                                    <label htmlFor="pooling-strategy" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Pooling Strategy</label>
+                                    <select id="pooling-strategy" value={pooling} onChange={e => dispatch({ type: 'SET_FIELD', field: 'pooling', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono text-sm">
+                                        <option value="cls">CLS</option>
+                                        <option value="mean">Mean</option>
+                                        <option value="last_token">Last Token</option>
+                                    </select>
+                                </div>
+                            )}
+
+                            <div className="space-y-2">
+                                <label htmlFor="port" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Service Port</label>
+                                <input id="port" type="number" value={port} onChange={e => dispatch({ type: 'SET_FIELD', field: 'port', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 font-mono text-sm" />
+                            </div>
+                        </m.div>
+                    )}
+                </div>
+            </div>
+        </m.div>
+    );
+}
+
 function TrainingSettings({ gitRepo, trainingScript, datasetUrl, dispatch }: { gitRepo: string; trainingScript: string; datasetUrl: string; dispatch: React.Dispatch<Action> }) {
     return (
         <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6 hover:border-amber-500/30 transition-all duration-300">
             <div className="flex items-center gap-2 mb-6 text-foreground"><Terminal className="w-4 h-4 text-amber-500 focus:text-amber-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Training Orchestration</h3></div>
             <div className="space-y-6">
-                <div className="space-y-2"><label htmlFor="git-repo" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Git Repository</label><input id="git-repo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" placeholder="https://..." /></div>
-                <div className="space-y-2"><label htmlFor="training-script" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Training Command</label><textarea id="training-script" rows={3} value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm resize-none" /></div>
-                <div className="space-y-2"><label htmlFor="dataset-url" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Dataset URL</label><input id="dataset-url" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2"><label htmlFor="git-repo" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Git Repository</label><input id="git-repo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" placeholder="https://..." /></div>
+                <div className="space-y-2"><label htmlFor="training-script" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Training Command</label><textarea id="training-script" rows={3} value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm resize-none" /></div>
+                <div className="space-y-2"><label htmlFor="dataset-url" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Dataset URL</label><input id="dataset-url" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" /></div>
             </div>
         </m.div>
     );
@@ -440,7 +572,7 @@ function EnvironmentSecrets({ hfToken, dispatch }: { hfToken: string; dispatch: 
     return (
         <div className="bg-card backdrop-blur-xl border border-border rounded-2xl p-6">
             <div className="flex items-center gap-2 mb-6 text-foreground"><ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Environment Secrets</h3></div>
-            <div className="space-y-2"><label htmlFor="hf-token" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Hugging Face Token</label><input id="hf-token" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono text-sm" placeholder="hf_••••••••" /><p className="text-[10px] text-muted-foreground font-mono mt-2">Required for gated models.</p></div>
+            <div className="space-y-2"><label htmlFor="hf-token" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Hugging Face Token</label><input id="hf-token" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono text-sm" placeholder="hf_••••••••" /><p className="text-[10px] text-muted-foreground font-mono mt-2">Required for gated models.</p></div>
         </div>
     );
 }

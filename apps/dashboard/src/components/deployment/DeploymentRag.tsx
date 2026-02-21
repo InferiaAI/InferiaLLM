@@ -151,7 +151,7 @@ export default function DeploymentRag({ deploymentId }: DeploymentRagProps) {
                             <div className="grid gap-2">
                                 <label className="text-sm font-medium">Knowledge Base Collection</label>
                                 <select
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="flex h-10 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                     value={config.default_collection || ""}
                                     onChange={(e) => updateConfig({ ...config, default_collection: e.target.value })}
                                 >
@@ -166,7 +166,7 @@ export default function DeploymentRag({ deploymentId }: DeploymentRagProps) {
                                 <label className="text-sm font-medium">Top K Results</label>
                                 <input
                                     type="number"
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="flex h-10 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                     value={config.top_k || 3}
                                     onChange={(e) => updateConfig({ ...config, top_k: parseInt(e.target.value) })}
                                     min={1}

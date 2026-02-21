@@ -175,6 +175,12 @@ type State = {
   nvidiaDisableCudaCompat: string;
   quantization: string;
   isAdvancedOpen: boolean;
+  // Advanced Embedding config
+  maxBatchTokens: string;
+  pooling: string;
+  requiredCpu: string;
+  requiredRam: string;
+  gpuEnabled: boolean;
 };
 
 type Action =
@@ -247,6 +253,12 @@ const initialState: State = {
   nvidiaDisableCudaCompat: "1",
   quantization: "",
   isAdvancedOpen: false,
+  // Advanced Embedding defaults
+  maxBatchTokens: "16384",
+  pooling: "cls",
+  requiredCpu: "2",
+  requiredRam: "4096",
+  gpuEnabled: false,
 };
 
 // --- Components ---
@@ -438,7 +450,9 @@ export default function NewDeployment() {
     maxSequenceLength, maxModelLen, gpuUtil, hfToken, vllmImage,
     selectedProvider, customProviderName, externalModelName, endpointUrl, apiKey,
     // Advanced VLLM config
-    dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization
+    dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization,
+    // Advanced Embedding config
+    maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled
   } = state;
 
   const externalModelType = modelType === "embedding" ? "embedding" : "inference"
@@ -557,16 +571,53 @@ export default function NewDeployment() {
     } else if (selectedEngine === "ollama") {
       return JSON.stringify({ image: "ollama/ollama:latest", cmd: ["serve"], expose: [{ port: 11434, type: "http" }], gpu: true }, null, 4)
     } else if (selectedEngine === "infinity") {
-      const spec = { image: "michaelf34/infinity:latest", cmd: ["v2", "--model-id", modelId || "sentence-transformers/all-MiniLM-L6-v2", "--port", "7997"], env: { "INFINITY_MODEL_ID": modelId || "sentence-transformers/all-MiniLM-L6-v2", "INFINITY_PORT": "7997", ...(hfToken ? { "HF_TOKEN": hfToken } : {}) }, expose: [{ port: 7997, type: "http", health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }] }], gpu: false }
+      const finalModelId = modelId || "sentence-transformers/all-MiniLM-L6-v2";
+      const spec = {
+        model_id: finalModelId,
+        engine: "infinity",
+        image: "michaelf34/infinity:latest",
+        port: 7997,
+        batch_size: parseInt(batchSize) || 32,
+        gpu: gpuEnabled,
+        required_cpu: parseInt(requiredCpu) || 2,
+        required_ram: parseInt(requiredRam) || 4096,
+        env: {
+          "INFINITY_MODEL_ID": finalModelId,
+          "INFINITY_PORT": "7997",
+          ...(hfToken ? { "HF_TOKEN": hfToken } : {})
+        },
+        expose: [{
+          port: 7997,
+          type: "http",
+          health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
+        }]
+      }
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "tei") {
-      const spec = { image: "ghcr.io/huggingface/text-embeddings-inference:latest", cmd: ["--model-id", modelId || "sentence-transformers/all-MiniLM-L6-v2", "--port", "8080"], env: hfToken ? { "HF_TOKEN": hfToken } : {}, expose: [{ port: 8080, type: "http", health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }] }], gpu: false }
+      const finalModelId = modelId || "sentence-transformers/all-MiniLM-L6-v2";
+      const spec = {
+        model_id: finalModelId,
+        engine: "tei",
+        image: "ghcr.io/huggingface/text-embeddings-inference:latest",
+        port: 8080,
+        max_batch_tokens: parseInt(maxBatchTokens) || 16384,
+        pooling: pooling || "cls",
+        gpu: gpuEnabled,
+        required_cpu: parseInt(requiredCpu) || 2,
+        required_ram: parseInt(requiredRam) || 4096,
+        env: hfToken ? { "HF_TOKEN": hfToken } : {},
+        expose: [{
+          port: 8080,
+          type: "http",
+          health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
+        }]
+      }
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "pytorch") {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization])
+  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -764,13 +815,20 @@ function PoolSelection({ userPools, selectedPool, dispatch, setStep }: { userPoo
 }
 
 function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean }) {
-  const { deploymentType, modelType, instanceName, selectedEngine, selectedHFModel, modelId, vllmImage, maxModelLen, gpuUtil, hfToken, batchSize, maxSequenceLength, gitRepo, trainingScript, datasetUrl, baseModel, dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, isAdvancedOpen } = state;
+  const {
+    deploymentType, modelType, instanceName, selectedEngine, selectedHFModel, modelId,
+    vllmImage, maxModelLen, gpuUtil, hfToken, batchSize, maxSequenceLength, gitRepo,
+    trainingScript, datasetUrl, baseModel, dtype, enforceEager, maxNumSeqs,
+    enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading,
+    nvidiaDisableCudaCompat, quantization, isAdvancedOpen,
+    maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled
+  } = state;
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
       <div className="space-y-4">
         <label htmlFor="instanceName" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Deployment Name</label>
-        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none transition-all dark:bg-zinc-900 dark:text-white" placeholder="e.g. Production Llama 3" />
+        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. Production Llama 3" />
       </div>
 
       <div className="space-y-4">
@@ -829,7 +887,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
                 </div>
                 <div>
                   <label htmlFor="maxNumSeqs" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Num Sequences</label>
-                  <input id="maxNumSeqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md" />
+                  <input id="maxNumSeqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
                 </div>
                 <div>
                   <label htmlFor="quantization" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Quantization</label>
@@ -900,8 +958,56 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Database className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">Embedding Configuration</h4></div>
           <div className="grid grid-cols-2 gap-4">
-            <div><label htmlFor="batchSize" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Batch Size</label><input id="batchSize" value={batchSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
-            <div><label htmlFor="maxSequenceLength" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Sequence Length</label><input id="maxSequenceLength" value={maxSequenceLength} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxSequenceLength', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+            {selectedEngine === "infinity" && (
+              <div><label htmlFor="batchSize" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Batch Size</label><input id="batchSize" type="number" value={batchSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+            )}
+            {selectedEngine === "tei" && (
+              <div><label htmlFor="maxBatchTokens" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Batch Tokens</label><input id="maxBatchTokens" type="number" value={maxBatchTokens} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxBatchTokens', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+            )}
+            <div className="flex items-center gap-2 pt-6">
+              <input
+                id="gpuEnabled"
+                type="checkbox"
+                checked={gpuEnabled}
+                onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuEnabled', value: e.target.checked })}
+                className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
+              />
+              <label htmlFor="gpuEnabled" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Enable GPU Acceleration</label>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-200 dark:border-zinc-700 pt-4 mt-4">
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'SET_FIELD', field: 'isAdvancedOpen', value: !isAdvancedOpen })}
+              className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+            >
+              {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              Advanced Hardware Configuration
+            </button>
+
+            {isAdvancedOpen && (
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="requiredCpu" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Required CPU Cores</label>
+                  <input id="requiredCpu" type="number" min="1" value={requiredCpu} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredCpu', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+                </div>
+                <div>
+                  <label htmlFor="requiredRam" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Required RAM (MB)</label>
+                  <input id="requiredRam" type="number" min="1024" step="1024" value={requiredRam} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredRam', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+                </div>
+                {selectedEngine === "tei" && (
+                  <div>
+                    <label htmlFor="pooling" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Pooling Strategy</label>
+                    <select id="pooling" value={pooling} onChange={e => dispatch({ type: 'SET_FIELD', field: 'pooling', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                      <option value="cls">CLS</option>
+                      <option value="mean">Mean</option>
+                      <option value="last_token">Last Token</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -943,10 +1049,10 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
 
       {step === 2 && (
         <div className="max-w-2xl mx-auto space-y-6 bg-white dark:bg-zinc-900 p-8 rounded-xl border dark:border-zinc-800 shadow-sm">
-          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="customProviderName" className="block text-sm font-medium">Provider Name</label><input id="customProviderName" value={customProviderName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'customProviderName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md dark:bg-zinc-900 dark:text-white" placeholder="e.g. My Custom Provider" /></div>)}
-          <div className="space-y-4"><label htmlFor="externalModelName" className="block text-sm font-medium">Model Name</label><input id="externalModelName" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md dark:bg-zinc-900 dark:text-white" placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3" : "e.g. gpt-4o"} /></div>
-          <div className="space-y-4"><label htmlFor="apiKey" className="block text-sm font-medium">API Key</label><input id="apiKey" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md dark:bg-zinc-900 dark:text-white font-mono" placeholder="sk-..." /></div>
-          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="endpointUrl" className="block text-sm font-medium">Endpoint URL</label><input id="endpointUrl" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md dark:bg-zinc-900 dark:text-white" placeholder="https://..." /></div>)}
+          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="customProviderName" className="block text-sm font-medium">Provider Name</label><input id="customProviderName" value={customProviderName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'customProviderName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. My Custom Provider" /></div>)}
+          <div className="space-y-4"><label htmlFor="externalModelName" className="block text-sm font-medium">Model Name</label><input id="externalModelName" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3" : "e.g. gpt-4o"} /></div>
+          <div className="space-y-4"><label htmlFor="apiKey" className="block text-sm font-medium">API Key</label><input id="apiKey" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white font-mono" placeholder="sk-..." /></div>
+          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="endpointUrl" className="block text-sm font-medium">Endpoint URL</label><input id="endpointUrl" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="https://..." /></div>)}
           <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && (!customProviderName || !endpointUrl))} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
         </div>
       )}
@@ -954,7 +1060,7 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
       {step === 3 && (
         <div className="max-w-xl mx-auto space-y-6">
           <div className="p-6 rounded-xl border dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 space-y-4">
-            <div className="space-y-2"><label htmlFor="externalInstanceName" className="text-sm font-medium">Name your Deployment</label><input id="externalInstanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md dark:bg-zinc-900" placeholder="My External Model" /></div>
+            <div className="space-y-2"><label htmlFor="externalInstanceName" className="text-sm font-medium">Name your Deployment</label><input id="externalInstanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white border-slate-200 dark:border-zinc-700" placeholder="My External Model" /></div>
             <div className="pt-4 border-t dark:border-zinc-800 space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-500">Type</span> <span className="font-medium capitalize">{externalModelType}</span></div><div className="flex justify-between"><span className="text-slate-500">Provider</span> <span className="font-medium capitalize">{selectedProvider}</span></div><div className="flex justify-between"><span className="text-slate-500">Model</span> <span className="font-medium">{externalModelName}</span></div></div>
           </div>
           <div className="flex gap-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} className="flex-1 py-2 border rounded-md font-medium text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-70 font-medium shadow-sm flex items-center justify-center gap-2">{isPending ? "Deploying..." : "Launch Deployment"}</button></div>

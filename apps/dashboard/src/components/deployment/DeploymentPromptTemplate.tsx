@@ -122,7 +122,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                             <div className="grid gap-2">
                                 <label className="text-sm font-medium">Base Template</label>
                                 <select
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="flex h-10 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                     value={config.base_template_id || ""}
                                     onChange={(e) => {
                                         const newConfig = { ...config }
@@ -164,7 +164,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                 <div className="col-span-1 text-center text-muted-foreground">←</div>
                                                 <div className="col-span-3">
                                                     <select
-                                                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                        className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                         value={varConfig.source}
                                                         onChange={(e) => {
                                                             const newConfig = { ...config }
@@ -180,7 +180,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                 <div className="col-span-5">
                                                     {varConfig.source === "rag" ? (
                                                         <select
-                                                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                            className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                             value={varConfig.collection_id || ""}
                                                             onChange={(e) => {
                                                                 const newConfig = { ...config }
@@ -193,7 +193,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                         </select>
                                                     ) : varConfig.source === "static" ? (
                                                         <input
-                                                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                            className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                             placeholder="Static Value"
                                                             value={varConfig.value || ""}
                                                             onChange={(e) => {
@@ -204,7 +204,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                         />
                                                     ) : (
                                                         <input
-                                                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                            className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                             placeholder="JSON Key (default: same as var)"
                                                             value={varConfig.key || varName}
                                                             onChange={(e) => {
