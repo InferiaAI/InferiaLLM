@@ -1,6 +1,6 @@
 # RBAC Component (Role-Based Access Control)
 
-The RBAC component handles Authentication (AuthN) and Authorization (AuthZ) for the Filtration Gateway.
+The RBAC component handles Authentication (AuthN) and Authorization (AuthZ) for the API Gateway.
 
 ## Architecture
 

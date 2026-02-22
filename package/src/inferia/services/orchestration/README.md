@@ -38,7 +38,7 @@ graph TD
 
 ## Core Components
 
-### 1. Adapter Engine (`app/services/adapter_engine`)
+### 1. Adapter Engine (`services/adapter_engine`)
 
 This is the infrastructure abstraction layer. It defines a strict contract (`ProviderAdapter`) that all providers must implement.
 
@@ -48,7 +48,7 @@ This is the infrastructure abstraction layer. It defines a strict contract (`Pro
   - `provision_node()`: Deploys a new compute instance with base image.
   - `deprovision_node()`: Terminates an instance.
 
-### 2. Compute Pool Engine (`app/services/compute_pool_engine`)
+### 2. Compute Pool Engine (`services/compute_pool_engine`)
 
 Manages logical groupings of nodes called **Compute Pools**.
 
@@ -56,7 +56,7 @@ Manages logical groupings of nodes called **Compute Pools**.
 - **Scaling**: Handles auto-scaling logic (coming soon) and manual scaling events.
 - **State Management**: Tracks the `provisioning`, `ready`, and `terminated` states of nodes.
 
-### 3. Model Deployment Engine (`app/services/model_deployment`)
+### 3. Model Deployment Engine (`services/model_deployment`)
 
 Manages the application layer (the LLMs running on the nodes).
 
@@ -64,7 +64,7 @@ Manages the application layer (the LLMs running on the nodes).
 - **Worker**: A background worker (`worker_main.py`) processes deployment tasks asynchronously to avoid blocking API requests.
 - **Containerization**: Uses standardized container images (vLLM, Ollama) to ensure consistent runtime environments.
 
-### 4. Inventory Manager (`app/services/inventory_manager`)
+### 4. Inventory Manager (`services/inventory_manager`)
 
 The source of truth for all active resources.
 
@@ -72,21 +72,21 @@ The source of truth for all active resources.
 - **Health Checks**: Marks nodes as `unhealthy` if heartbeats are missed.
 - **Routing**: Provides the routing table for the **Inference Gateway** to find active model endpoints.
 
-## Nosana Integration (Deep Dive)
+## DePIN Integration (Deep Dive)
 
-The Nosana integration requires a specialized **Sidecar** because it interacts with the Solana blockchain and IPFS, which is handled more robustly in the Node.js ecosystem (`@nosana/sdk`).
+The DePIN integration requires a specialized **Sidecar** because it interacts with the Solana blockchain and IPFS, which is handled more robustly in the Node.js ecosystem (`@nosana/sdk`).
 
 ### Flow
 
 1. **Orchestrator** calls `NosanaAdapter.provision_node()`.
 2. **NosanaAdapter** formats a Job Definition (JSON) describing the container (vLLM).
-3. **NosanaAdapter** sends a request to the **Nosana Sidecar** (`localhost:3000/jobs/launch`).
+3.** sends a request **NosanaAdapter to the **DePIN Sidecar** (`localhost:3000/jobs/launch`).
 4. **Sidecar** uploads definition to IPFS and posts a transaction to Solana.
 5. **Sidecar** watches the job on-chain for events (Posted -> Claimed -> Running).
 6. **Sidecar** sends heartbeats to **Orchestrator** with the job's exposed IP/URL.
 7. **Sidecar** handles auto-extensions (extending job timeout) and auto-redeployment on failure.
 
-**Sidecar Location**: `app/services/nosana-sidecar/`
+**Sidecar Location**: `services/depin-sidecar/`
 
 ## Adapters
 
@@ -100,9 +100,9 @@ Supported providers:
 
 ### Adding a New Provider
 
-1. Create `app/services/adapter_engine/adapters/<provider_name>/`.
+1. Create `services/adapter_engine/adapters/<provider_name>/`.
 2. Implement `ProviderAdapter` class.
-3. Register in `app/services/adapter_engine/registry.py`.
+3. Register in `services/adapter_engine/registry.py`.
 
 ## Data Model
 

@@ -1,6 +1,6 @@
-# Filtration Service
+# API Gateway Service
 
-The **Filtration Service** (`services/filtration`) contains the core business logic for security, authentication, and policy enforcement in InferiaLLM. It is designed as a modular library that the `apps/filtration-gateway` application wraps.
+The **API Gateway Service** (`services/api_gateway`) contains the core business logic for security, authentication, and policy enforcement in InferiaLLM. It is designed as a modular library that the API Gateway application wraps.
 
 ## Architecture
 
@@ -10,7 +10,7 @@ The service is composed of several independent components that work together to 
 graph TD
     Request --> Gateway
     
-    subgraph "Filtration Service Logic"
+    subgraph "API Gateway Service Logic"
         Gateway[Gateway Logic/Router]
         
         %% Core Security
@@ -67,9 +67,9 @@ The service uses a centralized `config.py` in each module, typically loading fro
 
 ## Development
 
-To run tests for the filtration logic:
+To run tests for the API Gateway logic:
 
 ```bash
 # from root
-pytest services/filtration/tests/
+pytest package/src/inferia/services/api_gateway/tests/
 ```

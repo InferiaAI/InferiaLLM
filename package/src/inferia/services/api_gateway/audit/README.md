@@ -21,9 +21,9 @@ graph LR
 
 ## Integration
 
-- **Filtration Gateway**: Logs failed authentication, blocked requests (Guardrails).
+- **API Gateway**: Logs failed authentication, blocked requests (Guardrails).
 - **Inference Gateway**: Logs prompt/completion tokens, latency, and model usage.
-  - Sends logs to Filtration via `/internal/logs/create`.
+  - Sends logs to API Gateway via `/internal/logs/create`.
 
 ## Data Storage
 
