@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS public.model_deployments
     pool_id uuid NOT NULL,
     replicas integer NOT NULL,
     gpu_per_replica integer NOT NULL,
-    state text COLLATE pg_catalog."default" NOT NULL,
+    state text COLLATE pg_catalog."default" NOT NULL DEFAULT 'pending',
     llmd_resource_name text COLLATE pg_catalog."default",
     allocation_ids uuid[],
     node_ids uuid[],
