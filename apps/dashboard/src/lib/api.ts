@@ -1,7 +1,11 @@
 import axios, { type AxiosInstance } from "axios";
 
+// Runtime config injected via /config.js at container startup.
+// Falls back to VITE_ build-time env vars, then to localhost defaults.
+const rc = (window as any).__RUNTIME_CONFIG__ || {};
+
 // URLs - All through API Gateway
-export const API_GATEWAY_URL = import.meta.env.VITE_API_GATEWAY_URL || "http://localhost:8000";
+export const API_GATEWAY_URL = rc.API_GATEWAY_URL || import.meta.env.VITE_API_GATEWAY_URL || "http://localhost:8000";
 
 // Service URLs for health checks and direct access
 // API Gateway (replaces MANAGEMENT_URL)
@@ -9,13 +13,13 @@ export const MANAGEMENT_URL = API_GATEWAY_URL;
 // Orchestration now accessed through API Gateway proxy
 export const COMPUTE_URL = `${API_GATEWAY_URL}/api/v1`;
 // Inference Gateway - separate public service
-export const INFERENCE_URL = import.meta.env.VITE_INFERENCE_URL || "http://localhost:8001";
+export const INFERENCE_URL = rc.INFERENCE_URL || import.meta.env.VITE_INFERENCE_URL || "http://localhost:8001";
 // Internal services - accessed through gateway
 export const DATA_URL = API_GATEWAY_URL;
 export const GUARDRAIL_URL = API_GATEWAY_URL;
 // WebSocket still goes through sidecar for DePIN
-export const WEB_SOCKET_URL = import.meta.env.VITE_WEB_SOCKET_URL || "ws://localhost:3000";
-export const SIDECAR_URL = import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000";
+export const WEB_SOCKET_URL = rc.WEB_SOCKET_URL || import.meta.env.VITE_WEB_SOCKET_URL || "ws://localhost:3000";
+export const SIDECAR_URL = rc.SIDECAR_URL || import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000";
 
 // Client Factory
 const createApiClient = (baseURL: string): AxiosInstance => {

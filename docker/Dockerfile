@@ -35,16 +35,6 @@ RUN npm run build
 
 WORKDIR /build/dashboard
 
-# consume args from compose
-ARG VITE_API_GATEWAY_URL
-ARG VITE_WEB_SOCKET_URL
-ARG VITE_SIDECAR_URL
-
-# set envs before build
-ENV VITE_API_GATEWAY_URL=$VITE_API_GATEWAY_URL
-ENV VITE_WEB_SOCKET_URL=$VITE_WEB_SOCKET_URL
-ENV VITE_SIDECAR_URL=$VITE_SIDECAR_URL
-
 COPY apps/dashboard/package*.json ./
 RUN npm install
 

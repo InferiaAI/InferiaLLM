@@ -40,20 +40,16 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      args:
-        VITE_MANAGEMENT_URL: ${VITE_MANAGEMENT_URL}
-        VITE_COMPUTE_URL: ${VITE_COMPUTE_URL}
-        VITE_WEB_SOCKET_URL: ${VITE_WEB_SOCKET_URL}
-        VITE_INFERENCE_URL: ${VITE_INFERENCE_URL}
-        VITE_SIDECAR_URL: ${VITE_SIDECAR_URL}
-        VITE_DATA_URL: ${VITE_DATA_URL}
-        VITE_GUARDRAIL_URL: ${VITE_GUARDRAIL_URL}
     container_name: inferia-app
     restart: unless-stopped
     pull_policy: always
     env_file: .env
     environment:
       - SERVICE_TYPE=unified
+      - API_GATEWAY_URL=${API_GATEWAY_URL:-}
+      - INFERENCE_URL=${INFERENCE_URL:-}
+      - WEB_SOCKET_URL=${WEB_SOCKET_URL:-}
+      - SIDECAR_URL=${SIDECAR_URL:-}
     volumes:
       - appdata:/data
     ports:

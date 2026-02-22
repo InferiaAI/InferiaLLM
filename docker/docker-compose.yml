@@ -48,6 +48,10 @@ services:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
       - SERVICE_TYPE=unified
+      - API_GATEWAY_URL=${API_GATEWAY_URL:-}
+      - INFERENCE_URL=${INFERENCE_URL:-}
+      - WEB_SOCKET_URL=${WEB_SOCKET_URL:-}
+      - SIDECAR_URL=${SIDECAR_URL:-}
     ports:
       - "8000:8000"
       - "8001:8001"
