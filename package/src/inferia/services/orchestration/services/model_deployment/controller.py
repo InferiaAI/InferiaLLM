@@ -169,24 +169,24 @@ class ModelDeploymentController:
                 tx=tx,
             )
 
-            # Only emit deploy event for compute deployments (worker-managed)
-            # External deployments are already RUNNING and don't need worker processing
-            if not is_external:
-                await self.event_bus.publish(
-                    "model.deploy.requested",
-                    {
-                        "deployment_id": str(deployment_id),
-                        "model_id": str(model_id) if model_id else None,
-                        "pool_id": str(pool_id),
-                        "replicas": replicas,
-                        "gpu_per_replica": gpu_per_replica,
-                        "workload_type": workload_type,
-                        "engine": engine,
-                        "configuration": configuration,
-                        "owner_id": owner_id,
-                        "model_type": model_type,
-                    },
-                )
+        # Only emit deploy event for compute deployments (worker-managed) AFTER transaction commits
+        # External deployments are already RUNNING and don't need worker processing
+        if not is_external:
+            await self.event_bus.publish(
+                "model.deploy.requested",
+                {
+                    "deployment_id": str(deployment_id),
+                    "model_id": str(model_id) if model_id else None,
+                    "pool_id": str(pool_id),
+                    "replicas": replicas,
+                    "gpu_per_replica": gpu_per_replica,
+                    "workload_type": workload_type,
+                    "engine": engine,
+                    "configuration": configuration,
+                    "owner_id": owner_id,
+                    "model_type": model_type,
+                },
+            )
 
         return deployment_id
 
