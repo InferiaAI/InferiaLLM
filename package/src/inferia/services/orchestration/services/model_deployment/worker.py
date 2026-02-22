@@ -41,17 +41,31 @@ class ModelDeploymentWorker:
     # -------------------------------------------------
     async def handle_deploy_requested(self, deployment_id: UUID):
         d = await self.deployments.get(deployment_id)
-        log.info(
-            f"Handling deploy request for {deployment_id}. State: {d.get('state') if d else 'None'}"
-        )
-        if not d or (d.get("state") not in ("PENDING", None)):
+        if not d:
             log.warning(
-                f"Skipping deploy for {deployment_id} because state is not PENDING (current: {d.get('state')})"
+                f"Skipping deploy for {deployment_id} because deployment not found in database"
+            )
+            return
+
+        current_state = d.get("state")
+        log.info(f"Handling deploy request for {deployment_id}. State: {current_state}")
+        if not d:
+            log.warning(
+                f"Skipping deploy for {deployment_id} because deployment not found in database"
+            )
+            return
+
+        current_state = d.get("state")
+        log.info(f"Handling deploy request for {deployment_id}. State: {current_state}")
+
+        if current_state not in ("PENDING", None):
+            log.warning(
+                f"Skipping deploy for {deployment_id} because state is not PENDING (current: {current_state})"
             )
             return
 
         # Treat NULL state as PENDING - fix for deployments with NULL state
-        if d.get("state") is None:
+        if current_state is None:
             log.info(f"Deployment {deployment_id} has NULL state, treating as PENDING")
             d = dict(d)
             d["state"] = "PENDING"
