@@ -52,7 +52,7 @@ Manage data sources for Retrieval Augmented Generation (RAG) pipelines. Upload d
 
 ### Prerequisites
 - Node.js 18+
-- Running instance of InferiaLLM Backend (Orchestration & Filtration Gateways)
+- Running instance of InferiaLLM Backend (Orchestration & API Gateways)
 
 ### Installation
 
@@ -70,7 +70,7 @@ VITE_API_BASE_URL=http://localhost:8000
 VITE_ORCHESTRATOR_URL=http://localhost:8080
 ```
 
-- `VITE_API_BASE_URL`: URL of the Filtration Gateway (Management API).
+- `VITE_API_BASE_URL`: URL of the API Gateway (Management API).
 - `VITE_ORCHESTRATOR_URL`: URL of the Orchestration Gateway.
 
 ### Development
@@ -95,6 +95,6 @@ The output will be generated in the `dist` directory.
 
 The dashboard acts as a frontend for the InferiaLLM Control Plane.
 
-- **Filtration Gateway Connection**: Used for authentication, RBAC, user management, and high-level policy configuration.
+- **API Gateway Connection**: Used for authentication, RBAC, user management, and high-level policy configuration.
 - **Orchestration Gateway Connection**: Used for "Day 2" operations—deploying models, managing compute pools, and viewing live deployment status. Use `VITE_ORCHESTRATOR_URL` to configure this connection.
 - **Inference Gateway Interaction**: The dashboard does **not** directly handle inference traffic. It visualizes logs and metrics that are asynchronously reported by the Inference Gateway to the control plane.

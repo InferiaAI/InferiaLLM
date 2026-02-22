@@ -1,6 +1,6 @@
 # Gateway Component
 
-The Gateway module is the routing engine of the Filtration service. It manages request lifecycle, routing to internal services (like Guardrails), and implementing cross-cutting concerns like rate limiting.
+The Gateway module is the routing engine of the API Gateway service. It manages request lifecycle, routing to internal services (like Guardrails), and implementing cross-cutting concerns like rate limiting.
 
 ## Architecture
 

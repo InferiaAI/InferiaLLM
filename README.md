@@ -265,7 +265,8 @@ inferiallm start [service]
 * `all`: Start all services (default)
 * `orchestration`: Start Orchestration Gateway stack
 * `inference`: Start Inference Gateway
-* `filtration`: Start Filtration Gateway
+* `inference`: Start Inference Gateway
+* `api`: Start API Gateway
 
 **Examples:**
 
@@ -283,7 +284,7 @@ inferiallm start orchestration
 [CLI] Starting All Services...
 [Orchestration Gateway API] Listening on port 8080
 [Inference Gateway API] Listening on port 8001
-[Filtration Gateway API] Listening on port 8000
+[API Gateway] Listening on port 8000
 [Dashboard] Serving at http://localhost:3001/
 ...
 ```
@@ -300,9 +301,9 @@ Start the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecar
 
 Start the Inference Gateway standalone.
 
-#### `inferiallm start filtration`
+#### `inferiallm start api`
 
-Start the Filtration Gateway standalone.
+Start the API Gateway standalone.
 
  ---
 
@@ -389,7 +390,7 @@ These are the **only externally reachable services**.
 | Service | Responsibility | Documentation |
 | ------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
 | **Admin Dashboard** | Administrative control surface for policies, compute pools, usage, and audits | [README](./apps/dashboard/README.md) |
-| **Filtration Gateway** | Authentication, RBAC, policy enforcement | [README](./package/src/inferia/services/filtration/README.md) |
+| **API Gateway** | Authentication, RBAC, policy enforcement | [README](./package/src/inferia/services/api_gateway/README.md) |
 | **Inference Gateway** | Data-plane ingress for all LLM inference traffic | [README](./package/src/inferia/services/inference/README.md) |
 | **Guardrail Engine** | Content safety scanning and PII detection | [README](./package/src/inferia/services/guardrail/README.md) |
 | **Data Engine** | Data processing and knowledge base operations | [README](./package/src/inferia/services/data/README.md) |
@@ -506,11 +507,11 @@ Supports:
 | **Orchestrator** | Compute lifecycle and workload management | [README](./package/src/inferia/services/orchestration/README.md) |
 | **Guardrail Engine** | Content safety scanning and PII detection | [README](./package/src/inferia/services/guardrail/README.md) |
 | **Data Engine** | Knowledge base and data processing | [README](./package/src/inferia/services/data/README.md) |
-| **RBAC** | Identity and access boundaries | [README](./package/src/inferia/services/filtration/rbac/README.md) |
-| **Gateway** | Secure internal service routing | [README](./package/src/inferia/services/filtration/gateway/README.md) |
-| **Audit** | Immutable execution and policy logs | [README](./package/src/inferia/services/filtration/audit/README.md) |
-| **Policy** | Quota, rate, and budget enforcement | [README](./package/src/inferia/services/filtration/policy/README.md) |
-| **Prompt** | Prompt templates and versioning | [README](./package/src/inferia/services/filtration/prompt/README.md) |
+| **RBAC** | Identity and access boundaries | [README](./package/src/inferia/services/api_gateway/rbac/README.md) |
+| **Gateway** | Secure internal service routing | [README](./package/src/inferia/services/api_gateway/gateway/README.md) |
+| **Audit** | Immutable execution and policy logs | [README](./package/src/inferia/services/api_gateway/audit/README.md) |
+| **Policy** | Quota, rate, and budget enforcement | [README](./package/src/inferia/services/api_gateway/policy/README.md) |
+| **Prompt** | Prompt templates and versioning | [README](./package/src/inferia/services/api_gateway/prompt/README.md) |
 | **Packages** | Installation, versioning, and initialization | [README](./package/README.md) |
 
  ---

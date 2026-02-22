@@ -82,7 +82,7 @@ Starts all InferiaLLM gateways (Orchestration, Inference, Filtration) and the Da
 You can also start specific services:
 * `inferiallm start orchestration`: Starts the Orchestration Gateway stack.
 * `inferiallm start inference`: Starts the Inference Gateway standalone.
-* `inferiallm start filtration`: Starts the Filtration Gateway standalone.
+* `inferiallm start api`: Starts the API Gateway standalone.
 
 ---
 
@@ -93,13 +93,12 @@ The `inferia` package is a monorepo-style library that contains all backend serv
 ```text
 package/src/inferia/
 ├── cli.py                  # Entry point for the CLI
-├── gateways/
-│   ├── filtration_gateway  # Security & Policy Service (Port 8000)
+├── services/
+│   ├── api_gateway/        # Security & Policy Service (Port 8000)
 │   ├── inference_gateway   # Inference Proxy Service (Port 8001)
-│   └── orchestration_gateway # Compute Control Plane (Port 8080)
-└── services/               # Shared business logic
-    ├── filtration/         # Guardrails, RBAC, Audit logic
-    └── orchestration/      # Compute Adapters, Scheduling logic
+│   ├── orchestration/      # Compute Control Plane (Port 8080)
+│   ├── data/               # Data Engine (Port 8003)
+│   └── guardrail/          # Guardrail Engine (Port 8002)
 ```
 
 ---
