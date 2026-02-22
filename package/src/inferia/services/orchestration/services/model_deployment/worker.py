@@ -44,11 +44,17 @@ class ModelDeploymentWorker:
         log.info(
             f"Handling deploy request for {deployment_id}. State: {d.get('state') if d else 'None'}"
         )
-        if not d or d["state"] != "PENDING":
+        if not d or (d.get("state") not in ("PENDING", None)):
             log.warning(
-                f"Skipping deploy for {deployment_id} because state is not PENDING"
+                f"Skipping deploy for {deployment_id} because state is not PENDING (current: {d.get('state')})"
             )
             return
+
+        # Treat NULL state as PENDING - fix for deployments with NULL state
+        if d.get("state") is None:
+            log.info(f"Deployment {deployment_id} has NULL state, treating as PENDING")
+            d = dict(d)
+            d["state"] = "PENDING"
 
         updated = await self.deployments.update_state_if(
             deployment_id, expected_state="PENDING", new_state="PROVISIONING"
@@ -335,7 +341,9 @@ class ModelDeploymentWorker:
                     log.info(f"Deprovisioning {node['provider']} node {node_id}")
                     await adapter.deprovision_node(
                         provider_instance_id=node["provider_instance_id"],
-                        provider_credential_name=metadata.get("provider_credential_name"),
+                        provider_credential_name=metadata.get(
+                            "provider_credential_name"
+                        ),
                     )
 
         log.info(f"Stopped runtime for deployment {deployment_id}")
