@@ -174,7 +174,7 @@ docker compose -f deploy/docker-compose.yml --profile split up --build
 
 * **Dashboard:** `http://localhost:3001` (React/Vite Frontend)
 * **Orchestration API:** `http://localhost:8080`
-* **Filtration Gateway:** `http://localhost:8000`
+* **API Gateway:** `http://localhost:8000`
 * **Inference Gateway:** `http://localhost:8001`
 * **Guardrail Engine:** `http://localhost:8002`
 * **Data Engine:** `http://localhost:8003`
@@ -239,7 +239,7 @@ Initialize the control-plane databases, roles, and schemas.
 [inferia:init] Creating database: inferia
 [inferia:init] Repairing privileges on inferia
 [inferia:init] Applying schema: global_schema
-[inferia:init] Bootstrapping filtration database (tables, default org, super admin)
+[inferia:init] Bootstrapping API database (tables, default org, super admin)
 ...
 [inferia:init] Bootstrap complete
 ```
@@ -264,7 +264,6 @@ inferiallm start [service]
 
 * `all`: Start all services (default)
 * `orchestration`: Start Orchestration Gateway stack
-* `inference`: Start Inference Gateway
 * `inference`: Start Inference Gateway
 * `api`: Start API Gateway
 
@@ -449,7 +448,7 @@ The value is stored in `inference_logs.ip_address` and can be used in Insights I
 
  ---
 
-### Filtration Gateway (Policy Authority)
+### API Gateway (Policy Authority)
 
 * Validates identity and permissions
 * Enforces quotas, rate limits, and budgets

@@ -34,7 +34,7 @@ Manage the underlying compute infrastructure.
 - **Instance Details**: View detailed status, resource usage, and connectivity of compute instances.
 - **Multi-Provider Support**: Seamlessly integrate with vLLM, DePIN networks (Nosana, Akash), and standard cloud providers.
 
-### 3. Filtration & Security
+### 3. Security & Access Control
 Configure the policy and security layer.
 - **Access Control (RBAC)**: granular management of Roles and Users.
 - **API Keys**: Generate and manage API keys for programmatic access.

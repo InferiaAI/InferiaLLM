@@ -36,7 +36,7 @@ cp .env.sample .env
 inferiallm init
 
 # 3. Launch all services
-# Starts Orchestration, Inference, and Filtration gateways in a single process
+# Starts Orchestration, Inference, and API gateways in a single process
 inferiallm start
 ```
 
@@ -77,7 +77,7 @@ psql "$DATABASE_URL" -f db/migrations/20260212_add_inference_logs_ip.sql
 ```
 
 ### `inferiallm start`
-Starts all InferiaLLM gateways (Orchestration, Inference, Filtration) and the Dashboard in one command.
+Starts all InferiaLLM gateways (Orchestration, Inference, API) and the Dashboard in one command.
 
 You can also start specific services:
 * `inferiallm start orchestration`: Starts the Orchestration Gateway stack.
