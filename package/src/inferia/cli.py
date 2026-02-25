@@ -1,6 +1,7 @@
 import argparse
 import sys
 import os
+import shutil
 import subprocess
 import multiprocessing
 from inferia.startup_ui import StartupUI
@@ -278,6 +279,54 @@ def run_dashboard(queue=None):
         if queue:
             queue.put(ServiceFailed("Dashboard", str(e)))
 
+def build_dashboard():
+    """
+    Builds the Dashboard.
+    If package/src/inferia/dashboard doesn't exist, runs npm install and
+    npm run build in apps/dashboard, then copies the dist output to
+    package/src/inferia/dashboard.
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    dashboard_dest = os.path.join(base_dir, "dashboard")
+
+    if os.path.isdir(dashboard_dest):
+        print(f"[inferia:init] Info: Dashboard directory already exists at {dashboard_dest}, skipping build.")
+        return
+
+    # Locate the apps/dashboard source directory
+    # base_dir is <repo>/package/src/inferia, walk up to repo root
+    repo_root = os.path.abspath(os.path.join(base_dir, "..", "..", ".."))
+    dashboard_src = os.path.join(repo_root, "apps", "dashboard")
+
+    if not os.path.isdir(dashboard_src):
+        print(f"[inferia:init] Error: Dashboard source directory not found at {dashboard_src}")
+        return
+
+    print(f"[inferia:init] Building Dashboard from {dashboard_src}")
+
+    try:
+        print("[inferia:init] Installing dashboard dependencies...")
+        subprocess.run(["npm", "install"], cwd=dashboard_src, check=True)
+
+        print("[inferia:init] Building dashboard...")
+        subprocess.run(["npm", "run", "build"], cwd=dashboard_src, check=True)
+
+        dist_dir = os.path.join(dashboard_src, "dist")
+        if not os.path.isdir(dist_dir):
+            print(f"[inferia:init] Error: Build output not found at {dist_dir}")
+            return
+
+        shutil.copytree(dist_dir, dashboard_dest)
+        print(f"[inferia:init] Dashboard built and copied to {dashboard_dest}")
+
+    except FileNotFoundError:
+        print(
+            "[inferia:init] Error: 'npm' command not found. Ensure Node.js is installed."
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"[inferia:init] Dashboard build failed: {e}")
+    except Exception as e:
+        print(f"[inferia:init] Error building dashboard: {e}")
 
 def build_sidecar():
     """
@@ -319,6 +368,7 @@ def run_init():
     from inferia.cli_init import init_databases
 
     init_databases()
+    build_dashboard()
     build_sidecar()
 
 
