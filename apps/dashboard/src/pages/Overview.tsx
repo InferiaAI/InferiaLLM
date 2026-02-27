@@ -210,27 +210,13 @@ export default function Overview() {
 
   return (
     <div className="space-y-8 animate-in fade-in-50 duration-300">
-      <section className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/10 p-6 shadow-sm">
+      <section className="rounded-xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/10 p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">Control Plane Overview</h1>
             <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
               Launch intelligent workload agents, configure infrastructure, and observe requests for your {org?.name ? `${org.name} organization` : "organization"}.
             </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link
-              to="/dashboard/deployments/new"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 shadow-sm"
-            >
-              Control Plane <ChevronRight className="h-4 w-4" />
-            </Link>
-            <Link
-              to="/dashboard/insights"
-              className="inline-flex items-center justify-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
-            >
-              View documentations
-            </Link>
           </div>
         </div>
       </section>
@@ -259,7 +245,7 @@ export default function Overview() {
 
       <section className="space-y-4">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
           <h2 className="text-lg font-medium">Quick Setup</h2>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -302,7 +288,7 @@ export default function Overview() {
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-medium">Running Deployments</h3>
-            <Link to="/dashboard/deployments" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+            <Link to="/dashboard/deployments" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
               View all
             </Link>
           </div>
@@ -346,7 +332,7 @@ export default function Overview() {
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-medium">Compute Pool Health</h3>
-            <Link to="/dashboard/compute/pools" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+            <Link to="/dashboard/compute/pools" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
               Manage pools
             </Link>
           </div>
@@ -383,7 +369,7 @@ export default function Overview() {
       <section className="rounded-xl border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="text-sm font-medium">Recent Inference Activity</h3>
-          <Link to="/dashboard/insights" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+          <Link to="/dashboard/insights" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
             Explore insights
           </Link>
         </div>

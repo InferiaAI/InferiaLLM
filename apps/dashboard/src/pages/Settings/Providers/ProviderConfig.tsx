@@ -486,7 +486,7 @@ function NosanaFields({
                     <Key className="w-4 h-4" />
                     Wallet Configuration
                 </h3>
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-xs text-emerald-700">
                     Nosana supports both Wallet-based (on-chain) and API-based (credit) deployments. Enter a Private Key for on-chain deployments.
                 </div>
                 <div className="space-y-2">
@@ -605,7 +605,7 @@ function AkashFields({ config, updateField, handleAddKey }: { config: ProvidersC
                     <Key className="w-4 h-4" />
                     Legacy Mnemonic
                 </h3>
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-xs text-emerald-700">
                     Akash uses a mnemonic phrase for wallet authentication. You can use the legacy field below or set up multiple wallets using the credential management system.
                 </div>
                 <div className="space-y-2">

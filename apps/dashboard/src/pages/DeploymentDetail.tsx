@@ -217,7 +217,7 @@ function DeploymentHeader({ deployment, isRunning, processing, deleting, onRefre
           <button onClick={() => onAction('stop')} disabled={processing} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-amber-500/20 text-amber-600 dark:text-amber-500 rounded-md text-sm font-medium hover:bg-amber-50 dark:hover:bg-amber-500/10 flex items-center gap-2 disabled:opacity-50 transition-colors"><Square className="w-4 h-4" /> Stop</button>
         ) : (
           <div className="flex gap-2">
-            <button onClick={() => onAction('start')} disabled={processing} className="px-5 py-1.5 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-500 flex items-center gap-2 disabled:opacity-50"><Play className="w-4 h-4 fill-current" /> Start</button>
+            <button onClick={() => onAction('start')} disabled={processing} className="px-5 py-1.5 bg-emerald-600 text-white rounded-md text-sm font-semibold hover:bg-emerald-500 flex items-center gap-2 disabled:opacity-50"><Play className="w-4 h-4 fill-current" /> Start</button>
             <button onClick={() => onAction('delete')} disabled={deleting} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-red-500/20 text-red-600 dark:text-red-400 rounded-md text-sm font-medium hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-2 disabled:opacity-50 transition-colors"><Trash2 className="w-4 h-4" /> Delete</button>
           </div>
         )}
@@ -263,7 +263,7 @@ function ActionModal({ type, onCancel, onConfirm }: { type: ActionModalType; onC
         </div>
         <div className="mt-5 flex items-center justify-end gap-2">
           <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm rounded-md border hover:bg-muted">Cancel</button>
-          <button type="button" onClick={onConfirm} className={cn("px-3 py-1.5 text-sm rounded-md text-white", type === "delete" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700")}>{type === "delete" ? "Delete" : type === "stop" ? "Stop" : "Start"}</button>
+          <button type="button" onClick={onConfirm} className={cn("px-3 py-1.5 text-sm rounded-md text-white", type === "delete" ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700")}>{type === "delete" ? "Delete" : type === "stop" ? "Stop" : "Start"}</button>
         </div>
       </div>
     </div>

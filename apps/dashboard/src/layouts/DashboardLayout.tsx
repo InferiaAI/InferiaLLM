@@ -84,10 +84,10 @@ function SidebarItem({
       {({ isActive }) => (
         <div
           className={cn(
-            "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 group relative",
+            "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all duration-200 group relative",
             isActive
-              ? "bg-blue-50 text-blue-700 dark:bg-transparent dark:text-primary-foreground"
-              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-muted-foreground dark:hover:bg-transparent dark:hover:text-primary-foreground",
+              ? "font-semibold bg-emerald-50 text-emerald-700 dark:bg-primary/10 dark:text-primary"
+              : "font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-muted-foreground dark:hover:bg-white/5 dark:hover:text-foreground",
             isCollapsed && "justify-center px-2"
           )}
         >
@@ -95,15 +95,15 @@ function SidebarItem({
             className={cn(
               "w-4 h-4 shrink-0 transition-colors",
               isActive
-                ? "text-blue-700 dark:text-primary"
-                : "text-slate-500 group-hover:text-slate-900 dark:text-muted-foreground dark:group-hover:text-primary-foreground"
+                ? "text-emerald-700 dark:text-primary"
+                : "text-slate-500 group-hover:text-slate-900 dark:text-muted-foreground dark:group-hover:text-foreground"
             )}
           />
           {!isCollapsed && <span>{item.label}</span>}
           {isCollapsed && (
             <div
               className={cn(
-                "absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-md bg-blue-600 dark:bg-primary transition-opacity",
+                "absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-md bg-emerald-600 dark:bg-primary transition-opacity",
                 isActive ? "opacity-100" : "opacity-0"
               )}
             />
@@ -178,7 +178,7 @@ export default function DashboardLayout() {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 bg-slate-100 dark:bg-card border-r border-slate-200 dark:border-border transform transition-all duration-300 flex flex-col",
+          "fixed inset-y-0 left-0 z-50 bg-slate-100 dark:bg-background border-r border-slate-200 dark:border-border transform transition-all duration-300 flex flex-col",
           mobileMenuOpen ? "translate-x-0 w-64" : "-translate-x-full lg:translate-x-0",
           isCollapsed ? "lg:w-[70px]" : "lg:w-64"
         )}
@@ -203,7 +203,7 @@ export default function DashboardLayout() {
                 setMobileMenuOpen(false);
               }}
               className={cn(
-                "w-full h-9 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors",
+                "w-full h-9 inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors",
                 isCollapsed && "px-0"
               )}
               aria-label="Create new deployment"
@@ -248,7 +248,7 @@ export default function DashboardLayout() {
               isCollapsed ? "justify-center" : "bg-white/50 dark:bg-transparent border border-slate-200/50 dark:border-transparent dark:hover:bg-muted/40 shadow-sm dark:shadow-none"
             )}
           >
-            <div className="h-8 w-8 rounded-md bg-blue-600 dark:bg-primary/20 dark:text-primary text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm">
+            <div className="h-8 w-8 rounded-md bg-emerald-600 dark:bg-primary/20 dark:text-primary text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm">
               {user?.email?.charAt(0).toUpperCase()}
             </div>
             {!isCollapsed && (
@@ -284,7 +284,7 @@ export default function DashboardLayout() {
       </aside>
 
       <div className={cn("flex-1 flex flex-col min-h-screen transition-all duration-300", isCollapsed ? "lg:ml-[70px]" : "lg:ml-64")}>
-        <header className="h-14 border-b border-slate-200 dark:border-border bg-white/95 dark:bg-background/95 backdrop-blur sticky top-0 z-30 px-4 sm:px-6 flex items-center justify-between shadow-sm dark:shadow-none">
+        <header className="h-14 border-b border-slate-200 dark:border-border bg-white/95 dark:bg-background/80 backdrop-blur-md sticky top-0 z-30 px-4 sm:px-6 flex items-center justify-between shadow-sm dark:shadow-none">
           <div className="flex items-center gap-4">
             <button
               type="button"
@@ -351,10 +351,6 @@ export default function DashboardLayout() {
               <span className="text-sm text-slate-400 dark:text-muted-foreground w-32 text-left">Search...</span>
               <kbd className="text-[10px] font-mono border rounded px-1 text-slate-400 dark:text-muted-foreground bg-white dark:bg-muted dark:border-border">⌘K</kbd>
             </button>
-
-            <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-primary/20 text-blue-600 dark:text-primary flex items-center justify-center font-bold text-xs ring-2 ring-white dark:ring-background border border-blue-200 dark:border-primary/30">
-              {user?.email?.charAt(0).toUpperCase()}
-            </div>
           </div>
         </header>
 

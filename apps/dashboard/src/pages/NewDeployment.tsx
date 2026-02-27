@@ -266,10 +266,10 @@ const initialState: State = {
 function StepIndicator({ step, current, label }: { step: number; current: number; label: string }) {
   const isActive = step >= current
   return (
-    <div className={cn("flex items-center gap-2", isActive && "text-blue-600 dark:text-blue-400")}>
+    <div className={cn("flex items-center gap-2", isActive && "text-emerald-600 dark:text-emerald-400")}>
       <div className={cn(
         "w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-all",
-        isActive ? "bg-blue-600 text-white border-blue-600 dark:border-blue-500 dark:bg-blue-600" : "border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+        isActive ? "bg-emerald-600 text-white border-emerald-600 dark:border-emerald-500 dark:bg-emerald-600" : "border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
       )}>
         {current}
       </div>
@@ -315,7 +315,7 @@ function HuggingFaceModelBrowser({
     return (
       <button
         onClick={() => setShowBrowser(true)}
-        className="w-full px-3 py-2 text-sm border border-dashed border-blue-300 dark:border-blue-700 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center gap-2 transition-colors"
+        className="w-full px-3 py-2 text-sm border border-dashed border-emerald-300 dark:border-emerald-700 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-2 transition-colors"
       >
         <Search className="w-4 h-4" />
         Browse Hugging Face Models
@@ -369,7 +369,7 @@ function HuggingFaceModelBrowser({
                 }}
                 className={cn(
                   "w-full p-3 text-left hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors flex items-start gap-3",
-                  selectedModelId === model.id && "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500"
+                  selectedModelId === model.id && "bg-emerald-50 dark:bg-emerald-900/20 border-l-2 border-emerald-500"
                 )}
               >
                 <Database className="w-5 h-5 text-slate-400 mt-0.5" />
@@ -396,7 +396,7 @@ function HuggingFaceModelBrowser({
                 }}
                 className={cn(
                   "w-full p-3 text-left hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors",
-                  selectedModelId === model.id && "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500"
+                  selectedModelId === model.id && "bg-emerald-50 dark:bg-emerald-900/20 border-l-2 border-emerald-500"
                 )}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -680,13 +680,13 @@ export default function NewDeployment() {
         <div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner">
           <button
             onClick={() => { dispatch({ type: 'SET_MODE', payload: "managed" }); }}
-            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2", mode === "managed" ? "bg-white dark:bg-zinc-800 shadow-sm text-blue-600 dark:text-blue-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
+            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2", mode === "managed" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
           >
             <Layers className="w-4 h-4" /> Deploy on Compute
           </button>
           <button
             onClick={() => { dispatch({ type: 'SET_MODE', payload: "external" }); }}
-            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2", mode === "external" ? "bg-white dark:bg-zinc-800 shadow-sm text-blue-600 dark:text-blue-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
+            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2", mode === "external" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
           >
             <Globe className="w-4 h-4" /> External Provider
           </button>
@@ -748,7 +748,7 @@ function TypeSelection({ selectedId, onSelect }: { selectedId: string; onSelect:
           role="button"
           tabIndex={type.active ? 0 : -1}
           onClick={() => type.active && onSelect(type.id, type.modelType)}
-          className={cn("p-5 rounded-xl border relative transition-all outline-none", type.active ? "cursor-pointer bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm focus:ring-2 focus:ring-blue-500/40" : "opacity-50 cursor-not-allowed bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800", selectedId === type.id && type.active ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "")}
+          className={cn("p-5 rounded-xl border relative transition-all outline-none", type.active ? "cursor-pointer bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm focus:ring-2 focus:ring-emerald-500/40" : "opacity-50 cursor-not-allowed bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800", selectedId === type.id && type.active ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "")}
         >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -771,18 +771,18 @@ function EngineSelection({ modelType, selectedEngine, dispatch, setStep }: { mod
         <button type="button" onClick={() => setStep(1)} className="text-sm text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium mb-4 flex items-center gap-1">← Back to Type</button>
       </div>
       {computeEngines.filter(e => e.modelTypes.includes(modelType)).map(e => (
-        <div key={e.id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id })} className={cn("cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-blue-500/40", selectedEngine === e.id ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-sm")}>
+        <div key={e.id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id })} className={cn("cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-emerald-500/40", selectedEngine === e.id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm")}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               {e.icon && <e.icon className="w-5 h-5 text-slate-700 dark:text-zinc-200" />}
               <h3 className="font-bold text-lg">{e.name}</h3>
             </div>
-            {selectedEngine === e.id && <Check className="w-5 h-5 text-blue-600 dark:text-blue-500" />}
+            {selectedEngine === e.id && <Check className="w-5 h-5 text-emerald-600 dark:text-emerald-500" />}
           </div>
           <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{e.desc}</p>
         </div>
       ))}
-      <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => setStep(3)} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium">Continue</button></div>
+      <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => setStep(3)} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors font-medium">Continue</button></div>
     </div>
   );
 }
@@ -800,7 +800,7 @@ function PoolSelection({ userPools, selectedPool, dispatch, setStep }: { userPoo
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {userPools.map(pool => (
-            <div key={pool.pool_id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-blue-500/40", selectedPool?.pool_id === pool.pool_id ? "border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-md" : "hover:border-blue-300 dark:hover:border-blue-700")}>
+            <div key={pool.pool_id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-emerald-500/40", selectedPool?.pool_id === pool.pool_id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}>
               <div className="flex items-start justify-between">
                 <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-slate-500 dark:text-zinc-400 font-mono mt-1">{pool.provider}</div></div>
                 <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", pool.is_active ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-slate-50 text-slate-500 border-slate-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700")}>{pool.is_active ? "Active" : "Inactive"}</div>
@@ -809,7 +809,7 @@ function PoolSelection({ userPools, selectedPool, dispatch, setStep }: { userPoo
           ))}
         </div>
       )}
-      <div className="flex justify-between pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => setStep(2)} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => selectedPool && setStep(4)} disabled={!selectedPool} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
+      <div className="flex justify-between pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => setStep(2)} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => selectedPool && setStep(4)} disabled={!selectedPool} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
     </div>
   );
 }
@@ -828,20 +828,20 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
     <div className="max-w-2xl mx-auto space-y-8">
       <div className="space-y-4">
         <label htmlFor="instanceName" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Deployment Name</label>
-        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none transition-all bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. Production Llama 3" />
+        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. Production Llama 3" />
       </div>
 
       <div className="space-y-4">
         <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">{modelType === "embedding" ? "Embedding Model" : "Model"}</label>
         {selectedHFModel ? (
-          <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg">
             <div className="flex items-start justify-between">
-              <div><div className="font-medium text-blue-900 dark:text-blue-100">{selectedHFModel.id}</div><div className="text-sm text-blue-600 dark:text-blue-400 mt-1">{selectedHFModel.pipeline_tag || "feature-extraction"} • {formatDownloads(selectedHFModel.downloads || 0)} downloads</div></div>
-              <button type="button" onClick={() => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: null }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: "" }); }} className="p-1 hover:bg-blue-100 dark:hover:bg-blue-800 rounded"><X className="w-4 h-4 text-blue-600 dark:text-blue-400" /></button>
+              <div><div className="font-medium text-emerald-900 dark:text-emerald-100">{selectedHFModel.id}</div><div className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">{selectedHFModel.pipeline_tag || "feature-extraction"} • {formatDownloads(selectedHFModel.downloads || 0)} downloads</div></div>
+              <button type="button" onClick={() => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: null }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: "" }); }} className="p-1 hover:bg-emerald-100 dark:hover:bg-emerald-800 rounded"><X className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /></button>
             </div>
           </div>
         ) : <HuggingFaceModelBrowser modelType={modelType} onSelect={(m) => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: m }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: m.id }); }} selectedModelId={modelId} />}
-        <input id="modelId" value={modelId} onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white" placeholder={modelType === "embedding" ? "e.g. sentence-transformers/all-MiniLM-L6-v2" : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"} />
+        <input id="modelId" value={modelId} onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white" placeholder={modelType === "embedding" ? "e.g. sentence-transformers/all-MiniLM-L6-v2" : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"} />
       </div>
 
       {selectedEngine === "vllm" && (
@@ -859,7 +859,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
             <button
               type="button"
               onClick={() => dispatch({ type: 'SET_FIELD', field: 'isAdvancedOpen', value: !isAdvancedOpen })}
-              className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+              className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
             >
               {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               Advanced Configuration
@@ -980,7 +980,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
             <button
               type="button"
               onClick={() => dispatch({ type: 'SET_FIELD', field: 'isAdvancedOpen', value: !isAdvancedOpen })}
-              className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+              className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
             >
               {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               Advanced Hardware Configuration
@@ -1021,7 +1021,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
         </div>
       )}
 
-      <div className="flex gap-4 pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} className="flex-1 py-2.5 border rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium transition-colors text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-70 font-medium shadow-sm transition-all flex justify-center items-center gap-2">{isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}</button></div>
+      <div className="flex gap-4 pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} className="flex-1 py-2.5 border rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium transition-colors text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-70 font-medium shadow-sm transition-all flex justify-center items-center gap-2">{isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}</button></div>
     </div>
   );
 }
@@ -1041,9 +1041,9 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
 
       {step === 1 && (
         <div className="space-y-6">
-          <div className="flex justify-center"><div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner"><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2", externalModelType === "inference" ? "bg-white dark:bg-zinc-800 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500")}><MessageSquare className="w-4 h-4" /> Inference</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2", externalModelType === "embedding" ? "bg-white dark:bg-zinc-800 shadow-sm text-blue-600 dark:text-blue-400" : "text-slate-500")}><Database className="w-4 h-4" /> Embeddings</button></div></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<div key={p.id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-all outline-none", selectedProvider === p.id ? "border-blue-600 shadow-md" : "hover:border-blue-300")}><div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg"><p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p></div></div>))}</div>
-          <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} disabled={!selectedProvider} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
+          <div className="flex justify-center"><div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner"><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2", externalModelType === "inference" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><MessageSquare className="w-4 h-4" /> Inference</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2", externalModelType === "embedding" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><Database className="w-4 h-4" /> Embeddings</button></div></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<div key={p.id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-all outline-none", selectedProvider === p.id ? "border-emerald-600 shadow-md" : "hover:border-emerald-300")}><div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg"><p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p></div></div>))}</div>
+          <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} disabled={!selectedProvider} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
         </div>
       )}
 
@@ -1053,7 +1053,7 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
           <div className="space-y-4"><label htmlFor="externalModelName" className="block text-sm font-medium">Model Name</label><input id="externalModelName" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3" : "e.g. gpt-4o"} /></div>
           <div className="space-y-4"><label htmlFor="apiKey" className="block text-sm font-medium">API Key</label><input id="apiKey" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white font-mono" placeholder="sk-..." /></div>
           {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="endpointUrl" className="block text-sm font-medium">Endpoint URL</label><input id="endpointUrl" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="https://..." /></div>)}
-          <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && (!customProviderName || !endpointUrl))} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
+          <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && (!customProviderName || !endpointUrl))} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
         </div>
       )}
 
@@ -1063,7 +1063,7 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
             <div className="space-y-2"><label htmlFor="externalInstanceName" className="text-sm font-medium">Name your Deployment</label><input id="externalInstanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white border-slate-200 dark:border-zinc-700" placeholder="My External Model" /></div>
             <div className="pt-4 border-t dark:border-zinc-800 space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-500">Type</span> <span className="font-medium capitalize">{externalModelType}</span></div><div className="flex justify-between"><span className="text-slate-500">Provider</span> <span className="font-medium capitalize">{selectedProvider}</span></div><div className="flex justify-between"><span className="text-slate-500">Model</span> <span className="font-medium">{externalModelName}</span></div></div>
           </div>
-          <div className="flex gap-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} className="flex-1 py-2 border rounded-md font-medium text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-70 font-medium shadow-sm flex items-center justify-center gap-2">{isPending ? "Deploying..." : "Launch Deployment"}</button></div>
+          <div className="flex gap-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} className="flex-1 py-2 border rounded-md font-medium text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-70 font-medium shadow-sm flex items-center justify-center gap-2">{isPending ? "Deploying..." : "Launch Deployment"}</button></div>
         </div>
       )}
     </>

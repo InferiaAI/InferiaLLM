@@ -178,7 +178,7 @@ export default function InstanceDetail() {
                       <div className="flex flex-wrap gap-1 mt-1">
                         {poolDetails.allowed_gpu_types?.length > 0 ? (
                           poolDetails.allowed_gpu_types.map((gpu: string) => (
-                            <span key={gpu} className="text-xs font-mono bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-1.5 py-0.5 rounded border border-blue-100 dark:border-blue-800">
+                            <span key={gpu} className="text-xs font-mono bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-100 dark:border-emerald-800">
                               {gpu}
                             </span>
                           ))
@@ -203,15 +203,15 @@ export default function InstanceDetail() {
         )}
 
         {activeTab === "nodes" && (
-          <div className="rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden">
+          <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
             <div className="px-6 py-4 border-b">
-              <h3 className="font-mono text-sm font-semibold">
+              <h3 className="font-medium text-foreground">
                 Nodes ({nodes.length})
               </h3>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-xs uppercase text-muted-foreground font-semibold">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
                   <tr>
                     <th className="px-6 py-3 text-left font-mono">Node ID</th>
                     <th className="px-6 py-3 text-left font-mono">State</th>
@@ -226,14 +226,14 @@ export default function InstanceDetail() {
                     <tr><td colSpan={6} className="px-6 py-8 text-center text-muted-foreground">No nodes provisioned in this pool yet.</td></tr>
                   ) : (
                     nodes.map((node) => (
-                      <tr key={node.node_id} className="group hover:bg-muted/30 transition-colors">
-                        <td className="px-6 py-4 font-mono text-blue-600 truncate max-w-[120px]" title={node.node_id}>{node.node_id}</td>
+                      <tr key={node.node_id} className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
+                        <td className="px-6 py-4 font-mono text-emerald-600 truncate max-w-[120px]" title={node.node_id}>{node.node_id}</td>
                         <td className="px-6 py-4">
                           <span className={cn(
-                            "inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium",
+                            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium shadow-sm",
                             node.state === "active" || node.state === "ready"
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
-                              : "border-slate-200 bg-slate-50 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700"
+                              ? "border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+                              : "border-slate-500/20 text-slate-600 dark:text-slate-400 bg-slate-500/10"
                           )}>
                             {node.state}
                           </span>
@@ -247,7 +247,7 @@ export default function InstanceDetail() {
                               href={node.expose_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-600 hover:text-blue-800 flex items-center gap-1 font-mono text-xs truncate max-w-[200px]"
+                              className="text-emerald-600 hover:text-emerald-800 flex items-center gap-1 font-mono text-xs truncate max-w-[200px]"
                               title={node.expose_url}
                             >
                               <ExternalLink className="w-3 h-3 flex-shrink-0" />

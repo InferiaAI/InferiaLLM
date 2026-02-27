@@ -230,7 +230,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                 <div className="flex flex-col gap-1">
                                     <span className="text-muted-foreground text-xs uppercase">TensorBoard URL</span>
                                     {deployment.endpoint_url ? (
-                                        <a href={deployment.endpoint_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">
+                                        <a href={deployment.endpoint_url} target="_blank" rel="noopener noreferrer" className="text-emerald-600 hover:underline break-all">
                                             {deployment.endpoint_url}
                                         </a>
                                     ) : (
@@ -245,7 +245,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                         href={deployment.endpoint_url}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="ml-4 px-4 py-2 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 transition-colors shrink-0"
+                                        className="ml-4 px-4 py-2 bg-emerald-600 text-white rounded-md text-xs font-medium hover:bg-emerald-700 transition-colors shrink-0"
                                     >
                                         Open Board
                                     </a>

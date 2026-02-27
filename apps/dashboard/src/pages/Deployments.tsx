@@ -135,12 +135,12 @@ export default function Deployments() {
       <div className="flex items-center justify-between gap-3">
         <div className="relative w-full max-w-sm">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input placeholder="Search deployments..." className="h-9 w-full rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-blue-500 shadow-sm" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          <input placeholder="Search deployments..." className="h-9 w-full rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
         </div>
         <div className="text-xs text-muted-foreground">{filtered.length} deployments</div>
       </div>
 
-      <div className="rounded-xl border dark:border-zinc-800 bg-white dark:bg-black shadow-sm overflow-hidden">
+      <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
         <DeploymentTable
           deployments={paginated}
           isLoading={isLoading}
@@ -173,7 +173,7 @@ function DeploymentHeader({ onRefresh, onNew }: { onRefresh: () => void; onNew: 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className="h-9 px-3 inline-flex items-center gap-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:bg-slate-50 transition-colors text-sm font-medium" onClick={onRefresh}><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
-          <button type="button" onClick={onNew} className="h-9 px-4 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> New Deployment</button>
+          <button type="button" onClick={onNew} className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> New Deployment</button>
         </div>
       </div>
     </div>
@@ -203,17 +203,17 @@ function DeploymentTable({ deployments, isLoading, isMutating, onStart, onStop, 
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[980px] text-sm text-left">
-        <thead className="bg-slate-50 dark:bg-zinc-900 text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider border-b dark:border-zinc-800">
+        <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
           <tr>
-            <th className="px-4 py-3 font-medium">Deployment</th>
-            <th className="px-4 py-3 font-medium">Model</th>
-            <th className="px-4 py-3 font-medium">Provider</th>
-            <th className="px-4 py-3 font-medium">Status</th>
-            <th className="px-4 py-3 font-medium">Created</th>
-            <th className="px-4 py-3 font-medium text-right">Actions</th>
+            <th className="px-6 py-3 font-medium">Deployment</th>
+            <th className="px-6 py-3 font-medium">Model</th>
+            <th className="px-6 py-3 font-medium">Provider</th>
+            <th className="px-6 py-3 font-medium">Status</th>
+            <th className="px-6 py-3 font-medium">Created On</th>
+            <th className="px-6 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
+        <tbody className="divide-y">
           {deployments.map((d) => (
             <DeploymentRow key={d.id} deployment={d} isMutating={isMutating} onStart={onStart} onStop={onStop} onDelete={onDelete} />
           ))}
@@ -229,26 +229,26 @@ function DeploymentRow({ deployment: d, isMutating, onStart, onStop, onDelete }:
   const canDelete = ["STOPPED", "TERMINATED", "FAILED"].includes(d.status);
 
   return (
-    <tr className="hover:bg-slate-50/80 dark:hover:bg-zinc-900/50 transition-colors">
-      <td className="px-4 py-3">
-        <Link to={`/dashboard/deployments/${d.id}`} className="font-medium text-blue-600 dark:text-blue-400 hover:underline">{d.name}</Link>
+    <tr className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
+      <td className="px-6 py-4">
+        <Link to={`/dashboard/deployments/${d.id}`} className="font-medium text-foreground hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">{d.name}</Link>
         <div className="mt-1 text-xs text-muted-foreground font-mono">{(d.id || "").slice(0, 12)}...</div>
       </td>
-      <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 font-mono text-xs">{d.modelName}</td>
-      <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 capitalize">{d.provider}</td>
-      <td className="px-4 py-3">
-        <span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium", getStatusStyles(d.status))}>
+      <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{d.modelName}</td>
+      <td className="px-6 py-4 text-muted-foreground capitalize">{d.provider}</td>
+      <td className="px-6 py-4">
+        <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm", getStatusStyles(d.status))}>
           <span className={cn("h-1.5 w-1.5 rounded-full", getStatusDot(d.status))} />
           {d.status}
         </span>
       </td>
-      <td className="px-4 py-3 text-slate-500 dark:text-zinc-500 text-xs">{new Date(d.createdAt).toLocaleDateString()}</td>
-      <td className="px-4 py-3">
+      <td className="px-6 py-4 text-muted-foreground text-xs">{new Date(d.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+      <td className="px-6 py-4">
         <div className="flex items-center justify-end gap-2">
-          <Link to={`/dashboard/deployments/${d.id}`} className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted"><Settings className="w-3.5 h-3.5" /> Settings</Link>
-          {canStart && <button type="button" disabled={isMutating} onClick={() => onStart(d.id)} className="inline-flex items-center gap-1 rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900 disabled:opacity-60"><Play className="w-3.5 h-3.5" /> Start</button>}
-          {isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(d.id)} className="inline-flex items-center gap-1 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900 disabled:opacity-60"><Square className="w-3.5 h-3.5" /> Stop</button>}
-          {canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(d.id)} className="inline-flex items-center gap-1 rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900 disabled:opacity-60"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
+          <Link to={`/dashboard/deployments/${d.id}`} className="inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted text-foreground transition-colors"><Settings className="w-3.5 h-3.5 text-muted-foreground" /> Settings</Link>
+          {canStart && <button type="button" disabled={isMutating} onClick={() => onStart(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 font-medium disabled:opacity-50 transition-colors"><Play className="w-3.5 h-3.5" /> Start</button>}
+          {isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-medium disabled:opacity-50 transition-colors"><Square className="w-3.5 h-3.5" /> Stop</button>}
+          {canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium disabled:opacity-50 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
         </div>
       </td>
     </tr>
@@ -257,7 +257,7 @@ function DeploymentRow({ deployment: d, isMutating, onStart, onStop, onDelete }:
 
 function DeploymentPagination({ totalItems, pageSize, currentPage, totalPages, onPageChange, onPageSizeChange }: { totalItems: number; pageSize: number; currentPage: number; totalPages: number; onPageChange: (p: number) => void; onPageSizeChange: (s: number) => void }) {
   return (
-    <div className="bg-slate-50 dark:bg-zinc-900/50 border-t dark:border-zinc-800 px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-500 dark:text-zinc-500">
+    <div className="bg-muted/10 border-t border-border/50 px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground">
       <span>Showing {totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalItems)} of {totalItems}</span>
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2"><span>Rows</span><select className="bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded px-2 py-1 outline-none" value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>{PAGE_SIZE_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}</select></div>

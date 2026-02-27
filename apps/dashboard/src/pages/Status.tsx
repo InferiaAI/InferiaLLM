@@ -225,7 +225,7 @@ export default function Status() {
             {/* Service Endpoints Reference */}
             <div className="bg-card rounded-xl border p-6">
                 <h3 className="font-semibold mb-4 flex items-center gap-2">
-                    <Database className="w-4 h-4 text-blue-500" />
+                    <Database className="w-4 h-4 text-emerald-500" />
                     Service Endpoints
                 </h3>
                 <div className="grid gap-2 text-sm font-mono">

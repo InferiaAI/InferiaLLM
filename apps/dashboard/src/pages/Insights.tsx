@@ -613,7 +613,7 @@ export default function Insights() {
                         </ChartCard>
 
                         <ChartCard title="Request Volume" subtitle={`${granularity === "hour" ? "Hourly" : "Daily"} requests`}>
-                            <ChartLegend items={[{ label: "Requests", colorClass: "bg-blue-600" }]} />
+                            <ChartLegend items={[{ label: "Requests", colorClass: "bg-emerald-600" }]} />
                             <Suspense fallback={<Skeleton className="h-[260px] w-full" />}>
                                 <RequestVolumeChart data={chartData} />
                             </Suspense>
@@ -866,7 +866,7 @@ function MetricCard({
         <div className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
-                <Icon className="h-4 w-4 text-blue-500" />
+                <Icon className="h-4 w-4 text-emerald-500" />
             </div>
             <div className="text-2xl font-bold">{value}</div>
             <div className="mt-1 text-xs text-muted-foreground">{subtitle}</div>

@@ -166,20 +166,20 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
                                             className={cn(
                                                 "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
                                                 isSelected
-                                                    ? "bg-blue-50 dark:bg-blue-900/20"
+                                                    ? "bg-emerald-50 dark:bg-emerald-900/20"
                                                     : "hover:bg-slate-50 dark:hover:bg-zinc-800/50"
                                             )}
                                         >
                                             <div className={cn(
                                                 "p-2 rounded-lg",
                                                 isSelected
-                                                    ? "bg-blue-100 dark:bg-blue-900/40"
+                                                    ? "bg-emerald-100 dark:bg-emerald-900/40"
                                                     : "bg-slate-100 dark:bg-zinc-800"
                                             )}>
                                                 <item.icon className={cn(
                                                     "w-4 h-4",
                                                     isSelected
-                                                        ? "text-blue-600 dark:text-blue-400"
+                                                        ? "text-emerald-600 dark:text-emerald-400"
                                                         : "text-slate-500 dark:text-zinc-400"
                                                 )} />
                                             </div>
@@ -187,7 +187,7 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
                                                 <div className={cn(
                                                     "font-medium text-sm",
                                                     isSelected
-                                                        ? "text-blue-700 dark:text-blue-300"
+                                                        ? "text-emerald-700 dark:text-emerald-300"
                                                         : "text-slate-900 dark:text-zinc-100"
                                                 )}>
                                                     {item.title}
