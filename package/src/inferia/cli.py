@@ -290,8 +290,8 @@ def build_dashboard():
     dashboard_dest = os.path.join(base_dir, "dashboard")
 
     if os.path.isdir(dashboard_dest):
-        print(f"[inferia:init] Info: Dashboard directory already exists at {dashboard_dest}, skipping build.")
-        return
+        shutil.rmtree(dashboard_dest)
+        print(f"[inferia:init] Info: Dashboard directory already exists at {dashboard_dest}, rebuilding.")
 
     # Locate the apps/dashboard source directory
     # base_dir is <repo>/package/src/inferia, walk up to repo root

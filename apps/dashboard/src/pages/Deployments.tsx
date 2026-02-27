@@ -11,6 +11,7 @@ import {
   Trash2,
   ArrowRight,
   Activity,
+  AlertCircle,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
@@ -26,6 +27,7 @@ interface DeploymentRecord {
   org_id?: string;
   created_at?: string;
   state?: string;
+  error_message?: string | null;
 }
 
 interface DeploymentResponse {
@@ -41,6 +43,7 @@ interface Deployment {
   orgId: string;
   createdAt: string;
   status: string;
+  errorMessage: string | null;
 }
 
 type ApiErrorResponse = {
@@ -95,6 +98,7 @@ export default function Deployments() {
         orgId: d.org_id || "user",
         createdAt: d.created_at || new Date().toISOString(),
         status: (d.state || "PENDING").toUpperCase(),
+        errorMessage: d.error_message || null,
       }));
     },
     enabled: !!targetOrgId,
@@ -241,6 +245,12 @@ function DeploymentRow({ deployment: d, isMutating, onStart, onStop, onDelete }:
           <span className={cn("h-1.5 w-1.5 rounded-full", getStatusDot(d.status))} />
           {d.status}
         </span>
+        {d.status === "FAILED" && d.errorMessage && (
+          <div className="mt-1 flex items-start gap-1 text-[11px] text-red-600 dark:text-red-400 max-w-[280px]">
+            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+            <span className="line-clamp-2">{d.errorMessage}</span>
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 text-slate-500 dark:text-zinc-500 text-xs">{new Date(d.createdAt).toLocaleDateString()}</td>
       <td className="px-4 py-3">

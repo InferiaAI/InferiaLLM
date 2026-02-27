@@ -36,6 +36,7 @@ type DeploymentData = {
   replicas?: number;
   inference_model?: string;
   configuration?: any;
+  error_message?: string | null;
 }
 
 type ProviderCapabilities = {
@@ -103,11 +104,11 @@ export default function DeploymentDetail() {
       try {
         const { data } = await computeApi.get(`/deployment/status/${id}`)
         if (data && data.deployment_id) {
-          dispatch({ type: 'SET_DEPLOYMENT', payload: { ...data, id: data.deployment_id, name: data.model_name || `Compute-${data.deployment_id.slice(0, 8)}`, provider: data.engine === "vllm" ? "vLLM (Compute)" : "Compute", endpoint_url: data.endpoint, model_name: data.model_name, workload_type: data.configuration?.workload_type || (data.configuration?.git_repo ? "training" : "inference"), git_repo: data.configuration?.git_repo, training_script: data.configuration?.training_script, dataset_url: data.configuration?.dataset_url } });
+          dispatch({ type: 'SET_DEPLOYMENT', payload: { ...data, id: data.deployment_id, name: data.model_name || `Compute-${data.deployment_id.slice(0, 8)}`, provider: data.engine === "vllm" ? "vLLM (Compute)" : "Compute", endpoint_url: data.endpoint, model_name: data.model_name, workload_type: data.configuration?.workload_type || (data.configuration?.git_repo ? "training" : "inference"), git_repo: data.configuration?.git_repo, training_script: data.configuration?.training_script, dataset_url: data.configuration?.dataset_url, error_message: data.error_message || null } });
           return
         }
       } catch { /* ignore */ }
-      const { data } = await managementApi.get<DeploymentData[]>("/management/deployments")
+      const { data } = await managementApi.get<DeploymentData[]>("/deployments")
       dispatch({ type: 'SET_DEPLOYMENT', payload: data.find((d) => d.id === id) || null });
     } catch (e) { console.error(e) } finally { dispatch({ type: 'SET_LOADING', payload: false }); dispatch({ type: 'SET_PROCESSING', payload: false }); }
   }, [id])
@@ -158,7 +159,7 @@ export default function DeploymentDetail() {
       else if (action === "delete") {
         dispatch({ type: 'SET_DELETING', payload: true });
         if (deployment?.provider?.includes("Compute") || deployment?.engine === "vllm") await computeApi.delete(`/deployment/delete/${id}`)
-        else await managementApi.delete(`/management/deployments/${id}`)
+        else await managementApi.delete(`/deployments/${id}`)
         navigate("/dashboard/deployments")
         return
       }
@@ -180,6 +181,16 @@ export default function DeploymentDetail() {
         onRefresh={() => void fetchDeployment(false)}
         onAction={(a) => dispatch({ type: 'SET_ACTION_MODAL', payload: a })}
       />
+
+      {deploymentState === "FAILED" && deployment?.error_message && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300">
+          <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0 text-red-500" />
+          <div>
+            <h3 className="font-semibold text-sm">Deployment Failed</h3>
+            <p className="text-sm mt-0.5 text-red-700 dark:text-red-400">{deployment.error_message}</p>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-1 border-b pb-0">
         {tabs.map((tab) => (

@@ -85,7 +85,11 @@ async def health_check_loop(inventory_repo, deployment_repo):
                          current_d = await deployment_repo.get(d_id)
                          if current_d and current_d["state"] not in ["TERMINATED", "FAILED", "STOPPED"]:
                              log.info(f"Marking deployment {d_id} as FAILED due to unhealthy node")
-                             await deployment_repo.update_state(d_id, "FAILED")
+                             await deployment_repo.update_state(
+                                 d_id,
+                                 "FAILED",
+                                 error_message=f"Node {node_id} became unhealthy (heartbeat timeout)",
+                             )
 
         except Exception:
             log.exception("Error in health check loop")

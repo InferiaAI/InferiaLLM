@@ -214,6 +214,7 @@ async def get_deployment_status(deployment_id: str):
         "policies": json.loads(resp.policies) if resp.policies else {},
         "engine": resp.engine,
         "inference_model": resp.inference_model,
+        "error_message": resp.error_message or None,
     }
 
 
@@ -760,6 +761,7 @@ async def list_all_deployments(org_id: str | None = None):
                 "engine": d.engine,
                 "endpoint": d.endpoint,
                 "org_id": d.org_id,
+                "error_message": d.error_message or None,
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility

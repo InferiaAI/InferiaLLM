@@ -412,10 +412,12 @@ export class NosanaService {
                     break;
                 }
                 if (job.state === JobState.COMPLETED || job.state === JobState.STOPPED) {
-                    console.warn(`[Confidential] Job ${jobAddress} ended before we could send definition.`);
+                    console.warn(`[Confidential] Job ${jobAddress} ended before we could send definition. State: ${job.state}`);
                     return;
                 }
-            } catch (e) { }
+            } catch (e: any) {
+                console.debug(`[Confidential] Retry poll error for job ${jobAddress}: ${e.message || 'unknown error'}`);
+            }
             // Increase polling interval to 3s to reduce load
             await new Promise(r => setTimeout(r, 3000));
         }
@@ -825,8 +827,8 @@ export class NosanaService {
                             // Remove from watched jobs if it's terminated
                             this.watchedJobs.delete(jobAddress);
                         }
-                    } catch (e) {
-                        console.warn(`[Recovery] Could not check job ${jobAddress}:`, e);
+                    } catch (e: any) {
+                        console.warn(`[Recovery] Could not check job ${jobAddress}:`, e.message || e);
                     }
                 }
 
@@ -1033,7 +1035,9 @@ export class NosanaService {
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify(payload),
                             });
-                        } catch (err) { }
+                        } catch (err: any) {
+                            console.error(`[heartbeat] Failed to send failed heartbeat for short-lived job ${jobAddress}:`, err.message || err);
+                        }
                     } else if (shouldRedeploy) {
                         console.log(`[auto-redeploy] Attempting redeploy for ${jobAddress}...`);
                         try {
@@ -1059,7 +1063,9 @@ export class NosanaService {
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify(updatePayload),
                                 });
-                            } catch (err) { }
+                            } catch (err: any) {
+                                console.error(`[heartbeat] Failed to send provisioning heartbeat for redeployed job ${newJob.jobAddress}:`, err.message || err);
+                            }
 
                             this.watchJob(newJob.jobAddress, orchestratorUrl, {
                                 jobDefinition: currentJobInfo.jobDefinition,
@@ -1085,7 +1091,9 @@ export class NosanaService {
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify(payload),
                                 });
-                            } catch (err) { }
+                            } catch (err: any) {
+                                console.error(`[heartbeat] Failed to send failed heartbeat after redeploy error for ${jobAddress}:`, err.message || err);
+                            }
                         }
                     }
 
@@ -1104,7 +1112,9 @@ export class NosanaService {
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify(payload),
                         });
-                    } catch (err) { }
+                    } catch (err: any) {
+                        console.error(`[heartbeat] Failed to send terminated heartbeat for ${jobAddress}:`, err.message || err);
+                    }
 
                     this.watchedJobs.delete(jobAddress);
                     return;

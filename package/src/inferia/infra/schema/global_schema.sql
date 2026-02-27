@@ -373,6 +373,7 @@ CREATE TABLE IF NOT EXISTS public.model_deployments
     node_ids uuid[],
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
+    error_message text,
     CONSTRAINT model_deployments_pkey PRIMARY KEY (deployment_id),
     CONSTRAINT model_deployments_model_id_fkey FOREIGN KEY (model_id)
         REFERENCES public.model_registry (model_id) MATCH SIMPLE

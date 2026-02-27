@@ -111,7 +111,11 @@ class ModelDeploymentWorker:
                     break
 
                 if attempt == MAX_PROVISION_RETRIES:
-                    await self.deployments.update_state(deployment_id, "FAILED")
+                    await self.deployments.update_state(
+                        deployment_id,
+                        "FAILED",
+                        error_message=f"No available nodes after {MAX_PROVISION_RETRIES} provisioning attempts",
+                    )
                     return
 
                 adapter = get_adapter(pool["provider"])
@@ -164,7 +168,11 @@ class ModelDeploymentWorker:
                 ):
                     # If we still lack info, we can't provision
                     log.error(f"Missing job definition for deployment {deployment_id}")
-                    await self.deployments.update_state(deployment_id, "FAILED")
+                    await self.deployments.update_state(
+                        deployment_id,
+                        "FAILED",
+                        error_message="Missing job definition or image for deployment",
+                    )
                     return
 
                 node_spec = await adapter.provision_node(
@@ -264,7 +272,11 @@ class ModelDeploymentWorker:
                 log.error(
                     f"Insufficient capacity for deployment {deployment_id} after {MAX_PROVISION_RETRIES} provisioning attempts. Needs GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}"
                 )
-                await self.deployments.update_state(deployment_id, "FAILED")
+                await self.deployments.update_state(
+                    deployment_id,
+                    "FAILED",
+                    error_message=f"Insufficient capacity: GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}",
+                )
                 return
 
             best_node = min(candidates, key=score_node)
@@ -299,7 +311,11 @@ class ModelDeploymentWorker:
                 )
 
             except Exception:
-                await self.deployments.update_state(deployment_id, "FAILED")
+                await self.deployments.update_state(
+                    deployment_id,
+                    "FAILED",
+                    error_message=f"Strategy deployment error: {e}",
+                )
                 raise
 
             # Normalize strategy outputs to UUID list shape expected by repository
@@ -323,7 +339,11 @@ class ModelDeploymentWorker:
 
         except Exception as e:
             log.error(f"Unhandled error during provisioning for {deployment_id}: {e}")
-            await self.deployments.update_state(deployment_id, "FAILED")
+            await self.deployments.update_state(
+                deployment_id,
+                "FAILED",
+                error_message=str(e),
+            )
             raise e
 
     async def handle_terminate_requested(self, deployment_id: UUID):

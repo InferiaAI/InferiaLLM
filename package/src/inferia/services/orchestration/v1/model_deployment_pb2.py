@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16model_deployment.proto\x12\x10orchestration.v1\"\xac\x02\n\x12\x44\x65ployModelRequest\x12\x12\n\nmodel_name\x18\x01 \x01(\t\x12\x15\n\rmodel_version\x18\x02 \x01(\t\x12\x0f\n\x07pool_id\x18\x03 \x01(\t\x12\x10\n\x08replicas\x18\x04 \x01(\x05\x12\x17\n\x0fgpu_per_replica\x18\x05 \x01(\x05\x12\x15\n\rworkload_type\x18\x06 \x01(\t\x12\x0e\n\x06\x65ngine\x18\x07 \x01(\t\x12\x15\n\rconfiguration\x18\x08 \x01(\t\x12\x10\n\x08owner_id\x18\t \x01(\t\x12\x10\n\x08\x65ndpoint\x18\n \x01(\t\x12\x0e\n\x06org_id\x18\x0b \x01(\t\x12\x10\n\x08policies\x18\x0c \x01(\t\x12\x17\n\x0finference_model\x18\r \x01(\t\x12\x12\n\nmodel_type\x18\x0e \x01(\t\";\n\x13\x44\x65ployModelResponse\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\r\n\x05state\x18\x02 \x01(\t\"-\n\x14GetDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\"\xbe\x02\n\x15GetDeploymentResponse\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t\x12\x15\n\rmodel_version\x18\x03 \x01(\t\x12\x10\n\x08replicas\x18\x04 \x01(\x05\x12\x17\n\x0fgpu_per_replica\x18\x05 \x01(\x05\x12\x0f\n\x07pool_id\x18\x06 \x01(\t\x12\r\n\x05state\x18\x07 \x01(\t\x12\x0e\n\x06\x65ngine\x18\x08 \x01(\t\x12\x15\n\rconfiguration\x18\t \x01(\t\x12\x10\n\x08owner_id\x18\n \x01(\t\x12\x10\n\x08\x65ndpoint\x18\x0b \x01(\t\x12\x0e\n\x06org_id\x18\x0c \x01(\t\x12\x10\n\x08policies\x18\r \x01(\t\x12\x17\n\x0finference_model\x18\x0e \x01(\t\x12\x12\n\nmodel_type\x18\x0f \x01(\t\"9\n\x16ListDeploymentsRequest\x12\x0f\n\x07pool_id\x18\x01 \x01(\t\x12\x0e\n\x06org_id\x18\x02 \x01(\t\"W\n\x17ListDeploymentsResponse\x12<\n\x0b\x64\x65ployments\x18\x01 \x03(\x0b\x32\'.orchestration.v1.GetDeploymentResponse\"A\n\x16ScaleDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\x10\n\x08replicas\x18\x02 \x01(\x05\":\n\x17ScaleDeploymentResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\r\n\x05state\x18\x02 \x01(\t\"0\n\x17\x44\x65leteDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\",\n\x18\x44\x65leteDeploymentResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\"/\n\x16StartDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\":\n\x17StartDeploymentResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\r\n\x05state\x18\x02 \x01(\t\"\xd8\x01\n\x17UpdateDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\x1a\n\rconfiguration\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1c\n\x0finference_model\x18\x03 \x01(\tH\x01\x88\x01\x01\x12\x15\n\x08\x65ndpoint\x18\x04 \x01(\tH\x02\x88\x01\x01\x12\x15\n\x08replicas\x18\x05 \x01(\x05H\x03\x88\x01\x01\x42\x10\n\x0e_configurationB\x12\n\x10_inference_modelB\x0b\n\t_endpointB\x0b\n\t_replicas\"<\n\x18UpdateDeploymentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t2\xe4\x05\n\x16ModelDeploymentService\x12Z\n\x0b\x44\x65ployModel\x12$.orchestration.v1.DeployModelRequest\x1a%.orchestration.v1.DeployModelResponse\x12`\n\rGetDeployment\x12&.orchestration.v1.GetDeploymentRequest\x1a\'.orchestration.v1.GetDeploymentResponse\x12\x66\n\x0fListDeployments\x12(.orchestration.v1.ListDeploymentsRequest\x1a).orchestration.v1.ListDeploymentsResponse\x12\x66\n\x0fScaleDeployment\x12(.orchestration.v1.ScaleDeploymentRequest\x1a).orchestration.v1.ScaleDeploymentResponse\x12i\n\x10\x44\x65leteDeployment\x12).orchestration.v1.DeleteDeploymentRequest\x1a*.orchestration.v1.DeleteDeploymentResponse\x12\x66\n\x0fStartDeployment\x12(.orchestration.v1.StartDeploymentRequest\x1a).orchestration.v1.StartDeploymentResponse\x12i\n\x10UpdateDeployment\x12).orchestration.v1.UpdateDeploymentRequest\x1a*.orchestration.v1.UpdateDeploymentResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16model_deployment.proto\x12\x10orchestration.v1\"\xac\x02\n\x12\x44\x65ployModelRequest\x12\x12\n\nmodel_name\x18\x01 \x01(\t\x12\x15\n\rmodel_version\x18\x02 \x01(\t\x12\x0f\n\x07pool_id\x18\x03 \x01(\t\x12\x10\n\x08replicas\x18\x04 \x01(\x05\x12\x17\n\x0fgpu_per_replica\x18\x05 \x01(\x05\x12\x15\n\rworkload_type\x18\x06 \x01(\t\x12\x0e\n\x06\x65ngine\x18\x07 \x01(\t\x12\x15\n\rconfiguration\x18\x08 \x01(\t\x12\x10\n\x08owner_id\x18\t \x01(\t\x12\x10\n\x08\x65ndpoint\x18\n \x01(\t\x12\x0e\n\x06org_id\x18\x0b \x01(\t\x12\x10\n\x08policies\x18\x0c \x01(\t\x12\x17\n\x0finference_model\x18\r \x01(\t\x12\x12\n\nmodel_type\x18\x0e \x01(\t\";\n\x13\x44\x65ployModelResponse\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\r\n\x05state\x18\x02 \x01(\t\"-\n\x14GetDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\"\xd5\x02\n\x15GetDeploymentResponse\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\x12\n\nmodel_name\x18\x02 \x01(\t\x12\x15\n\rmodel_version\x18\x03 \x01(\t\x12\x10\n\x08replicas\x18\x04 \x01(\x05\x12\x17\n\x0fgpu_per_replica\x18\x05 \x01(\x05\x12\x0f\n\x07pool_id\x18\x06 \x01(\t\x12\r\n\x05state\x18\x07 \x01(\t\x12\x0e\n\x06\x65ngine\x18\x08 \x01(\t\x12\x15\n\rconfiguration\x18\t \x01(\t\x12\x10\n\x08owner_id\x18\n \x01(\t\x12\x10\n\x08\x65ndpoint\x18\x0b \x01(\t\x12\x0e\n\x06org_id\x18\x0c \x01(\t\x12\x10\n\x08policies\x18\r \x01(\t\x12\x17\n\x0finference_model\x18\x0e \x01(\t\x12\x12\n\nmodel_type\x18\x0f \x01(\t\x12\x15\n\rerror_message\x18\x10 \x01(\t\"9\n\x16ListDeploymentsRequest\x12\x0f\n\x07pool_id\x18\x01 \x01(\t\x12\x0e\n\x06org_id\x18\x02 \x01(\t\"W\n\x17ListDeploymentsResponse\x12<\n\x0b\x64\x65ployments\x18\x01 \x03(\x0b\x32\'.orchestration.v1.GetDeploymentResponse\"A\n\x16ScaleDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\x10\n\x08replicas\x18\x02 \x01(\x05\":\n\x17ScaleDeploymentResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\r\n\x05state\x18\x02 \x01(\t\"0\n\x17\x44\x65leteDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\",\n\x18\x44\x65leteDeploymentResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\"/\n\x16StartDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\":\n\x17StartDeploymentResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\r\n\x05state\x18\x02 \x01(\t\"\xd8\x01\n\x17UpdateDeploymentRequest\x12\x15\n\rdeployment_id\x18\x01 \x01(\t\x12\x1a\n\rconfiguration\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1c\n\x0finference_model\x18\x03 \x01(\tH\x01\x88\x01\x01\x12\x15\n\x08\x65ndpoint\x18\x04 \x01(\tH\x02\x88\x01\x01\x12\x15\n\x08replicas\x18\x05 \x01(\x05H\x03\x88\x01\x01\x42\x10\n\x0e_configurationB\x12\n\x10_inference_modelB\x0b\n\t_endpointB\x0b\n\t_replicas\"<\n\x18UpdateDeploymentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t2\xe4\x05\n\x16ModelDeploymentService\x12Z\n\x0b\x44\x65ployModel\x12$.orchestration.v1.DeployModelRequest\x1a%.orchestration.v1.DeployModelResponse\x12`\n\rGetDeployment\x12&.orchestration.v1.GetDeploymentRequest\x1a\'.orchestration.v1.GetDeploymentResponse\x12\x66\n\x0fListDeployments\x12(.orchestration.v1.ListDeploymentsRequest\x1a).orchestration.v1.ListDeploymentsResponse\x12\x66\n\x0fScaleDeployment\x12(.orchestration.v1.ScaleDeploymentRequest\x1a).orchestration.v1.ScaleDeploymentResponse\x12i\n\x10\x44\x65leteDeployment\x12).orchestration.v1.DeleteDeploymentRequest\x1a*.orchestration.v1.DeleteDeploymentResponse\x12\x66\n\x0fStartDeployment\x12(.orchestration.v1.StartDeploymentRequest\x1a).orchestration.v1.StartDeploymentResponse\x12i\n\x10UpdateDeployment\x12).orchestration.v1.UpdateDeploymentRequest\x1a*.orchestration.v1.UpdateDeploymentResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -38,27 +38,27 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GETDEPLOYMENTREQUEST']._serialized_start=408
   _globals['_GETDEPLOYMENTREQUEST']._serialized_end=453
   _globals['_GETDEPLOYMENTRESPONSE']._serialized_start=456
-  _globals['_GETDEPLOYMENTRESPONSE']._serialized_end=774
-  _globals['_LISTDEPLOYMENTSREQUEST']._serialized_start=776
-  _globals['_LISTDEPLOYMENTSREQUEST']._serialized_end=833
-  _globals['_LISTDEPLOYMENTSRESPONSE']._serialized_start=835
-  _globals['_LISTDEPLOYMENTSRESPONSE']._serialized_end=922
-  _globals['_SCALEDEPLOYMENTREQUEST']._serialized_start=924
-  _globals['_SCALEDEPLOYMENTREQUEST']._serialized_end=989
-  _globals['_SCALEDEPLOYMENTRESPONSE']._serialized_start=991
-  _globals['_SCALEDEPLOYMENTRESPONSE']._serialized_end=1049
-  _globals['_DELETEDEPLOYMENTREQUEST']._serialized_start=1051
-  _globals['_DELETEDEPLOYMENTREQUEST']._serialized_end=1099
-  _globals['_DELETEDEPLOYMENTRESPONSE']._serialized_start=1101
-  _globals['_DELETEDEPLOYMENTRESPONSE']._serialized_end=1145
-  _globals['_STARTDEPLOYMENTREQUEST']._serialized_start=1147
-  _globals['_STARTDEPLOYMENTREQUEST']._serialized_end=1194
-  _globals['_STARTDEPLOYMENTRESPONSE']._serialized_start=1196
-  _globals['_STARTDEPLOYMENTRESPONSE']._serialized_end=1254
-  _globals['_UPDATEDEPLOYMENTREQUEST']._serialized_start=1257
-  _globals['_UPDATEDEPLOYMENTREQUEST']._serialized_end=1473
-  _globals['_UPDATEDEPLOYMENTRESPONSE']._serialized_start=1475
-  _globals['_UPDATEDEPLOYMENTRESPONSE']._serialized_end=1535
-  _globals['_MODELDEPLOYMENTSERVICE']._serialized_start=1538
-  _globals['_MODELDEPLOYMENTSERVICE']._serialized_end=2278
+  _globals['_GETDEPLOYMENTRESPONSE']._serialized_end=797
+  _globals['_LISTDEPLOYMENTSREQUEST']._serialized_start=799
+  _globals['_LISTDEPLOYMENTSREQUEST']._serialized_end=856
+  _globals['_LISTDEPLOYMENTSRESPONSE']._serialized_start=858
+  _globals['_LISTDEPLOYMENTSRESPONSE']._serialized_end=945
+  _globals['_SCALEDEPLOYMENTREQUEST']._serialized_start=947
+  _globals['_SCALEDEPLOYMENTREQUEST']._serialized_end=1012
+  _globals['_SCALEDEPLOYMENTRESPONSE']._serialized_start=1014
+  _globals['_SCALEDEPLOYMENTRESPONSE']._serialized_end=1072
+  _globals['_DELETEDEPLOYMENTREQUEST']._serialized_start=1074
+  _globals['_DELETEDEPLOYMENTREQUEST']._serialized_end=1122
+  _globals['_DELETEDEPLOYMENTRESPONSE']._serialized_start=1124
+  _globals['_DELETEDEPLOYMENTRESPONSE']._serialized_end=1168
+  _globals['_STARTDEPLOYMENTREQUEST']._serialized_start=1170
+  _globals['_STARTDEPLOYMENTREQUEST']._serialized_end=1217
+  _globals['_STARTDEPLOYMENTRESPONSE']._serialized_start=1219
+  _globals['_STARTDEPLOYMENTRESPONSE']._serialized_end=1277
+  _globals['_UPDATEDEPLOYMENTREQUEST']._serialized_start=1280
+  _globals['_UPDATEDEPLOYMENTREQUEST']._serialized_end=1496
+  _globals['_UPDATEDEPLOYMENTRESPONSE']._serialized_start=1498
+  _globals['_UPDATEDEPLOYMENTRESPONSE']._serialized_end=1558
+  _globals['_MODELDEPLOYMENTSERVICE']._serialized_start=1561
+  _globals['_MODELDEPLOYMENTSERVICE']._serialized_end=2301
 # @@protoc_insertion_point(module_scope)

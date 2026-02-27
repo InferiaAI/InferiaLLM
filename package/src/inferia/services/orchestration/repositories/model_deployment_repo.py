@@ -116,17 +116,27 @@ class ModelDeploymentRepository(BaseRepository):
         #     },
         # )
 
-    async def update_state(self, deployment_id: UUID, state: str, tx=None):
+    async def update_state(
+        self,
+        deployment_id: UUID,
+        state: str,
+        tx=None,
+        error_message: str | None = None,
+    ):
+        # Clear error_message when transitioning to non-failure states
+        if state != "FAILED":
+            error_message = None
+
         q = """
         UPDATE model_deployments
-        SET state=$2, updated_at=now()
+        SET state=$2, error_message=$3, updated_at=now()
         WHERE deployment_id=$1
         """
         if tx:
-            await tx.execute(q, deployment_id, state)
+            await tx.execute(q, deployment_id, state, error_message)
         else:
             async with self.db.acquire() as c:
-                await c.execute(q, deployment_id, state)
+                await c.execute(q, deployment_id, state, error_message)
 
         await self.event_bus.publish(
             "deployment.state_changed",
@@ -142,21 +152,30 @@ class ModelDeploymentRepository(BaseRepository):
         expected_state: str,
         new_state: str,
         tx=None,
+        error_message: str | None = None,
     ) -> bool:
         """
-        Atomically update state only if_state.
-        Returns current state matches expected True if update was successful, False otherwise.
+        Atomically update state only if current state matches expected.
+        Returns True if update was successful, False otherwise.
         """
+        # Clear error_message when transitioning to non-failure states
+        if new_state != "FAILED":
+            error_message = None
+
         q = """
         UPDATE model_deployments
-        SET state=$3, updated_at=now()
+        SET state=$3, error_message=$4, updated_at=now()
         WHERE deployment_id=$1 AND state=$2
         """
         if tx:
-            result = await tx.execute(q, deployment_id, expected_state, new_state)
+            result = await tx.execute(
+                q, deployment_id, expected_state, new_state, error_message
+            )
         else:
             async with self.db.acquire() as c:
-                result = await c.execute(q, deployment_id, expected_state, new_state)
+                result = await c.execute(
+                    q, deployment_id, expected_state, new_state, error_message
+                )
 
         updated = result != "UPDATE 0"
 

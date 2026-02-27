@@ -83,6 +83,7 @@ message GetDeploymentResponse {
   string policies = 13;
   string inference_model = 14;
   string model_type = 15;
+  string error_message = 16;
 }
 
 /* -------------------------

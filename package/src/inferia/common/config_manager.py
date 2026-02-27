@@ -1,10 +1,30 @@
 import asyncio
 import logging
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, get_args, get_origin
 import httpx
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_field_value(model: BaseModel, key: str, value: Any) -> Any:
+    """Coerce a value to match the Pydantic field type, especially lists of models."""
+    field_info = model.model_fields.get(key)
+    if field_info is None or not isinstance(value, list):
+        return value
+
+    annotation = field_info.annotation
+    # Unwrap Optional / Union
+    origin = get_origin(annotation)
+    if origin is list or origin is List:
+        args = get_args(annotation)
+        if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+            item_model = args[0]
+            return [
+                item_model.model_validate(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+    return value
 
 
 def update_pydantic_model(model: BaseModel, data: Dict[str, Any]):
@@ -21,7 +41,8 @@ def update_pydantic_model(model: BaseModel, data: Dict[str, Any]):
             update_pydantic_model(attr, value)
         else:
             try:
-                setattr(model, key, value)
+                coerced = _coerce_field_value(model, key, value)
+                setattr(model, key, coerced)
                 logger.debug(f"Updated {model.__class__.__name__}.{key}")
             except Exception as e:
                 logger.warning(

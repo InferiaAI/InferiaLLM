@@ -94,6 +94,7 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
             else (d.get("policies") or "{}"),
             inference_model=d.get("inference_model") or "",
             model_type=d.get("model_type") or "inference",
+            error_message=d.get("error_message") or "",
         )
 
     # -------------------------------------------------
@@ -146,6 +147,7 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
                     else (d.get("policies") or "{}"),
                     inference_model=d.get("inference_model") or "",
                     model_type=d.get("model_type") or "inference",
+                    error_message=d.get("error_message") or "",
                 )
                 for d in deployments
             ]
