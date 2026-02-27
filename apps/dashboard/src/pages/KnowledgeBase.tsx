@@ -141,9 +141,9 @@ export default function KnowledgeBase() {
                         setIsNew(false)
                         setNewCollectionName("")
                     }}
-                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center gap-2 hover:bg-primary/90 transition-colors"
+                    className="px-4 py-2 bg-transparent border text-blue-500 border-blue-500/50 hover:bg-blue-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
                 >
-                    <Plus className="w-4 h-4" /> Add Data
+                    Add new knowledge <Plus className="w-4 h-4" />
                 </button>
             </div>
 
@@ -214,9 +214,9 @@ export default function KnowledgeBase() {
                                         </p>
                                         <button
                                             onClick={() => setShowUpload(true)}
-                                            className="mt-4 px-4 py-2 text-primary text-sm font-medium hover:underline"
+                                            className="mt-4 px-4 py-2 bg-transparent border text-blue-500 border-blue-500/50 hover:bg-blue-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
                                         >
-                                            Upload Document
+                                            Create new knowledge <Plus className="w-4 h-4" />
                                         </button>
                                     </div>
                                 ) : (

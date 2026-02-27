@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer } from "react";
 import { rbacService } from "@/services/rbacService";
 import type { User, Role, Invitation } from "@/services/rbacService";
 import { toast } from "sonner";
-import { UserPlus, Shield, Copy, Mail, Users as UsersIcon } from "lucide-react";
+import { UserPlus, Shield, Copy, Mail, Users as UsersIcon, Activity } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Pagination } from "@/components/ui/Pagination";
 import type { AxiosError } from "axios";
@@ -209,31 +209,35 @@ export default function Users() {
             <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
               <tr>
                 <th className="px-6 py-3 font-medium">User</th>
+                <th className="px-6 py-3 font-medium">Name</th>
                 <th className="px-6 py-3 font-medium">Email</th>
                 <th className="px-6 py-3 font-medium">Role</th>
-                <th className="px-6 py-3 font-medium">Joined</th>
+                <th className="px-6 py-3 font-medium">Joined On</th>
+                <th className="px-6 py-3 font-medium">Status</th>
+                <th className="px-6 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {users.map((user) => (
-                <tr key={user.id} className="hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
-                  <td className="px-6 py-4 font-medium">
+                <tr key={user.id} className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
+                  <td className="px-6 py-4 font-medium text-muted-foreground font-mono text-xs">{user.id}</td>
+                  <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                        <Mail className="w-4 h-4" />
+                      <div className="w-7 h-7 rounded bg-amber-500 text-black flex items-center justify-center font-bold text-xs shadow-sm">
+                        {user.email.charAt(0).toUpperCase()}
                       </div>
-                      <span>{user.email.split("@")[0]}</span>
+                      <span className="text-foreground font-medium">{user.email.split("@")[0].replace(/\./g, ' ')}</span>
                       {user.email === currentUser?.email && (
-                        <span className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">You</span>
+                        <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground uppercase tracking-wider font-semibold">You</span>
                       )}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-muted-foreground">{user.email}</td>
                   <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 text-xs font-semibold relative max-w-[140px]">
+                      <UsersIcon className="w-3.5 h-3.5" />
                       <select
-                        className="bg-transparent border-none focus:ring-0 p-0 text-sm font-medium cursor-pointer"
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         value={user.role}
                         onChange={(event) => handleRoleChange(user.id, event.target.value)}
                         disabled={user.email === currentUser?.email}
@@ -244,10 +248,22 @@ export default function Users() {
                           </option>
                         ))}
                       </select>
+                      <span className="truncate capitalize">{user.role}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-muted-foreground">
-                    {user.created_at ? new Date(user.created_at).toLocaleDateString() : "-"}
+                    {user.created_at ? new Date(user.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "-"}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-medium">
+                      <Activity className="w-3 h-3" />
+                      Active
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <button className="p-1 px-2 rounded hover:bg-muted text-muted-foreground">
+                      ...
+                    </button>
                   </td>
                 </tr>
               ))}

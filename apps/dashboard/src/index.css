@@ -39,34 +39,34 @@
   }
 
   .dark {
-    /* Pure Black & Grey Theme */
-    --background: 0 0% 3%;
+    /* Pure Black & Grey Theme matching the reference images */
+    --background: 0 0% 7%; /* ~ #121212 */
     --foreground: 0 0% 98%;
     
-    --card: 0 0% 3%;
+    --card: 0 0% 10%; /* ~ #1A1A1A */
     --card-foreground: 0 0% 98%;
     
-    --popover: 0 0% 3%;
+    --popover: 0 0% 10%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47.4% 11.2%;
+    --primary: 221 83% 53%; /* #2563EB */
+    --primary-foreground: 210 40% 98%;
 
-    --secondary: 0 0% 12%;
+    --secondary: 0 0% 15%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 0 0% 12%;
-    --muted-foreground: 240 5% 64.9%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 65%;
 
-    --accent: 0 0% 12%;
+    --accent: 0 0% 15%;
     --accent-foreground: 0 0% 98%;
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 0 0% 12%;
-    --input: 0 0% 12%;
-    --ring: 240 4.9% 83.9%;
+    --border: 0 0% 14%;
+    --input: 0 0% 14%;
+    --ring: 221 83% 53%;
   }
 }
 

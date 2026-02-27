@@ -86,8 +86,8 @@ function SidebarItem({
           className={cn(
             "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 group relative",
             isActive
-              ? "bg-blue-50 text-blue-700 dark:bg-zinc-800 dark:text-blue-400"
-              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+              ? "bg-blue-50 text-blue-700 dark:bg-transparent dark:text-primary-foreground"
+              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-muted-foreground dark:hover:bg-transparent dark:hover:text-primary-foreground",
             isCollapsed && "justify-center px-2"
           )}
         >
@@ -95,15 +95,15 @@ function SidebarItem({
             className={cn(
               "w-4 h-4 shrink-0 transition-colors",
               isActive
-                ? "text-blue-700 dark:text-blue-400"
-                : "text-slate-500 group-hover:text-slate-900 dark:text-zinc-400 dark:group-hover:text-zinc-100"
+                ? "text-blue-700 dark:text-primary"
+                : "text-slate-500 group-hover:text-slate-900 dark:text-muted-foreground dark:group-hover:text-primary-foreground"
             )}
           />
           {!isCollapsed && <span>{item.label}</span>}
           {isCollapsed && (
             <div
               className={cn(
-                "absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-md bg-blue-600 dark:bg-blue-400 transition-opacity",
+                "absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-md bg-blue-600 dark:bg-primary transition-opacity",
                 isActive ? "opacity-100" : "opacity-0"
               )}
             />
@@ -166,7 +166,7 @@ export default function DashboardLayout() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-black dark:to-black flex font-sans text-foreground">
+    <div className="min-h-screen bg-background flex font-sans text-foreground">
       {mobileMenuOpen && (
         <button
           type="button"
@@ -178,14 +178,14 @@ export default function DashboardLayout() {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 bg-slate-100 dark:bg-zinc-900 border-r border-slate-200 dark:border-zinc-800 transform transition-all duration-300 flex flex-col",
+          "fixed inset-y-0 left-0 z-50 bg-slate-100 dark:bg-card border-r border-slate-200 dark:border-border transform transition-all duration-300 flex flex-col",
           mobileMenuOpen ? "translate-x-0 w-64" : "-translate-x-full lg:translate-x-0",
           isCollapsed ? "lg:w-[70px]" : "lg:w-64"
         )}
       >
         <div
           className={cn(
-            "h-14 flex items-center border-b border-slate-100 dark:border-zinc-800 transition-all duration-300",
+            "h-14 flex items-center border-b border-slate-100 dark:border-border transition-all duration-300",
             isCollapsed ? "justify-center px-0" : "px-4 justify-between"
           )}
         >
@@ -194,7 +194,7 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-7 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-zinc-800">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-7 scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-muted-foreground/20">
           {hasPermission("deployment:create") && (
             <button
               type="button"
@@ -241,20 +241,20 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-        <div className="p-3 border-t border-slate-200 dark:border-zinc-800 bg-slate-100/50 dark:bg-zinc-900/50">
+        <div className="p-3 border-t border-slate-200 dark:border-border bg-slate-100/50 dark:bg-card">
           <div
             className={cn(
               "flex items-center gap-3 px-2 py-2 rounded-lg transition-colors",
-              isCollapsed ? "justify-center" : "bg-white/50 dark:bg-black/20 border border-slate-200/50 dark:border-zinc-800/50 shadow-sm"
+              isCollapsed ? "justify-center" : "bg-white/50 dark:bg-transparent border border-slate-200/50 dark:border-transparent dark:hover:bg-muted/40 shadow-sm dark:shadow-none"
             )}
           >
-            <div className="h-8 w-8 rounded-md bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm">
+            <div className="h-8 w-8 rounded-md bg-blue-600 dark:bg-primary/20 dark:text-primary text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm">
               {user?.email?.charAt(0).toUpperCase()}
             </div>
             {!isCollapsed && (
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-slate-900 dark:text-zinc-100 truncate">{user?.email?.split("@")[0]}</p>
-                <p className="text-[10px] text-slate-500 dark:text-zinc-500 truncate uppercase tracking-tighter">Administrator</p>
+                <p className="text-xs font-semibold text-slate-900 dark:text-foreground truncate">{user?.email?.split("@")[0]}</p>
+                <p className="text-[10px] text-slate-500 dark:text-muted-foreground truncate uppercase tracking-tighter">Administrator</p>
               </div>
             )}
             {!isCollapsed && (
@@ -284,12 +284,12 @@ export default function DashboardLayout() {
       </aside>
 
       <div className={cn("flex-1 flex flex-col min-h-screen transition-all duration-300", isCollapsed ? "lg:ml-[70px]" : "lg:ml-64")}>
-        <header className="h-14 border-b border-slate-200 dark:border-zinc-800 bg-white/95 dark:bg-black/95 backdrop-blur sticky top-0 z-30 px-4 sm:px-6 flex items-center justify-between shadow-sm dark:shadow-none">
+        <header className="h-14 border-b border-slate-200 dark:border-border bg-white/95 dark:bg-background/95 backdrop-blur sticky top-0 z-30 px-4 sm:px-6 flex items-center justify-between shadow-sm dark:shadow-none">
           <div className="flex items-center gap-4">
             <button
               type="button"
               aria-label="Open navigation menu"
-              className="lg:hidden p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-md text-slate-500"
+              className="lg:hidden p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-muted/40 rounded-md text-slate-500"
               onClick={() => setMobileMenuOpen(true)}
             >
               <Menu className="w-5 h-5" />
@@ -297,7 +297,7 @@ export default function DashboardLayout() {
 
             <button
               type="button"
-              className="hidden lg:flex p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-md text-slate-500 dark:text-zinc-400 transition-colors"
+              className="hidden lg:flex p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-muted/40 rounded-md text-slate-500 dark:text-muted-foreground transition-colors"
               onClick={toggleCollapse}
               title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -306,9 +306,9 @@ export default function DashboardLayout() {
             </button>
 
             <div className="flex items-center">
-              <div className="h-6 w-px bg-slate-200 dark:bg-zinc-800 mx-2 hidden lg:block" />
+              <div className="h-6 w-px bg-slate-200 dark:bg-border mx-2 hidden lg:block" />
               <nav className="flex items-center text-sm font-medium" aria-label="Breadcrumb">
-                <Link to="/dashboard" className="text-slate-500 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-zinc-100 transition-colors">
+                <Link to="/dashboard" className="text-slate-500 dark:text-muted-foreground hover:text-slate-900 dark:hover:text-foreground transition-colors">
                   Dashboard
                 </Link>
                 {breadcrumbItems.map((item) => (
@@ -319,8 +319,8 @@ export default function DashboardLayout() {
                       className={cn(
                         "capitalize transition-colors",
                         item.isLast
-                          ? "text-slate-900 dark:text-zinc-100 font-medium pointer-events-none"
-                          : "text-slate-500 dark:text-zinc-500 hover:text-slate-900 dark:hover:text-zinc-100 cursor-pointer"
+                          ? "text-slate-900 dark:text-foreground font-medium pointer-events-none"
+                          : "text-slate-500 dark:text-muted-foreground hover:text-slate-900 dark:hover:text-foreground cursor-pointer"
                       )}
                     >
                       {item.label}
@@ -335,7 +335,7 @@ export default function DashboardLayout() {
             <button
               type="button"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="relative p-2 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors text-slate-500 dark:text-zinc-400"
+              className="relative p-2 rounded-md hover:bg-slate-100 dark:hover:bg-muted/40 transition-colors text-slate-500 dark:text-muted-foreground"
               aria-label="Toggle theme"
             >
               <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
@@ -345,14 +345,14 @@ export default function DashboardLayout() {
             <button
               type="button"
               onClick={spotlight.open}
-              className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-zinc-950 rounded-md border border-slate-200 dark:border-zinc-800 hover:border-slate-300 dark:hover:border-zinc-700 hover:bg-slate-100 dark:hover:bg-zinc-900 transition-all cursor-pointer"
+              className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-muted/20 rounded-md border border-slate-200 dark:border-border hover:border-slate-300 dark:hover:border-border/80 hover:bg-slate-100 dark:hover:bg-muted/40 transition-all cursor-pointer"
             >
               <Search className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-sm text-slate-400 w-32 text-left">Search...</span>
-              <kbd className="text-[10px] font-mono border rounded px-1 text-slate-400 bg-white dark:bg-zinc-900 dark:border-zinc-700">⌘K</kbd>
+              <span className="text-sm text-slate-400 dark:text-muted-foreground w-32 text-left">Search...</span>
+              <kbd className="text-[10px] font-mono border rounded px-1 text-slate-400 dark:text-muted-foreground bg-white dark:bg-muted dark:border-border">⌘K</kbd>
             </button>
 
-            <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs ring-2 ring-white dark:ring-black border border-blue-200 dark:border-blue-800">
+            <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-primary/20 text-blue-600 dark:text-primary flex items-center justify-center font-bold text-xs ring-2 ring-white dark:ring-background border border-blue-200 dark:border-primary/30">
               {user?.email?.charAt(0).toUpperCase()}
             </div>
           </div>
