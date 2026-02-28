@@ -293,6 +293,7 @@ class NosanaAdapter(ProviderAdapter):
         payload = {
             "jobDefinition": job_definition,
             "marketAddress": pool_id,
+            "confidential": True,  # Keep job definition private via Deployments API
             "resources_allocated": {
                 "gpu_allocated": gpu_allocated,
                 "vcpu_allocated": vcpu_allocated,

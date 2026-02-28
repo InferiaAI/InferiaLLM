@@ -494,6 +494,72 @@ wss.on('connection', (ws: WebSocket) => {
                         // 2. If running, use streamer
                         streamer = await service.getLogStreamer();
 
+                        if (!streamer) {
+                            // API mode - use polling-based log retrieval
+                            console.log(`[WS] API mode detected - using polling for logs: ${jobId}`);
+                            ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] Using API-based log retrieval (polling)..." }));
+
+                            // Start polling for logs
+                            const pollInterval = setInterval(async () => {
+                                try {
+                                    if (ws.readyState !== WebSocket.OPEN) {
+                                        clearInterval(pollInterval);
+                                        return;
+                                    }
+
+                                    const jobStatus = await service.getJob(jobId);
+
+                                    if (isJobTerminated(jobStatus.jobState)) {
+                                        // Job finished - get final logs
+                                        ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] Job finished, fetching final results..." }));
+                                        const logsData = await service.getJobLogs(jobId);
+                                        if (logsData.status === 'completed') {
+                                            const result = logsData.result;
+                                            const sendLogs = (logs: any) => {
+                                                if (Array.isArray(logs)) {
+                                                    logs.forEach((l: any) => {
+                                                        const line = typeof l === 'string' ? l : (l.log || l.message || (l.logs ? null : JSON.stringify(l)));
+                                                        if (line) {
+                                                            ws.send(JSON.stringify({ type: 'log', data: line }));
+                                                        } else if (l.logs) {
+                                                            sendLogs(l.logs);
+                                                        }
+                                                    });
+                                                }
+                                            };
+                                            if (result && typeof result === 'object') {
+                                                const resAny = result as any;
+                                                if (resAny.opStates && Array.isArray(resAny.opStates)) {
+                                                    resAny.opStates.forEach((op: any) => {
+                                                        if (op.logs) sendLogs(op.logs);
+                                                    });
+                                                } else if (resAny.logs) {
+                                                    sendLogs(resAny.logs);
+                                                } else {
+                                                    sendLogs(result);
+                                                }
+                                            }
+                                        }
+                                        ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] --- END OF LOGS ---" }));
+                                        clearInterval(pollInterval);
+                                        return;
+                                    }
+
+                                    // Job still running - just acknowledge
+                                    ws.send(JSON.stringify({ type: 'log', data: `[SYSTEM] Job still running (state: ${jobStatus.jobState})...` }));
+
+                                } catch (err: any) {
+                                    console.error(`[WS] Polling error:`, err.message);
+                                    ws.send(JSON.stringify({ type: 'error', message: err.message }));
+                                    clearInterval(pollInterval);
+                                }
+                            }, 10000); // Poll every 10 seconds
+
+                            // Store interval for cleanup
+                            (ws as any).pollInterval = pollInterval;
+                            return;
+                        }
+
                         streamer.on('log', (log: any) => {
                             if (ws.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({ type: 'log', data: log }));
@@ -506,8 +572,16 @@ wss.on('connection', (ws: WebSocket) => {
                             }
                         });
 
-                        console.log(`[WS] Subscribed to Nosana live logs: ${jobId} on node ${nodeAddress}`);
-                        await streamer.connect(nodeAddress, jobId);
+                        const activeJobAddress = job.jobAddress || jobId;
+                        const activeNodeAddress = nodeAddress || job.nodeAddress;
+
+                        if (!activeNodeAddress) {
+                            ws.send(JSON.stringify({ type: 'error', message: 'Node address is not available yet. The deployment might still be setting up.' }));
+                            return;
+                        }
+
+                        console.log(`[WS] Subscribed to Nosana live logs: ${activeJobAddress} on node ${activeNodeAddress}`);
+                        await streamer.connect(activeNodeAddress, activeJobAddress);
                     } catch (e: any) {
                         ws.send(JSON.stringify({ type: 'error', message: `Failed to initialize logs: ${e.message}` }));
                     }
@@ -526,6 +600,11 @@ wss.on('connection', (ws: WebSocket) => {
         if (streamer) {
             streamer.close();
             streamer = null;
+        }
+        // Clean up polling interval if exists
+        if ((ws as any).pollInterval) {
+            clearInterval((ws as any).pollInterval);
+            (ws as any).pollInterval = null;
         }
     });
 });

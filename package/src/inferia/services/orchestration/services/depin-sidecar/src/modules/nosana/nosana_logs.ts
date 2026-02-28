@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import bs58 from 'bs58';
+import nacl from 'tweetnacl';
 import { EventEmitter } from 'events';
 
 const FRP_SERVER_ADDR = 'node.k8s.prd.nos.ci';
@@ -16,26 +17,22 @@ export class LogStreamer extends EventEmitter {
     private retryDelay: number = 3000;
     private authMode: 'wallet' | 'api';
     private walletSigner: any;
-    private apiAuthProvider: ApiAuthProvider | null;
 
     /**
      * Create a new LogStreamer
-     * @param walletSignerOrApiAuth - Either a wallet signer (for wallet mode) or null (for API mode)
-     * @param apiAuthProvider - Function that returns API auth header (for API mode only)
+     * @param walletSigner - Wallet signer (for wallet mode) or null (for API mode)
      */
-    constructor(walletSignerOrApiAuth: any, apiAuthProvider?: ApiAuthProvider) {
+    constructor(walletSigner: any = null) {
         super();
 
-        if (apiAuthProvider) {
-            // API mode
+        if (!walletSigner) {
+            // API mode uses ephemeral wallet
             this.authMode = 'api';
             this.walletSigner = null;
-            this.apiAuthProvider = apiAuthProvider;
         } else {
             // Wallet mode
             this.authMode = 'wallet';
-            this.walletSigner = walletSignerOrApiAuth;
-            this.apiAuthProvider = null;
+            this.walletSigner = walletSigner;
         }
     }
 
@@ -68,17 +65,17 @@ export class LogStreamer extends EventEmitter {
     }
 
     /**
-     * Generate authorization header using API (API mode)
+     * Generate authorization header using ephemeral keypair (API mode)
      */
-    private async generateApiAuth(): Promise<{ auth: string; walletAddress: string }> {
-        if (!this.apiAuthProvider) {
-            throw new Error('API auth provider not available');
-        }
+    private async generateEphemeralAuth(): Promise<{ auth: string; walletAddress: string }> {
+        const kp = nacl.sign.keyPair();
+        const address = bs58.encode(kp.publicKey);
+        const signatureBytes = nacl.sign.detached(Buffer.from(SIGN_MESSAGE), kp.secretKey);
+        const signature = bs58.encode(signatureBytes);
 
-        const result = await this.apiAuthProvider();
         return {
-            auth: result.header,
-            walletAddress: result.userAddress
+            auth: `${SIGN_MESSAGE}:${signature}`,
+            walletAddress: address
         };
     }
 
@@ -87,7 +84,7 @@ export class LogStreamer extends EventEmitter {
      */
     async generateAuth(): Promise<{ auth: string; walletAddress: string }> {
         if (this.authMode === 'api') {
-            return this.generateApiAuth();
+            return this.generateEphemeralAuth();
         } else {
             return this.generateWalletAuth();
         }
