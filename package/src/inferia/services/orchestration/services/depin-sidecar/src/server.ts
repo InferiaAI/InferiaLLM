@@ -34,7 +34,10 @@ let defaultNosanaService: NosanaService | null = null;
 // Helper to get Nosana service by credential name
 const getNosanaService = (credentialName?: string): NosanaService | null => {
     if (credentialName) {
-        return nosanaServices.get(credentialName) || null;
+        const service = nosanaServices.get(credentialName);
+        if (service) return service;
+
+        console.warn(`[Sidecar] Nosana Service '${credentialName}' requested but not found. Falling back to default service.`);
     }
     return defaultNosanaService;
 };
