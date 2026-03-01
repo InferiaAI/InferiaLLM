@@ -77,7 +77,7 @@ export default function Instances() {
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
               <input
                 placeholder="Search pools..."
-                className="h-9 w-64 rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-blue-500 shadow-sm placeholder:text-slate-400 dark:text-zinc-200"
+                className="h-9 w-64 rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm placeholder:text-slate-400 dark:text-zinc-200"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -87,7 +87,7 @@ export default function Instances() {
           <div className="flex gap-2">
             <button
               onClick={() => navigate("/dashboard/compute/pools/new")}
-              className="h-9 px-4 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-2"
+              className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-2"
             >
               <Play className="w-4 h-4" />
               New
@@ -97,10 +97,10 @@ export default function Instances() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border dark:border-zinc-800 bg-white dark:bg-black shadow-sm overflow-hidden">
+      <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 dark:bg-zinc-900 text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider border-b dark:border-zinc-800">
+            <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
               <tr>
                 <th className="px-4 py-3 font-medium">Pool Name</th>
                 <th className="px-4 py-3 font-medium">Provider</th>
@@ -121,35 +121,34 @@ export default function Instances() {
                 filteredInstances.map((instance) => (
                   <tr
                     key={instance.pool_id}
-                    className="group hover:bg-slate-50/80 dark:hover:bg-zinc-900/50 transition-colors"
+                    className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors"
                   >
 
-                    <td className="px-4 py-3 font-medium text-blue-600 dark:text-blue-400">
+                    <td className="px-6 py-4 font-medium text-foreground hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
                       <Link
                         to={`/dashboard/compute/pools/${instance.pool_id}`}
-                        className="hover:underline"
                       >
                         {instance.pool_name}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 font-mono text-slate-600 dark:text-zinc-400 text-xs capitalize">
+                    <td className="px-6 py-4 font-mono text-muted-foreground text-xs capitalize">
                       {instance.provider}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-4">
                       <span className={cn(
-                        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium",
+                        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm",
                         instance.is_active
-                          ? "border-green-200 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800"
-                          : "border-slate-200 bg-slate-50 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700"
+                          ? "border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+                          : "border-slate-500/20 text-slate-600 dark:text-slate-400 bg-slate-500/10"
                       )}>
                         <div className={cn(
                           "h-1.5 w-1.5 rounded-full",
-                          instance.is_active ? "bg-green-500" : "bg-zinc-400"
+                          instance.is_active ? "bg-emerald-500" : "bg-slate-500"
                         )} />
                         {instance.is_active ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-slate-400 dark:text-zinc-500 font-mono text-xs">
+                    <td className="px-6 py-4 text-right text-muted-foreground font-mono text-xs">
                       {instance.pool_id.substring(0, 8)}...
                     </td>
                   </tr>
@@ -158,7 +157,7 @@ export default function Instances() {
             </tbody>
           </table>
         </div>
-        <div className="bg-slate-50 dark:bg-zinc-900/50 border-t dark:border-zinc-800 px-4 py-3 flex items-center justify-between text-xs text-slate-500 dark:text-zinc-500 font-mono">
+        <div className="bg-muted/10 border-t border-border/50 px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground font-mono">
           <span>{filteredInstances.length} row(s) total.</span>
         </div>
       </div>

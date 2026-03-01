@@ -129,7 +129,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                                 <div className="flex items-center gap-2 min-w-0">
                                     <span className="font-medium text-sm truncate max-w-[200px] md:max-w-none">{log.model}</span>
                                     {log.is_streaming && (
-                                        <span className="px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-500 rounded shrink-0">
+                                        <span className="px-1.5 py-0.5 text-[10px] bg-emerald-500/20 text-emerald-500 rounded shrink-0">
                                             STREAM
                                         </span>
                                     )}

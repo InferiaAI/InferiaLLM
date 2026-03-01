@@ -22,7 +22,7 @@ export default function ApiKeys() {
     const [loading, setLoading] = useState(true)
     const [showAdd, setShowAdd] = useState(false)
     const [newKeyData, setNewKeyData] = useState<ApiKeyCreated | null>(null)
-    
+
     // Pagination
     const [currentPage, setCurrentPage] = useState(1)
     const [pageSize, setPageSize] = useState(20)
@@ -123,41 +123,41 @@ export default function ApiKeys() {
             )}
 
             {loading ? <div>Loading keys...</div> : (
-                <div className="bg-card rounded-xl border shadow-sm overflow-hidden">
+                <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
                     <table className="w-full text-sm text-left">
-                        <thead className="bg-muted/50 text-muted-foreground font-medium border-b">
+                        <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
                             <tr>
-                                <th className="p-4">Name</th>
-                                <th className="p-4">Key Prefix</th>
-                                <th className="p-4">Created</th>
-                                <th className="p-4">Status</th>
+                                <th className="px-6 py-3 font-medium">Name</th>
+                                <th className="px-6 py-3 font-medium">Key Prefix</th>
+                                <th className="px-6 py-3 font-medium">Created On</th>
+                                <th className="px-6 py-3 font-medium">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
                             {keys.map(key => (
-                                <tr key={key.id} className="hover:bg-muted/30 transition-colors">
-                                    <td className="p-4 font-medium flex items-center gap-2">
-                                        <Key className="w-4 h-4 text-primary" />
+                                <tr key={key.id} className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
+                                    <td className="px-6 py-4 font-medium flex items-center gap-2 text-foreground">
+                                        <Key className="w-4 h-4 text-purple-500 dark:text-purple-400" />
                                         {key.name}
                                     </td>
-                                    <td className="p-4 font-mono text-muted-foreground">{key.prefix}</td>
-                                    <td className="p-4 text-muted-foreground">{new Date(key.created_at).toLocaleDateString()}</td>
-                                    <td className="p-4 flex items-center justify-between">
-                                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${key.is_active ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                                    <td className="px-6 py-4 font-mono text-xs text-muted-foreground">{key.prefix}...</td>
+                                    <td className="px-6 py-4 text-muted-foreground text-xs">{new Date(key.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+                                    <td className="px-6 py-4 flex items-center justify-between">
+                                        <span className={`inline-flex items-center px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm ${key.is_active ? 'border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : 'border-red-500/20 text-red-600 dark:text-red-400 bg-red-500/10'}`}>
                                             {key.is_active ? 'Active' : 'Revoked'}
                                         </span>
                                         {key.is_active && (
                                             <button
                                                 onClick={async () => {
-                                        if (confirm("Are you sure you want to revoke this key? It will stop working immediately.")) {
-                                            try {
-                                                await api.delete(`/management/api-keys/${key.id}`)
-                                                toast.success("API Key revoked")
-                                                fetchKeys(currentPage, pageSize)
-                                            } catch (e) {
-                                                toast.error("Failed to revoke key")
-                                            }
-                                        }
+                                                    if (confirm("Are you sure you want to revoke this key? It will stop working immediately.")) {
+                                                        try {
+                                                            await api.delete(`/management/api-keys/${key.id}`)
+                                                            toast.success("API Key revoked")
+                                                            fetchKeys(currentPage, pageSize)
+                                                        } catch (e) {
+                                                            toast.error("Failed to revoke key")
+                                                        }
+                                                    }
                                                 }}
                                                 className="text-xs text-destructive hover:underline ml-4"
                                             >
@@ -176,7 +176,7 @@ export default function ApiKeys() {
                     </table>
                 </div>
             )}
-            
+
             {/* Pagination */}
             {!loading && keys.length > 0 && (
                 <Pagination

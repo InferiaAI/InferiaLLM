@@ -141,9 +141,9 @@ export default function KnowledgeBase() {
                         setIsNew(false)
                         setNewCollectionName("")
                     }}
-                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center gap-2 hover:bg-primary/90 transition-colors"
+                    className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
                 >
-                    <Plus className="w-4 h-4" /> Add Data
+                    Add new knowledge <Plus className="w-4 h-4" />
                 </button>
             </div>
 
@@ -206,33 +206,35 @@ export default function KnowledgeBase() {
                                         {[1, 2, 3].map(i => <div key={i} className="h-16 bg-muted/50 rounded-lg animate-pulse" />)}
                                     </div>
                                 ) : files?.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center h-full text-center p-8 border-2 border-dashed border-muted rounded-xl bg-muted/5">
-                                        <Upload className="w-10 h-10 text-muted-foreground mb-4 opacity-50" />
-                                        <h4 className="text-lg font-medium">No files found</h4>
-                                        <p className="text-muted-foreground text-sm max-w-sm mt-2">
-                                            This collection is empty. Upload documents to start using RAG.
+                                    <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                                        <div className="w-12 h-12 bg-muted/20 rounded-xl flex items-center justify-center mb-4 text-muted-foreground">
+                                            <Database className="w-6 h-6" />
+                                        </div>
+                                        <h4 className="text-lg font-medium text-foreground">No Knowledge</h4>
+                                        <p className="text-muted-foreground text-sm max-w-sm mt-1 mb-6">
+                                            Get started by adding knowledge to this collection.
                                         </p>
                                         <button
                                             onClick={() => setShowUpload(true)}
-                                            className="mt-4 px-4 py-2 text-primary text-sm font-medium hover:underline"
+                                            className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
                                         >
-                                            Upload Document
+                                            Create new knowledge <Plus className="w-4 h-4" />
                                         </button>
                                     </div>
                                 ) : (
-                                    <div className="grid gap-3">
+                                    <div className="flex flex-col">
                                         {files?.map((file, idx) => (
-                                            <div key={idx} className="flex items-center justify-between p-4 bg-muted/10 border rounded-lg hover:border-primary/20 hover:shadow-sm transition-all group">
-                                                <div className="flex items-center gap-3 overflow-hidden">
-                                                    <div className="p-2 bg-background border rounded text-muted-foreground">
+                                            <div key={idx} className="flex items-center justify-between p-4 bg-transparent border-b border-border/50 hover:bg-muted/10 transition-colors group first:border-t-0">
+                                                <div className="flex items-center gap-4 overflow-hidden">
+                                                    <div className="p-2.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 rounded-lg shrink-0">
                                                         <FileText className="w-5 h-5" />
                                                     </div>
                                                     <div>
-                                                        <div className="font-medium truncate max-w-[300px]" title={file.filename}>{file.filename}</div>
-                                                        <div className="text-xs text-muted-foreground flex items-center gap-2">
+                                                        <div className="font-medium text-foreground truncate max-w-[400px]" title={file.filename}>{file.filename}</div>
+                                                        <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
                                                             <span>{file.doc_count} Chunks</span>
                                                             <span>•</span>
-                                                            <span>Est. Size: {(file.doc_count * 1).toFixed(1)} KB</span>
+                                                            <span>{(file.doc_count * 1).toFixed(1)} KB</span>
                                                         </div>
                                                     </div>
                                                 </div>

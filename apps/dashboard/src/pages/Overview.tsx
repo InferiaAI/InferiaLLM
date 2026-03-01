@@ -7,6 +7,7 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
+  ChevronRight,
   Circle,
   Clock,
   ExternalLink,
@@ -76,6 +77,8 @@ interface QuickActionProps {
   description: string;
   href: string;
   icon: LucideIcon;
+  colorClass?: string;
+  bgClass?: string;
 }
 
 function getStatusTone(state: string) {
@@ -92,17 +95,15 @@ function formatState(state?: string): string {
 
 function StatCard({ label, value, status, icon: Icon }: StatCardProps) {
   return (
-    <div className="rounded-xl border bg-card p-5 shadow-sm">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
-        </div>
-        <div className="rounded-lg border bg-background p-2">
-          <Icon className="h-5 w-5 text-muted-foreground" />
-        </div>
+    <div className="rounded-xl border border-border/50 bg-card p-6 shadow-sm hover:border-border transition-colors flex flex-col items-start text-left">
+      <div className="mb-4 rounded-md bg-green-500/10 p-2.5">
+        <Icon className="h-5 w-5 text-green-500 dark:text-green-400" />
       </div>
-      <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <div>
+        <p className="text-sm font-medium tracking-wide text-foreground">{label}</p>
+        <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
+      </div>
+      <div className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground w-full pt-4 border-t border-border/50">
         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
         <span>{status}</span>
       </div>
@@ -110,24 +111,18 @@ function StatCard({ label, value, status, icon: Icon }: StatCardProps) {
   );
 }
 
-function QuickAction({ title, description, href, icon: Icon }: QuickActionProps) {
+function QuickAction({ title, description, href, icon: Icon, colorClass = "text-purple-500 dark:text-purple-400", bgClass = "bg-purple-500/10" }: QuickActionProps) {
   return (
     <Link
       to={href}
-      className="group rounded-xl border bg-card p-4 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50/30 dark:hover:bg-blue-900/10"
+      className="group rounded-xl border border-border/50 bg-card p-6 shadow-sm transition-colors hover:border-border/80 flex flex-col items-start h-full"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-medium">{title}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-        </div>
-        <div className="rounded-lg border bg-background p-2 text-muted-foreground transition-colors group-hover:text-blue-600 dark:group-hover:text-blue-400">
-          <Icon className="h-4 w-4" />
-        </div>
+      <div className={cn("mb-4 rounded-md p-2.5 transition-colors", bgClass)}>
+        <Icon className={cn("h-5 w-5 transition-colors", colorClass)} />
       </div>
-      <div className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400">
-        Open
-        <ArrowRight className="h-3.5 w-3.5" />
+      <div className="flex-1">
+        <p className="font-semibold text-lg text-foreground mb-2">{title}</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
       </div>
     </Link>
   );
@@ -215,29 +210,13 @@ export default function Overview() {
 
   return (
     <div className="space-y-8 animate-in fade-in-50 duration-300">
-      <section className="rounded-2xl border bg-card p-6 shadow-sm">
+      <section className="rounded-xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/10 p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Control Plane Overview</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {org?.name ? `${org.name} organization` : "Organization"} · signed in as {user?.email}
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Control Plane Overview</h1>
+            <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
+              Launch intelligent workload agents, configure infrastructure, and observe requests for your {org?.name ? `${org.name} organization` : "organization"}.
             </p>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Link
-              to="/dashboard/deployments/new"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-            >
-              <Rocket className="h-4 w-4" />
-              Deploy Model
-            </Link>
-            <Link
-              to="/dashboard/insights"
-              className="inline-flex items-center justify-center gap-2 rounded-md border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
-            >
-              <TrendingUp className="h-4 w-4" />
-              Open Insights
-            </Link>
           </div>
         </div>
       </section>
@@ -266,7 +245,7 @@ export default function Overview() {
 
       <section className="space-y-4">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
           <h2 className="text-lg font-medium">Quick Setup</h2>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -275,24 +254,32 @@ export default function Overview() {
             description="Launch an inference or embedding workload."
             href="/dashboard/deployments/new"
             icon={Rocket}
+            colorClass="text-green-600 dark:text-green-400"
+            bgClass="bg-green-500/10"
           />
           <QuickAction
             title="Add Compute Pool"
             description="Provision compute capacity for model serving."
             href="/dashboard/compute/pools/new"
             icon={Server}
+            colorClass="text-purple-600 dark:text-purple-400"
+            bgClass="bg-purple-500/10"
           />
           <QuickAction
             title="Configure Providers"
             description="Set up cloud, vector DB, and guardrail integrations."
             href="/dashboard/settings/providers"
             icon={Wrench}
+            colorClass="text-red-600 dark:text-red-400"
+            bgClass="bg-red-500/10"
           />
           <QuickAction
             title="Manage Organization"
             description="Update quota, privacy, and organization controls."
             href="/dashboard/settings/organization"
             icon={Shield}
+            colorClass="text-indigo-600 dark:text-indigo-400"
+            bgClass="bg-indigo-500/10"
           />
         </div>
       </section>
@@ -301,7 +288,7 @@ export default function Overview() {
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-medium">Running Deployments</h3>
-            <Link to="/dashboard/deployments" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+            <Link to="/dashboard/deployments" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
               View all
             </Link>
           </div>
@@ -345,7 +332,7 @@ export default function Overview() {
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-medium">Compute Pool Health</h3>
-            <Link to="/dashboard/compute/pools" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+            <Link to="/dashboard/compute/pools" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
               Manage pools
             </Link>
           </div>
@@ -382,7 +369,7 @@ export default function Overview() {
       <section className="rounded-xl border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="text-sm font-medium">Recent Inference Activity</h3>
-          <Link to="/dashboard/insights" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+          <Link to="/dashboard/insights" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
             Explore insights
           </Link>
         </div>

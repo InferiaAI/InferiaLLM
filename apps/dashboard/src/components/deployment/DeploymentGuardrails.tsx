@@ -178,7 +178,7 @@ export default function DeploymentGuardrails({ deploymentId }: DeploymentGuardra
                     )}
 
                     {config.guardrail_engine === "llama-guard" && isEngineConfigured("llama-guard") && (
-                        <p className="text-xs text-muted-foreground bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 p-2 rounded">
+                        <p className="text-xs text-muted-foreground bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 p-2 rounded">
                             Uses meta-llama/llama-guard-4-12b via Groq. Optimized for chat safety (Violence, Hate, Sexual Content, etc.).
                         </p>
                     )}

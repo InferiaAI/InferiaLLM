@@ -10,8 +10,8 @@ export default function ProviderCategories() {
             title: "Infrastructure & Compute",
             description: "Manage Cloud (AWS, GCP) and DePIN (Nosana, Akash) credentials",
             icon: Cloud,
-            color: "text-blue-500",
-            bg: "bg-blue-50 dark:bg-blue-900/20",
+            color: "text-emerald-500",
+            bg: "bg-emerald-50 dark:bg-emerald-900/20",
         },
         {
             id: "vector-db",
