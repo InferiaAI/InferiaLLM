@@ -667,8 +667,9 @@ export class NosanaService {
                     deploymentId = depInfo.deploymentId;
                 }
 
-                // Try deployment-level status first
-                if (deploymentId || jobOrDeploymentId.length >= 43) {
+                // Try deployment-level status if we know the deployment ID
+                // OR if it's formatted like a deployment UUID (less than 43 chars)
+                if (deploymentId || jobOrDeploymentId.length < 43) {
                     const idToQuery = deploymentId || jobOrDeploymentId;
 
                     try {
@@ -726,8 +727,10 @@ export class NosanaService {
                             endpoints: deployment.endpoints,
                         };
                     } catch (depError: any) {
-                        // Not a valid deployment ID, try as job address below
-                        console.warn(`[getJob] Deployment query failed for ${idToQuery}: ${depError.message}`);
+                        // Suppress expected 401/404 errors during fallback to avoid console noise
+                        if (!depError.message?.includes('401') && !depError.message?.includes('404')) {
+                            console.warn(`[getJob] Deployment query failed for ${idToQuery}: ${depError.message}`);
+                        }
                     }
                 }
 
