@@ -14,6 +14,7 @@ def utcnow_naive():
 
 
 from inferia.services.api_gateway.db.database import get_db
+from inferia.services.api_gateway.gateway.http_client import gateway_http_client
 from inferia.services.api_gateway.db.models import (
     Policy as DBPolicy,
     Usage as DBUsage,
@@ -624,6 +625,14 @@ async def delete_provider_credential(
 
     from inferia.services.api_gateway.management.config_manager import config_manager
 
+    # 1. Cascade cleanup: Stop deployments and delete compute pools associated with this credential
+    try:
+        await _cleanup_provider_resources(
+            provider, credential_name, user_ctx.user_id, user_ctx.org_id
+        )
+    except Exception as e:
+        logger.warning(f"Resource cleanup during credential deletion failed: {e}")
+
     current_config = settings.providers.model_dump()
     deleted = False
 
@@ -700,6 +709,14 @@ async def delete_nosana_api_key(
 
     from inferia.services.api_gateway.management.config_manager import config_manager
 
+    # 1. Cascade cleanup: Stop deployments and delete compute pools associated with this credential
+    try:
+        await _cleanup_provider_resources(
+            "nosana", key_name, user_ctx.user_id, user_ctx.org_id
+        )
+    except Exception as e:
+        logger.warning(f"Resource cleanup during Nosana key deletion failed: {e}")
+
     # Find and remove the key from raw config
     current_config = settings.providers.model_dump()
     api_keys = current_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
@@ -727,3 +744,84 @@ async def delete_nosana_api_key(
         raise HTTPException(status_code=500, detail=f"Failed to delete API key: {e}")
 
     return {"status": "ok", "message": f"API key '{key_name}' deleted successfully"}
+
+
+async def _cleanup_provider_resources(
+    provider: str, credential_name: str, user_id: str, org_id: str
+):
+    """
+    Orchestrate recursive deletion:
+    1. Find compute pools using this credential.
+    2. Terminate all deployments in those pools.
+    3. Delete those compute pools.
+    """
+    orch_url = settings.orchestration_url or "http://localhost:8080"
+    client = gateway_http_client.get_service_client()
+
+    logger.info(
+        f"Starting cascade cleanup for {provider} credential: {credential_name}"
+    )
+
+    # 1. List pools for this org/user
+    # Some endpoints might use org_id, some might use owner_id.
+    # In deployment_server.py: list_pools(owner_id: str | None = None)
+    try:
+        resp = await client.get(f"{orch_url}/deployment/listPools/{org_id}")
+        if resp.status_code != 200:
+            logger.error(f"Failed to list pools: {resp.status_code} {resp.text}")
+            return
+
+        pools_data = resp.json().get("pools", [])
+    except Exception as e:
+        logger.error(f"Error calling listPools: {e}")
+        return
+
+    # Filter pools matching provider and credential_name
+    target_pools = [
+        p
+        for p in pools_data
+        if p.get("provider") == provider
+        and p.get("provider_credential_name") == credential_name
+    ]
+
+    if not target_pools:
+        logger.info("No compute pools found for this credential. Skipping cleanup.")
+        return
+
+    for pool in target_pools:
+        pool_id = pool["pool_id"]
+        logger.info(f"Cleaning up pool {pool_id} ({pool.get('pool_name')})")
+
+        # 2. Terminate deployments in this pool
+        try:
+            resp = await client.get(f"{orch_url}/deployment/listDeployments/{pool_id}")
+            if resp.status_code == 200:
+                deployments = resp.json().get("deployments", [])
+                for dep in deployments:
+                    dep_id = dep["deployment_id"]
+                    if dep["state"] in ("STOPPED", "TERMINATED", "FAILED"):
+                        logger.info(
+                            f"Permanently deleting legacy deployment {dep_id} in pool {pool_id}"
+                        )
+                        await client.delete(f"{orch_url}/deployment/delete/{dep_id}")
+                    else:
+                        logger.info(f"Terminating deployment {dep_id} in pool {pool_id}")
+                        await client.post(
+                            f"{orch_url}/deployment/terminate",
+                            json={"deployment_id": dep_id},
+                        )
+            else:
+                logger.error(
+                    f"Failed to list deployments for pool {pool_id}: {resp.status_code}"
+                )
+        except Exception as e:
+            logger.error(f"Error terminating deployments for pool {pool_id}: {e}")
+
+        # 3. Delete the pool
+        try:
+            logger.info(f"Deleting compute pool {pool_id}")
+            await client.post(f"{orch_url}/deployment/deletepool/{pool_id}")
+        except Exception as e:
+            logger.error(f"Error deleting pool {pool_id}: {e}")
+
+    logger.info(f"Cascade cleanup completed for {provider} credential: {credential_name}")

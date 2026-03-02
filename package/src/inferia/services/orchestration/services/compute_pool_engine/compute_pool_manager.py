@@ -5,8 +5,10 @@ from inferia.services.orchestration.v1 import compute_pool_pb2, compute_pool_pb2
 
 
 class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer):
-    def __init__(self, repo):
+    def __init__(self, repo, deployment_repo=None, controller=None):
         self.repo = repo
+        self.deployment_repo = deployment_repo
+        self.controller = controller
 
     async def RegisterPool(self, request, context):
         try:
@@ -93,7 +95,30 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         )
 
     async def DeletePool(self, request, context):
-        await self.repo.soft_delete_pool(UUID(request.pool_id))
+        pool_id = UUID(request.pool_id)
+
+        # Cascade cleanup: Delete/Terminate deployments in this pool
+        if self.deployment_repo:
+            try:
+                deployments = await self.deployment_repo.list(pool_id=pool_id)
+                for dep in deployments:
+                    dep_id = dep["deployment_id"]
+                    if dep["state"] in ("STOPPED", "TERMINATED", "FAILED", "PENDING"):
+                        # If it's already stopped or hasn't started, just delete it
+                        await self.deployment_repo.delete(dep_id)
+                    elif self.controller:
+                        # If running, request termination
+                        try:
+                            await self.controller.request_delete(dep_id)
+                        except Exception:
+                            # If termination fails, at least we tried. 
+                            # We might consider force-deleting anyway if the pool is going away.
+                            pass
+            except Exception as e:
+                # Log error but don't block pool deletion
+                print(f"Error during deployment cascade cleanup for pool {pool_id}: {e}")
+
+        await self.repo.soft_delete_pool(pool_id)
         return compute_pool_pb2.poolEmpty()
 
     async def BindProviderResource(self, request, context):

@@ -151,17 +151,20 @@ async def serve():
     # Note: Dashboard now runs on its own port (3001) via the CLI
 
     # ---------------- gRPC Services ----------------
-    compute_pool_service = ComputePoolManagerService(pool_repo)
-    model_registry_service = ModelRegistryService(model_registry_repo)
-    model_deployment_service = ModelDeploymentService(
-        controller=ModelDeploymentController(
-            model_registry_repo=model_registry_repo,
-            deployment_repo=model_deployment_repo,
-            outbox_repo=outbox_repo,
-            event_bus=event_bus,
-            pool_repo=pool_repo,
-        )
+    deployment_controller = ModelDeploymentController(
+        model_registry_repo=model_registry_repo,
+        deployment_repo=model_deployment_repo,
+        outbox_repo=outbox_repo,
+        event_bus=event_bus,
+        pool_repo=pool_repo,
     )
+    compute_pool_service = ComputePoolManagerService(
+        repo=pool_repo,
+        deployment_repo=model_deployment_repo,
+        controller=deployment_controller,
+    )
+    model_registry_service = ModelRegistryService(model_registry_repo)
+    model_deployment_service = ModelDeploymentService(controller=deployment_controller)
 
     # Register gRPC services
     compute_pool_pb2_grpc.add_ComputePoolManagerServicer_to_server(

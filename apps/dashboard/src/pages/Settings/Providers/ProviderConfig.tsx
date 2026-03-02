@@ -15,6 +15,8 @@ type State = {
     newKeyName: string;
     newKeyValue: string;
     loadingKeys: boolean;
+    showDeleteModal: boolean;
+    keyToDelete: string | null;
 };
 
 type Action =
@@ -38,6 +40,10 @@ function reducer(state: State, action: Action): State {
         }
         case 'RESET_ADD_KEY_MODAL':
             return { ...state, showAddKeyModal: false, newKeyName: "", newKeyValue: "" };
+        case 'SHOW_DELETE_MODAL':
+            return { ...state, showDeleteModal: true, keyToDelete: action.value };
+        case 'HIDE_DELETE_MODAL':
+            return { ...state, showDeleteModal: false, keyToDelete: null };
         default:
             return state;
     }
@@ -54,6 +60,8 @@ const initialState: State = {
     newKeyName: "",
     newKeyValue: "",
     loadingKeys: false,
+    showDeleteModal: false,
+    keyToDelete: null,
 };
 
 export default function ProviderConfigPage() {
@@ -62,7 +70,8 @@ export default function ProviderConfigPage() {
     const [state, dispatch] = useReducer(reducer, initialState);
     const {
         config, loading, saving, isEditing, isConfigured,
-        nosanaApiKeys, showAddKeyModal, newKeyName, newKeyValue, loadingKeys
+        nosanaApiKeys, showAddKeyModal, newKeyName, newKeyValue, loadingKeys,
+        showDeleteModal, keyToDelete
     } = state;
 
     useEffect(() => {
@@ -134,12 +143,16 @@ export default function ProviderConfigPage() {
     };
 
     const handleDeleteApiKey = async (name: string) => {
-        if (!confirm(`Are you sure you want to delete the API key "${name}"?`)) {
-            return;
-        }
+        dispatch({ type: 'SHOW_DELETE_MODAL', value: name });
+    };
+
+    const confirmDeleteApiKey = async () => {
+        if (!keyToDelete) return;
+        const name = keyToDelete;
         try {
             await ConfigService.deleteNosanaApiKey(name);
             toast.success(`API key "${name}" deleted successfully`);
+            dispatch({ type: 'HIDE_DELETE_MODAL' });
             loadNosanaApiKeys();
         } catch (e) {
             toast.error("Failed to delete API key");
@@ -309,6 +322,52 @@ export default function ProviderConfigPage() {
                                 className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
                             >
                                 Add Key
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showDeleteModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
+                    <div className="bg-card border rounded-xl p-6 w-full max-w-md mx-4 space-y-4 shadow-xl border-red-100">
+                        <div className="flex items-center gap-3 text-red-600">
+                            <div className="p-2 bg-red-50 rounded-full">
+                                <Trash2 className="w-6 h-6" />
+                            </div>
+                            <h3 className="text-lg font-semibold">Delete API Key?</h3>
+                        </div>
+
+                        <div className="space-y-3">
+                            <p className="text-sm text-foreground">
+                                Are you sure you want to delete the API key <span className="font-bold">&quot;{keyToDelete}&quot;</span>?
+                            </p>
+
+                            <div className="p-4 bg-red-50 border border-red-100 rounded-lg space-y-2">
+                                <p className="text-xs font-bold text-red-800 flex items-center gap-1.5">
+                                    <ShieldCheck className="w-3.5 h-3.5" />
+                                    WARNING: RECURSIVE DELETION
+                                </p>
+                                <p className="text-xs text-red-700 leading-relaxed">
+                                    Deleting this key will automatically <span className="font-bold underline">terminate all active deployments</span> and <span className="font-bold underline">delete all compute pools</span> associated with it. This action cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => dispatch({ type: 'HIDE_DELETE_MODAL' })}
+                                className="px-4 py-2 text-sm font-medium rounded-md border hover:bg-accent transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmDeleteApiKey}
+                                className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors shadow-sm"
+                            >
+                                Delete Key & Resources
                             </button>
                         </div>
                     </div>
