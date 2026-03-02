@@ -11,7 +11,6 @@
 
 InferiaLLM acts as the authoritative execution layer between your applications and your AI infrastructure. It governs how LLMs are accessed, secured, routed, and run on compute.
 
-
 ---
 
 ## Installation
@@ -36,8 +35,8 @@ cp .env.sample .env
 inferiallm init
 
 # 3. Launch all services
-# Starts Orchestration, Inference, and API gateways in a single process
-inferiallm start
+# Starts API, Orchestration, Inference, and the Dashboard in one go
+inferiallm start all
 ```
 
 ---
@@ -47,6 +46,7 @@ inferiallm start
 The CLI manages configuration through environment variables. The most critical settings are:
 
 ### 1. Database & Security
+
 | Variable | Description | Default |
 | --- | --- | --- |
 | `DATABASE_URL` | Primary database connection string | `postgresql://inferia:inferia@localhost:5432/inferia` |
@@ -61,8 +61,10 @@ The CLI manages configuration through environment variables. The most critical s
 ## CLI Reference
 
 ### `inferiallm init`
+
 Bootstraps the unified database environment.
 **Output:**
+
 ```text
 [inferia:init] Connecting as admin to bootstrap inferia
 [inferia:init] Creating role: inferia
@@ -72,17 +74,21 @@ Bootstraps the unified database environment.
 ```
 
 For existing databases, apply incremental schema updates manually:
+
 ```bash
 psql "$DATABASE_URL" -f db/migrations/20260212_add_inference_logs_ip.sql
 ```
 
 ### `inferiallm start`
-Starts all InferiaLLM gateways (Orchestration, Inference, API) and the Dashboard in one command.
+
+Starts all InferiaLLM gateways (API, Orchestration, Inference) and the Dashboard.
 
 You can also start specific services:
-* `inferiallm start orchestration`: Starts the Orchestration Gateway stack.
-* `inferiallm start inference`: Starts the Inference Gateway standalone.
-* `inferiallm start api`: Starts the API Gateway standalone.
+
+* `inferiallm start all`: Starts all core services (default).
+* `inferiallm start api-gateway`: Starts only the API Gateway.
+* `inferiallm start orchestration`: Starts the Orchestration stack (API, Sidecar, Worker).
+* `inferiallm start inference`: Starts the Inference engine.
 
 ---
 
@@ -95,7 +101,7 @@ package/src/inferia/
 ├── cli.py                  # Entry point for the CLI
 ├── services/
 │   ├── api_gateway/        # Security & Policy Service (Port 8000)
-│   ├── inference_gateway   # Inference Proxy Service (Port 8001)
+│   ├── inference/          # Inference Proxy Service (Port 8001)
 │   ├── orchestration/      # Compute Control Plane (Port 8080)
 │   ├── data/               # Data Engine (Port 8003)
 │   └── guardrail/          # Guardrail Engine (Port 8002)
@@ -104,6 +110,7 @@ package/src/inferia/
 ---
 
 ## Core Capabilities
+
 * **Unified Control Plane**: Orchestrate LLMs across heterogeneous compute (K8s, DePIN, VPS).
 * **Policy Enforcement**: Centralized RBAC, safety guardrails, and budget controls.
 * **Execution Boundary**: Authority-based routing between applications and infrastructure.

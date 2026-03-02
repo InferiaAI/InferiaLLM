@@ -62,9 +62,9 @@ InferiaLLM provides these primitives as a single, cohesive system.
 
 ## Quick Start
 
-### 1. Manual Installation via Package
+### 1. Simple Installation (via PyPI)
 
-The easiest way to get started is to run Inferia as a comprehensive Python package.
+The easiest way to get started is to run InferiaLLM as a comprehensive Python package.
 
 ```bash
 pip install inferiallm
@@ -73,19 +73,20 @@ pip install inferiallm
 **Setup & Configuration:**
 
 > [!NOTE]
-> Inferia looks for a `.env` configuration file in your current working directory. You must create one to configure databases and secrets.
+> InferiaLLM looks for a `.env` configuration file in your current working directory. You must create one to configure databases and secrets.
 
 ```bash
 # 1. Download sample environment
 curl -o .env https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sample
 
 # 2. Configure your credentials (DB, Redis, Secrets)
+# Ensure JWT_SECRET_KEY is at least 32 characters long
 nano .env
 
 # 3. Initialize database
 inferiallm init
 
-# 4. Start all services
+# 4. Start all services (API, Orchestration, Inference, Dashboard)
 inferiallm start
 ```
 
@@ -96,26 +97,26 @@ If you want to contribute or modify the core logic:
 ```bash
 # Clone repo
 git clone https://github.com/InferiaAI/InferiaLLM.git
-cd inferiaLLM
+cd InferiaLLM
 
 # Setup virtual environment
+# Recommended: create venv at root for easy CLI access
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install in editable mode
-# The backend logic resides in the 'package' directory
-cd package
-pip install -e .
-cd ..
+# Install the package in editable mode
+pip install -e package/
 
 # Configure environment
 cp .env.sample .env
+# Edit .env (Set DB, Redis, and Secrets)
 
-# Initialize databases
-inferiallm init
+# Initialize databases and build frontend assets
+# '--env dev' ensures dashboard and sidecar are rebuilt
+inferiallm init --env dev
 
-# Start API services
-inferiallm start
+# Start all services (API, Orchestration, Inference, Dashboard)
+inferiallm start all
 ```
 
 ### 3. Run via Docker (Recommended for Production)
@@ -206,11 +207,11 @@ Essential for protecting your gateways and dashboard.
 
 | Variable | Description |
 | --- | --- |
-| `JWT_SECRET_KEY` | Secret key for signing access tokens (use a long random string) |
+| `JWT_SECRET_KEY` | Secret key for signing access tokens (Use a long random string, min 32 chars) |
 | `INTERNAL_API_KEY` | Secret key for service-to-service communication |
 | `SECRET_ENCRYPTION_KEY` | 32-byte base64 key for encrypting provider credentials |
-| `SUPERADMIN_EMAIL` | Initial admin user email |
-| `SUPERADMIN_PASSWORD` | Initial admin user password |
+| `SUPERADMIN_EMAIL` | Initial admin user email (used for Dashboard login) |
+| `SUPERADMIN_PASSWORD` | Initial admin user password (used for Dashboard login) |
 
 ### 3. Service Connectivity
 
@@ -265,13 +266,16 @@ inferiallm start [service]
 * `all`: Start all services (default)
 * `orchestration`: Start Orchestration Gateway stack
 * `inference`: Start Inference Gateway
-* `api`: Start API Gateway
+* `api-gateway`: Start API Gateway
 
 **Examples:**
 
 ```bash
-# Start everything
+# Start everything (Simplified Command)
 inferiallm start
+
+# Start everything (Explicit Command)
+inferiallm start all
 
 # Start only Orchestration
 inferiallm start orchestration
@@ -294,15 +298,15 @@ Instead of running everything, you can run individual gateways:
 
 #### `inferiallm start orchestration`
 
-Start the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecars).
+Starts the Orchestration Gateway stack (API, Background Worker, and DePIN Sidecars).
 
 #### `inferiallm start inference`
 
-Start the Inference Gateway standalone.
+Starts the Inference Gateway standalone.
 
-#### `inferiallm start api`
+#### `inferiallm start api-gateway`
 
-Start the API Gateway standalone.
+Starts the API Gateway standalone.
 
  ---
 
