@@ -248,14 +248,19 @@ def run_dashboard(queue=None):
                 ".woff2": "font/woff2",
             }
 
-            def translate_path(self, path):
-                resolved = super().translate_path(path)
-                if os.path.exists(resolved):
-                    return resolved
-                _, ext = os.path.splitext(path)
-                if ext and ext.lower() not in [".html", ".htm"]:
-                    return resolved
-                return os.path.join(os.getcwd(), "index.html")
+            def do_GET(self):
+                """Override to handle SPA routing."""
+                # Get the physical path for the request
+                path = self.translate_path(self.path)
+                
+                # If path doesn't exist, check if we should serve index.html
+                if not os.path.exists(path):
+                    # Only fallback if it's not a request for a static asset (no extension or .html)
+                    _, ext = os.path.splitext(self.path)
+                    if not ext or ext.lower() in [".html", ".htm"]:
+                        self.path = "/index.html"
+                
+                return super().do_GET()
 
             def log_message(self, format, *args):
                 pass
