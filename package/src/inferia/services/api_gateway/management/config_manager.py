@@ -82,6 +82,16 @@ class ConfigManager(BaseConfigManager):
                 and isinstance(merged[key], dict)
             ):
                 merged[key] = self._merge_configs(merged[key], value)
+            elif (
+                isinstance(value, list)
+                and key in merged
+                and isinstance(merged[key], list)
+            ):
+                # Smart merging for credential lists to prevent deletion and masking corruption
+                if key in ["api_keys", "wallets", "credentials"]:
+                    merged[key] = self._merge_credential_lists(merged[key], value)
+                else:
+                    merged[key] = value
             else:
                 # Skip if the new value is masked
                 if value == "********":
@@ -94,6 +104,38 @@ class ConfigManager(BaseConfigManager):
                             continue
                 merged[key] = value
         return merged
+
+    def _merge_credential_lists(
+        self, existing: List[Dict[str, Any]], new: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Smart merge for credential lists (api_keys, wallets, etc.).
+        1. Preserves unmasked secrets if incoming value is masked.
+        2. Preserves existing items if missing in new list (additive mode for safety).
+        """
+        # Dictionary for fast lookup by name (or name+provider for universal)
+        def get_id(item: Dict[str, Any]) -> str:
+            return f"{item.get('provider', '')}:{item.get('name', '')}"
+
+        merged_map = {get_id(item): item.copy() for item in existing}
+
+        for new_item in new:
+            item_id = get_id(new_item)
+            if item_id in merged_map:
+                existing_item = merged_map[item_id]
+                # Merge dict contents to handle masked keys/values
+                for k, v in new_item.items():
+                    # Handle specific secret keys: 'key' for nosana, 'value' for universal, 'mnemonic' for akash
+                    if k in ["key", "value", "mnemonic"] and isinstance(v, str) and "..." in v:
+                        existing_val = existing_item.get(k)
+                        if existing_val and v == self._mask_secret(existing_val):
+                            continue  # Skip updating this masked field
+                    existing_item[k] = v
+            else:
+                # It's a brand new item in this list
+                merged_map[item_id] = new_item.copy()
+
+        return list(merged_map.values())
 
     async def initialize(self):
         """Initial load of configuration from database."""

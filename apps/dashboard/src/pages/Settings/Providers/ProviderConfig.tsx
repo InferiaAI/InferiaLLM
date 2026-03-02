@@ -120,6 +120,16 @@ export default function ProviderConfigPage() {
             dispatch({ type: 'SET_FIELD', field: 'loadingKeys', value: true });
             const keys = await ConfigService.listNosanaApiKeys();
             dispatch({ type: 'SET_FIELD', field: 'nosanaApiKeys', value: keys });
+
+            // Sync with main config to prevent stale data when saving main config
+            // Note: nosanaApiKeys doesn't have the full secret 'key', but the backend
+            // merge logic now handles masked values by preserving existing unmasked ones.
+            const apiKeyEntries = keys.map(k => ({
+                name: k.name,
+                key: "********", // Placeholder to let backend know we have this key
+                is_active: k.is_active
+            }));
+            dispatch({ type: 'UPDATE_CONFIG', path: ['depin', 'nosana', 'api_keys'], value: apiKeyEntries });
         } catch (e) {
             toast.error("Failed to load Nosana API keys");
         } finally {
