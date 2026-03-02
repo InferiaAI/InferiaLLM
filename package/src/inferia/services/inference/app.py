@@ -36,8 +36,14 @@ app = FastAPI(
 # Register standard exception handlers
 register_exception_handlers(app)
 
-# CORS configuration (Standardized)
-setup_cors(app, settings.allowed_origins, settings.is_development)
+# CORS configuration (Allow All)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # Add standard / and /health routes
