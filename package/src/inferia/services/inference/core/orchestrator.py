@@ -98,39 +98,52 @@ class OrchestrationService:
         provider_headers = adapter.get_headers(provider_key)
         provider_payload = adapter.transform_request(body.copy())
 
-        # Call upstream embedding endpoint
-        # Note: Infinity and TEI serve embeddings at /embeddings (not /v1/embeddings)
-        response_data = await GatewayService.call_upstream(
-            endpoint_url,
-            provider_payload,
-            provider_headers,
-            engine,
-            path="/embeddings",
-            concurrency_key=concurrency_key,
-        )
-
-        # 5. Log embedding usage (simplified logging for embeddings)
-        usage = response_data.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", 0)
-
-        # Count number of inputs embedded
+        status_code = 200
+        error_message = None
+        prompt_tokens = 0
         input_count = len(input_data) if isinstance(input_data, list) else 1
 
-        background_tasks.add_task(
-            OrchestrationService._log_embedding_request,
-            deployment_id,
-            user_context_id,
-            model,
-            body,
-            start_time,
-            prompt_tokens,
-            input_count,
-            applied_policies,
-            log_payloads,
-            ip_address,
-        )
+        try:
+            # Call upstream embedding endpoint
+            # Note: Infinity and TEI serve embeddings at /embeddings (not /v1/embeddings)
+            response_data = await GatewayService.call_upstream(
+                endpoint_url,
+                provider_payload,
+                provider_headers,
+                engine,
+                path="/embeddings",
+                concurrency_key=concurrency_key,
+            )
 
-        return response_data
+            # 5. Log embedding usage (simplified logging for embeddings)
+            usage = response_data.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+
+            return response_data
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_embedding_request,
+                deployment_id,
+                user_context_id,
+                model,
+                body,
+                start_time,
+                prompt_tokens,
+                input_count,
+                applied_policies,
+                log_payloads,
+                ip_address,
+                status_code=status_code,
+                error_message=error_message,
+            )
 
     @staticmethod
     async def handle_completion(
@@ -354,9 +367,22 @@ class OrchestrationService:
 
         # We need a generator that logs on finish.
         async def logging_generator_wrapper():
+            status_code = 200
+            error_message = None
             try:
                 async for chunk in processed_stream:
+                    if b'"error":' in chunk and b'Upstream Error' in chunk:
+                        status_code = 502
+                        error_message = chunk.decode("utf-8", errors="ignore")
                     yield chunk
+            except HTTPException as e:
+                status_code = e.status_code
+                error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+                raise
+            except Exception as e:
+                status_code = 500
+                error_message = str(e)
+                raise
             finally:
                 # Log completion
                 asyncio.create_task(
@@ -373,6 +399,8 @@ class OrchestrationService:
                         applied_policies=applied_policies,
                         log_payloads=log_payloads,
                         ip_address=ip_address,
+                        status_code=status_code,
+                        error_message=error_message,
                     )
                 )
 
@@ -404,47 +432,63 @@ class OrchestrationService:
         ip_address,
         concurrency_key,
     ):
-        response_data = await GatewayService.call_upstream(
-            endpoint_url,
-            provider_payload,
-            provider_headers,
-            engine,
-            concurrency_key=concurrency_key,
-        )
-
-        # Output Guardrails
-        if response_data and response_data.get("choices"):
-            content = response_data["choices"][0]["message"]["content"]
-            await GatewayService.scan_output(
-                content,
-                provider_payload["messages"][-1]["content"],
-                guardrail_cfg,
-                user_context_id,
+        status_code = 200
+        error_message = None
+        prompt_tokens = 0
+        completion_tokens = 0
+        
+        try:
+            response_data = await GatewayService.call_upstream(
+                endpoint_url,
+                provider_payload,
+                provider_headers,
+                engine,
+                concurrency_key=concurrency_key,
             )
 
-        # Usage
-        usage = response_data.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", 0)
+            # Output Guardrails
+            if response_data and response_data.get("choices"):
+                content = response_data["choices"][0]["message"]["content"]
+                await GatewayService.scan_output(
+                    content,
+                    provider_payload["messages"][-1]["content"],
+                    guardrail_cfg,
+                    user_context_id,
+                )
 
-        # Log
-        background_tasks.add_task(
-            OrchestrationService._log_request,
-            deployment_id,
-            user_context_id,
-            model,
-            original_body,
-            start_time,
-            prompt_tokens,
-            completion_tokens,
-            None,
-            False,
-            applied_policies,
-            log_payloads,
-            ip_address,
-        )
+            # Usage
+            usage = response_data.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
 
-        return response_data
+            return response_data
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            # Log
+            background_tasks.add_task(
+                OrchestrationService._log_request,
+                deployment_id,
+                user_context_id,
+                model,
+                original_body,
+                start_time,
+                prompt_tokens,
+                completion_tokens,
+                None,
+                False,
+                applied_policies,
+                log_payloads,
+                ip_address,
+                status_code=status_code,
+                error_message=error_message,
+            )
 
     # _log_request_sync removed
 
@@ -462,6 +506,8 @@ class OrchestrationService:
         applied_policies,
         log_payloads,
         ip_address=None,
+        status_code=200,
+        error_message=None,
     ):
         end_time = time.time()
         total_duration_ms = int((end_time - start_time) * 1000)
@@ -494,7 +540,8 @@ class OrchestrationService:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
-                status_code=200,
+                status_code=status_code,
+                error_message=error_message,
                 is_streaming=is_streaming,
                 applied_policies=applied_policies,
                 ip_address=ip_address,
@@ -523,6 +570,8 @@ class OrchestrationService:
         applied_policies,
         log_payloads,
         ip_address=None,
+        status_code=200,
+        error_message=None,
     ):
         """
         Log embedding request details.
@@ -551,7 +600,8 @@ class OrchestrationService:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=0,  # Embeddings don't generate completion tokens
                 total_tokens=total_tokens,
-                status_code=200,
+                status_code=status_code,
+                error_message=error_message,
                 is_streaming=False,  # Embeddings never stream
                 applied_policies=applied_policies,
                 ip_address=ip_address,

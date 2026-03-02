@@ -1341,7 +1341,7 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                             lastHeartbeat = currentTime;
@@ -1398,7 +1398,7 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                         } catch (err) { }
@@ -1427,7 +1427,7 @@ export class NosanaService {
                                 };
                                 await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                     body: JSON.stringify(updatePayload),
                                 });
                             } catch (err) { }
@@ -1455,7 +1455,7 @@ export class NosanaService {
                                 };
                                 await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                     body: JSON.stringify(payload),
                                 });
                             } catch (err) { }
@@ -1476,7 +1476,7 @@ export class NosanaService {
                         };
                         await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                             method: "POST",
-                            headers: { "Content-Type": "application/json" },
+                            headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                             body: JSON.stringify(payload),
                         });
                     } catch (err) { }
@@ -1587,7 +1587,7 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                             lastHeartbeat = currentTime;
@@ -1644,7 +1644,7 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                         } catch (err: any) {
@@ -1672,7 +1672,7 @@ export class NosanaService {
                                 };
                                 await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                     body: JSON.stringify(updatePayload),
                                 });
                             } catch (err: any) {
@@ -1700,7 +1700,7 @@ export class NosanaService {
                                 };
                                 await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                     body: JSON.stringify(payload),
                                 });
                             } catch (err: any) {
@@ -1722,7 +1722,7 @@ export class NosanaService {
                         };
                         await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                             method: "POST",
-                            headers: { "Content-Type": "application/json" },
+                            headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                             body: JSON.stringify(payload),
                         });
                     } catch (err: any) {

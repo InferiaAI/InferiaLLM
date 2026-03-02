@@ -51,15 +51,18 @@ def create_internal_auth_middleware(
 
             if not api_key:
                 logger.warning(f"Unauthorized access attempt to {path}: Missing API Key")
-                raise HTTPException(
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Missing X-Internal-API-Key header",
+                    content={"detail": "Missing X-Internal-API-Key header"},
                 )
 
             if api_key != internal_api_key:
                 logger.warning(f"Unauthorized access attempt to {path}: Invalid API Key")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal API key"
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN, 
+                    content={"detail": "Invalid internal API key"},
                 )
 
             response = await call_next(request)
