@@ -133,7 +133,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-exclude = ["**/node_modules", "**/dist", "**/build"]
+exclude = ["**/node_modules"]
 
 [tool.setuptools.package-data]
 inferia = [
