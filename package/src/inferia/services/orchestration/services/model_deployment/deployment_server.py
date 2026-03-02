@@ -472,13 +472,24 @@ async def list_pools(owner_id: str | None = None):
     async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
-        resp = await stub.ListPools(
-            compute_pool_pb2.ListPoolsRequest(owner_id=owner_id)
-        )
+        try:
+            resp = await stub.ListPools(
+                compute_pool_pb2.ListPoolsRequest(owner_id=owner_id or "")
+            )
+        except grpc.RpcError as e:
+            raise HTTPException(status_code=500, detail=e.details())
 
-    return {
-        "pools": [
-            {
+    # Enrich with GPU Specs from DB
+    enriched_pools = []
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        # Fetch available GPU specs
+        resources = await conn.fetch("SELECT DISTINCT gpu_type, gpu_memory_gb FROM provider_resources WHERE gpu_type IS NOT NULL")
+        gpu_resource_map = {r['gpu_type'].upper(): r['gpu_memory_gb'] for r in resources}
+
+        for p in resp.pools:
+            pool_dict = {
                 "pool_id": p.pool_id,
                 "pool_name": p.pool_name,
                 "provider": p.provider,
@@ -493,10 +504,43 @@ async def list_pools(owner_id: str | None = None):
                 "provider_credential_name": p.provider_credential_name,
                 "created_at": p.created_at,
                 "updated_at": p.updated_at,
+                "gpu_specs": []
             }
-            for p in resp.pools
-        ]
-    }
+            # Add VRAM info if we have it in our map
+            for gt in p.allowed_gpu_types:
+                vram = gpu_resource_map.get(gt.upper())
+                if vram:
+                     pool_dict["gpu_specs"].append({"gpu_type": gt, "vram": vram})
+            
+            enriched_pools.append(pool_dict)
+    except Exception:
+        # Fallback to non-enriched if DB fails
+        return {
+            "pools": [
+                {
+                    "pool_id": p.pool_id,
+                    "pool_name": p.pool_name,
+                    "provider": p.provider,
+                    "is_active": p.is_active,
+                    "owner_type": p.owner_type,
+                    "owner_id": p.owner_id,
+                    "allowed_gpu_types": list(p.allowed_gpu_types),
+                    "max_cost_per_hour": p.max_cost_per_hour,
+                    "is_dedicated": p.is_dedicated,
+                    "scheduling_policy_json": p.scheduling_policy_json,
+                    "provider_pool_id": p.provider_pool_id,
+                    "provider_credential_name": p.provider_credential_name,
+                    "created_at": p.created_at,
+                    "updated_at": p.updated_at,
+                }
+                for p in resp.pools
+            ]
+        }
+    finally:
+        if conn:
+            await conn.close()
+
+    return {"pools": enriched_pools}
 
 
 @router.get("/pool/{pool_id}")

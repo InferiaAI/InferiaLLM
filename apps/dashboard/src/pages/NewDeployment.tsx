@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useReducer } from "react"
 import {
   Cpu, Server, Check, Zap, Globe, Layers, Terminal, Rocket, Brain,
   Database, Image, Eye, Volume2, Search, X, ChevronDown, ChevronRight, Star, Download, Loader2,
-  MessageSquare
+  MessageSquare, AlertCircle
 } from "lucide-react"
 import { computeApi } from "@/lib/api"
 import { toast } from "sonner"
@@ -19,6 +19,7 @@ import {
   type HFModel,
   type ModelTypeKey
 } from "@/services/huggingfaceService"
+import { calculateCompatibility, fetchExternalRegistry, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
 
 // --- Constants ---
 
@@ -442,6 +443,11 @@ export default function NewDeployment() {
   const queryClient = useQueryClient()
   const { user, organizations } = useAuth()
 
+  const { data: externalRegistry } = useQuery({
+    queryKey: ["external-registry"],
+    queryFn: fetchExternalRegistry
+  })
+
   const [state, dispatch] = useReducer(deploymentReducer, initialState);
   const {
     mode, step, deploymentType, modelType, instanceName, selectedEngine,
@@ -699,6 +705,7 @@ export default function NewDeployment() {
           dispatch={dispatch}
           onLaunch={handleManagedLaunch}
           isPending={createMutation.isPending}
+          externalRegistry={externalRegistry}
         />
       ) : (
         <ExternalFlow
@@ -716,7 +723,7 @@ export default function NewDeployment() {
 
 // --- Sub-Components ---
 
-function ManagedFlow({ state, dispatch, onLaunch, isPending }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean }) {
+function ManagedFlow({ state, dispatch, onLaunch, isPending, externalRegistry }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean; externalRegistry?: ExternalModel[] }) {
   const { step, deploymentType, modelType, instanceName, selectedEngine, selectedPool, userPools, selectedHFModel, jobDescription, modelId, gitRepo, trainingScript, datasetUrl, baseModel, batchSize, maxSequenceLength, maxModelLen, gpuUtil, hfToken, vllmImage } = state;
 
   return (
@@ -734,7 +741,7 @@ function ManagedFlow({ state, dispatch, onLaunch, isPending }: { state: State; d
       {step === 1 && <TypeSelection selectedId={deploymentType} onSelect={(id, mt) => dispatch({ type: 'SELECT_TYPE', deploymentType: id, modelType: mt })} />}
       {step === 2 && <EngineSelection modelType={modelType} selectedEngine={selectedEngine} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
       {step === 3 && <PoolSelection userPools={userPools} selectedPool={selectedPool} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
-      {step === 4 && <ManagedConfig state={state} dispatch={dispatch} onLaunch={onLaunch} isPending={isPending} />}
+      {step === 4 && <ManagedConfig state={state} dispatch={dispatch} onLaunch={onLaunch} isPending={isPending} externalRegistry={externalRegistry} />}
     </>
   )
 }
@@ -814,15 +821,36 @@ function PoolSelection({ userPools, selectedPool, dispatch, setStep }: { userPoo
   );
 }
 
-function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean }) {
+function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean; externalRegistry?: ExternalModel[] }) {
   const {
     deploymentType, modelType, instanceName, selectedEngine, selectedHFModel, modelId,
     vllmImage, maxModelLen, gpuUtil, hfToken, batchSize, maxSequenceLength, gitRepo,
     trainingScript, datasetUrl, baseModel, dtype, enforceEager, maxNumSeqs,
     enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading,
     nvidiaDisableCudaCompat, quantization, isAdvancedOpen,
-    maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled
+    maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
+    selectedPool
   } = state;
+
+  const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"))
+    ? calculateCompatibility(
+      modelId,
+      selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
+      quantization || dtype,
+      { vram: selectedPool.gpu_specs?.[0]?.vram },
+      externalRegistry
+    )
+    : null;
+
+  const getFitColor = (level: FitLevel) => {
+    switch (level) {
+      case "Perfect": return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
+      case "Good": return "text-blue-500 bg-blue-500/10 border-blue-500/20";
+      case "Marginal": return "text-amber-500 bg-amber-500/10 border-amber-500/20";
+      case "TooTight": return "text-rose-500 bg-rose-500/10 border-rose-500/20";
+      default: return "text-slate-500 bg-slate-500/10 border-slate-500/20";
+    }
+  };
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -844,6 +872,65 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
         <input id="modelId" value={modelId} onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white" placeholder={modelType === "embedding" ? "e.g. sentence-transformers/all-MiniLM-L6-v2" : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"} />
       </div>
 
+      {compatibility && (
+        <div className={cn("mt-4 p-5 rounded-xl border-2 transition-all animate-in fade-in slide-in-from-top-4", getFitColor(compatibility.fitLevel))}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-current/10">
+                <Zap className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="font-bold text-base block tracking-tight underline decoration-current/30 underline-offset-4 decoration-2">Compatibility: {compatibility.fitLevel}</span>
+                <span className="text-[10px] uppercase font-semibold opacity-60">Engine Assessment • {compatibility.score}/100</span>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-sm font-medium opacity-90 leading-snug mb-5 decoration-current/20">{compatibility.reason}</p>
+
+          {/* Multi-Dimensional Breakdown */}
+          <div className="space-y-3 mb-6">
+            {[
+              { label: 'Quality', value: compatibility.details.qualityScore, icon: '💎' },
+              { label: 'Speed', value: compatibility.details.speedScore, icon: '🏎️' },
+              { label: 'Fit', value: compatibility.details.fitScore, icon: '🧩' },
+              { label: 'Context', value: compatibility.details.contextScore, icon: '📏' }
+            ].map((stat) => (
+              <div key={stat.label} className="space-y-1">
+                <div className="flex justify-between text-[11px] font-bold uppercase tracking-wider">
+                  <span className="flex items-center gap-1.5 opacity-80">{stat.icon} {stat.label}</span>
+                  <span>{Math.round(stat.value)}%</span>
+                </div>
+                <div className="h-1.5 w-full bg-current/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-current transition-all duration-1000 ease-out"
+                    style={{ width: `${stat.value}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-6 pt-5 border-t border-current/15">
+            <div className="bg-current/5 p-3 rounded-lg border border-current/10">
+              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Est. Performance</div>
+              <div className="text-lg font-black">{compatibility.estimatedTps.toFixed(1)} <span className="text-xs font-normal opacity-70">tokens/s</span></div>
+            </div>
+            <div className="bg-current/5 p-3 rounded-lg border border-current/10">
+              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">VRAM Allocation</div>
+              <div className="text-lg font-black">{compatibility.requiredVram.toFixed(1)} <span className="text-xs font-normal opacity-70">/ {compatibility.availableVram} GB</span></div>
+            </div>
+          </div>
+
+          {compatibility.fitLevel === "TooTight" && (
+            <div className="mt-4 p-3 bg-rose-500/15 rounded-lg border-2 border-rose-500/30 text-xs font-bold flex items-start gap-3 text-rose-600 dark:text-rose-400">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+              <span>Critical: Model memory exceeds pool capacity. Deployment will likely fail or cause Hardware OOM.</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {selectedEngine === "vllm" && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">vLLM Configuration</h4></div>
@@ -853,6 +940,8 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending }: { state: State;
             <div><label htmlFor="gpuUtil" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">GPU Memory Util</label><input id="gpuUtil" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
           </div>
           <div><label htmlFor="hfTokenVllm" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token</label><input id="hfTokenVllm" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="hf_..." /></div>
+
+
 
           {/* Advanced Configuration */}
           <div className="border-t border-slate-200 dark:border-zinc-700 pt-4 mt-4">
