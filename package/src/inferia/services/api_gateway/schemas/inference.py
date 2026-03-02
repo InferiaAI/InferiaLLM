@@ -21,7 +21,7 @@ class InferenceRequest(BaseModel):
 
     # Feature Flags (Client-side configuration override)
     enable_guardrails: bool = Field(
-        default=True, description="Enable input/output guardrail scanning"
+        default=False, description="Enable input/output guardrail scanning"
     )
     enable_rag: bool = Field(default=False, description="Enable RAG context retrieval")
     rag_collection_name: Optional[str] = Field(

@@ -48,6 +48,48 @@ async def create_deployment(
     )
 
     db.add(new_deployment)
+    await db.flush() # Get the ID before commit
+
+    # Initialize default DISABLED policies for guardrail, rag, and prompt template
+    # as requested: "they should be marked and flase not enabled"
+    default_policies = [
+        DBPolicy(
+            policy_type="guardrail",
+            config_json={
+                "enabled": False,
+                "guardrail_engine": "llm-guard",
+                "input_scanners": [],
+                "output_scanners": [],
+                "toxicity_threshold": 0.5
+            },
+            org_id=user_ctx.org_id,
+            deployment_id=new_deployment.id
+        ),
+        DBPolicy(
+            policy_type="rag",
+            config_json={
+                "enabled": False,
+                "default_collection": "default",
+                "top_k": 3
+            },
+            org_id=user_ctx.org_id,
+            deployment_id=new_deployment.id
+        ),
+        DBPolicy(
+            policy_type="prompt_template",
+            config_json={
+                "enabled": False,
+                "template_id": None,
+                "template_vars": {}
+            },
+            org_id=user_ctx.org_id,
+            deployment_id=new_deployment.id
+        )
+    ]
+    
+    for p in default_policies:
+        db.add(p)
+
     await db.commit()
     await db.refresh(new_deployment)
 
