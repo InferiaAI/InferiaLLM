@@ -1132,14 +1132,15 @@ export class NosanaService {
         };
     }
 
-    async recoverJobs() {
+    async recoverJobs(credentialName?: string) {
         if (this.authMode === 'api') {
-            console.log("[Recovery] Attempting to recover deployments for API mode...");
+            const displayCred = credentialName || "default";
+            console.log(`[Recovery] Attempting to recover deployments for API mode (Credential: ${displayCred})...`);
             try {
                 // Use the deployments list endpoint to find running deployments
                 try {
                     const deploymentsResult = await this.apiRequest<{
-                        deployments: DeploymentResponse[];
+                        deployments: Array<DeploymentResponse & { job_definition?: any }>;
                         pagination: any;
                     }>('/deployments?status=RUNNING,STARTING&limit=100');
 
@@ -1159,17 +1160,23 @@ export class NosanaService {
                             }
 
                             // Recover the watchdog
+                            // Use created_at if available to avoid the "tooShort" redeploy failure logic
+                            const startTime = dep.created_at ? new Date(dep.created_at).getTime() : Date.now();
+
                             this.watchDeployment(dep.id, process.env.ORCHESTRATOR_URL || "http://localhost:8080", {
                                 jobAddresses,
                                 isConfidential: dep.confidential,
                                 marketAddress: dep.market,
                                 strategy: dep.strategy,
+                                startTime: startTime,
+                                jobDefinition: dep.job_definition || null, // API key should return the definition
                                 resources_allocated: { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 },
+                                credentialName: credentialName,
                             });
                         }
                     }
                 } catch (e: any) {
-                    console.warn(`[Recovery] Could not list deployments: ${e.message}`);
+                    console.warn(`[Recovery] Could not list deployments for ${displayCred}: ${e.message}`);
                 }
 
                 // Also check any cached watched deployments
@@ -1177,7 +1184,7 @@ export class NosanaService {
                     try {
                         const deployment = await this.getDeployment(depId);
                         if (deployment.status === 'RUNNING' || deployment.status === 'STARTING') {
-                            console.log(`[Recovery] Deployment ${depId} is still running`);
+                            // Still good
                         } else {
                             console.log(`[Recovery] Deployment ${depId} is no longer running (status: ${deployment.status})`);
                             this.watchedDeployments.delete(depId);
@@ -1187,9 +1194,9 @@ export class NosanaService {
                     }
                 }
 
-                console.log("[Recovery] API mode recovery complete");
+                console.log(`[Recovery] API mode recovery complete for ${displayCred}`);
             } catch (e: any) {
-                console.error("[Recovery] Failed to recover deployments:", e);
+                console.error(`[Recovery] Failed to recover deployments for ${displayCred}:`, e);
             }
             return;
         }
@@ -1230,6 +1237,7 @@ export class NosanaService {
             jobAddresses?: string[];
             isConfidential?: boolean;
             strategy?: DeploymentStrategy;
+            startTime?: number;
             resources_allocated?: {
                 gpu_allocated: number;
                 vcpu_allocated: number;
@@ -1248,7 +1256,7 @@ export class NosanaService {
         const depInfo: WatchedDeploymentInfo = {
             deploymentId,
             jobAddresses: options?.jobAddresses || [],
-            startTime: now,
+            startTime: options?.startTime || now,
             jobDefinition: options?.jobDefinition || null,
             marketAddress: options?.marketAddress || "",
             isConfidential: options?.isConfidential !== undefined ? options.isConfidential : true,
@@ -1497,6 +1505,7 @@ export class NosanaService {
             marketAddress?: string;
             deploymentUuid?: string;
             isConfidential?: boolean;
+            startTime?: number;
             resources_allocated?: {
                 gpu_allocated: number;
                 vcpu_allocated: number;
@@ -1513,6 +1522,7 @@ export class NosanaService {
                 jobAddresses: [jobAddress],
                 isConfidential: options?.isConfidential,
                 strategy: 'SIMPLE-EXTEND',
+                startTime: options?.startTime,
                 resources_allocated: options?.resources_allocated,
                 credentialName: options?.credentialName,
             });
@@ -1529,7 +1539,7 @@ export class NosanaService {
         const depInfo: WatchedDeploymentInfo = {
             deploymentId: options?.deploymentUuid || jobAddress,
             jobAddresses: [jobAddress],
-            startTime: now,
+            startTime: options?.startTime || now,
             jobDefinition: options?.jobDefinition || null,
             marketAddress: options?.marketAddress || "",
             isConfidential: options?.isConfidential !== undefined ? options.isConfidential : true,

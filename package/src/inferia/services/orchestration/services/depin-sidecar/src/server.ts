@@ -59,7 +59,7 @@ const initNosanaService = async (
         const service = new NosanaService({ privateKey, apiKey, rpcUrl: rpc });
         await service.init();
         console.log(`[Sidecar] Nosana Service '${name}' Initialized`);
-        await service.recoverJobs();
+        await service.recoverJobs(name);
         return service;
     } catch (e) {
         console.error(`[Sidecar] Failed to init Nosana Service '${name}':`, e);
