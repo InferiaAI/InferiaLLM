@@ -19,6 +19,7 @@ import logging
 import sys
 
 from inferia.common.logger import setup_logging
+from inferia.common.app_setup import setup_cors, add_standard_health_routes
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.models import HealthCheckResponse, ErrorResponse
 from inferia.services.api_gateway.gateway.middleware import (
@@ -99,18 +100,7 @@ register_exception_handlers(app)
 
 
 # ==================== CORS Configuration ====================
-
-# Parse allowed origins from comma-separated string
-allowed_origins = [origin.strip() for origin in settings.allowed_origins.split(",")]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins if not settings.is_development else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+setup_cors(app, settings.allowed_origins, settings.is_development)
 
 # ==================== Custom Middleware ====================
 
@@ -127,55 +117,22 @@ app.middleware("http")(auth_middleware)
 
 
 # ==================== Exception Handlers ====================
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler for unhandled exceptions."""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-
-    request_id = getattr(request.state, "request_id", "unknown")
-
-    error_response = ErrorResponse(
-        error="internal_server_error",
-        message="An unexpected error occurred",
-        request_id=request_id,
-    )
-
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content=jsonable_encoder(error_response),
-    )
+# Using standardized handlers from inferia.common.exception_handlers
 
 
 # ==================== Routes ====================
 
-
-@app.get("/", tags=["Root"])
-async def root():
-    """Root endpoint."""
-    return {
-        "service": settings.app_name,
-        "version": settings.app_version,
-        "environment": settings.environment,
-        "docs": "/docs",
-        "health": "/health",
+# Add standard / and /health routes
+add_standard_health_routes(
+    app=app,
+    app_name=settings.app_name,
+    app_version=settings.app_version,
+    environment=settings.environment,
+    extra_components={
+        "rbac": "healthy",
+        "rate_limiter": "healthy",
     }
-
-
-@app.get("/health", tags=["Health"])
-async def health_check():
-    """Health check endpoint."""
-    response = HealthCheckResponse(
-        status="healthy",
-        version=settings.app_version,
-        components={
-            "rbac": "healthy",
-            "rate_limiter": "healthy",
-        },
-    )
-    return JSONResponse(content=jsonable_encoder(response))
-
+)
 
 # Include routers
 app.include_router(auth_router)

@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from inferia.common.exception_handlers import register_exception_handlers
 from inferia.common.logger import setup_logging
+from inferia.common.app_setup import setup_cors, add_standard_health_routes
 from inferia.services.guardrail.config import settings
 from inferia.services.guardrail.engine import guardrail_engine
 from inferia.services.guardrail.models import GuardrailResult, ScanType
@@ -54,18 +55,8 @@ app = FastAPI(
 # Register standard exception handlers
 register_exception_handlers(app)
 
-# CORS configuration
-_allow_origins = [
-    origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allow_origins if not settings.is_development else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS configuration (Standardized)
+setup_cors(app, settings.allowed_origins, settings.is_development)
 
 # Add internal authentication middleware
 app.middleware("http")(internal_auth_middleware)
@@ -81,25 +72,13 @@ class ScanRequest(BaseModel):
     pii_entities: Optional[List[str]] = None
 
 
-@app.get("/", tags=["Root"])
-async def root():
-    """Root endpoint."""
-    return {
-        "service": settings.app_name,
-        "version": settings.app_version,
-        "health": "/health",
-        "docs": "/docs",
-    }
-
-
-@app.get("/health", tags=["Health"])
-async def health():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "service": settings.app_name,
-        "version": settings.app_version,
-    }
+# Add standard / and /health routes
+add_standard_health_routes(
+    app=app,
+    app_name=settings.app_name,
+    app_version=settings.app_version,
+    environment=settings.environment
+)
 
 
 @app.post("/scan", response_model=GuardrailResult, tags=["Guardrail"])

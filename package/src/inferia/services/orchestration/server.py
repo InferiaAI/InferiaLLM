@@ -18,6 +18,7 @@ import uvicorn
 
 from inferia.common.exception_handlers import register_exception_handlers
 from inferia.common.logger import setup_logging
+from inferia.common.app_setup import setup_cors, add_standard_health_routes
 from inferia.services.orchestration.config import settings
 
 # Configure logging
@@ -123,19 +124,8 @@ async def serve():
         description="Orchestration Gateway - Compute Pool and Model Deployment Management",
     )
 
-    allowed_origins = (
-        os.getenv("ALLOWED_ORIGINS", "").split(",")
-        if os.getenv("ALLOWED_ORIGINS")
-        else ["*"]
-    )
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allowed_origins,
-        allow_credentials=True if allowed_origins != ["*"] else False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # CORS configuration (Standardized)
+    setup_cors(app, os.getenv("ALLOWED_ORIGINS", ""), settings.is_development)
 
     # Add internal authentication middleware
     app.middleware("http")(internal_auth_middleware)
@@ -150,14 +140,13 @@ async def serve():
     # Share pool with routes
     app.state.pool = db_pool
 
-    # Health check endpoint
-    @app.get("/health")
-    async def health_check():
-        return {
-            "status": "healthy",
-            "service": settings.app_name,
-            "version": settings.app_version,
-        }
+    # Add standard / and /health routes
+    add_standard_health_routes(
+        app=app,
+        app_name=settings.app_name,
+        app_version=settings.app_version,
+        environment=settings.environment
+    )
 
     # Note: Dashboard now runs on its own port (3001) via the CLI
 

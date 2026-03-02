@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from inferia.common.exception_handlers import register_exception_handlers
 from inferia.common.logger import setup_logging
+from inferia.common.app_setup import setup_cors, add_standard_health_routes
 
 # Configure logging
 setup_logging(
@@ -35,40 +36,17 @@ app = FastAPI(
 # Register standard exception handlers
 register_exception_handlers(app)
 
-# Parse allowed origins from settings
-# In development, this allows localhost origins
-# In production, ALLOWED_ORIGINS should be set to specific domains
-_allow_origins = [
-    origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()
-]
+# CORS configuration (Standardized)
+setup_cors(app, settings.allowed_origins, settings.is_development)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allow_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=[
-        "Authorization",
-        "Content-Type",
-        "X-Requested-With",
-        "X-IP-Address",
-        "X-Client-IP",
-        "X-Forwarded-For",
-        "X-Real-IP",
-    ],
+
+# Add standard / and /health routes
+add_standard_health_routes(
+    app=app,
+    app_name=settings.app_name,
+    app_version=settings.app_version,
+    environment=settings.environment
 )
-
-
-@app.get("/health", response_model=HealthCheckResponse)
-async def health_check():
-    """
-    Health check endpoint for the Inference Gateway.
-    """
-    return HealthCheckResponse(
-        status="healthy",
-        version=settings.app_version,
-        service="inference-gateway",
-    )
 
 
 @app.on_event("shutdown")
