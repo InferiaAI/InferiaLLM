@@ -9,14 +9,18 @@ from typing import List, Optional, Dict, Any
 import logging
 from contextlib import asynccontextmanager
 
+from inferia.common.exception_handlers import register_exception_handlers
+from inferia.common.logger import setup_logging
 from inferia.services.guardrail.config import settings
 from inferia.services.guardrail.engine import guardrail_engine
 from inferia.services.guardrail.models import GuardrailResult, ScanType
+from inferia.services.guardrail.middleware import internal_auth_middleware
 
 # Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+setup_logging(
+    level=settings.log_level,
+    service_name="guardrail-service",
+    use_json=not settings.is_development
 )
 logger = logging.getLogger("guardrail-service")
 
@@ -47,6 +51,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register standard exception handlers
+register_exception_handlers(app)
+
 # CORS configuration
 _allow_origins = [
     origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()
@@ -59,6 +66,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add internal authentication middleware
+app.middleware("http")(internal_auth_middleware)
 
 
 class ScanRequest(BaseModel):

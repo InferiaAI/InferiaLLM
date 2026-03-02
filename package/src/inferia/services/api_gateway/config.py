@@ -113,22 +113,23 @@ class Settings(BaseSettings):
     default_org_name: str = "Default Organization"
 
     # Superadmin credentials - MUST be set via environment variables in production
-    # No defaults for security - will raise error if not set
-    superadmin_email: str = Field(default=None, validation_alias="SUPERADMIN_EMAIL")
-    superadmin_password: str = Field(
+    superadmin_email: Optional[str] = Field(default=None, validation_alias="SUPERADMIN_EMAIL")
+    superadmin_password: Optional[str] = Field(
         default=None, validation_alias="SUPERADMIN_PASSWORD"
     )
 
     # Internal API Key (for service-to-service auth) - MUST be set in production
     # Generate with: openssl rand -hex 32
-    internal_api_key: str = Field(
+    internal_api_key: Optional[str] = Field(
         default=None, min_length=32, validation_alias="INTERNAL_API_KEY"
     )
     allowed_origins: str = "http://localhost:3001,http://localhost:8001,http://localhost:5173"  # Comma-separated list
 
     # RBAC Settings
     jwt_secret_key: str = Field(
-        default="", min_length=32, validation_alias="JWT_SECRET_KEY"
+        default="placeholder-secret-key-at-least-32-chars-long", 
+        min_length=32, 
+        validation_alias="JWT_SECRET_KEY"
     )
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30

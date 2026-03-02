@@ -13,9 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from contextlib import asynccontextmanager
+
+from inferia.common.exception_handlers import register_exception_handlers
 import logging
 import sys
 
+from inferia.common.logger import setup_logging
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.models import HealthCheckResponse, ErrorResponse
 from inferia.services.api_gateway.gateway.middleware import (
@@ -37,10 +40,11 @@ from inferia.services.api_gateway.gateway.proxy_routes import router as proxy_ro
 from inferia.services.api_gateway.gateway.health_routes import router as health_router
 
 # Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("debug.log"), logging.StreamHandler(sys.stdout)],
+setup_logging(
+    level=settings.log_level,
+    service_name="api-gateway",
+    use_json=not settings.is_development,
+    log_file="debug.log"
 )
 logger = logging.getLogger(__name__)
 
@@ -84,11 +88,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="API Gateway for InferiaLLM - Authentication, RBAC, Policy Enforcement, and Service Proxy",
+    description="API Gateway Service",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Register standard exception handlers
+register_exception_handlers(app)
 
 
 # ==================== CORS Configuration ====================

@@ -146,6 +146,16 @@ class Settings(BaseSettings):
         }
         return provider_configs.get(provider, {})
 
+    @property
+    def is_production(self) -> bool:
+        """Check if running in production environment."""
+        return getattr(self, "environment", "development") == "production"
+
+    @property
+    def is_development(self) -> bool:
+        """Check if running in development environment."""
+        return getattr(self, "environment", "development") == "development"
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )

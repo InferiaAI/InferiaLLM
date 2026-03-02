@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_JOB_STATES = {2, 3, 4, "COMPLETED", "STOPPED", "FAILED", "QUIT"}
 
+# Standard headers for internal sidecar calls
+internal_headers = {
+    "X-Internal-API-Key": settings.internal_api_key,
+    "Content-Type": "application/json",
+}
+
 
 # Configuration with defaults
 NOSANA_SIDECAR_URL = settings.nosana_sidecar_url
@@ -311,6 +317,7 @@ class NosanaAdapter(ProviderAdapter):
                 async with session.post(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/launch",
                     json=payload,
+                    headers=internal_headers,
                     timeout=aiohttp.ClientTimeout(total=60),
                 ) as resp:
                     if resp.status != 200:
@@ -366,6 +373,7 @@ class NosanaAdapter(ProviderAdapter):
                     async with session.get(
                         f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
                         params=params,
+                        headers=internal_headers,
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
                         if resp.status == 200:
@@ -411,6 +419,7 @@ class NosanaAdapter(ProviderAdapter):
                 await session.post(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/stop",
                     json=payload,
+                    headers=internal_headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 )
         except Exception:
@@ -432,6 +441,7 @@ class NosanaAdapter(ProviderAdapter):
                 async with session.get(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs",
                     params=params,
+                    headers=internal_headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
@@ -466,6 +476,7 @@ class NosanaAdapter(ProviderAdapter):
                 async with session.get(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
                     params=params,
+                    headers=internal_headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:

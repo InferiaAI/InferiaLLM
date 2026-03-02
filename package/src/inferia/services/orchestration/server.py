@@ -16,11 +16,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+from inferia.common.exception_handlers import register_exception_handlers
+from inferia.common.logger import setup_logging
 from inferia.services.orchestration.config import settings
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+setup_logging(
+    level="INFO",
+    service_name="orchestration-service",
+    use_json=not settings.is_development
 )
 logger = logging.getLogger("orchestration-service")
 
@@ -64,6 +68,7 @@ from inferia.services.orchestration.repositories.inventory_repo import (
 )
 
 from inferia.services.orchestration.infra.redis_event_bus import RedisEventBus
+from inferia.services.orchestration.middleware import internal_auth_middleware
 
 
 async def create_db_pool():
@@ -131,6 +136,12 @@ async def serve():
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Add internal authentication middleware
+    app.middleware("http")(internal_auth_middleware)
+
+    # Register standard exception handlers
+    register_exception_handlers(app)
 
     # Include routers
     app.include_router(inventory_router)

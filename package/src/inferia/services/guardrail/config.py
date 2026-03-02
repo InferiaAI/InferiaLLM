@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.environment == "development"
 
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
     def get_banned_substrings_list(self) -> List[str]:
         if not self.banned_substrings:
             return []

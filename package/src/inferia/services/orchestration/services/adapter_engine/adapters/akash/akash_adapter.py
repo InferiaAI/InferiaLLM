@@ -18,6 +18,12 @@ from inferia.services.orchestration.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Standard headers for internal sidecar calls
+internal_headers = {
+    "X-Internal-API-Key": settings.internal_api_key,
+    "Content-Type": "application/json",
+}
+
 # Configuration with defaults
 AKASH_SIDECAR_URL = getattr(
     settings,
@@ -73,6 +79,7 @@ class AkashAdapter(ProviderAdapter):
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{AKASH_SIDECAR_URL}/network/stats",
+                    headers=internal_headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 200:
@@ -197,6 +204,7 @@ class AkashAdapter(ProviderAdapter):
                 async with session.post(
                     f"{AKASH_SIDECAR_URL}/deployments/create",
                     json={"sdl": sdl_content, "metadata": metadata},
+                    headers=internal_headers,
                 ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
@@ -252,6 +260,7 @@ class AkashAdapter(ProviderAdapter):
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         f"{AKASH_SIDECAR_URL}/deployments/status/{provider_instance_id}",
+                        headers=internal_headers,
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
                         if resp.status == 200:
@@ -300,6 +309,7 @@ class AkashAdapter(ProviderAdapter):
                 async with session.post(
                     f"{AKASH_SIDECAR_URL}/deployments/close",
                     json={"deploymentId": provider_instance_id},
+                    headers=internal_headers,
                 ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
@@ -322,6 +332,7 @@ class AkashAdapter(ProviderAdapter):
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{AKASH_SIDECAR_URL}/deployments/{provider_instance_id}/logs",
+                    headers=internal_headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status == 200:

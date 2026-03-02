@@ -15,9 +15,14 @@ from inferia.services.inference.core.orchestrator import OrchestrationService
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from inferia.common.exception_handlers import register_exception_handlers
+from inferia.common.logger import setup_logging
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+setup_logging(
+    level="INFO",
+    service_name="inference-gateway",
+    use_json=not settings.is_development
 )
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,9 @@ app = FastAPI(
     version=settings.app_version,
     description="Inference Gateway - OpenAI Compatible Endpoint",
 )
+
+# Register standard exception handlers
+register_exception_handlers(app)
 
 # Parse allowed origins from settings
 # In development, this allows localhost origins

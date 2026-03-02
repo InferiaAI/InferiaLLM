@@ -24,6 +24,31 @@ const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || "dev-internal-key-chang
 
 console.log(`[Sidecar] Configured to fetch settings from: ${API_GATEWAY_URL}`);
 
+// --- Internal Auth Middleware ---
+const internalAuthMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    // Skip health check
+    if (req.path === '/health') {
+        return next();
+    }
+
+    const apiKey = req.headers['x-internal-api-key'] || req.headers['x-internal-key'];
+
+    if (!apiKey) {
+        console.warn(`[Sidecar] Unauthorized access attempt to ${req.path}: Missing API Key`);
+        return res.status(401).json({ error: "Missing X-Internal-API-Key header" });
+    }
+
+    if (apiKey !== INTERNAL_API_KEY) {
+        console.warn(`[Sidecar] Unauthorized access attempt to ${req.path}: Invalid API Key`);
+        return res.status(403).json({ error: "Invalid internal API key" });
+    }
+
+    next();
+};
+
+// Apply auth middleware to all routes
+app.use(internalAuthMiddleware);
+
 // --- Initialize Services ---
 const akashService = new AkashService();
 

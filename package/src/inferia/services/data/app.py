@@ -5,14 +5,18 @@ from typing import List, Optional, Dict, Any
 import logging
 from pathlib import Path
 
+from inferia.common.exception_handlers import register_exception_handlers
+from inferia.common.logger import setup_logging
 from inferia.services.data.config import settings
 from inferia.services.data.engine import data_engine
 from inferia.services.data.prompt_engine import prompt_engine
+from inferia.services.data.middleware import internal_auth_middleware
 
 # Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+setup_logging(
+    level=settings.log_level,
+    service_name="data-service",
+    use_json=not settings.is_development
 )
 logger = logging.getLogger("data-service")
 
@@ -49,6 +53,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register standard exception handlers
+register_exception_handlers(app)
+
 # CORS configuration
 _allow_origins = [
     origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()
@@ -61,6 +68,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add internal authentication middleware
+app.middleware("http")(internal_auth_middleware)
 
 
 class RetrieveRequest(BaseModel):

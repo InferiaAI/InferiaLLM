@@ -220,6 +220,7 @@ async def scan_content(request_body: GuardrailScanRequest, request: Request):
         response = await client.post(
             f"{settings.guardrail_service_url}/scan",
             json=payload,
+            headers=gateway_http_client.get_internal_headers(),
             timeout=settings.guardrail_settings_timeout
             if hasattr(settings, "guardrail_settings_timeout")
             else 10.0,
@@ -516,7 +517,6 @@ async def process_prompt(
             template_config.get("variable_mapping", {}) if template_enabled else {}
         )
 
-        client = gateway_http_client.get_service_client()
         # Resolve mapped variables
         for var_name, config in variable_mapping.items():
             source = config.get("source")
@@ -525,7 +525,7 @@ async def process_prompt(
                 top_k = config.get("top_k", 3)
                 # Fetch RAG context for this variable via Data Service (Prompt Engine)
                 try:
-                    resp = await client.post(
+                    resp = await gateway_http_client.post(
                         f"{settings.data_service_url}/context/assemble",
                         json={
                             "query": processed_query,
@@ -562,7 +562,7 @@ async def process_prompt(
                 collection = request.rag_config.get("default_collection") or "default"
                 top_k = request.rag_config.get("top_k", 3)
                 try:
-                    resp = await client.post(
+                    resp = await gateway_http_client.post(
                         f"{settings.data_service_url}/context/assemble",
                         json={
                             "query": processed_query,
@@ -588,7 +588,7 @@ async def process_prompt(
                 "template_content": template_content,
             }
 
-            resp = await client.post(
+            resp = await gateway_http_client.post(
                 f"{settings.data_service_url}/process",
                 json=process_payload,
                 timeout=2.0,
@@ -612,8 +612,7 @@ async def process_prompt(
         top_k = request.rag_config.get("top_k", 3)
 
         try:
-            client = gateway_http_client.get_service_client()
-            resp = await client.post(
+            resp = await gateway_http_client.post(
                 f"{settings.data_service_url}/context/assemble",
                 json={
                     "query": processed_query,

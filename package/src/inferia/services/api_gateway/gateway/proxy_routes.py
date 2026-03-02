@@ -42,12 +42,13 @@ async def proxy_request(
     # Remove internal API key from being forwarded to prevent exposure in downstream logs
     headers.pop("X-Internal-API-Key", None)
 
+    # Pass internal API key for service-to-service authentication
+    headers["X-Internal-API-Key"] = settings.internal_api_key
+    
     # Pass user context for authorization at downstream service
     headers["X-User-ID"] = str(user_context.user_id)
     headers["X-Organization-ID"] = str(user_context.org_id)
     # Use X-Gateway-Key header that downstream services should validate
-    # This key should be configured in downstream services, not passed as plain API key
-    # The downstream service should validate this against its own configuration
     headers["X-Gateway-Request"] = "true"
 
     content = await request.body()
