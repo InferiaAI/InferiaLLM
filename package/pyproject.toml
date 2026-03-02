@@ -82,11 +82,6 @@ dependencies = [
   "python-multipart",
   "skypilot",
   "kubernetes==33.1.0",
-
-  "sqlalchemy>=2.0",
-  "alembic>=1.13",
-  "greenlet",
-  "jinja2",
 ]
 
 [project.urls]
