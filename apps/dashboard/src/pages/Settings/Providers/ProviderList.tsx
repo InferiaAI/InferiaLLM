@@ -5,15 +5,14 @@ import { Check, ChevronRight, Boxes } from "lucide-react";
 
 const PROVIDERS_MAP: Record<string, any[]> = {
     cloud: [
-        { id: "aws", name: "Amazon Web Services", description: "AWS SDK & S3 Integration" },
-        { id: "gcp", name: "Google Cloud Platform", description: "Coming Soon", disabled: true },
-        { id: "azure", name: "Microsoft Azure", description: "Coming Soon", disabled: true },
         { id: "nosana", name: "Nosana", description: "Decentralized GPU Compute (DePIN)" },
         { id: "akash", name: "Akash Network", description: "Open Cloud Network (DePIN)" },
+        { id: "aws", name: "Amazon Web Services", description: "AWS SDK & S3 Integration", disabled: true },
+        { id: "gcp", name: "Google Cloud Platform", description: "Coming Soon", disabled: true },
+        { id: "azure", name: "Microsoft Azure", description: "Coming Soon", disabled: true },
     ],
     "vector-db": [
         { id: "chroma", name: "ChromaDB", description: "Open-source embedding database" },
-        { id: "pinecone", name: "Pinecone", description: "Coming Soon", disabled: true },
     ],
     guardrails: [
         { id: "pii", name: "Built-in PII Redaction", description: "Local sensitive information masking" },

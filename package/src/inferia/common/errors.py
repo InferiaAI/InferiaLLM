@@ -19,6 +19,7 @@ class ErrorResponse(BaseModel):
     """Standardized API error response."""
 
     success: bool = False
+    request_id: Optional[str] = None
     error: ErrorDetail
 
 
@@ -33,12 +34,15 @@ class APIError(HTTPException):
         details: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
     ):
+        from inferia.common.http_client import request_id_ctx
+
         self.error_code = code
         self.error_message = message
         self.error_details = details
 
         error_response = {
             "success": False,
+            "request_id": request_id_ctx.get(),
             "error": {"code": code, "message": message, "details": details or {}},
         }
 

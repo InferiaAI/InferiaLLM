@@ -29,4 +29,4 @@ COPY ./ ./orchestration
 WORKDIR /app2/orchestration
 
 # ---- entrypoint ----
-CMD ["python", "-m", "app.main"]
+CMD ["python", "main.py"]

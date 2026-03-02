@@ -1162,14 +1162,36 @@ export class NosanaService {
                             // Recover the watchdog
                             // Use created_at if available to avoid the "tooShort" redeploy failure logic
                             const startTime = dep.created_at ? new Date(dep.created_at).getTime() : Date.now();
+                            const orchestratorUrl = process.env.ORCHESTRATOR_URL || "http://localhost:8080";
+                            let recoveredJobDefinition = dep.job_definition || null;
 
-                            this.watchDeployment(dep.id, process.env.ORCHESTRATOR_URL || "http://localhost:8080", {
+                            // If job definition is missing, try to fetch it from the internal Orchestrator database
+                            if (!recoveredJobDefinition) {
+                                try {
+                                    const orchResp = await fetch(`${orchestratorUrl}/deployment/status/${dep.id}`, {
+                                        headers: {
+                                            "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key"
+                                        }
+                                    });
+                                    if (orchResp.ok) {
+                                        const orchData = await orchResp.json();
+                                        if (orchData.configuration) {
+                                            recoveredJobDefinition = orchData.configuration;
+                                            console.log(`[Recovery] Successfully retrieved local configuration for deployment ${dep.id} from orchestrator.`);
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.warn(`[Recovery] Failed to reach orchestrator to fetch job definition for ${dep.id}:`, e);
+                                }
+                            }
+
+                            this.watchDeployment(dep.id, orchestratorUrl, {
                                 jobAddresses,
                                 isConfidential: dep.confidential,
                                 marketAddress: dep.market,
                                 strategy: dep.strategy,
                                 startTime: startTime,
-                                jobDefinition: dep.job_definition || null, // API key should return the definition
+                                jobDefinition: recoveredJobDefinition, // Restored definition guarantees auto-redeploy works!
                                 resources_allocated: { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 },
                                 credentialName: credentialName,
                             });
@@ -1341,7 +1363,7 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                             lastHeartbeat = currentTime;
@@ -1398,50 +1420,90 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                         } catch (err) { }
                     } else if (shouldRedeploy) {
                         console.log(`[auto-redeploy] Attempting redeploy for ${deploymentId}...`);
-                        try {
-                            const newResult = await this.launchJob(
-                                currentDepInfo.jobDefinition,
-                                currentDepInfo.marketAddress,
-                                currentDepInfo.isConfidential
-                            );
+                        let success = false;
+                        let retryCount = 0;
+                        const maxRetries = 5;
 
-                            const newDeploymentId = newResult.deploymentId || newResult.jobAddress;
-
+                        while (!success && retryCount < maxRetries) {
                             try {
-                                const updatePayload = {
-                                    provider: "nosana",
-                                    provider_instance_id: newResult.jobAddress,
-                                    deployment_id: newDeploymentId,
-                                    old_provider_instance_id: instanceId,
-                                    gpu_allocated: currentDepInfo.resources.gpu_allocated,
-                                    vcpu_allocated: currentDepInfo.resources.vcpu_allocated,
-                                    ram_gb_allocated: currentDepInfo.resources.ram_gb_allocated,
-                                    health_score: 50,
-                                    state: "provisioning",
-                                };
-                                await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify(updatePayload),
-                                });
-                            } catch (err) { }
+                                if (retryCount > 0) {
+                                    // Backoff logic: 15s, 30s, 45s, 60s, 75s
+                                    console.log(`[auto-redeploy] Retrying ${deploymentId} in ${retryCount * 15}s (Attempt ${retryCount + 1}/${maxRetries})...`);
+                                    await new Promise(r => setTimeout(r, retryCount * 15000));
+                                }
 
-                            this.watchDeployment(newDeploymentId, orchestratorUrl, {
-                                jobDefinition: currentDepInfo.jobDefinition,
-                                marketAddress: currentDepInfo.marketAddress,
-                                isConfidential: currentDepInfo.isConfidential,
-                                strategy: currentDepInfo.strategy,
-                                resources_allocated: currentDepInfo.resources,
-                                credentialName: currentDepInfo.credentialName,
-                            });
-                        } catch (redeployErr: any) {
-                            console.error(`[auto-redeploy] Failed:`, redeployErr);
+                                const newResult = await this.launchJob(
+                                    currentDepInfo.jobDefinition,
+                                    currentDepInfo.marketAddress,
+                                    currentDepInfo.isConfidential
+                                );
+
+                                const newDeploymentId = newResult.deploymentId || newResult.jobAddress;
+
+                                try {
+                                    const updatePayload = {
+                                        provider: "nosana",
+                                        provider_instance_id: newResult.jobAddress,
+                                        deployment_id: newDeploymentId,
+                                        old_provider_instance_id: instanceId,
+                                        gpu_allocated: currentDepInfo.resources.gpu_allocated,
+                                        vcpu_allocated: currentDepInfo.resources.vcpu_allocated,
+                                        ram_gb_allocated: currentDepInfo.resources.ram_gb_allocated,
+                                        health_score: 50,
+                                        state: "provisioning",
+                                    };
+                                    await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
+                                        body: JSON.stringify(updatePayload),
+                                    });
+                                } catch (err) { }
+
+                                this.watchDeployment(newDeploymentId, orchestratorUrl, {
+                                    jobDefinition: currentDepInfo.jobDefinition,
+                                    marketAddress: currentDepInfo.marketAddress,
+                                    isConfidential: currentDepInfo.isConfidential,
+                                    strategy: currentDepInfo.strategy,
+                                    resources_allocated: currentDepInfo.resources,
+                                    credentialName: currentDepInfo.credentialName,
+                                });
+
+                                success = true;
+                                console.log(`[auto-redeploy] Successfully redeployed ${deploymentId} to ${newDeploymentId}`);
+                            } catch (redeployErr: any) {
+                                retryCount++;
+                                console.error(`[auto-redeploy] Failed attempt ${retryCount}/${maxRetries} for ${deploymentId}:`, redeployErr.message);
+
+                                // Keep sending provisioning heartbeats to prevent orchestrator from marking it FAILED
+                                try {
+                                    const payload = {
+                                        provider: "nosana",
+                                        provider_instance_id: instanceId,
+                                        deployment_id: deploymentId,
+                                        gpu_allocated: 0,
+                                        vcpu_allocated: 0,
+                                        ram_gb_allocated: 0,
+                                        health_score: 10,
+                                        state: "provisioning", // Keeps it alive in the database
+                                        error_message: `Redeploy failed, retrying (${retryCount}/${maxRetries}): ${redeployErr.message}`
+                                    };
+                                    await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
+                                        body: JSON.stringify(payload),
+                                    });
+                                } catch (err) { }
+                            }
+                        }
+
+                        if (!success) {
+                            console.error(`[auto-redeploy] Final failure for ${deploymentId} after ${maxRetries} attempts.`);
                             try {
                                 const payload = {
                                     provider: "nosana",
@@ -1455,7 +1517,7 @@ export class NosanaService {
                                 };
                                 await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                     body: JSON.stringify(payload),
                                 });
                             } catch (err) { }
@@ -1476,7 +1538,7 @@ export class NosanaService {
                         };
                         await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                             method: "POST",
-                            headers: { "Content-Type": "application/json" },
+                            headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                             body: JSON.stringify(payload),
                         });
                     } catch (err) { }
@@ -1587,7 +1649,7 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                             lastHeartbeat = currentTime;
@@ -1644,7 +1706,7 @@ export class NosanaService {
                             };
                             await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                 body: JSON.stringify(payload),
                             });
                         } catch (err: any) {
@@ -1672,7 +1734,7 @@ export class NosanaService {
                                 };
                                 await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                     body: JSON.stringify(updatePayload),
                                 });
                             } catch (err: any) {
@@ -1700,7 +1762,7 @@ export class NosanaService {
                                 };
                                 await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                                     body: JSON.stringify(payload),
                                 });
                             } catch (err: any) {
@@ -1722,7 +1784,7 @@ export class NosanaService {
                         };
                         await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
                             method: "POST",
-                            headers: { "Content-Type": "application/json" },
+                            headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
                             body: JSON.stringify(payload),
                         });
                     } catch (err: any) {

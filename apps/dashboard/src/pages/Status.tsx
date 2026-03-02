@@ -12,10 +12,17 @@ interface ServiceHealth {
     error?: string
 }
 
+interface DependencyHealth {
+    name: string
+    status: string
+    error?: string
+}
+
 interface SystemHealthResponse {
     status: string
     version: string
     services: ServiceHealth[]
+    dependencies: DependencyHealth[]
 }
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -60,14 +67,22 @@ export default function Status() {
 
     const statuses = healthData?.services.map(service => ({
         name: service.name,
-        status: service.status as "online" | "offline" | "unknown",
+        status: service.status as "online" | "offline" | "degraded" | "unknown",
         latency: service.latency_ms,
         icon: iconMap[service.name] || Activity,
         description: descriptionMap[service.name] || "Service",
     })) || []
 
-    const onlineCount = statuses.filter(s => s.status === "online").length
-    const totalCount = statuses.length
+    const dependencies = healthData?.dependencies.map(dep => ({
+        name: dep.name,
+        status: dep.status as "online" | "offline" | "unknown",
+        error: dep.error,
+        icon: dep.name === "PostgreSQL" ? Database : Zap,
+        description: dep.name === "PostgreSQL" ? "Primary relational storage" : "Rate limiting and message broker",
+    })) || []
+
+    const onlineCount = statuses.filter(s => s.status === "online").length + dependencies.filter(d => d.status === "online").length
+    const totalCount = statuses.length + dependencies.length
     const allOnline = onlineCount === totalCount && totalCount > 0
 
     const handleRefresh = () => {
@@ -220,6 +235,74 @@ export default function Status() {
                         </div>
                     ))
                 )}
+            </div>
+
+            {/* Core Infrastructure */}
+            <div className="space-y-4">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Server className="w-5 h-5 text-indigo-500" />
+                    Core Infrastructure
+                </h3>
+                <div className="grid gap-4 md:grid-cols-2">
+                    {isLoading ? (
+                        Array.from({ length: 2 }).map((_, i) => (
+                            <div key={i} className="p-6 bg-card rounded-xl border animate-pulse">
+                                <div className="w-full h-10 bg-muted rounded" />
+                            </div>
+                        ))
+                    ) : (
+                        dependencies.map((dep) => (
+                            <div
+                                key={dep.name}
+                                className={cn(
+                                    "p-6 bg-card rounded-xl border transition-all hover:shadow-md",
+                                    dep.status === "online"
+                                        ? "border-l-4 border-l-indigo-500"
+                                        : "border-l-4 border-l-red-500"
+                                )}
+                            >
+                                <div className="flex items-start justify-between">
+                                    <div className="flex items-start gap-3">
+                                        <div className={cn(
+                                            "p-2.5 rounded-lg",
+                                            dep.status === "online"
+                                                ? "bg-indigo-500/10"
+                                                : "bg-red-500/10"
+                                        )}>
+                                            <dep.icon className={cn(
+                                                "w-5 h-5",
+                                                dep.status === "online"
+                                                    ? "text-indigo-600 dark:text-indigo-400"
+                                                    : "text-red-600 dark:text-red-400"
+                                            )} />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-semibold text-foreground">{dep.name}</h4>
+                                            <p className="text-sm text-muted-foreground mt-0.5">
+                                                {dep.description}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1">
+                                        <span className={cn(
+                                            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
+                                            dep.status === "online"
+                                                ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                                : "bg-red-500/10 text-red-600 dark:text-red-400"
+                                        )}>
+                                            {dep.status === "online" ? "Healthy" : "Failed"}
+                                        </span>
+                                        {dep.error && (
+                                            <span className="text-[10px] text-red-500 max-w-[120px] truncate" title={dep.error}>
+                                                {dep.error}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
             </div>
 
             {/* Service Endpoints Reference */}

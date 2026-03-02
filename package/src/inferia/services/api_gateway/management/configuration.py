@@ -301,8 +301,30 @@ async def get_config(
     policy = result.scalars().first()
 
     if not policy:
+        # Provide explicit disabled defaults for core features to avoid UI confusion
+        default_config = {"enabled": False}
+        if policy_type == "guardrail":
+            default_config.update({
+                "guardrail_engine": "llm-guard",
+                "input_scanners": [],
+                "output_scanners": [],
+                "toxicity_threshold": 0.5
+            })
+        elif policy_type == "rag":
+            default_config.update({
+                "default_collection": "default",
+                "top_k": 3
+            })
+        elif policy_type == "prompt_template":
+            default_config.update({
+                "template_id": None,
+                "template_vars": {}
+            })
+            
         return ConfigResponse(
-            policy_type=policy_type, config_json={}, updated_at=utcnow_naive()
+            policy_type=policy_type, 
+            config_json=default_config, 
+            updated_at=utcnow_naive()
         )
 
     return policy

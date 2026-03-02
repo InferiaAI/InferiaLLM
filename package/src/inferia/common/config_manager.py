@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Dict, Any, List, Optional, Callable, get_args, get_origin
 import httpx
+from inferia.common.http_client import InternalHttpClient
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -101,26 +102,27 @@ class HTTPConfigManager(BaseConfigManager):
         self.gateway_url = gateway_url
         self.api_key = api_key
         self.update_callback = update_callback
+        self._http_client = InternalHttpClient(
+            internal_api_key=api_key,
+            base_url=gateway_url,
+            timeout_seconds=5.0
+        )
 
     async def poll_once(self):
-        headers = {}
-        if self.api_key:
-            headers["X-Internal-API-Key"] = self.api_key
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.gateway_url}/internal/config/provider",
-                    headers=headers,
-                    timeout=5.0,
+        try:
+            response = await self._http_client.get("/internal/config/provider")
+            if response.status_code == 200:
+                data = response.json()
+                if "providers" in data:
+                    self.update_callback(data["providers"])
+            else:
+                logger.warning(
+                    f"Failed to fetch config from {self.gateway_url}: {response.status_code}"
                 )
-                if response.status_code == 200:
-                    data = response.json()
-                    if "providers" in data:
-                        self.update_callback(data["providers"])
-                else:
-                    logger.warning(
-                        f"Failed to fetch config from {self.gateway_url}: {response.status_code}"
-                    )
-            except Exception as e:
-                logger.error(f"Error polling config from {self.gateway_url}: {e}")
+        except Exception as e:
+            logger.error(f"Error polling config from {self.gateway_url}: {e}")
+
+    def stop_polling(self):
+        super().stop_polling()
+        # Non-blocking close attempt or just let it be handled by GC/lifecycle
+        # For a background poller, we usually close in a dedicated shutdown hook

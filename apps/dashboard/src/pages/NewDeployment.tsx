@@ -233,8 +233,8 @@ const initialState: State = {
   embeddingDimensions: "384",
   maxSequenceLength: "512",
   batchSize: "32",
-  maxModelLen: "8192",
-  gpuUtil: "0.95",
+  maxModelLen: "4192",
+  gpuUtil: "0.90",
   hfToken: "",
   vllmImage: "docker.io/vllm/vllm-openai:v0.14.0",
   selectedProvider: "",
@@ -245,7 +245,7 @@ const initialState: State = {
   // Advanced VLLM defaults
   dtype: "auto",
   enforceEager: true,
-  maxNumSeqs: "256",
+  maxNumSeqs: "128",
   enableChunkedPrefill: true,
   kvCacheDtype: "auto",
   trustRemoteCode: true,
@@ -509,9 +509,9 @@ export default function NewDeployment() {
   // Split vLLM Logic into dedicated function to avoid multiple setState calls in one effect
   const buildJobSpec = useCallback(() => {
     if (selectedEngine === "vllm" && modelType === "inference") {
-      const finalMaxNumSeqs = maxNumSeqs || "256";
-      const finalMaxModelLen = maxModelLen || "8192";
-      const finalGpuUtil = gpuUtil || "0.95";
+      const finalMaxNumSeqs = maxNumSeqs || "128";
+      const finalMaxModelLen = maxModelLen || "4192";
+      const finalGpuUtil = gpuUtil || "0.90";
       const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
 
       const cmd = [
@@ -555,11 +555,11 @@ export default function NewDeployment() {
         env,
         expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
         gpu: true,
-        gpu_util: parseFloat(finalGpuUtil) || 0.95,
-        max_model_len: parseInt(finalMaxModelLen) || 8192,
+        gpu_util: parseFloat(finalGpuUtil) || 0.90,
+        max_model_len: parseInt(finalMaxModelLen) || 4192,
         dtype: dtype,
         enforce_eager: enforceEager,
-        max_num_seqs: parseInt(finalMaxNumSeqs) || 256,
+        max_num_seqs: parseInt(finalMaxNumSeqs) || 128,
         enable_chunked_prefill: enableChunkedPrefill,
         kv_cache_dtype: kvCacheDtype,
         trust_remote_code: trustRemoteCode,

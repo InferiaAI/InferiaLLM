@@ -156,7 +156,7 @@ def run_worker(queue=None):
             print(f"Error starting Orchestration Worker: {e}")
 
 
-def run_nosana_sidecar(queue=None):
+def run_nosana_sidecar(queue=None, env: str = "production"):
     """
     Runs the DePIN Sidecar (Node.js service).
     """
@@ -179,18 +179,24 @@ def run_nosana_sidecar(queue=None):
         if queue:
             queue.put(ServiceStarting("nosana-sidecar"))
         if not os.path.isdir(node_modules):
-            print("[DePIN] Installing dependencies...")
-            subprocess.run(["npm", "install"], cwd=sidecar_dir, check=True)
+            if env == "dev":
+                print("[DePIN] Installing dependencies...")
+                subprocess.run(["npm", "install"], cwd=sidecar_dir, check=True)
+            else:
+                print("[DePIN] Installing production dependencies...")
+                subprocess.run(["npm", "install", "--omit=dev"], cwd=sidecar_dir, check=True)
 
-        env = os.environ.copy()
-        if not env.get("API_GATEWAY_URL"):
-            env["API_GATEWAY_URL"] = "http://localhost:8000"
+        node_env = os.environ.copy()
+        if not node_env.get("API_GATEWAY_URL"):
+            node_env["API_GATEWAY_URL"] = "http://localhost:8000"
 
         print("[DePIN] Launching sidecar...")
+        cmd = ["npm", "run", "dev"] if env == "dev" else ["npm", "start"]
+
         subprocess.Popen(
-            ["npm", "start"],
+            cmd,
             cwd=sidecar_dir,
-            env=env,
+            env=node_env,
         )
         if queue:
             queue.put(ServiceStarted("nosana-sidecar", "Node.js"))
@@ -248,14 +254,19 @@ def run_dashboard(queue=None):
                 ".woff2": "font/woff2",
             }
 
-            def translate_path(self, path):
-                resolved = super().translate_path(path)
-                if os.path.exists(resolved):
-                    return resolved
-                _, ext = os.path.splitext(path)
-                if ext and ext.lower() not in [".html", ".htm"]:
-                    return resolved
-                return os.path.join(os.getcwd(), "index.html")
+            def do_GET(self):
+                """Override to handle SPA routing."""
+                # Get the physical path for the request
+                path = self.translate_path(self.path)
+                
+                # If path doesn't exist, check if we should serve index.html
+                if not os.path.exists(path):
+                    # Only fallback if it's not a request for a static asset (no extension or .html)
+                    _, ext = os.path.splitext(self.path)
+                    if not ext or ext.lower() in [".html", ".htm"]:
+                        self.path = "/index.html"
+                
+                return super().do_GET()
 
             def log_message(self, format, *args):
                 pass
@@ -364,15 +375,18 @@ def build_sidecar():
         print(f"[inferia:init] Error building sidecar: {e}")
 
 
-def run_init():
+def run_init(env: str = "production"):
     from inferia.cli_init import init_databases
 
     init_databases()
-    build_dashboard()
-    build_sidecar()
+    if env == "dev":
+        build_dashboard()
+        build_sidecar()
+    else:
+        print("[inferia:init] Running in production mode: skipping builds.")
 
 
-def run_orchestration_stack():
+def run_orchestration_stack(env: str = "production"):
     """
     Runs the full orchestration stack: API, Worker, and DePIN Sidecar.
     """
@@ -385,7 +399,7 @@ def run_orchestration_stack():
             target=run_worker, name="orchestration-worker", args=(queue,)
         ),
         multiprocessing.Process(
-            target=run_nosana_sidecar, name="nosana-sidecar", args=(queue,)
+            target=run_nosana_sidecar, name="nosana-sidecar", args=(queue, env)
         ),
     ]
 
@@ -405,7 +419,7 @@ def run_orchestration_stack():
             p.join()
 
 
-def run_all():
+def run_all(env: str = "production"):
     # Run all services efficiently by spawning them as direct children
     queue = multiprocessing.Queue()
     ui = StartupUI(queue, total=8)
@@ -447,7 +461,7 @@ def run_all():
         multiprocessing.Process(
             target=run_nosana_sidecar,
             name="nosana-sidecar",
-            args=(queue,),
+            args=(queue, env),
         ),
         # Dashboard
         multiprocessing.Process(
@@ -497,7 +511,13 @@ def main(argv=None):
         dest="command", required=True, help="Available commands"
     )
 
-    sub.add_parser("init", help="Initialize Inferia databases")
+    init_parser = sub.add_parser("init", help="Initialize Inferia databases")
+    init_parser.add_argument(
+        "--env",
+        choices=["dev", "production"],
+        default="production",
+        help="Environment to initialize for (default: production)",
+    )
 
     # --- New START Command ---
     start_parser = sub.add_parser("start", help="Start Inferia services")
@@ -515,6 +535,12 @@ def main(argv=None):
         ],
         help="Service to start (default: all)",
     )
+    start_parser.add_argument(
+        "--env",
+        choices=["dev", "production"],
+        default="production",
+        help="Environment to run in (default: production)",
+    )
 
     args, unknown = parser.parse_known_args(argv)
 
@@ -530,12 +556,13 @@ def main(argv=None):
         # --- Handle NEW Command Structure ---
         if cmd == "start":
             service = getattr(args, "service", "all")
+            env = getattr(args, "env", "production")
 
             if service == "all":
                 if wants_help(flags):
                     show_inferia()
                 else:
-                    run_all()
+                    run_all(env=env)
 
             elif service == "api-gateway":
                 if wants_help(flags):
@@ -553,7 +580,7 @@ def main(argv=None):
                 if wants_help(flags):
                     show_orchestration_docs()
                 else:
-                    run_orchestration_stack()
+                    run_orchestration_stack(env=env)
 
             elif service == "guardrail":
                 run_guardrail_service()
@@ -562,7 +589,8 @@ def main(argv=None):
                 run_data_service()
 
         elif cmd == "init":
-            run_init()
+            env = getattr(args, "env", "production")
+            run_init(env=env)
 
         else:
             print(f"Unknown command: {cmd}")

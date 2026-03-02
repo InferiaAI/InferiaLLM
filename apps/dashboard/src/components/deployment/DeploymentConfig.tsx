@@ -89,7 +89,7 @@ const initialState = (deployment: DeploymentData): State => ({
     // Advanced VLLM defaults (matching backend defaults)
     dtype: "auto",
     enforceEager: true,
-    maxNumSeqs: "256",
+    maxNumSeqs: "128",
     enableChunkedPrefill: true,
     kvCacheDtype: "auto",
     trustRemoteCode: true,
@@ -148,7 +148,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 // Parse advanced config from metadata
                 updates.dtype = c.dtype || "auto";
                 updates.enforceEager = c.enforce_eager ?? true;
-                updates.maxNumSeqs = String(c.max_num_seqs || 256);
+                updates.maxNumSeqs = String(c.max_num_seqs || 128);
                 updates.enableChunkedPrefill = c.enable_chunked_prefill ?? true;
                 updates.kvCacheDtype = c.kv_cache_dtype || "auto";
                 updates.trustRemoteCode = c.trust_remote_code ?? true;
@@ -195,9 +195,9 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                         else if (!enabled && idx !== -1) updatedConfig.cmd.splice(idx, 1)
                     }
 
-                    updateFlag("--max-model-len", maxModelLen || "8192")
-                    updateFlag("--gpu-memory-utilization", gpuUtil || "0.95")
-                    updateFlag("--max-num-seqs", maxNumSeqs || "256")
+                    updateFlag("--max-model-len", maxModelLen || "4192")
+                    updateFlag("--gpu-memory-utilization", gpuUtil || "0.90")
+                    updateFlag("--max-num-seqs", maxNumSeqs || "128")
                     updateFlag("--dtype", dtype || "auto")
                     updateFlag("--kv-cache-dtype", kvCacheDtype || "auto")
 
@@ -223,7 +223,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 // Save advanced config as metadata
                 updatedConfig.dtype = dtype;
                 updatedConfig.enforce_eager = enforceEager;
-                updatedConfig.max_num_seqs = parseInt(maxNumSeqs) || 256;
+                updatedConfig.max_num_seqs = parseInt(maxNumSeqs) || 128;
                 updatedConfig.enable_chunked_prefill = enableChunkedPrefill;
                 updatedConfig.kv_cache_dtype = kvCacheDtype;
                 updatedConfig.trust_remote_code = trustRemoteCode;

@@ -10,13 +10,20 @@ class StandardHeaders(BaseModel):
     user_id: Optional[str] = Field(None, alias="X-User-ID")
 
 
-class ErrorResponse(BaseModel):
-    """Standard error response format."""
+class ErrorDetail(BaseModel):
+    """Standardized error detail structure."""
 
-    error: str
+    code: str
     message: str
-    request_id: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
+
+
+class ErrorResponse(BaseModel):
+    """Standardized API error response."""
+
+    success: bool = False
+    request_id: Optional[str] = None
+    error: ErrorDetail
 
 
 class HealthCheckResponse(BaseModel):
