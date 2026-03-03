@@ -91,7 +91,6 @@ def create_vllm_job(
         envs["HF_TOKEN"] = token_to_use
 
     cmd_args = [
-        "--model",
         model_id,
         "--served-model-name",
         model_id,

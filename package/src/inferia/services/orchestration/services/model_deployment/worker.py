@@ -151,7 +151,6 @@ class ModelDeploymentWorker:
                     metadata = {
                         "image": model["artifact_uri"],
                         "cmd": [
-                            "--model",
                             "meta-llama/Llama-2-7b-chat-hf",  # Generic placeholder if not in config
                             "--port",
                             "9000",

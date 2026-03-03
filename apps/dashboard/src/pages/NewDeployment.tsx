@@ -522,7 +522,7 @@ export default function NewDeployment() {
       const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
 
       const cmd = [
-        "--model", finalModelId,
+        finalModelId,
         "--served-model-name", finalModelId,
         "--port", "9000",
         "--max-model-len", finalMaxModelLen,
