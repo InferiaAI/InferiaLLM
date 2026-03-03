@@ -7,9 +7,14 @@ from datetime import datetime
 
 from inferia.services.api_gateway.db.database import get_db
 from inferia.services.api_gateway.audit.service import audit_service
-from inferia.services.api_gateway.models import AuditLogResponse, AuditLogFilter, AuditLogCreate
-from inferia.services.api_gateway.rbac.middleware import require_role
-from inferia.services.api_gateway.rbac.models import RoleType as Role
+from inferia.services.api_gateway.models import (
+    AuditLogResponse,
+    AuditLogFilter,
+    AuditLogCreate,
+    PermissionEnum,
+)
+from inferia.services.api_gateway.rbac.middleware import get_current_user_from_request
+from inferia.services.api_gateway.rbac.authorization import authz_service
 
 router = APIRouter(prefix="/audit", tags=["Audit"])
 
@@ -22,12 +27,13 @@ async def get_audit_logs(
     limit: int = Query(100, le=1000),
     skip: int = 0,
     db: AsyncSession = Depends(get_db),
-    # Only admins can view audit logs
-    _ = Depends(require_role([Role.ADMIN])) 
+    user_ctx=Depends(get_current_user_from_request),
 ):
     """
-    Retrieve audit logs (Admin only).
+    Retrieve audit logs.
     """
+    authz_service.require_permission(user_ctx, PermissionEnum.AUDIT_LOG_LIST)
+
     filters = AuditLogFilter(
         user_id=user_id,
         action=action,

@@ -10,10 +10,13 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { computeApi } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 export default function InstanceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { hasPermission } = useAuth();
+  const canDeletePool = hasPermission("deployment:delete");
   const [activeTab, setActiveTab] = useState<
     "overview" | "logs" | "events" | "terminal" | "nodes"
   >("overview");
@@ -60,6 +63,11 @@ export default function InstanceDetail() {
   const poolName = poolDetails?.pool_name || "Compute Pool";
 
   const handleDelete = async () => {
+    if (!canDeletePool) {
+      toast.error("You don't have permission to delete pools");
+      return;
+    }
+
     if (!confirm("Are you sure you want to delete this pool? This action cannot be undone.")) return;
 
     // Optimistically assuming it works or using simple fetch if api not available, 
@@ -120,12 +128,14 @@ export default function InstanceDetail() {
           <button onClick={fetchInventory} className="h-9 px-4 flex items-center gap-2 border rounded-md bg-background hover:bg-muted/50 transition-colors text-sm font-medium">
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
-          <button
-            onClick={handleDelete}
-            className="h-9 px-4 flex items-center gap-2 border rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors text-sm font-medium shadow-sm"
-          >
-            <Trash2 className="w-4 h-4" /> Delete Pool
-          </button>
+          {canDeletePool && (
+            <button
+              onClick={handleDelete}
+              className="h-9 px-4 flex items-center gap-2 border rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors text-sm font-medium shadow-sm"
+            >
+              <Trash2 className="w-4 h-4" /> Delete Pool
+            </button>
+          )}
         </div>
       </div>
 

@@ -14,8 +14,19 @@ from inferia.services.api_gateway.models import (
 )
 from .middleware import get_current_user_from_request
 from .authorization import authz_service
+from .permissions import normalize_permissions
 
 router = APIRouter(prefix="/admin/roles", tags=["RBAC Management"])
+
+
+def _validate_permissions(permissions: list[str]) -> list[str]:
+    normalized_permissions, _, invalid_permissions = normalize_permissions(permissions)
+    if invalid_permissions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid permissions: {', '.join(invalid_permissions)}",
+        )
+    return normalized_permissions
 
 
 @router.get("", response_model=List[RoleResponse])
@@ -48,10 +59,12 @@ async def create_role(
     if result.scalars().first():
         raise HTTPException(status_code=400, detail="Role already exists")
 
+    validated_permissions = _validate_permissions(role_in.permissions)
+
     role = Role(
         name=role_in.name,
         description=role_in.description,
-        permissions=role_in.permissions,
+        permissions=validated_permissions,
     )
     db.add(role)
     await db.commit()
@@ -75,8 +88,7 @@ async def update_role(
     if role_in.description is not None:
         role.description = role_in.description
     if role_in.permissions is not None:
-        # Unique permissions
-        role.permissions = list(set(role_in.permissions))
+        role.permissions = _validate_permissions(role_in.permissions)
 
     await db.commit()
     await db.refresh(role)

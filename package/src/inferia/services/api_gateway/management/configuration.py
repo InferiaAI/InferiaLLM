@@ -28,6 +28,8 @@ from inferia.services.api_gateway.schemas.config import (
 from inferia.services.api_gateway.management.dependencies import (
     get_current_user_context,
 )
+from inferia.services.api_gateway.schemas.auth import PermissionEnum
+from inferia.services.api_gateway.rbac.authorization import authz_service
 
 # New imports for local provider config
 from pydantic import BaseModel, Field
@@ -112,17 +114,36 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     return masked
 
 
+def _require_policy_read_permission(user_ctx, deployment_id: Optional[str]) -> None:
+    if deployment_id:
+        authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
+    else:
+        authz_service.require_permission(user_ctx, PermissionEnum.ORG_VIEW)
+
+
+def _require_policy_write_permission(user_ctx, deployment_id: Optional[str]) -> None:
+    if deployment_id:
+        authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_UPDATE)
+    else:
+        authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+
+
+def _require_provider_read_permission(user_ctx) -> None:
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_VIEW)
+
+
+def _require_provider_write_permission(user_ctx) -> None:
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+
+
 @router.get("/config/providers", response_model=ProviderConfigResponse)
 async def get_provider_config(request: Request, db: AsyncSession = Depends(get_db)):
     """
     Get current provider configuration. Returns masked secrets.
-    Requires Admin role.
+    Requires `organization:view`.
     """
     user_ctx = get_current_user_context(request)
-    if not "admin" in user_ctx.roles:
-        raise HTTPException(
-            status_code=403, detail="Only admins can view provider config"
-        )
+    _require_provider_read_permission(user_ctx)
 
     masked_providers = _mask_config(settings.providers)
     return ProviderConfigResponse(providers=masked_providers)
@@ -136,13 +157,10 @@ async def update_provider_config(
 ):
     """
     Update provider configuration. Persists to the system database.
-    Requires Admin role.
+    Requires `organization:update`.
     """
     user_ctx = get_current_user_context(request)
-    if not "admin" in user_ctx.roles:
-        raise HTTPException(
-            status_code=403, detail="Only admins can update provider config"
-        )
+    _require_provider_write_permission(user_ctx)
 
     # 1. Update DB and Local Cache
     from inferia.services.api_gateway.management.config_manager import config_manager
@@ -183,8 +201,7 @@ async def update_config(
             status_code=400, detail="Action requires organization context"
         )
 
-    if "admin" not in user_ctx.roles:
-        raise HTTPException(status_code=403, detail="Only admins can update config")
+    _require_policy_write_permission(user_ctx, config_data.deployment_id)
 
     stmt = select(DBPolicy).where(
         (DBPolicy.org_id == user_ctx.org_id)
@@ -241,6 +258,7 @@ async def update_config(
 @router.get("/config/quota/usage", response_model=List[UsageStatsResponse])
 async def get_usage_stats(request: Request, db: AsyncSession = Depends(get_db)):
     user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_VIEW)
     if not user_ctx.org_id:
         return []
 
@@ -283,6 +301,7 @@ async def get_config(
     db: AsyncSession = Depends(get_db),
 ):
     user_ctx = get_current_user_context(request)
+    _require_policy_read_permission(user_ctx, deployment_id)
     if not user_ctx.org_id:
         return ConfigResponse(
             policy_type=policy_type, config_json={}, updated_at=utcnow_naive()
@@ -414,15 +433,11 @@ async def list_provider_credentials(
 ):
     """
     List all credentials for a provider (with masked values).
-    Requires Admin role.
+    Requires `organization:view`.
     Works for ANY provider: nosana, akash, aws, etc.
     """
     user_ctx = get_current_user_context(request)
-    if "admin" not in user_ctx.roles:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Only admins can view {provider} credentials",
-        )
+    _require_provider_read_permission(user_ctx)
 
     # TODO: In production, fetch from provider_credentials table
     # For now, use config-based storage with migration
@@ -467,7 +482,7 @@ async def add_provider_credential(
 ):
     """
     Add a new credential for any provider.
-    Requires Admin role.
+    Requires `organization:update`.
 
     Examples:
     - provider="nosana", credential_type="api_key"
@@ -475,11 +490,7 @@ async def add_provider_credential(
     - provider="aws", credential_type="access_key"
     """
     user_ctx = get_current_user_context(request)
-    if "admin" not in user_ctx.roles:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Only admins can add {provider} credentials",
-        )
+    _require_provider_write_permission(user_ctx)
 
     from inferia.services.api_gateway.management.config_manager import config_manager
 
@@ -571,14 +582,10 @@ async def update_provider_credential(
 ):
     """
     Update a credential for any provider.
-    Requires Admin role.
+    Requires `organization:update`.
     """
     user_ctx = get_current_user_context(request)
-    if "admin" not in user_ctx.roles:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Only admins can update {provider} credentials",
-        )
+    _require_provider_write_permission(user_ctx)
 
     from inferia.services.api_gateway.management.config_manager import config_manager
 
@@ -636,14 +643,10 @@ async def delete_provider_credential(
 ):
     """
     Delete a credential for any provider.
-    Requires Admin role.
+    Requires `organization:update`.
     """
     user_ctx = get_current_user_context(request)
-    if "admin" not in user_ctx.roles:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Only admins can delete {provider} credentials",
-        )
+    _require_provider_write_permission(user_ctx)
 
     from inferia.services.api_gateway.management.config_manager import config_manager
 
@@ -721,13 +724,10 @@ async def delete_nosana_api_key(
 ):
     """
     Delete a nosana API key.
-    Requires Admin role.
+    Requires `organization:update`.
     """
     user_ctx = get_current_user_context(request)
-    if "admin" not in user_ctx.roles:
-        raise HTTPException(
-            status_code=403, detail="Only admins can delete nosana API keys"
-        )
+    _require_provider_write_permission(user_ctx)
 
     from inferia.services.api_gateway.management.config_manager import config_manager
 

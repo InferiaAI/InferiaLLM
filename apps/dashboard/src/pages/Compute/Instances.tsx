@@ -12,7 +12,8 @@ import { computeApi } from "@/lib/api";
 
 export default function Instances() {
   const navigate = useNavigate();
-  const { user, organizations } = useAuth();
+  const { user, organizations, hasPermission } = useAuth();
+  const canCreatePool = hasPermission("deployment:create");
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [instances, setInstances] = useState<any[]>([]);
@@ -84,15 +85,17 @@ export default function Instances() {
             </div>
           </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => navigate("/dashboard/compute/pools/new")}
-              className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-2"
-            >
-              <Play className="w-4 h-4" />
-              New
-            </button>
-          </div>
+          {canCreatePool && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => navigate("/dashboard/compute/pools/new")}
+                className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-2"
+              >
+                <Play className="w-4 h-4" />
+                New
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

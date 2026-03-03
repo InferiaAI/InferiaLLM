@@ -72,7 +72,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const hasPermission = (permission: string) => {
         if (!user) return false;
-        if (user.permissions.includes("admin:all")) return true;
         return user.permissions.includes(permission);
     };
 

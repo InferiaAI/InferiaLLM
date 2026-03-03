@@ -30,8 +30,8 @@ import { useTheme } from "@/components/theme-provider";
 import { SpotlightSearch, useSpotlight } from "@/components/SpotlightSearch";
 
 const navItems: (NavItem & { permission?: string })[] = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
-  { href: "/dashboard/insights", label: "Insights", icon: BarChart3, permission: "audit_log:list" }, // Or similar
+  { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true, permission: "organization:view" },
+  { href: "/dashboard/insights", label: "Insights", icon: BarChart3, permission: "deployment:list" },
   { href: "/dashboard/deployments", label: "Deployments", icon: Rocket, permission: "deployment:list" },
   { href: "/dashboard/compute/pools", label: "Compute Pools", icon: Box, permission: "deployment:list" }, // Reusing deployment list for now
   { href: "/dashboard/templates", label: "Templates", icon: FileText, permission: "prompt_template:list" },
@@ -44,9 +44,9 @@ const settingsItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard/settings/users", label: "Users", icon: Users, permission: "member:list" },
   { href: "/dashboard/settings/roles", label: "Roles", icon: Shield, permission: "role:list" },
   { href: "/dashboard/settings/audit-logs", label: "Audit Logs", icon: Clock, permission: "audit_log:list" },
-  { href: "/dashboard/settings/providers", label: "Providers", icon: Database, permission: "admin:all" },
+  { href: "/dashboard/settings/providers", label: "Providers", icon: Database, permission: "organization:update" },
   { href: "/dashboard/settings/security", label: "Security", icon: Shield },
-  { href: "/dashboard/status", label: "System Status", icon: Activity },
+  { href: "/dashboard/status", label: "System Status", icon: Activity, permission: "organization:view" },
 ];
 
 const breadcrumbLabels: Record<string, string> = {
@@ -125,6 +125,9 @@ export default function DashboardLayout() {
     const stored = localStorage.getItem("sidebarCollapsed");
     return stored === "true";
   });
+  const primaryRole = (user?.roles?.[0] || "member")
+    .replace(/[_-]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 
   const filteredNavItems = useMemo(() => {
     return navItems.filter(item => !item.permission || hasPermission(item.permission));
@@ -254,7 +257,7 @@ export default function DashboardLayout() {
             {!isCollapsed && (
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-slate-900 dark:text-foreground truncate">{user?.email?.split("@")[0]}</p>
-                <p className="text-[10px] text-slate-500 dark:text-muted-foreground truncate uppercase tracking-tighter">Administrator</p>
+                <p className="text-[10px] text-slate-500 dark:text-muted-foreground truncate uppercase tracking-tighter">{primaryRole}</p>
               </div>
             )}
             {!isCollapsed && (

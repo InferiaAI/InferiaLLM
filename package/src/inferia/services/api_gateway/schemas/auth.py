@@ -5,13 +5,6 @@ from datetime import datetime
 
 
 class PermissionEnum(str, Enum):
-    # Core
-    ADMIN_ALL = "admin:all"  # Super admin
-
-    # Generic (To be deprecated/removed if possible, but keeping for now if widely used)
-    # READ = "read"  # Cleaned up
-    # WRITE = "write" # Cleaned up
-
     # API Keys
     API_KEY_CREATE = "api_key:create"
     API_KEY_LIST = "api_key:list"
@@ -26,8 +19,6 @@ class PermissionEnum(str, Enum):
     # Prompt Templates
     PROMPT_CREATE = "prompt_template:create"
     PROMPT_LIST = "prompt_template:list"
-    PROMPT_VIEW = "prompt_template:view"
-    PROMPT_UPDATE = "prompt_template:update"
     PROMPT_DELETE = "prompt_template:delete"
 
     # Models
@@ -37,32 +28,19 @@ class PermissionEnum(str, Enum):
     MEMBER_INVITE = "member:invite"
     MEMBER_DELETE = "member:delete"
     MEMBER_LIST = "member:list"
-    MEMBER_UPDATE = "member:update"
 
     # Knowledge Base
-    KB_CREATE = "knowledge_base:create"
     KB_ADD_DATA = "knowledge_base:add_data"
-    KB_DELETE = "knowledge_base:delete"
     KB_LIST = "knowledge_base:list"
-    KB_VIEW = "knowledge_base:view"
-    KB_UPDATE = "knowledge_base:update"
 
     # Role Management
     ROLE_CREATE = "role:create"
     ROLE_LIST = "role:list"
-    ROLE_View = "role:view"
     ROLE_UPDATE = "role:update"
     ROLE_DELETE = "role:delete"
 
-    # User Management
-    USER_LIST = "user:list"
-    USER_VIEW = "user:view"
-    USER_UPDATE = "user:update"
-    USER_DELETE = "user:delete"
-
     # Audit Logs
     AUDIT_LOG_LIST = "audit_log:list"
-    AUDIT_LOG_VIEW = "audit_log:view"
 
     # Organization
     ORG_VIEW = "organization:view"

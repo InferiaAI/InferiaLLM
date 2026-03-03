@@ -9,7 +9,8 @@ import logging
 
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from inferia.services.api_gateway.rbac.middleware import get_current_user_from_request
-from inferia.services.api_gateway.models import UserContext
+from inferia.services.api_gateway.models import UserContext, PermissionEnum
+from inferia.services.api_gateway.rbac.authorization import authz_service
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.gateway.http_client import gateway_http_client
 from inferia.services.api_gateway.gateway.rate_limiter import rate_limiter
@@ -19,6 +20,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["Proxy API"])
 
 ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
+
+
+def _require_proxy_permission(user_context: UserContext, method: str, path: str) -> None:
+    normalized_method = method.upper()
+    normalized_path = (path or "").strip("/").lower()
+
+    if normalized_method == "POST":
+        # Deployment RPC-style endpoints use POST for non-create actions.
+        # Map those explicitly to update/delete permissions.
+        if normalized_path.startswith("deployment/deletepool"):
+            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
+            return
+        if normalized_path.startswith("deployment/deploy") or normalized_path.startswith("deployment/createpool"):
+            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+            return
+        if normalized_path.startswith("deployment/"):
+            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_UPDATE)
+            return
+
+    if normalized_method in {"GET", "HEAD"}:
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    elif normalized_method == "POST":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+    elif normalized_method in {"PUT", "PATCH"}:
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_UPDATE)
+    elif normalized_method == "DELETE":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
+    else:
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
 
 
 async def proxy_request(
@@ -82,6 +112,7 @@ async def proxy_deployments(
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
     """Proxy deployment operations to orchestration service."""
+    _require_proxy_permission(user_context, request.method, f"deployments/{path}")
     return await proxy_request(
         method=request.method,
         path=f"deployments/{path}",
@@ -100,6 +131,7 @@ async def proxy_pools(
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
     """Proxy compute pool operations to orchestration service."""
+    _require_proxy_permission(user_context, request.method, f"pools/{path}")
     return await proxy_request(
         method=request.method,
         path=f"listPools/{path}".replace("listPools/", "")
@@ -118,6 +150,7 @@ async def proxy_logs(
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
     """Proxy log streaming from orchestration service."""
+    _require_proxy_permission(user_context, request.method, f"logs/{path}")
     return await proxy_request(
         method="GET",
         path=f"logs/{path}",
@@ -133,6 +166,7 @@ async def proxy_provider_resources(
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
     """Proxy provider resources list from orchestration service."""
+    _require_proxy_permission(user_context, request.method, "provider/resources")
     return await proxy_request(
         method="GET",
         path="provider/resources",
@@ -149,6 +183,7 @@ async def proxy_inventory(
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
     """Proxy inventory operations to orchestration service."""
+    _require_proxy_permission(user_context, request.method, f"inventory/{path}")
     return await proxy_request(
         method=request.method,
         path=f"inventory/{path}",
@@ -167,6 +202,7 @@ async def proxy_deployment(
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
     """Proxy all deployment operations to orchestration service."""
+    _require_proxy_permission(user_context, request.method, f"deployment/{path}")
     return await proxy_request(
         method=request.method,
         path=f"deployment/{path}",

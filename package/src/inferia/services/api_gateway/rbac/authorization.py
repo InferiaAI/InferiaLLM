@@ -32,11 +32,6 @@ class AuthorizationService:
     def has_permission(self, user: UserContext, permission: PermissionEnum) -> bool:
         """Check if user has a specific permission."""
         user_permissions = self.get_user_permissions(user)
-        
-        # Super-admin check: admin:all bypasses everything
-        if PermissionEnum.ADMIN_ALL.value in user_permissions:
-            return True
-            
         return permission.value in user_permissions
     
     def require_permission(self, user: UserContext, permission: PermissionEnum) -> None:
@@ -48,12 +43,14 @@ class AuthorizationService:
             )
             
     def require_role(self, user: UserContext, role: str) -> None:
-        """Require user to have a specific role."""
-        if role not in user.roles:
-             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: Role '{role}' required",
-            )
+        """Deprecated: Role-based checks are disabled."""
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Role-based authorization is disabled. "
+                "Use require_permission with PermissionEnum."
+            ),
+        )
     
     def can_access_model(self, user: UserContext, model_id: str) -> bool:
         """Check if user can access a specific model."""

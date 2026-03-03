@@ -75,7 +75,10 @@ function getStatusDot(status: string) {
 export default function Deployments() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { user, organizations } = useAuth();
+  const { user, organizations, hasPermission } = useAuth();
+  const canCreateDeployment = hasPermission("deployment:create");
+  const canUpdateDeployment = hasPermission("deployment:update");
+  const canDeleteDeployment = hasPermission("deployment:delete");
 
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -134,7 +137,11 @@ export default function Deployments() {
 
   return (
     <div className="space-y-5 font-sans text-slate-900 dark:text-zinc-100">
-      <DeploymentHeader onRefresh={() => queryClient.invalidateQueries({ queryKey: ["deployments"] })} onNew={() => navigate("/dashboard/deployments/new")} />
+      <DeploymentHeader
+        canCreateDeployment={canCreateDeployment}
+        onRefresh={() => queryClient.invalidateQueries({ queryKey: ["deployments"] })}
+        onNew={() => navigate("/dashboard/deployments/new")}
+      />
 
       <div className="flex items-center justify-between gap-3">
         <div className="relative w-full max-w-sm">
@@ -149,6 +156,8 @@ export default function Deployments() {
           deployments={paginated}
           isLoading={isLoading}
           isMutating={stopMutation.isPending || deleteMutation.isPending || startMutation.isPending}
+          canUpdateDeployment={canUpdateDeployment}
+          canDeleteDeployment={canDeleteDeployment}
           onStart={(id) => startMutation.mutate(id)}
           onStop={(id) => confirm("Stop this deployment?") && stopMutation.mutate(id)}
           onDelete={(id) => confirm("Permanently delete?") && deleteMutation.mutate(id)}
@@ -167,7 +176,15 @@ export default function Deployments() {
   );
 }
 
-function DeploymentHeader({ onRefresh, onNew }: { onRefresh: () => void; onNew: () => void }) {
+function DeploymentHeader({
+  canCreateDeployment,
+  onRefresh,
+  onNew,
+}: {
+  canCreateDeployment: boolean;
+  onRefresh: () => void;
+  onNew: () => void;
+}) {
   return (
     <div className="rounded-xl border bg-card p-5 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -177,14 +194,34 @@ function DeploymentHeader({ onRefresh, onNew }: { onRefresh: () => void; onNew: 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className="h-9 px-3 inline-flex items-center gap-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:bg-slate-50 transition-colors text-sm font-medium" onClick={onRefresh}><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
-          <button type="button" onClick={onNew} className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> New Deployment</button>
+          {canCreateDeployment && (
+            <button type="button" onClick={onNew} className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> New Deployment</button>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function DeploymentTable({ deployments, isLoading, isMutating, onStart, onStop, onDelete }: { deployments: Deployment[]; isLoading: boolean; isMutating: boolean; onStart: (id: string) => void; onStop: (id: string) => void; onDelete: (id: string) => void }) {
+function DeploymentTable({
+  deployments,
+  isLoading,
+  isMutating,
+  canUpdateDeployment,
+  canDeleteDeployment,
+  onStart,
+  onStop,
+  onDelete,
+}: {
+  deployments: Deployment[];
+  isLoading: boolean;
+  isMutating: boolean;
+  canUpdateDeployment: boolean;
+  canDeleteDeployment: boolean;
+  onStart: (id: string) => void;
+  onStop: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
   if (isLoading) {
     return (
       <div className="p-8">
@@ -219,7 +256,16 @@ function DeploymentTable({ deployments, isLoading, isMutating, onStart, onStop, 
         </thead>
         <tbody className="divide-y">
           {deployments.map((d) => (
-            <DeploymentRow key={d.id} deployment={d} isMutating={isMutating} onStart={onStart} onStop={onStop} onDelete={onDelete} />
+            <DeploymentRow
+              key={d.id}
+              deployment={d}
+              isMutating={isMutating}
+              canUpdateDeployment={canUpdateDeployment}
+              canDeleteDeployment={canDeleteDeployment}
+              onStart={onStart}
+              onStop={onStop}
+              onDelete={onDelete}
+            />
           ))}
         </tbody>
       </table>
@@ -227,7 +273,23 @@ function DeploymentTable({ deployments, isLoading, isMutating, onStart, onStop, 
   );
 }
 
-function DeploymentRow({ deployment: d, isMutating, onStart, onStop, onDelete }: { deployment: Deployment; isMutating: boolean; onStart: (id: string) => void; onStop: (id: string) => void; onDelete: (id: string) => void }) {
+function DeploymentRow({
+  deployment: d,
+  isMutating,
+  canUpdateDeployment,
+  canDeleteDeployment,
+  onStart,
+  onStop,
+  onDelete,
+}: {
+  deployment: Deployment;
+  isMutating: boolean;
+  canUpdateDeployment: boolean;
+  canDeleteDeployment: boolean;
+  onStart: (id: string) => void;
+  onStop: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
   const isRunning = ["READY", "RUNNING", "PENDING", "DEPLOYING"].includes(d.status);
   const canStart = ["STOPPED", "TERMINATED", "FAILED"].includes(d.status);
   const canDelete = ["STOPPED", "TERMINATED", "FAILED"].includes(d.status);
@@ -256,9 +318,9 @@ function DeploymentRow({ deployment: d, isMutating, onStart, onStop, onDelete }:
       <td className="px-6 py-4">
         <div className="flex items-center justify-end gap-2">
           <Link to={`/dashboard/deployments/${d.id}`} className="inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted text-foreground transition-colors"><Settings className="w-3.5 h-3.5 text-muted-foreground" /> Settings</Link>
-          {canStart && <button type="button" disabled={isMutating} onClick={() => onStart(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 font-medium disabled:opacity-50 transition-colors"><Play className="w-3.5 h-3.5" /> Start</button>}
-          {isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-medium disabled:opacity-50 transition-colors"><Square className="w-3.5 h-3.5" /> Stop</button>}
-          {canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium disabled:opacity-50 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
+          {canUpdateDeployment && canStart && <button type="button" disabled={isMutating} onClick={() => onStart(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 font-medium disabled:opacity-50 transition-colors"><Play className="w-3.5 h-3.5" /> Start</button>}
+          {canUpdateDeployment && isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-medium disabled:opacity-50 transition-colors"><Square className="w-3.5 h-3.5" /> Stop</button>}
+          {canDeleteDeployment && canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium disabled:opacity-50 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
         </div>
       </td>
     </tr>

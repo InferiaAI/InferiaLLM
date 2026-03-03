@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Scale, Save, Activity, Shield, RefreshCw } from "lucide-react";
 import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import type { AxiosError } from "axios";
+import { useAuth } from "@/context/AuthContext";
 
 interface ConfigResponse {
   policy_type: string;
@@ -64,6 +65,9 @@ const initialState: State = {
 };
 
 export default function Organization() {
+  const { hasPermission } = useAuth();
+  const canUpdateOrganization = hasPermission("organization:update");
+
   const [state, dispatch] = useReducer(reducer, initialState);
   const {
     isLoading,
@@ -113,6 +117,10 @@ export default function Organization() {
   }, [fetchConfig, fetchUsageStats, fetchOrgData]);
 
   const handleUpdateLogPayloads = async (enabled: boolean) => {
+    if (!canUpdateOrganization) {
+      toast.error("You don't have permission to update organization settings");
+      return;
+    }
     if (!orgData) return;
     try {
       dispatch({ type: 'SET_FIELD', field: 'orgData', value: { ...orgData, log_payloads: enabled } });
@@ -126,6 +134,10 @@ export default function Organization() {
   };
 
   const handleSave = async () => {
+    if (!canUpdateOrganization) {
+      toast.error("You don't have permission to update organization settings");
+      return;
+    }
     if (isQuotaInvalid) {
       toast.error("Quota values must be positive numbers");
       return;
@@ -183,7 +195,7 @@ export default function Organization() {
           <button
             type="button"
             onClick={handleSave}
-            disabled={isSaving || isQuotaInvalid}
+            disabled={isSaving || isQuotaInvalid || !canUpdateOrganization}
             className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             <Save className="w-4 h-4" />
@@ -246,6 +258,7 @@ export default function Organization() {
             <button
               type="button"
               onClick={() => void handleUpdateLogPayloads(!orgData?.log_payloads)}
+              disabled={!canUpdateOrganization}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${orgData?.log_payloads ? "bg-primary" : "bg-muted"
                 }`}
               aria-label="Toggle inference payload logging"

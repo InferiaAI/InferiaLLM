@@ -4,6 +4,7 @@ from jose import JWTError, jwt
 from fastapi import HTTPException, status
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 import bcrypt
 
 from inferia.services.api_gateway.config import settings
@@ -28,7 +29,11 @@ class AuthService:
         # hashed_password from DB is string, needs to be bytes
         if isinstance(hashed_password, str):
             hashed_password = hashed_password.encode('utf-8')
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password)
+        try:
+            return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password)
+        except ValueError:
+            # Invalid/corrupted hash in storage should not bubble as 500.
+            return False
 
     def get_password_hash(self, password):
         # Returns bytes, decode to string for DB storage
@@ -93,8 +98,11 @@ class AuthService:
     
     async def authenticate_user(self, db: AsyncSession, username: str, password: str) -> Optional[DBUser]:
         """Authenticate user with username (email) and password."""
-        # Query DB for user by email
-        result = await db.execute(select(DBUser).where(DBUser.email == username))
+        normalized_username = username.strip().lower()
+        # Query DB for user by email (case-insensitive)
+        result = await db.execute(
+            select(DBUser).where(func.lower(DBUser.email) == normalized_username)
+        )
         user = result.scalars().first()
         
         if not user:
@@ -212,7 +220,12 @@ class AuthService:
         )
     
     async def get_current_user(self, db: AsyncSession, token: str) -> tuple[DBUser, Optional[str], list[str]]:
-        """Get current user from token. Returns (user, org_id, roles)."""
+        """
+        Get current user from token. Returns (user, org_id, roles).
+
+        Security: role and org access are resolved from live DB membership,
+        not trusted directly from JWT role claims.
+        """
         token_payload = self.decode_token(token)
         
         if token_payload.type != "access":
@@ -229,8 +242,37 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
             )
-        
-        return user, token_payload.org_id, token_payload.roles
+
+        target_org_id = token_payload.org_id
+        if target_org_id:
+            membership_stmt = select(UserOrganization).where(
+                UserOrganization.user_id == user.id,
+                UserOrganization.org_id == target_org_id,
+            )
+            membership_res = await db.execute(membership_stmt)
+            membership = membership_res.scalars().first()
+            if not membership:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Organization access revoked",
+                )
+            return user, target_org_id, [membership.role]
+
+        # Fallback for older tokens with no org_id claim
+        fallback_stmt = (
+            select(UserOrganization)
+            .where(UserOrganization.user_id == user.id)
+            .order_by(UserOrganization.created_at.asc())
+        )
+        fallback_res = await db.execute(fallback_stmt)
+        fallback_membership = fallback_res.scalars().first()
+        if not fallback_membership:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User does not belong to any organization",
+            )
+
+        return user, fallback_membership.org_id, [fallback_membership.role]
 
     async def refresh_access_token(self, refresh_token: str, db: AsyncSession) -> AuthToken:
         """Refresh access token using refresh token."""
@@ -247,30 +289,44 @@ class AuthService:
             if not user:
                 raise HTTPException(status_code=401, detail="User not found")
             
-            # If org_id in token, verify user still has access
+            # If org_id in token, verify user still has access.
+            # Fallback to default org, then to first available membership.
             target_org_id = org_id or user.default_org_id
             target_role = "member"
-            
+
+            membership = None
             if target_org_id:
                 stmt = select(UserOrganization).where(
                     UserOrganization.user_id == user.id,
                     UserOrganization.org_id == target_org_id
                 )
                 res = await db.execute(stmt)
-                uo = res.scalars().first()
-                if uo:
-                    target_role = uo.role
-                else:
-                     target_org_id = user.default_org_id
-                     if target_org_id:
-                         stmt = select(UserOrganization).where(
-                             UserOrganization.user_id == user.id,
-                             UserOrganization.org_id == target_org_id
-                         )
-                         res = await db.execute(stmt)
-                         uo = res.scalars().first()
-                         if uo:
-                            target_role = uo.role
+                membership = res.scalars().first()
+
+            if not membership and user.default_org_id:
+                target_org_id = user.default_org_id
+                stmt = select(UserOrganization).where(
+                    UserOrganization.user_id == user.id,
+                    UserOrganization.org_id == target_org_id
+                )
+                res = await db.execute(stmt)
+                membership = res.scalars().first()
+
+            if not membership:
+                stmt = (
+                    select(UserOrganization)
+                    .where(UserOrganization.user_id == user.id)
+                    .order_by(UserOrganization.created_at.asc())
+                )
+                res = await db.execute(stmt)
+                membership = res.scalars().first()
+                if membership:
+                    target_org_id = membership.org_id
+
+            if not membership:
+                raise HTTPException(status_code=401, detail="User does not belong to any organization")
+
+            target_role = membership.role
             
             access_token = self.create_access_token(user, org_id=target_org_id, role=target_role)
             

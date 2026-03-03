@@ -4,6 +4,8 @@ import api from "@/lib/api"
 import { toast } from "sonner"
 import { Key, Plus, Copy } from "lucide-react"
 import { Pagination } from "@/components/ui/Pagination"
+import { useAuth } from "@/context/AuthContext"
+import type { AxiosError } from "axios"
 
 interface ApiKey {
     id: string
@@ -18,6 +20,10 @@ interface ApiKeyCreated extends ApiKey {
 }
 
 export default function ApiKeys() {
+    const { hasPermission } = useAuth()
+    const canCreateKey = hasPermission("api_key:create")
+    const canRevokeKey = hasPermission("api_key:revoke")
+
     const [keys, setKeys] = useState<ApiKey[]>([])
     const [loading, setLoading] = useState(true)
     const [showAdd, setShowAdd] = useState(false)
@@ -30,6 +36,12 @@ export default function ApiKeys() {
 
     // Form
     const [name, setName] = useState("")
+
+    const getErrorDetail = (error: unknown, fallback: string): string | null => {
+        const apiError = error as AxiosError<{ detail?: string }>
+        if (apiError.response?.status === 403) return null
+        return apiError.response?.data?.detail || fallback
+    }
 
     const fetchKeys = async (page: number = 1, limit: number = 20) => {
         try {
@@ -55,6 +67,10 @@ export default function ApiKeys() {
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (!canCreateKey) {
+            toast.error("You don't have permission to create API keys")
+            return
+        }
         try {
             const { data } = await api.post("/management/api-keys", { name })
             setNewKeyData(data)
@@ -63,7 +79,8 @@ export default function ApiKeys() {
             setName("")
             fetchKeys(currentPage, pageSize)
         } catch (error) {
-            toast.error("Failed to create key")
+            const message = getErrorDetail(error, "Failed to create key")
+            if (message) toast.error(message)
         }
     }
 
@@ -76,12 +93,14 @@ export default function ApiKeys() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <h2 className="text-3xl font-bold tracking-tight">API Keys</h2>
-                <button
-                    onClick={() => setShowAdd(!showAdd)}
-                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center gap-2"
-                >
-                    <Plus className="w-4 h-4" /> Create Key
-                </button>
+                {canCreateKey && (
+                    <button
+                        onClick={() => setShowAdd(!showAdd)}
+                        className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center gap-2"
+                    >
+                        <Plus className="w-4 h-4" /> Create Key
+                    </button>
+                )}
             </div>
 
             {/* Creation Modal / Inline */}
@@ -146,7 +165,7 @@ export default function ApiKeys() {
                                         <span className={`inline-flex items-center px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm ${key.is_active ? 'border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : 'border-red-500/20 text-red-600 dark:text-red-400 bg-red-500/10'}`}>
                                             {key.is_active ? 'Active' : 'Revoked'}
                                         </span>
-                                        {key.is_active && (
+                                        {key.is_active && canRevokeKey && (
                                             <button
                                                 onClick={async () => {
                                                     if (confirm("Are you sure you want to revoke this key? It will stop working immediately.")) {
@@ -155,7 +174,8 @@ export default function ApiKeys() {
                                                             toast.success("API Key revoked")
                                                             fetchKeys(currentPage, pageSize)
                                                         } catch (e) {
-                                                            toast.error("Failed to revoke key")
+                                                            const message = getErrorDetail(e, "Failed to revoke key")
+                                                            if (message) toast.error(message)
                                                         }
                                                     }
                                                 }}

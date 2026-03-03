@@ -5,6 +5,10 @@ from inferia.services.api_gateway.db.models import Organization, User, UserOrgan
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.schemas.auth import PermissionEnum
+from inferia.services.api_gateway.rbac.permissions import (
+    canonical_permissions,
+    normalize_permissions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +18,7 @@ async def initialize_default_org(db: AsyncSession):
     """
     try:
         # 1. Initialize Roles & Permissions
-        all_permissions = [p.value for p in PermissionEnum]
+        all_permissions = canonical_permissions()
         
         # Admin Role: All permissions
         admin_role_stmt = select(Role).where(Role.name == "admin")
@@ -31,18 +35,22 @@ async def initialize_default_org(db: AsyncSession):
             admin_role.permissions = all_permissions
             db.add(admin_role)
 
-        # Member Role: Limited permissions
+        # Member Role: Default dashboard operator permissions
         member_permissions = [
             PermissionEnum.DEPLOYMENT_LIST.value,
+            PermissionEnum.DEPLOYMENT_CREATE.value,
+            PermissionEnum.DEPLOYMENT_UPDATE.value,
+            PermissionEnum.DEPLOYMENT_DELETE.value,
             PermissionEnum.MODEL_ACCESS.value,
+            PermissionEnum.API_KEY_LIST.value,
+            PermissionEnum.API_KEY_CREATE.value,
+            PermissionEnum.API_KEY_REVOKE.value,
             PermissionEnum.PROMPT_LIST.value,
-            PermissionEnum.PROMPT_VIEW.value,
+            PermissionEnum.PROMPT_CREATE.value,
+            PermissionEnum.PROMPT_DELETE.value,
             PermissionEnum.KB_LIST.value,
-            PermissionEnum.KB_VIEW.value,
             PermissionEnum.KB_ADD_DATA.value,
             PermissionEnum.ORG_VIEW.value,
-            PermissionEnum.USER_LIST.value, # Members can usually see other members
-            PermissionEnum.USER_VIEW.value,
         ]
         
         member_role_stmt = select(Role).where(Role.name == "member")
@@ -53,6 +61,44 @@ async def initialize_default_org(db: AsyncSession):
             logger.info("Creating 'member' role")
             member_role = Role(name="member", description="Standard organization member", permissions=member_permissions)
             db.add(member_role)
+        else:
+            # Keep member role aligned with current product policy.
+            if sorted(set(member_role.permissions or [])) != sorted(set(member_permissions)):
+                logger.info("Updating 'member' role permissions")
+                member_role.permissions = sorted(set(member_permissions))
+                db.add(member_role)
+
+        # Normalize all stored role permissions to canonical values.
+        # This migrates deprecated values (e.g. user:*, admin:all) without requiring a manual DB migration.
+        roles_stmt = select(Role)
+        roles_res = await db.execute(roles_stmt)
+        all_roles = roles_res.scalars().all()
+        for role in all_roles:
+            if role.name == "admin":
+                target_permissions = all_permissions
+            elif role.name == "member":
+                target_permissions = sorted(set(member_permissions))
+            else:
+                normalized_permissions, mapped_deprecated, unknown_permissions = normalize_permissions(
+                    role.permissions or []
+                )
+                target_permissions = normalized_permissions
+                if mapped_deprecated:
+                    logger.info(
+                        "Normalized deprecated permissions for role '%s': %s",
+                        role.name,
+                        ", ".join(mapped_deprecated),
+                    )
+                if unknown_permissions:
+                    logger.warning(
+                        "Dropping unknown permissions from role '%s': %s",
+                        role.name,
+                        ", ".join(unknown_permissions),
+                    )
+
+            if sorted(set(role.permissions or [])) != target_permissions:
+                role.permissions = target_permissions
+                db.add(role)
         
         await db.commit()
 

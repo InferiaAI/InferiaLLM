@@ -129,7 +129,11 @@ function QuickAction({ title, description, href, icon: Icon, colorClass = "text-
 }
 
 export default function Overview() {
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
+  const canViewDeployments = hasPermission("deployment:list");
+  const canViewAuditLogs = hasPermission("audit_log:list");
+  const canCreateDeployment = hasPermission("deployment:create");
+  const canManageProviders = hasPermission("organization:update");
 
   const { data: org, isLoading: orgLoading, error: orgError } = useQuery({
     queryKey: ["organization"],
@@ -148,7 +152,7 @@ export default function Overview() {
       const { data } = await computeApi.get<PoolsResponse>(`/deployment/listPools/${orgId}`);
       return data;
     },
-    enabled: !!orgId,
+    enabled: !!orgId && canViewDeployments,
   });
 
   const { data: deployments, isLoading: deploymentsLoading, error: deploymentsError } = useQuery({
@@ -160,7 +164,7 @@ export default function Overview() {
       );
       return Array.isArray(data) ? data : (data.deployments ?? []);
     },
-    enabled: !!orgId,
+    enabled: !!orgId && canViewDeployments,
   });
 
   const { data: recentLogs, isLoading: logsLoading } = useQuery({
@@ -169,7 +173,7 @@ export default function Overview() {
       const { data } = await api.get<InferenceLog[]>("/management/deployments/recent-logs?limit=8");
       return data;
     },
-    enabled: !!orgId,
+    enabled: !!orgId && canViewDeployments,
   });
 
   const { data: auditLogs } = useQuery({
@@ -182,11 +186,15 @@ export default function Overview() {
         return [];
       }
     },
-    enabled: !!orgId,
+    enabled: !!orgId && canViewAuditLogs,
   });
 
-  const isLoading = orgLoading || poolsLoading || deploymentsLoading || logsLoading;
-  const error = orgError || poolsError || deploymentsError;
+  const isLoading =
+    orgLoading ||
+    (canViewDeployments && (poolsLoading || deploymentsLoading || logsLoading));
+  const error =
+    orgError ||
+    (canViewDeployments ? poolsError || deploymentsError : null);
 
   const deploymentList = deployments ?? [];
   const poolList = poolsData?.pools ?? [];
@@ -225,20 +233,43 @@ export default function Overview() {
         <StatCard
           label="Deployments"
           value={deploymentList.length}
-          status={runningDeployments.length > 0 ? `${runningDeployments.length} active` : "No active deployments"}
+          status={
+            canViewDeployments
+              ? runningDeployments.length > 0
+                ? `${runningDeployments.length} active`
+                : "No active deployments"
+              : "No access"
+          }
           icon={Rocket}
         />
         <StatCard
           label="Compute Pools"
           value={poolList.length}
-          status={poolList.length > 0 ? `${healthyPools} healthy` : "No pools configured"}
+          status={
+            canViewDeployments
+              ? poolList.length > 0
+                ? `${healthyPools} healthy`
+                : "No pools configured"
+              : "No access"
+          }
           icon={Server}
         />
-        <StatCard label="Recent Requests" value={recentLogs?.length ?? 0} status="Latest entries" icon={Activity} />
+        <StatCard
+          label="Recent Requests"
+          value={recentLogs?.length ?? 0}
+          status={canViewDeployments ? "Latest entries" : "No access"}
+          icon={Activity}
+        />
         <StatCard
           label="Audit Events"
           value={auditLogs?.length ?? 0}
-          status={auditLogs && auditLogs.length > 0 ? "Recent admin activity" : "No recent audit events"}
+          status={
+            canViewAuditLogs
+              ? auditLogs && auditLogs.length > 0
+                ? "Recent admin activity"
+                : "No recent audit events"
+              : "No access"
+          }
           icon={Shield}
         />
       </section>
@@ -249,38 +280,46 @@ export default function Overview() {
           <h2 className="text-lg font-medium">Quick Setup</h2>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <QuickAction
-            title="Create Deployment"
-            description="Launch an inference or embedding workload."
-            href="/dashboard/deployments/new"
-            icon={Rocket}
-            colorClass="text-green-600 dark:text-green-400"
-            bgClass="bg-green-500/10"
-          />
-          <QuickAction
-            title="Add Compute Pool"
-            description="Provision compute capacity for model serving."
-            href="/dashboard/compute/pools/new"
-            icon={Server}
-            colorClass="text-purple-600 dark:text-purple-400"
-            bgClass="bg-purple-500/10"
-          />
-          <QuickAction
-            title="Configure Providers"
-            description="Set up cloud, vector DB, and guardrail integrations."
-            href="/dashboard/settings/providers"
-            icon={Wrench}
-            colorClass="text-red-600 dark:text-red-400"
-            bgClass="bg-red-500/10"
-          />
-          <QuickAction
-            title="Manage Organization"
-            description="Update quota, privacy, and organization controls."
-            href="/dashboard/settings/organization"
-            icon={Shield}
-            colorClass="text-indigo-600 dark:text-indigo-400"
-            bgClass="bg-indigo-500/10"
-          />
+          {canCreateDeployment && (
+            <>
+              <QuickAction
+                title="Create Deployment"
+                description="Launch an inference or embedding workload."
+                href="/dashboard/deployments/new"
+                icon={Rocket}
+                colorClass="text-green-600 dark:text-green-400"
+                bgClass="bg-green-500/10"
+              />
+              <QuickAction
+                title="Add Compute Pool"
+                description="Provision compute capacity for model serving."
+                href="/dashboard/compute/pools/new"
+                icon={Server}
+                colorClass="text-purple-600 dark:text-purple-400"
+                bgClass="bg-purple-500/10"
+              />
+            </>
+          )}
+          {canManageProviders && (
+            <QuickAction
+              title="Configure Providers"
+              description="Set up cloud, vector DB, and guardrail integrations."
+              href="/dashboard/settings/providers"
+              icon={Wrench}
+              colorClass="text-red-600 dark:text-red-400"
+              bgClass="bg-red-500/10"
+            />
+          )}
+          {hasPermission("organization:view") && (
+            <QuickAction
+              title="Manage Organization"
+              description="Update quota, privacy, and organization controls."
+              href="/dashboard/settings/organization"
+              icon={Shield}
+              colorClass="text-indigo-600 dark:text-indigo-400"
+              bgClass="bg-indigo-500/10"
+            />
+          )}
         </div>
       </section>
 
@@ -288,12 +327,21 @@ export default function Overview() {
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-medium">Running Deployments</h3>
-            <Link to="/dashboard/deployments" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
-              View all
-            </Link>
+            {canViewDeployments ? (
+              <Link to="/dashboard/deployments" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+                View all
+              </Link>
+            ) : (
+              <span className="text-xs text-muted-foreground">Restricted</span>
+            )}
           </div>
           <div className="divide-y">
-            {runningDeployments.length === 0 ? (
+            {!canViewDeployments ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">
+                <Circle className="mx-auto mb-2 h-7 w-7 opacity-25" />
+                You do not have permission to view deployments.
+              </div>
+            ) : runningDeployments.length === 0 ? (
               <div className="p-6 text-center text-sm text-muted-foreground">
                 <Circle className="mx-auto mb-2 h-7 w-7 opacity-25" />
                 No active deployments.
@@ -332,12 +380,21 @@ export default function Overview() {
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <h3 className="text-sm font-medium">Compute Pool Health</h3>
-            <Link to="/dashboard/compute/pools" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
-              Manage pools
-            </Link>
+            {canViewDeployments ? (
+              <Link to="/dashboard/compute/pools" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+                Manage pools
+              </Link>
+            ) : (
+              <span className="text-xs text-muted-foreground">Restricted</span>
+            )}
           </div>
           <div className="divide-y">
-            {poolList.length === 0 ? (
+            {!canViewDeployments ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">
+                <Server className="mx-auto mb-2 h-7 w-7 opacity-25" />
+                You do not have permission to view compute pools.
+              </div>
+            ) : poolList.length === 0 ? (
               <div className="p-6 text-center text-sm text-muted-foreground">
                 <Server className="mx-auto mb-2 h-7 w-7 opacity-25" />
                 No pools configured.
@@ -369,9 +426,13 @@ export default function Overview() {
       <section className="rounded-xl border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="text-sm font-medium">Recent Inference Activity</h3>
-          <Link to="/dashboard/insights" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
-            Explore insights
-          </Link>
+          {canViewDeployments ? (
+            <Link to="/dashboard/insights" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+              Explore insights
+            </Link>
+          ) : (
+            <span className="text-xs text-muted-foreground">Restricted</span>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-sm">
@@ -385,7 +446,16 @@ export default function Overview() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {recentLogs && recentLogs.length > 0 ? (
+              {!canViewDeployments ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <div className="flex flex-col items-center gap-2">
+                      <Activity className="h-7 w-7 opacity-30" />
+                      You do not have permission to view inference activity.
+                    </div>
+                  </td>
+                </tr>
+              ) : recentLogs && recentLogs.length > 0 ? (
                 recentLogs.map((log) => {
                   const isSuccess = !log.status_code || log.status_code < 400;
                   return (

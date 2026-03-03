@@ -1,4 +1,5 @@
 import axios, { type AxiosInstance } from "axios";
+import { toast } from "sonner";
 
 // Runtime config injected via /config.js at container startup.
 // Falls back to VITE_ build-time env vars, then to localhost defaults.
@@ -46,12 +47,16 @@ const createApiClient = (baseURL: string): AxiosInstance => {
     instance.interceptors.response.use(
         (response) => response,
         (error) => {
+            const status = error.response?.status;
+            const detail = error.response?.data?.detail;
             if (error.response?.status === 401) {
                 // Check current path to avoid redirect loop
                 if (window.location.pathname !== "/auth/login") {
                     localStorage.removeItem("token");
                     window.location.href = "/auth/login";
                 }
+            } else if (status === 403) {
+                toast.error(detail || "You don't have permission for this action.");
             }
             return Promise.reject(error);
         }

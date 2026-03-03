@@ -84,7 +84,20 @@ export default function Users() {
     inviteEmail, inviteRole, inviting, currentPage, pageSize, totalUsers
   } = state;
 
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, hasPermission } = useAuth();
+  const canInviteMember = hasPermission("member:invite");
+  const canRevokeInvite = hasPermission("member:delete");
+  const canUpdateUserRole = hasPermission("role:update");
+  const canViewRoles = hasPermission("role:list");
+  const canManageRoles = canUpdateUserRole && canViewRoles;
+
+  const getErrorDetail = (error: unknown, fallback: string): string | null => {
+    const apiError = error as AxiosError<ApiErrorResponse>;
+    if (apiError.response?.status === 403) {
+      return null;
+    }
+    return apiError.response?.data?.detail || fallback;
+  };
 
   const sortedInvitations = useMemo(
     () => [...invitations].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
@@ -95,38 +108,50 @@ export default function Users() {
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
       const skip = (currentPage - 1) * pageSize;
-      const [usersData, rolesData, invitesData] = await Promise.all([
+      const [usersData, invitesData] = await Promise.all([
         rbacService.getUsers({ skip, limit: pageSize }),
-        rbacService.getRoles(),
         rbacService.getInvitations(),
       ]);
+      let rolesData: Role[] = [];
+      if (canManageRoles) {
+        rolesData = await rbacService.getRoles();
+      }
 
       const total = usersData.length === pageSize ? currentPage * pageSize + 1 : (currentPage - 1) * pageSize + usersData.length;
       dispatch({ type: 'SET_USERS_DATA', users: usersData, total, roles: rolesData, invitations: invitesData });
     } catch (error) {
       console.error(error);
-      toast.error("Failed to fetch users or invitations");
+      const message = getErrorDetail(error, "Failed to fetch users or invitations");
+      if (message) toast.error(message);
       dispatch({ type: 'SET_LOADING', payload: false });
     }
-  }, [currentPage, pageSize]);
+  }, [currentPage, pageSize, canManageRoles]);
 
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
 
   const handleRoleChange = async (userId: string, newRole: string) => {
+    if (!canUpdateUserRole) {
+      toast.error("You don't have permission to update user roles");
+      return;
+    }
     try {
       await rbacService.updateUserRole(userId, newRole);
       toast.success("User role updated");
       dispatch({ type: 'UPDATE_USER_ROLE', userId, role: newRole });
     } catch (error) {
-      const apiError = error as AxiosError<ApiErrorResponse>;
-      toast.error(apiError.response?.data?.detail || "Update failed");
+      const message = getErrorDetail(error, "Update failed");
+      if (message) toast.error(message);
     }
   };
 
   const handleInvite = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!canInviteMember) {
+      toast.error("You don't have permission to invite members");
+      return;
+    }
     dispatch({ type: 'SET_INVITING', payload: true });
     try {
       const newInvite = await rbacService.inviteUser(inviteEmail.trim(), inviteRole);
@@ -136,28 +161,35 @@ export default function Users() {
       dispatch({ type: 'SET_FIELD', field: 'inviteEmail', value: "" });
       dispatch({ type: 'SET_FIELD', field: 'inviteRole', value: "member" });
     } catch (error) {
-      const apiError = error as AxiosError<ApiErrorResponse>;
-      toast.error(apiError.response?.data?.detail || "Invite failed");
+      const message = getErrorDetail(error, "Invite failed");
+      if (message) toast.error(message);
     } finally {
       dispatch({ type: 'SET_INVITING', payload: false });
     }
   };
 
   const handleRevoke = async (id: string) => {
+    if (!canRevokeInvite) {
+      toast.error("You don't have permission to revoke invitations");
+      return;
+    }
     if (!confirm("Are you sure you want to revoke this invitation?")) return;
     try {
       await rbacService.revokeInvitation(id);
       dispatch({ type: 'REMOVE_INVITATION', id });
       toast.success("Invitation revoked");
     } catch (error) {
-      const apiError = error as AxiosError<ApiErrorResponse>;
-      toast.error(apiError.response?.data?.detail || "Revoke failed");
+      const message = getErrorDetail(error, "Revoke failed");
+      if (message) toast.error(message);
     }
   };
 
   const copyInviteLink = async (link: string) => {
     try {
-      await navigator.clipboard.writeText(link);
+      const normalizedLink = /^https?:\/\//i.test(link)
+        ? link
+        : `${window.location.origin}${link.startsWith("/") ? "" : "/"}${link}`;
+      await navigator.clipboard.writeText(normalizedLink);
       toast.success("Invite link copied");
     } catch {
       toast.error("Could not copy invite link");
@@ -184,14 +216,16 @@ export default function Users() {
               Manage organization members, assign roles, and control pending invitations.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => dispatch({ type: 'SET_SHOW_MODAL', payload: true })}
-            className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-          >
-            <UserPlus className="w-4 h-4" />
-            Invite Member
-          </button>
+          {canInviteMember && (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'SET_SHOW_MODAL', payload: true })}
+              className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              <UserPlus className="w-4 h-4" />
+              Invite Member
+            </button>
+          )}
         </div>
       </div>
 
@@ -240,7 +274,7 @@ export default function Users() {
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         value={user.role}
                         onChange={(event) => handleRoleChange(user.id, event.target.value)}
-                        disabled={user.email === currentUser?.email}
+                        disabled={user.email === currentUser?.email || !canManageRoles}
                       >
                         {roles.map((role) => (
                           <option key={role.name} value={role.name}>
@@ -332,13 +366,15 @@ export default function Users() {
                       >
                         <Copy className="w-3.5 h-3.5" /> Copy
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRevoke(invitation.id)}
-                        className="text-destructive hover:underline text-xs"
-                      >
-                        Revoke
-                      </button>
+                      {canRevokeInvite && (
+                        <button
+                          type="button"
+                          onClick={() => handleRevoke(invitation.id)}
+                          className="text-destructive hover:underline text-xs"
+                        >
+                          Revoke
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -355,7 +391,7 @@ export default function Users() {
         </div>
       </section>
 
-      {showInviteModal && (
+      {showInviteModal && canInviteMember && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-card w-full max-w-sm rounded-lg border shadow-lg p-6 space-y-4">
             <h3 className="text-lg font-semibold">Invite New Member</h3>
@@ -380,8 +416,18 @@ export default function Users() {
                   value={inviteRole}
                   onChange={(event) => dispatch({ type: 'SET_FIELD', field: 'inviteRole', value: event.target.value })}
                 >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
+                  {roles.length > 0 ? (
+                    roles.map((role) => (
+                      <option key={role.name} value={role.name}>
+                        {role.name}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="member">Member</option>
+                      <option value="admin">Admin</option>
+                    </>
+                  )}
                 </select>
               </div>
               <div className="flex justify-end gap-2 pt-2">

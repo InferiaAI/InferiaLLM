@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { FileText, Plus, Trash2 } from "lucide-react"
 import { useQueryClient, useMutation } from "@tanstack/react-query"
 import { Pagination } from "@/components/ui/Pagination"
+import { useAuth } from "@/context/AuthContext"
 
 interface PromptTemplate {
     template_id: string
@@ -14,6 +15,10 @@ interface PromptTemplate {
 }
 
 export default function Templates() {
+    const { hasPermission } = useAuth()
+    const canCreateTemplate = hasPermission("prompt_template:create")
+    const canDeleteTemplate = hasPermission("prompt_template:delete")
+
     const [templates, setTemplates] = useState<PromptTemplate[]>([])
     const [loading, setLoading] = useState(true)
     const [showAdd, setShowAdd] = useState(false)
@@ -50,6 +55,10 @@ export default function Templates() {
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (!canCreateTemplate) {
+            toast.error("You don't have permission to create templates")
+            return
+        }
         try {
             await api.post("/management/templates", {
                 template_id: templateId,
@@ -85,6 +94,10 @@ export default function Templates() {
     })
 
     const handleDelete = async (id: string) => {
+        if (!canDeleteTemplate) {
+            toast.error("You don't have permission to delete templates")
+            return
+        }
         if (confirm("Are you sure you want to delete this template?")) {
             deleteMutation.mutate(id)
         }
@@ -94,12 +107,14 @@ export default function Templates() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <h2 className="text-3xl font-bold tracking-tight">Prompt Templates</h2>
-                <button
-                    onClick={() => setShowAdd(!showAdd)}
-                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center gap-2"
-                >
-                    <Plus className="w-4 h-4" /> Create Template
-                </button>
+                {canCreateTemplate && (
+                    <button
+                        onClick={() => setShowAdd(!showAdd)}
+                        className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center gap-2"
+                    >
+                        <Plus className="w-4 h-4" /> Create Template
+                    </button>
+                )}
             </div>
 
             {/* Creation Modal / Inline */}
@@ -165,13 +180,15 @@ export default function Templates() {
                                     <td className="p-4 text-muted-foreground">{tmpl.description || "-"}</td>
                                     <td className="p-4 text-muted-foreground">{new Date(tmpl.updated_at).toLocaleDateString()}</td>
                                     <td className="p-4">
-                                        <button
-                                            onClick={() => handleDelete(tmpl.template_id)}
-                                            className="text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 p-2"
-                                            title="Delete Template"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
+                                        {canDeleteTemplate && (
+                                            <button
+                                                onClick={() => handleDelete(tmpl.template_id)}
+                                                className="text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 p-2"
+                                                title="Delete Template"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}

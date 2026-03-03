@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { ConfigService } from "@/services/configService"
 import { Link } from "react-router-dom"
+import { useAuth } from "@/context/AuthContext"
 
 interface KBFile {
     filename: string
@@ -15,6 +16,9 @@ interface KBFile {
 }
 
 export default function KnowledgeBase() {
+    const { hasPermission } = useAuth()
+    const canAddKnowledge = hasPermission("knowledge_base:add_data")
+
     const queryClient = useQueryClient()
     const [selectedCollection, setSelectedCollection] = useState<string | null>(null)
     const [showUpload, setShowUpload] = useState(false)
@@ -78,6 +82,10 @@ export default function KnowledgeBase() {
 
     const handleUpload = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (!canAddKnowledge) {
+            toast.error("You don't have permission to add knowledge")
+            return
+        }
         if (!file) return
 
         const targetCollection = isNew ? newCollectionName : selectedCollection
@@ -135,16 +143,18 @@ export default function KnowledgeBase() {
                     <h2 className="text-3xl font-bold tracking-tight">Knowledge Base</h2>
                     <p className="text-muted-foreground">Manage your RAG collections and ingested documents.</p>
                 </div>
-                <button
-                    onClick={() => {
-                        setShowUpload(true)
-                        setIsNew(false)
-                        setNewCollectionName("")
-                    }}
-                    className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
-                >
-                    Add new knowledge <Plus className="w-4 h-4" />
-                </button>
+                {canAddKnowledge && (
+                    <button
+                        onClick={() => {
+                            setShowUpload(true)
+                            setIsNew(false)
+                            setNewCollectionName("")
+                        }}
+                        className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
+                    >
+                        Add new knowledge <Plus className="w-4 h-4" />
+                    </button>
+                )}
             </div>
 
             <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-6 min-h-0">
@@ -214,12 +224,14 @@ export default function KnowledgeBase() {
                                         <p className="text-muted-foreground text-sm max-w-sm mt-1 mb-6">
                                             Get started by adding knowledge to this collection.
                                         </p>
-                                        <button
-                                            onClick={() => setShowUpload(true)}
-                                            className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
-                                        >
-                                            Create new knowledge <Plus className="w-4 h-4" />
-                                        </button>
+                                        {canAddKnowledge && (
+                                            <button
+                                                onClick={() => setShowUpload(true)}
+                                                className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
+                                            >
+                                                Create new knowledge <Plus className="w-4 h-4" />
+                                            </button>
+                                        )}
                                     </div>
                                 ) : (
                                     <div className="flex flex-col">
@@ -253,7 +265,7 @@ export default function KnowledgeBase() {
                 </div>
             </div>
 
-            {showUpload && (
+            {showUpload && canAddKnowledge && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
                     <div className="bg-card w-full max-w-lg rounded-xl border shadow-lg animate-in fade-in zoom-in-95 p-6">
                         <h3 className="text-xl font-bold mb-6">Ingest Document</h3>

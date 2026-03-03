@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, Trash2, Edit, ShieldCheck, RefreshCw } from "lucide-react";
 import { Pagination } from "@/components/ui/Pagination";
 import type { AxiosError } from "axios";
+import { useAuth } from "@/context/AuthContext";
 
 type ApiErrorResponse = {
   detail?: string;
@@ -83,6 +84,7 @@ const initialState: State = {
 
 export default function Roles() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const { hasPermission } = useAuth();
   const {
     roles,
     permissionsList,
@@ -94,6 +96,17 @@ export default function Roles() {
     pageSize,
     totalRoles,
   } = state;
+  const canCreateRole = hasPermission("role:create");
+  const canUpdateRole = hasPermission("role:update");
+  const canDeleteRole = hasPermission("role:delete");
+
+  const getErrorDetail = (error: unknown, fallback: string): string | null => {
+    const apiError = error as AxiosError<ApiErrorResponse>;
+    if (apiError.response?.status === 403) {
+      return null;
+    }
+    return apiError.response?.data?.detail || fallback;
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -113,7 +126,8 @@ export default function Roles() {
       dispatch({ type: 'SET_FIELD', field: 'permissionsList', value: permsData });
     } catch (error) {
       console.error(error);
-      toast.error("Failed to fetch roles");
+      const message = getErrorDetail(error, "Failed to fetch roles");
+      if (message) toast.error(message);
     } finally {
       dispatch({ type: 'SET_FIELD', field: 'loading', value: false });
     }
@@ -125,6 +139,14 @@ export default function Roles() {
 
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (editingRole && !canUpdateRole) {
+      toast.error("You don't have permission to update roles");
+      return;
+    }
+    if (!editingRole && !canCreateRole) {
+      toast.error("You don't have permission to create roles");
+      return;
+    }
     try {
       if (editingRole) {
         await rbacService.updateRole(editingRole.name, formData);
@@ -136,8 +158,8 @@ export default function Roles() {
       dispatch({ type: 'CLOSE_MODAL' });
       await fetchData();
     } catch (error) {
-      const apiError = error as AxiosError<ApiErrorResponse>;
-      toast.error(apiError.response?.data?.detail || "Action failed");
+      const message = getErrorDetail(error, "Action failed");
+      if (message) toast.error(message);
     }
   };
 
@@ -148,8 +170,8 @@ export default function Roles() {
       toast.success("Role deleted");
       await fetchData();
     } catch (error) {
-      const apiError = error as AxiosError<ApiErrorResponse>;
-      toast.error(apiError.response?.data?.detail || "Delete failed");
+      const message = getErrorDetail(error, "Delete failed");
+      if (message) toast.error(message);
     }
   };
 
@@ -178,13 +200,15 @@ export default function Roles() {
             >
               <RefreshCw className="w-4 h-4" /> Refresh
             </button>
-            <button
-              type="button"
-              onClick={() => dispatch({ type: 'OPEN_CREATE' })}
-              className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition"
-            >
-              <Plus className="w-4 h-4" /> Create Role
-            </button>
+            {canCreateRole && (
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'OPEN_CREATE' })}
+                className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition"
+              >
+                <Plus className="w-4 h-4" /> Create Role
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -223,15 +247,17 @@ export default function Roles() {
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => dispatch({ type: 'OPEN_EDIT', role })}
-                      className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                      title="Edit"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    {role.name !== "admin" && role.name !== "member" && role.name !== "guest" && (
+                    {canUpdateRole && (
+                      <button
+                        type="button"
+                        onClick={() => dispatch({ type: 'OPEN_EDIT', role })}
+                        className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                        title="Edit"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                    )}
+                    {canDeleteRole && role.name !== "admin" && role.name !== "member" && role.name !== "guest" && (
                       <button
                         type="button"
                         onClick={() => handleDelete(role.name)}

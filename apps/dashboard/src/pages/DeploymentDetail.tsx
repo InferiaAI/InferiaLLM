@@ -15,6 +15,7 @@ import DeploymentConfig from "@/components/deployment/DeploymentConfig"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { LoadingScreen } from "@/components/ui/LoadingScreen"
+import { useAuth } from "@/context/AuthContext"
 
 type TabType = "overview" | "logs" | "terminal" | "guardrail" | "rag" | "prompt_template" | "rate_limit" | "config"
 type ActionModalType = "start" | "stop" | "delete" | null
@@ -85,6 +86,9 @@ export default function DeploymentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { hasPermission } = useAuth()
+  const canUpdateDeployment = hasPermission("deployment:update")
+  const canDeleteDeployment = hasPermission("deployment:delete")
 
   const [state, dispatch] = useReducer(deploymentReducer, initialState);
   const { loading, deleting, processing, deployment, actionModal } = state;
@@ -152,6 +156,14 @@ export default function DeploymentDetail() {
 
   const handleAction = async (action: ActionModalType) => {
     if (!id) return
+    if ((action === "start" || action === "stop") && !canUpdateDeployment) {
+      toast.error("You don't have permission to update deployments")
+      return
+    }
+    if (action === "delete" && !canDeleteDeployment) {
+      toast.error("You don't have permission to delete deployments")
+      return
+    }
     dispatch({ type: 'SET_PROCESSING', payload: true });
     try {
       if (action === "start") await computeApi.post("/deployment/start", { deployment_id: id })
@@ -176,6 +188,8 @@ export default function DeploymentDetail() {
       <DeploymentHeader
         deployment={deployment!}
         isRunning={isRunning}
+        canUpdateDeployment={canUpdateDeployment}
+        canDeleteDeployment={canDeleteDeployment}
         processing={processing}
         deleting={deleting}
         onRefresh={() => void fetchDeployment(false)}
@@ -207,7 +221,25 @@ export default function DeploymentDetail() {
   )
 }
 
-function DeploymentHeader({ deployment, isRunning, processing, deleting, onRefresh, onAction }: { deployment: DeploymentData; isRunning: boolean; processing: boolean; deleting: boolean; onRefresh: () => void; onAction: (a: ActionModalType) => void }) {
+function DeploymentHeader({
+  deployment,
+  isRunning,
+  canUpdateDeployment,
+  canDeleteDeployment,
+  processing,
+  deleting,
+  onRefresh,
+  onAction,
+}: {
+  deployment: DeploymentData;
+  isRunning: boolean;
+  canUpdateDeployment: boolean;
+  canDeleteDeployment: boolean;
+  processing: boolean;
+  deleting: boolean;
+  onRefresh: () => void;
+  onAction: (a: ActionModalType) => void;
+}) {
   const state = (deployment.state || deployment.status || "").toUpperCase()
   return (
     <div className="flex items-center justify-between">
@@ -225,11 +257,17 @@ function DeploymentHeader({ deployment, isRunning, processing, deleting, onRefre
       <div className="flex items-center gap-2">
         <button onClick={onRefresh} disabled={processing} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-300 rounded-md text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 flex items-center gap-2 disabled:opacity-50 transition-colors"><RefreshCcw className={cn("w-4 h-4", processing && "animate-spin")} /> {processing ? "..." : "Refresh"}</button>
         {isRunning ? (
+          canUpdateDeployment && (
           <button onClick={() => onAction('stop')} disabled={processing} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-amber-500/20 text-amber-600 dark:text-amber-500 rounded-md text-sm font-medium hover:bg-amber-50 dark:hover:bg-amber-500/10 flex items-center gap-2 disabled:opacity-50 transition-colors"><Square className="w-4 h-4" /> Stop</button>
+          )
         ) : (
           <div className="flex gap-2">
-            <button onClick={() => onAction('start')} disabled={processing} className="px-5 py-1.5 bg-emerald-600 text-white rounded-md text-sm font-semibold hover:bg-emerald-500 flex items-center gap-2 disabled:opacity-50"><Play className="w-4 h-4 fill-current" /> Start</button>
-            <button onClick={() => onAction('delete')} disabled={deleting} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-red-500/20 text-red-600 dark:text-red-400 rounded-md text-sm font-medium hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-2 disabled:opacity-50 transition-colors"><Trash2 className="w-4 h-4" /> Delete</button>
+            {canUpdateDeployment && (
+              <button onClick={() => onAction('start')} disabled={processing} className="px-5 py-1.5 bg-emerald-600 text-white rounded-md text-sm font-semibold hover:bg-emerald-500 flex items-center gap-2 disabled:opacity-50"><Play className="w-4 h-4 fill-current" /> Start</button>
+            )}
+            {canDeleteDeployment && (
+              <button onClick={() => onAction('delete')} disabled={deleting} className="px-4 py-1.5 bg-white dark:bg-zinc-900 border border-red-500/20 text-red-600 dark:text-red-400 rounded-md text-sm font-medium hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-2 disabled:opacity-50 transition-colors"><Trash2 className="w-4 h-4" /> Delete</button>
+            )}
           </div>
         )}
       </div>

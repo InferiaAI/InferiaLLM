@@ -79,12 +79,22 @@ const router = createBrowserRouter([
         element: <DashboardLayout />,
         children: [
           {
-            index: true,
-            element: <Overview />,
+            element: <PermissionGuard permission="organization:view" />,
+            children: [
+              {
+                index: true,
+                element: <Overview />,
+              },
+            ],
           },
           {
-            path: "insights",
-            element: <Insights />,
+            element: <PermissionGuard permission="deployment:list" />,
+            children: [
+              {
+                path: "insights",
+                element: <Insights />,
+              },
+            ]
           },
           {
             element: <PermissionGuard permission="deployment:list" />,
@@ -173,7 +183,7 @@ const router = createBrowserRouter([
           },
           {
             path: "settings/providers",
-            element: <PermissionGuard permission="admin:all" />,
+            element: <PermissionGuard permission="organization:update" />,
             children: [
               { index: true, element: <ProviderCategories /> },
               { path: ":category", element: <ProviderList /> },
@@ -194,7 +204,8 @@ const router = createBrowserRouter([
           },
           {
             path: "status",
-            element: <Status />,
+            element: <PermissionGuard permission="organization:view" />,
+            children: [{ index: true, element: <Status /> }]
           },
         ],
       },

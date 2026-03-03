@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 import uuid
 import secrets
 
@@ -9,6 +10,7 @@ from inferia.services.api_gateway.db.models import (
     Organization as DBOrganization,
     Invitation as DBInvitation,
     User as DBUser,
+    UserOrganization,
 )
 from inferia.services.api_gateway.schemas.management import (
     OrganizationCreate,
@@ -27,6 +29,9 @@ from datetime import datetime, timedelta, timezone
 def utcnow_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+def build_invite_link_path(token: str) -> str:
+    return f"/auth/accept-invite?token={token}"
+
 
 router = APIRouter(tags=["Organizations"])
 
@@ -34,9 +39,12 @@ router = APIRouter(tags=["Organizations"])
 @router.post("/organizations", response_model=OrganizationResponse, status_code=201)
 async def create_organization(
     org_data: OrganizationCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    request: Request = None,
 ):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+
     # Generate API Key
     api_key = f"sk-inferia-{uuid.uuid4()}"
 
@@ -44,6 +52,21 @@ async def create_organization(
         name=org_data.name, api_key=api_key, log_payloads=org_data.log_payloads
     )
     db.add(new_org)
+    await db.flush()
+
+    # Creator is automatically admin of the new organization.
+    creator_link = UserOrganization(
+        user_id=user_ctx.user_id,
+        org_id=new_org.id,
+        role="admin",
+    )
+    db.add(creator_link)
+
+    creator_result = await db.execute(select(DBUser).where(DBUser.id == user_ctx.user_id))
+    creator = creator_result.scalars().first()
+    if creator and not creator.default_org_id:
+        creator.default_org_id = new_org.id
+
     await db.commit()
     await db.refresh(new_org)
     return new_org
@@ -52,6 +75,7 @@ async def create_organization(
 @router.get("/organizations/me", response_model=OrganizationResponse)
 async def get_my_organization(request: Request, db: AsyncSession = Depends(get_db)):
     user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_VIEW)
 
     if not user_ctx.org_id:
         raise HTTPException(
@@ -113,15 +137,14 @@ async def create_invitation(
         )
 
     # Check if user is already a member of *this* organization
+    normalized_email = invite_data.email.strip().lower()
     existing_user_result = await db.execute(
-        select(DBUser).where(DBUser.email == invite_data.email)
+        select(DBUser).where(func.lower(DBUser.email) == normalized_email)
     )
     existing_user = existing_user_result.scalars().first()
 
     if existing_user:
         # Check membership
-        from inferia.services.api_gateway.db.models import UserOrganization
-
         membership = await db.execute(
             select(UserOrganization).where(
                 UserOrganization.user_id == existing_user.id,
@@ -136,7 +159,7 @@ async def create_invitation(
     # Check for existing pending invitation
     existing_invite = await db.execute(
         select(DBInvitation).where(
-            DBInvitation.email == invite_data.email,
+            func.lower(DBInvitation.email) == normalized_email,
             DBInvitation.org_id == user_ctx.org_id,
             DBInvitation.accepted_at == None,
             DBInvitation.expires_at > utcnow_naive(),
@@ -151,7 +174,7 @@ async def create_invitation(
     expires = utcnow_naive() + timedelta(hours=48)
 
     new_invite = DBInvitation(
-        email=invite_data.email,
+        email=normalized_email,
         role=invite_data.role,
         org_id=user_ctx.org_id,
         created_by=user_ctx.user_id,
@@ -163,8 +186,7 @@ async def create_invitation(
     await db.commit()
     await db.refresh(new_invite)
 
-    base_url = "http://localhost:3001"
-    invite_link = f"{base_url}/auth/accept-invite?token={token}"
+    invite_link = build_invite_link_path(token)
 
     return InviteResponse(
         id=new_invite.id,
@@ -194,7 +216,6 @@ async def list_invitations(request: Request, db: AsyncSession = Depends(get_db))
     invites = await db.execute(invites_query)
 
     response_list = []
-    base_url = "http://localhost:3001"
 
     for inv in invites.scalars().all():
         response_list.append(
@@ -203,7 +224,7 @@ async def list_invitations(request: Request, db: AsyncSession = Depends(get_db))
                 email=inv.email,
                 role=inv.role,
                 token=inv.token,
-                invite_link=f"{base_url}/auth/accept-invite?token={inv.token}",
+                invite_link=build_invite_link_path(inv.token),
                 status="pending",
                 expires_at=inv.expires_at,
                 created_at=inv.created_at,

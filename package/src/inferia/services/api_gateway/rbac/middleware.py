@@ -1,12 +1,21 @@
 from fastapi import Request, HTTPException, status, Depends
 from fastapi.security import HTTPBearer
 from typing import Optional, List
+from fastapi.responses import JSONResponse
 
 from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
+from inferia.services.api_gateway.rbac.permissions import normalize_permissions
 
 security = HTTPBearer()
+
+def _auth_error_response(status_code: int, detail: str, headers: Optional[dict] = None) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": detail},
+        headers=headers or {},
+    )
 
 
 async def auth_middleware(request: Request, call_next):
@@ -39,24 +48,24 @@ async def auth_middleware(request: Request, call_next):
     # Extract token from Authorization header
     auth_header = request.headers.get("Authorization")
     if not auth_header:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
+        return _auth_error_response(
+            status.HTTP_401_UNAUTHORIZED,
+            "Missing Authorization header",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     try:
         scheme, token = auth_header.split()
         if scheme.lower() != "bearer":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication scheme",
+            return _auth_error_response(
+                status.HTTP_401_UNAUTHORIZED,
+                "Invalid authentication scheme",
                 headers={"WWW-Authenticate": "Bearer"},
             )
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Authorization header format",
+        return _auth_error_response(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid Authorization header format",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -79,7 +88,7 @@ async def auth_middleware(request: Request, call_next):
                     if r.permissions:
                         permissions_set.update(r.permissions)
 
-            permissions = list(permissions_set)
+            permissions, _, _ = normalize_permissions(permissions_set)
 
             # Mock Quota (until quota model implemented)
             # Default to high limit
@@ -103,13 +112,15 @@ async def auth_middleware(request: Request, call_next):
             request.state.user = user_context
 
         except HTTPException as e:
-            # Re-raise HTTP exceptions
-            raise e
+            return _auth_error_response(
+                e.status_code,
+                e.detail if isinstance(e.detail, str) else str(e.detail),
+                headers=getattr(e, "headers", None),
+            )
         except Exception as e:
-            # Log error?
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Authentication failed: {str(e)}",
+            return _auth_error_response(
+                status.HTTP_401_UNAUTHORIZED,
+                f"Authentication failed: {str(e)}",
             )
 
     response = await call_next(request)
@@ -128,31 +139,18 @@ def get_current_user_from_request(request: Request) -> UserContext:
 
 def require_role(allowed_roles: List[str]):
     """
-    Dependency factory to enforce role-based access control.
+    Deprecated dependency factory.
+
+    Role-based checks are intentionally disabled in favor of permission-based RBAC.
     """
 
     def role_dependency(user: UserContext = Depends(get_current_user_from_request)):
-        # Normalize roles to set for O(1) lookup
-        user_roles = set(user.roles or [])
-
-        # Check if user has at least one of the allowed roles
-        # Note: We assume role names in DB match those passed here (e.g. "admin", "developer")
-
-        # If admin is in allowed_roles, checking intersection handles it.
-        # But if we want Admin to ALWAYS have access regardless of allowed_roles (unless implicit),
-        # typically we explicitly check. For now, let's stick to the requested list.
-
-        has_permission = False
-        for role in allowed_roles:
-            if role in user_roles:
-                has_permission = True
-                break
-
-        if not has_permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Operation not permitted. Required roles: {allowed_roles}",
-            )
-        return user
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Role-based authorization is disabled. "
+                "Use permission-based checks via authz_service.require_permission."
+            ),
+        )
 
     return role_dependency

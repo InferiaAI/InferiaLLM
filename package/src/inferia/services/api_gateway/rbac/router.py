@@ -15,8 +15,7 @@ from inferia.services.api_gateway.models import (
 )
 from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.rbac.middleware import get_current_user_from_request
-
-# from rbac.authorization import authz_service # Temporarily disabled or needs refactor
+from inferia.services.api_gateway.rbac.authorization import authz_service
 from inferia.services.api_gateway.db.database import get_db
 from inferia.services.api_gateway.db.models import (
     User as DBUser,
@@ -26,6 +25,7 @@ from inferia.services.api_gateway.db.models import (
 )
 from inferia.services.api_gateway.models import OrganizationBasicInfo, SwitchOrgRequest
 from sqlalchemy.future import select
+from sqlalchemy import func
 import uuid
 import secrets
 import os
@@ -50,6 +50,9 @@ def utcnow_naive():
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 security = HTTPBearer()
+
+def build_invite_link_path(token: str) -> str:
+    return f"/auth/accept-invite?token={token}"
 
 
 @router.post("/login", response_model=AuthToken)
@@ -160,7 +163,9 @@ async def register_invite(
         raise HTTPException(status_code=400, detail="Invitation expired")
 
     # 2. Check if user exists (Should use Accept Invite flow if exists, but handling edge cases)
-    existing = await db.execute(select(DBUser).where(DBUser.email == invite.email))
+    existing = await db.execute(
+        select(DBUser).where(func.lower(DBUser.email) == invite.email.lower())
+    )
     if existing.scalars().first():
         raise HTTPException(
             status_code=400,
@@ -316,14 +321,12 @@ async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
     if invite.accepted_at:
         raise HTTPException(status_code=400, detail="Invitation already accepted")
 
-    # We mock invite link here as we don't store it, just reconstruct for response/validation
-    base_url = "http://localhost:3001"
     return InviteResponse(
         id=invite.id,
         email=invite.email,
         role=invite.role,
         token=invite.token,
-        invite_link=f"{base_url}/auth/accept-invite?token={invite.token}",
+        invite_link=build_invite_link_path(invite.token),
         status="pending",
         expires_at=invite.expires_at,
         created_at=invite.created_at,
@@ -331,11 +334,12 @@ async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/refresh", response_model=AuthToken)
-async def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def refresh_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
     """Refresh access token using refresh token."""
-    # Note: refresh logic also needs DB update if strictly following pattern,
-    # but verify_token doesn't check DB in current implementation (stateless).
-    return auth_service.refresh_access_token(credentials.credentials)
+    return await auth_service.refresh_access_token(credentials.credentials, db)
 
 
 @router.post("/logout")
@@ -467,9 +471,12 @@ async def get_current_user_info(request: Request, db: AsyncSession = Depends(get
 async def get_user_permissions(request: Request):
     """Get current user's permissions and allowed models."""
     user_context = get_current_user_from_request(request)
-    permissions = user_context.permissions
-
-    allowed_models = ["gpt-4", "gpt-3.5-turbo"]  # Temporary fallback
+    permissions = user_context.permissions or []
+    allowed_models = authz_service.get_allowed_models(user_context)
+    return {
+        "permissions": permissions,
+        "allowed_models": allowed_models,
+    }
 
 
 @router.post("/totp/setup", response_model=TOTPSetupResponse)
