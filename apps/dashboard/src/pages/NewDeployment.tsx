@@ -21,6 +21,7 @@ import {
   type ModelTypeKey
 } from "@/services/huggingfaceService"
 import { calculateCompatibility, fetchExternalRegistry, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
+import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 
 // --- Constants ---
 
@@ -905,6 +906,15 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
           </div>
 
           <p className="text-sm font-medium opacity-90 leading-snug mb-5 decoration-current/20">{compatibility.reason}</p>
+
+          <div className="mb-6">
+            <CompatibilityProjectionChart
+              compatibility={compatibility}
+              poolName={selectedPool?.pool_name}
+              inputTokens={200}
+              outputTokens={200}
+            />
+          </div>
 
           {/* Multi-Dimensional Breakdown */}
           <div className="space-y-3 mb-6">

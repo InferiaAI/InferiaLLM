@@ -109,6 +109,104 @@ export interface CompatibilityResult {
     };
 }
 
+export interface CompatibilityProjectionPoint {
+    concurrency: number;
+    ttftSeconds: number;
+    referenceTtftSeconds: number;
+    totalTps: number;
+    tpsPerUser: number;
+}
+
+export interface CompatibilityProjectionOptions {
+    concurrencyLevels?: number[];
+    inputTokens?: number;
+    outputTokens?: number;
+}
+
+export const DEFAULT_CONCURRENCY_LEVELS = [1, 2, 5, 10, 20, 50, 100, 200, 500];
+
+const FIT_LEVEL_CONCURRENCY_PENALTY: Record<FitLevel, number> = {
+    Perfect: 0.9,
+    Good: 1.0,
+    Marginal: 1.25,
+    TooTight: 1.55,
+};
+
+function clampNumber(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Builds a TTFT-vs-concurrency projection from compatibility outputs.
+ *
+ * Derived from existing compatibility logic:
+ * - Base throughput comes from `estimatedTps` (bandwidth and model-size formula).
+ * - Pressure comes from `requiredVram / availableVram`.
+ * - Fit-level contributes extra concurrency penalty.
+ *
+ * The resulting curve approximates batching gains at low/medium concurrency and
+ * tail-latency growth at high concurrency.
+ */
+export function projectCompatibilityPerformance(
+    compatibility: CompatibilityResult,
+    options?: CompatibilityProjectionOptions
+): CompatibilityProjectionPoint[] {
+    const levels = (options?.concurrencyLevels && options.concurrencyLevels.length > 0)
+        ? Array.from(new Set(options.concurrencyLevels
+            .filter((value) => Number.isFinite(value) && value > 0)
+            .map((value) => Math.round(value))
+        )).sort((a, b) => a - b)
+        : DEFAULT_CONCURRENCY_LEVELS;
+
+    const inputTokens = Math.max(1, options?.inputTokens ?? 200);
+    const outputTokens = Math.max(1, options?.outputTokens ?? 200);
+    const tokenScale = clampNumber((inputTokens + outputTokens) / 400, 0.5, 3.0);
+
+    const safeAvailableVram = Math.max(compatibility.availableVram, 0.1);
+    const vramPressure = clampNumber(compatibility.requiredVram / safeAvailableVram, 0.1, 1.8);
+    const speedRatio = clampNumber(compatibility.details.speedScore / 100, 0, 1);
+    const fitPenalty = FIT_LEVEL_CONCURRENCY_PENALTY[compatibility.fitLevel];
+
+    const batchingGainMax = (0.6 + speedRatio * 1.4) * Math.max(0.45, 1 - Math.max(vramPressure - 0.85, 0) * 0.8);
+    const baseTtftSeconds =
+        (0.1 + (1 - speedRatio) * 0.24 + Math.max(vramPressure - 0.9, 0) * 0.2)
+        * Math.pow(tokenScale, 0.35);
+
+    const referencePressure = 0.7;
+    const referenceFitPenalty = FIT_LEVEL_CONCURRENCY_PENALTY.Perfect;
+    const ttftGrowthMultiplier = 22 * Math.pow(tokenScale, 0.25);
+
+    return levels.map((concurrency) => {
+        const normalizedConcurrency = Math.max(1, concurrency);
+
+        const contentionPenalty = 1 + Math.pow((normalizedConcurrency - 1) / 120, 1.18)
+            * Math.pow(Math.max(vramPressure - 0.55, 0), 1.3)
+            * fitPenalty
+            * 1.7;
+        const batchingGain = 1 + batchingGainMax * (1 - Math.exp(-(normalizedConcurrency - 1) / 36));
+
+        const totalTps = Math.max(0.05, (compatibility.estimatedTps * batchingGain) / contentionPenalty);
+        const tpsPerUser = totalTps / normalizedConcurrency;
+
+        const ttftGrowth = 1 + Math.pow((normalizedConcurrency - 1) / 110, 1.22)
+            * Math.pow(vramPressure, 1.9)
+            * fitPenalty
+            * ttftGrowthMultiplier;
+        const referenceTtftGrowth = 1 + Math.pow((normalizedConcurrency - 1) / 110, 1.22)
+            * Math.pow(referencePressure, 1.9)
+            * referenceFitPenalty
+            * ttftGrowthMultiplier;
+
+        return {
+            concurrency: normalizedConcurrency,
+            ttftSeconds: baseTtftSeconds * ttftGrowth,
+            referenceTtftSeconds: baseTtftSeconds * referenceTtftGrowth,
+            totalTps,
+            tpsPerUser,
+        };
+    });
+}
+
 export interface ExternalModel {
     name: string;
     provider: string;
