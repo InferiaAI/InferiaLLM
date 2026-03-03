@@ -16,6 +16,7 @@ import {
   EMBEDDING_MODELS,
   MODEL_TYPES,
   formatDownloads,
+  getModelConfig,
   type HFModel,
   type ModelTypeKey
 } from "@/services/huggingfaceService"
@@ -832,12 +833,33 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     selectedPool
   } = state;
 
+  const { data: hfConfig } = useQuery({
+    queryKey: ['modelConfig', modelId],
+    queryFn: () => getModelConfig(modelId),
+    enabled: !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
+    staleTime: 1000 * 60 * 60 // 1 hour
+  });
+
+  // Extract full architecture details from HF config
+  const hfContextLength = hfConfig?.max_position_embeddings || hfConfig?.seq_length || hfConfig?.max_sequence_length;
+  const hfHiddenSize = hfConfig?.hidden_size;
+  const hfNumLayers = hfConfig?.num_hidden_layers;
+  const hfNumAttentionHeads = hfConfig?.num_attention_heads;
+  const hfNumKeyValueHeads = hfConfig?.num_key_value_heads; // GQA: e.g. Llama 3 uses 8 KV heads vs 32 attention heads
+
   const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"))
     ? calculateCompatibility(
       modelId,
       selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
       quantization || dtype,
-      { vram: selectedPool.gpu_specs?.[0]?.vram },
+      {
+        vram: selectedPool.gpu_specs?.[0]?.vram,
+        contextLength: hfContextLength,
+        hiddenSize: hfHiddenSize,
+        numLayers: hfNumLayers,
+        numAttentionHeads: hfNumAttentionHeads,
+        numKeyValueHeads: hfNumKeyValueHeads
+      },
       externalRegistry
     )
     : null;
@@ -921,6 +943,36 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
               <div className="text-lg font-black">{compatibility.requiredVram.toFixed(1)} <span className="text-xs font-normal opacity-70">/ {compatibility.availableVram} GB</span></div>
             </div>
           </div>
+
+          {compatibility.recommendedVllmConfig && selectedEngine === 'vllm' && (
+            <div className="mt-5 pt-4 border-t border-current/15">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] uppercase font-black tracking-widest opacity-60 flex items-center gap-1.5">
+                  <Terminal className="w-3 h-3" /> Recommended vLLM Settings
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cfg = compatibility.recommendedVllmConfig!;
+                    dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: cfg.maxModelLen.toString() });
+                    dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: cfg.gpuMemoryUtilization.toString() });
+                    dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: cfg.enforceEager });
+                    dispatch({ type: 'SET_FIELD', field: 'dtype', value: cfg.dtype });
+                    toast.success("Applied vLLM optimizations for this hardware.");
+                  }}
+                  className="px-3 py-1 bg-current/10 hover:bg-current/20 rounded-md text-[10px] font-black uppercase transition-all border border-current/20 active:scale-95"
+                >
+                  Apply Settings
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-y-2 text-[10px] font-medium opacity-80">
+                <div className="flex justify-between pr-4"><span>Max Length:</span> <span>{compatibility.recommendedVllmConfig.maxModelLen}</span></div>
+                <div className="flex justify-between pl-4 border-l border-current/10"><span>GPU Util:</span> <span>{compatibility.recommendedVllmConfig.gpuMemoryUtilization}</span></div>
+                <div className="flex justify-between pr-4"><span>Eager Mode:</span> <span>{compatibility.recommendedVllmConfig.enforceEager ? 'Yes' : 'No'}</span></div>
+                <div className="flex justify-between pl-4 border-l border-current/10"><span>DType:</span> <span className="uppercase">{compatibility.recommendedVllmConfig.dtype}</span></div>
+              </div>
+            </div>
+          )}
 
           {compatibility.fitLevel === "TooTight" && (
             <div className="mt-4 p-3 bg-rose-500/15 rounded-lg border-2 border-rose-500/30 text-xs font-bold flex items-start gap-3 text-rose-600 dark:text-rose-400">

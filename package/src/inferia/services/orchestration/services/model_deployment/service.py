@@ -10,19 +10,21 @@ from inferia.services.orchestration.v1 import (
 )
 
 
-def parse_uuid(value: str, field: str, context):
+async def parse_uuid(value: str, field: str, context):
     try:
         return UUID(value)
     except ValueError:
-        context.abort(
+        await context.abort(
             grpc.StatusCode.INVALID_ARGUMENT,
             f"Invalid UUID for field '{field}': {value}",
         )
+        return None
     except (TypeError, AttributeError):
-        context.abort(
+        await context.abort(
             grpc.StatusCode.INVALID_ARGUMENT,
             f"Expected string for field '{field}', got {type(value).__name__}",
         )
+        return None
 
 
 class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceServicer):
@@ -33,7 +35,7 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
     # DEPLOY
     # -------------------------------------------------
     async def DeployModel(self, request, context):
-        pool_id = parse_uuid(request.pool_id, "pool_id", context)
+        pool_id = await parse_uuid(request.pool_id, "pool_id", context)
 
         deployment_id = await self.controller.deploy_model(
             model_name=request.model_name,
@@ -62,16 +64,19 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
 
     async def GetDeployment(self, request, context):
         logger.info(f"GetDeployment requested: {request.deployment_id}")
-        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
+        deployment_id = await parse_uuid(request.deployment_id, "deployment_id", context)
+        if deployment_id is None:
+            return
 
         logger.info(f"Fetching deployment {deployment_id} from controller")
         d = await self.controller.get_deployment(deployment_id)
         if not d:
             logger.warning(f"Deployment {deployment_id} not found")
-            context.abort(
+            await context.abort(
                 grpc.StatusCode.NOT_FOUND,
                 "Deployment not found",
             )
+            return
         logger.info(f"Found deployment: {d.get('deployment_id')}")
 
         return model_deployment_pb2.GetDeploymentResponse(
@@ -106,7 +111,7 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
         )
         try:
             pool_id = (
-                parse_uuid(request.pool_id, "pool_id", context)
+                await parse_uuid(request.pool_id, "pool_id", context)
                 if request.pool_id
                 else None
             )
@@ -157,7 +162,9 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
     # START
     # -------------------------------------------------
     async def StartDeployment(self, request, context):
-        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
+        deployment_id = await parse_uuid(request.deployment_id, "deployment_id", context)
+        if deployment_id is None:
+            return
 
         try:
             next_state = await self.controller.start_deployment(deployment_id)
@@ -178,14 +185,18 @@ class ModelDeploymentService(model_deployment_pb2_grpc.ModelDeploymentServiceSer
     # -------------------------------------------------
 
     async def DeleteDeployment(self, request, context):
-        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
+        deployment_id = await parse_uuid(request.deployment_id, "deployment_id", context)
+        if deployment_id is None:
+            return
 
         await self.controller.request_delete(deployment_id)
 
         return model_deployment_pb2.DeleteDeploymentResponse(accepted=True)
 
     async def UpdateDeployment(self, request, context):
-        deployment_id = parse_uuid(request.deployment_id, "deployment_id", context)
+        deployment_id = await parse_uuid(request.deployment_id, "deployment_id", context)
+        if deployment_id is None:
+            return
 
         try:
             await self.controller.update_deployment(

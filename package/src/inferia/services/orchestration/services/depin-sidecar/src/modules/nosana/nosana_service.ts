@@ -168,54 +168,70 @@ export class NosanaService {
     }
 
     /**
-     * Authenticate with the Nosana API to sign a message for node communication
-     * POST /api/auth/sign-message/external
+     * Get deployment-scoped authorization header using the Nosana SDK.
+     * Uses client.api.deployments.get(id).generateAuthHeader() which properly
+     * generates a signed auth header for node communication.
+     * Also returns the deployment owner (vault address) for node auth.
      */
-    async signMessageExternal(message: string): Promise<{ signature: string; message: string; userAddress: string }> {
+    async getDeploymentAuthHeader(deploymentId: string): Promise<{ header: string; owner: string }> {
         if (this.authMode !== 'api') {
-            throw new Error('signMessageExternal is only available in API mode');
+            throw new Error('getDeploymentAuthHeader is only available in API mode');
         }
 
-        // Check cache
+        // Check cache (keyed by deploymentId)
         const now = Date.now();
+        const cacheKey = `deployment:${deploymentId}`;
         if (
             this.cachedApiAuth &&
-            this.cachedApiAuth.message === message &&
+            this.cachedApiAuth.message === cacheKey &&
             (now - this.cachedApiAuth.timestamp) < this.API_AUTH_CACHE_TTL_MS
         ) {
-            console.log('[API Auth] Using cached signature');
-            return {
-                signature: this.cachedApiAuth.signature,
-                message: this.cachedApiAuth.message,
-                userAddress: this.cachedApiAuth.userAddress
-            };
+            console.log(`[API Auth] Using cached header for deployment ${deploymentId}`);
+            return { header: this.cachedApiAuth.signature, owner: this.cachedApiAuth.userAddress };
         }
 
-        console.log(`[API Auth] Requesting signed message from Nosana API...`);
-        const result = await this.apiRequest<{ signature: string; message: string; userAddress: string }>('/auth/sign-message/external', {
-            method: 'POST',
-            body: { message }
-        });
+        console.log(`[API Auth] Requesting auth header for deployment ${deploymentId} via SDK...`);
+        const deployment = await this.client.api.deployments.get(deploymentId);
+        const header = await (deployment as any).generateAuthHeader();
+        const owner = (deployment as any).owner || (deployment as any).vault || '';
 
-        // Store in cache
+        console.log(`[API Auth] Header value (first 40 chars): ${String(header).substring(0, 40)}...`);
+        console.log(`[API Auth] Deployment owner/vault: ${owner}`);
+
+        // Cache the result (reusing cachedApiAuth structure)
         this.cachedApiAuth = {
-            ...result,
+            signature: header,
+            message: cacheKey,
+            userAddress: owner,
             timestamp: now
         };
 
-        console.log(`[API Auth] Received signature for user: ${result.userAddress}`);
-        return result;
+        console.log(`[API Auth] Received auth header for deployment ${deploymentId}`);
+        return { header, owner };
     }
 
     /**
-     * Generate authentication header for node communication in API mode
-     * Format: MESSAGE:SIGNATURE (same as wallet mode)
+     * Generate authentication header for node communication in API mode.
+     * Uses the SDK's deployment.generateAuthHeader() for proper signed headers.
+     * The API returns a raw signature — we format it as MESSAGE:SIGNATURE
+     * which is what Nosana nodes expect for authentication.
+     * @param deploymentId - The Nosana deployment ID to get auth header for
      */
-    async generateApiNodeAuthHeader(): Promise<{ header: string; userAddress: string }> {
-        const auth = await this.signMessageExternal(SIGN_MESSAGE);
+    async generateApiNodeAuthHeader(deploymentId: string): Promise<{ header: string; userAddress: string }> {
+        const result = await this.getDeploymentAuthHeader(deploymentId);
+
+        // The /deployments/{deployment}/header endpoint returns just the raw signature.
+        // Nosana nodes expect auth in MESSAGE:SIGNATURE format.
+        // If the header already contains ':', it's already formatted; otherwise prepend the message.
+        let formattedHeader = result.header;
+        if (!formattedHeader.includes(':')) {
+            formattedHeader = `${SIGN_MESSAGE}:${formattedHeader}`;
+            console.log(`[API Auth] Formatted header as MESSAGE:SIGNATURE (message: "${SIGN_MESSAGE}")`);
+        }
+
         return {
-            header: `${auth.message}:${auth.signature}`,
-            userAddress: auth.userAddress
+            header: formattedHeader,
+            userAddress: result.owner
         };
     }
 
@@ -552,13 +568,14 @@ export class NosanaService {
             let fetchHeaders: any = { 'Content-Type': 'application/json' };
             let walletAddress: string | undefined;
 
-            if (this.authMode === 'api') {
-                // Use the external signing API to get a signed message for node authentication
-                console.log(`[Confidential] Requesting Auth Header from API for job ${jobAddress}...`);
-                const apiAuth = await this.generateApiNodeAuthHeader();
+            if (this.authMode === 'api' && deploymentUuid) {
+                // Use the deployment-scoped header endpoint for node authentication
+                console.log(`[Confidential] Requesting Auth Header from API for deployment ${deploymentUuid}...`);
+                const apiAuth = await this.generateApiNodeAuthHeader(deploymentUuid);
                 fetchHeaders['Authorization'] = apiAuth.header;
+                fetchHeaders['x-user-id'] = apiAuth.userAddress; // Node needs this to verify signature
                 walletAddress = apiAuth.userAddress;
-                console.log(`[Confidential] Got API auth header for wallet: ${walletAddress}`);
+                console.log(`[Confidential] Got API auth header for deployment: ${deploymentUuid} (owner: ${walletAddress})`);
             } else {
                 const headers = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
                 headers.forEach((value, key) => { fetchHeaders[key] = value; });
@@ -591,9 +608,9 @@ export class NosanaService {
                     await new Promise(r => setTimeout(r, 5000));
 
                     // Regenerate headers - clear cache to force fresh signature
-                    if (this.authMode === 'api') {
-                        this.cachedApiAuth = null; // Clear cache to get fresh signature
-                        const apiAuth = await this.generateApiNodeAuthHeader();
+                    if (this.authMode === 'api' && deploymentUuid) {
+                        this.cachedApiAuth = null; // Clear cache to force fresh signature
+                        const apiAuth = await this.generateApiNodeAuthHeader(deploymentUuid);
                         fetchHeaders['Authorization'] = apiAuth.header;
                     } else {
                         const newHeaders = await this.client.authorization.generateHeaders(dummyIpfsHash, { includeTime: true } as any);
@@ -819,10 +836,20 @@ export class NosanaService {
         }
     }
 
-    async getLogStreamer() {
+    /**
+     * Get a log streamer for a job/deployment.
+     * In API mode, passes generateApiNodeAuthHeader as the apiAuthProvider callback
+     * to the LogStreamer so it can authenticate with the Nosana node.
+     * @param deploymentId - The deployment ID (required for API mode auth)
+     */
+    async getLogStreamer(deploymentId?: string) {
         if (this.authMode === 'api') {
-            console.log("[LogStreamer] Using API mode - creating ephemeral log streamer");
-            return new LogStreamer();
+            if (!deploymentId) {
+                console.warn("[LogStreamer] API mode requires deploymentId for auth. Log streaming may fail.");
+            }
+            console.log(`[LogStreamer] Using API mode - creating log streamer with deployment header (deployment: ${deploymentId})`);
+            const apiAuthProvider = () => this.generateApiNodeAuthHeader(deploymentId!);
+            return new LogStreamer(null, apiAuthProvider);
         } else {
             if (!this.client.wallet) throw new Error("Wallet not initialized");
             return new LogStreamer(this.client.wallet as any);

@@ -85,13 +85,13 @@ export type ModelTypeKey = keyof typeof MODEL_TYPES;
  */
 export function inferModelType(pipelineTag: string | null): ModelTypeKey {
   if (!pipelineTag) return "inference";
-  
+
   for (const [typeKey, typeInfo] of Object.entries(MODEL_TYPES)) {
     if (typeInfo.pipeline_tags.includes(pipelineTag)) {
       return typeKey as ModelTypeKey;
     }
   }
-  
+
   return "inference";
 }
 
@@ -102,33 +102,33 @@ export async function searchHFModels(
   filters: ModelSearchFilters = {}
 ): Promise<HFModel[]> {
   const params = new URLSearchParams();
-  
+
   if (filters.search) {
     params.append("search", filters.search);
   }
-  
+
   if (filters.pipeline_tag) {
     params.append("filter", filters.pipeline_tag);
   }
-  
+
   if (filters.library) {
     params.append("library", filters.library);
   }
-  
+
   if (filters.sort) {
     params.append("sort", filters.sort);
   }
-  
+
   params.append("limit", String(filters.limit || 50));
   params.append("full", "true");
   params.append("config", "true");
-  
+
   const response = await fetch(`${HF_API_BASE}/models?${params.toString()}`);
-  
+
   if (!response.ok) {
     throw new Error(`Failed to fetch models: ${response.statusText}`);
   }
-  
+
   return response.json();
 }
 
@@ -141,7 +141,7 @@ export async function getPopularModels(
 ): Promise<HFModel[]> {
   const typeInfo = MODEL_TYPES[modelType];
   const pipelineTag = typeInfo.pipeline_tags[0];
-  
+
   return searchHFModels({
     pipeline_tag: pipelineTag,
     sort: "downloads",
@@ -156,12 +156,25 @@ export async function getModelDetails(modelId: string): Promise<HFModel> {
   const response = await fetch(
     `${HF_API_BASE}/models/${modelId}?full=true&config=true`
   );
-  
+
   if (!response.ok) {
     throw new Error(`Failed to fetch model details: ${response.statusText}`);
   }
-  
+
   return response.json();
+}
+
+/**
+ * Get model native config.json
+ */
+export async function getModelConfig(modelId: string): Promise<any> {
+  try {
+    const res = await fetch(`https://huggingface.co/${modelId}/raw/main/config.json`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 /**

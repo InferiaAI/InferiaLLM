@@ -517,7 +517,9 @@ wss.on('connection', (ws: WebSocket) => {
                         }
 
                         // 2. If running, use streamer
-                        streamer = await service.getLogStreamer();
+                        // Pass Nosana deployment ID for SDK auth header generation
+                        const nosanaDeploymentId = (job as any).deploymentId || jobId;
+                        streamer = await service.getLogStreamer(nosanaDeploymentId);
 
                         if (!streamer) {
                             // API mode - use polling-based log retrieval

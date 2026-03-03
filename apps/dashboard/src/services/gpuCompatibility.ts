@@ -100,7 +100,13 @@ export interface CompatibilityResult {
         speedScore: number;
         fitScore: number;
         contextScore: number;
-    }
+    };
+    recommendedVllmConfig?: {
+        maxModelLen: number;
+        gpuMemoryUtilization: number;
+        enforceEager: boolean;
+        dtype: string;
+    };
 }
 
 export interface ExternalModel {
@@ -155,7 +161,16 @@ export function calculateCompatibility(
     modelId: string,
     gpuId: string,
     quantization?: string,
-    overrides?: { parameters?: number; vram?: number; bandwidth?: number; contextLength?: number },
+    overrides?: {
+        parameters?: number;
+        vram?: number;
+        bandwidth?: number;
+        contextLength?: number;
+        hiddenSize?: number;
+        numLayers?: number;
+        numAttentionHeads?: number;
+        numKeyValueHeads?: number;
+    },
     externalRegistry?: ExternalModel[]
 ): CompatibilityResult {
     // 1. Get Model Data
@@ -164,9 +179,21 @@ export function calculateCompatibility(
 
     // 2. Determine Parameters and Base Requirements
     const isMoE = profile?.isMoE || modelId.toLowerCase().includes("mixtral") || modelId.toLowerCase().includes("moe") || externalModel?.architecture === "mixtral";
-    const totalParams = overrides?.parameters || profile?.parameters || (externalModel?.parameters_raw ? externalModel.parameters_raw / 1e9 : 7);
+
+    // Parameter extraction: overrides > profile > external registry > model name regex > default 7B
+    let totalParams = overrides?.parameters || profile?.parameters || (externalModel?.parameters_raw ? externalModel.parameters_raw / 1e9 : 0);
+    if (!totalParams) {
+        const nameMatch = modelId.match(/(\d+\.?\d*)b/i);
+        totalParams = nameMatch ? parseFloat(nameMatch[1]) : 7;
+    }
+
     const activeParams = isMoE ? (profile?.activeParameters || totalParams * 0.25) : totalParams;
     const contextLength = overrides?.contextLength || profile?.contextLength || externalModel?.context_length || 4096;
+
+    const numLayers = overrides?.numLayers || profile?.numLayers || 32;
+    const hiddenSize = overrides?.hiddenSize || profile?.hiddenSize || 4096;
+    const numAttentionHeads = overrides?.numAttentionHeads || 32;
+    const numKeyValueHeads = overrides?.numKeyValueHeads || numAttentionHeads; // Default: MHA (no GQA)
 
     // 3. Get GPU Data
     const normalizedId = gpuId.toUpperCase().replace(/[\s-]/g, "");
@@ -175,90 +202,121 @@ export function calculateCompatibility(
         return normalizedId.includes(normalizedKey) || normalizedKey.includes(normalizedId);
     }) || "GENERIC-GPU";
     const gpuSpecFromRegistry = GPU_SPECS[matchKey];
-    const gpuSpec = {
+    const rawGpuSpec = {
         name: gpuSpecFromRegistry.name,
         vram: (overrides?.vram && overrides.vram > 0) ? overrides.vram : gpuSpecFromRegistry.vram,
         bandwidth: (overrides?.bandwidth && overrides.bandwidth > 0) ? overrides.bandwidth : gpuSpecFromRegistry.bandwidth
     };
 
-    // 4. Advanced Memory Calculation
-    const bytesPerParam = (QUANTIZATION_WEIGHTS as any)[quantization || "q4_k_m"] || 0.6;
-    const kvCacheGB = calculateKVCacheGB(profile?.hiddenSize || 4096, profile?.numLayers || 32, contextLength);
+    // VRAM Aggregation: Apply OS/Driver Buffer Overhead (deduct 0.5 GB)
+    const availableVram = Math.max(0, rawGpuSpec.vram - 0.5);
 
-    // Effective VRAM Calculation (MoE Aware)
-    // If we can offload experts, we only need VRAM for active params + KV cache
-    const effectiveModelSizeGB = activeParams * bytesPerParam;
+    // 4. Advanced Memory Calculation (llmfit deterministic formulas)
+    // Weight Memory calculation ($M_{weights} = (P \times Q) / (8 \times 1024^3)$ gb)
+    const bytesPerParam = (QUANTIZATION_WEIGHTS as any)[quantization || "q4_k_m"] || 0.6;
     const totalModelSizeGB = totalParams * bytesPerParam;
+    const effectiveModelSizeGB = activeParams * bytesPerParam;
+
+    // KV Cache Memory Calculation (GQA-aware)
+    // M_kv = 2 * L * (kv_head_dim) * C * B, using 2 bytes (FP16/BF16) per element
+    // GQA: effective KV hidden dim = hidden_size * (num_kv_heads / num_attn_heads)
+    const gqaRatio = numKeyValueHeads / numAttentionHeads;
+    const kvHiddenDim = hiddenSize * gqaRatio;
+    const bytesPerKVCacheElement = 2;
+    const mKvBytes = 2 * numLayers * kvHiddenDim * contextLength * bytesPerKVCacheElement;
+    const kvCacheGB = mKvBytes / (1024 ** 3);
 
     // requiredVram assumes full model in VRAM for high performance (Perfect Fit)
-    // marginalRequiredVram assumes expert offloading (Good Fit)
+    // marginalRequiredVram assumes expert offloading (Good Fit) with active params only
     const idealRequiredVram = totalModelSizeGB + kvCacheGB;
     const offloadRequiredVram = effectiveModelSizeGB + kvCacheGB;
 
-    const availableVram = gpuSpec.vram;
-
     // 5. Speed Estimation (TPS)
-    // Formula: (Bandwidth / Model Size) * Efficiency
-    // Penalties: MoE Expert Switching (0.8x)
-    let baseEstimatedTps = (gpuSpec.bandwidth / Math.max(totalModelSizeGB, 1)) * 0.55;
+    // Estimated TPS = Memory Bandwidth (GB/s) / M_weights 
+    let baseEstimatedTps = rawGpuSpec.bandwidth / Math.max(totalModelSizeGB, 1);
+
+    // Mixture-of-Experts (MoE) Special Logic Penalties
     if (isMoE) baseEstimatedTps *= 0.8;
 
-    // If offloading happens, apply 0.5x penalty as experts move between RAM and VRAM
+    // CPU offload penalty if experts are shipped off to system RAM
     const isOffloading = availableVram < idealRequiredVram && availableVram >= offloadRequiredVram;
     const finalTps = isOffloading ? baseEstimatedTps * 0.5 : baseEstimatedTps;
 
-    // 6. Multi-Dimensional Scoring (0-100)
-    // Fit Score: Sweet spot 50-80%
-    const usageRatio = (isOffloading ? offloadRequiredVram : idealRequiredVram) / availableVram;
+    // 6. Multi-Dimensional Scoring (0-100) & Fit Classification
+    const utilization = (isOffloading ? offloadRequiredVram : idealRequiredVram) / availableVram;
+
     let fitScore = 0;
-    if (usageRatio <= 0.8) fitScore = 100;
-    else if (usageRatio <= 0.95) fitScore = 70;
-    else if (usageRatio <= 1.0) fitScore = 40;
-    else fitScore = 10;
-
-    // Quality Score: Based on BPW
-    const qualityScore = (bytesPerParam / 2.0) * 100; // float16 = 100%
-
-    // Speed Score: TPS factor (assuming 50 TPS is amazing)
-    const speedScore = Math.min((finalTps / 50) * 100, 100);
-
-    // Context Score: Model capability
-    const contextScore = Math.min((contextLength / 32768) * 100, 100);
-
-    const score = (fitScore * 0.4) + (qualityScore * 0.2) + (speedScore * 0.3) + (contextScore * 0.1);
-
-    // 7. Determine Fit Level
     let fitLevel: FitLevel = "TooTight";
-    let isCompatible = false;
 
-    if (availableVram >= idealRequiredVram) {
-        fitLevel = "Perfect";
-        isCompatible = true;
-    } else if (availableVram >= offloadRequiredVram) {
-        fitLevel = "Good";
-        isCompatible = true;
-    } else if (availableVram >= offloadRequiredVram * 0.8) {
-        fitLevel = "Marginal";
-        isCompatible = true;
+    // The "Sweet Spot" Bell curve utilization logic
+    // Must cover ALL ranges from 0 to infinity with no gaps
+    if (utilization <= 1.0) {
+        // Model fits in VRAM — classify by efficiency
+        if (utilization >= 0.5 && utilization <= 0.8) {
+            fitScore = 100;  // Sweet spot: efficient and plenty of headroom
+            fitLevel = "Perfect";
+        } else if (utilization > 0.8 && utilization <= 0.95) {
+            fitScore = 80;   // Good: tight but comfortable
+            fitLevel = "Good";
+        } else if (utilization > 0.95) {
+            fitScore = 40;   // Marginal: very tight, OOM risk
+            fitLevel = "Marginal";
+        } else if (utilization >= 0.2) {
+            fitScore = 90;   // Under sweet spot but fits well
+            fitLevel = "Perfect";
+        } else {
+            fitScore = 60;   // Wasteful: tiny model on massive GPU
+            fitLevel = "Perfect";
+        }
     } else {
+        fitScore = 10;       // Does NOT fit in VRAM
         fitLevel = "TooTight";
-        isCompatible = false;
     }
 
+    const isCompatible = fitLevel !== "TooTight";
+
+    // Sub-scores
+    const qualityScore = Math.min((bytesPerParam / 2.0) * 100, 100);
+    const speedScore = Math.min((finalTps / 50) * 100, 100);
+    const contextScore = Math.min((contextLength / 32768) * 100, 100);
+
+    const matchScore = (fitScore * 0.4) + (qualityScore * 0.2) + (speedScore * 0.3) + (contextScore * 0.1);
+
+    // 7. Generate Recommended vLLM Config (Maximize performance setup)
+    const vramForWeights = isOffloading ? effectiveModelSizeGB : totalModelSizeGB;
+    const vramForKV = availableVram * 0.98 - vramForWeights; // Dedicate up to 98% utilization max
+
+    let recommendedMaxLen = contextLength;
+    if (vramForKV > 0) {
+        // Reverse KV formula (GQA-aware) to find maximum context allowed by leftover VRAM
+        const calcMaxLen = Math.floor((vramForKV * (1024 ** 3)) / (2 * numLayers * kvHiddenDim * bytesPerKVCacheElement));
+        recommendedMaxLen = Math.min(contextLength, Math.max(2048, calcMaxLen));
+    } else {
+        recommendedMaxLen = 2048; // Bare minimum fallback
+    }
+
+    const recommendedVllmConfig = {
+        maxModelLen: recommendedMaxLen,
+        gpuMemoryUtilization: fitLevel === "Perfect" ? 0.95 : (fitLevel === "Good" ? 0.98 : 0.99),
+        enforceEager: (fitLevel === "Marginal" || fitLevel === "TooTight"),
+        dtype: quantization === "float16" || quantization === "bfloat16" ? quantization : "auto"
+    };
+
     let reason = "";
-    if (fitLevel === "Perfect") reason = `Fits entirely in VRAM for maximum speed.`;
-    else if (fitLevel === "Good") reason = `Fits using Expert Offloading. Expect ${isMoE ? "MoE" : "CPU"} latency.`;
-    else if (fitLevel === "Marginal") reason = `Extremely tight fit. May require reduced context or OOM risk.`;
-    else reason = `Model size (${totalModelSizeGB.toFixed(1)}GB) exceeds available VRAM (${availableVram}GB).`;
+    if (fitLevel === "Perfect") reason = `Fits easily. M_total (${idealRequiredVram.toFixed(1)}GB) < 80% VRAM. High speeds available.`;
+    else if (fitLevel === "Good") reason = `M_total < 95% VRAM. Fits with ${isMoE ? "MoE expert active offloading" : "optimized settings"}.`;
+    else if (fitLevel === "Marginal") reason = `Tight fit (M_total ~ VRAM). Potential context limit reductions needed.`;
+    else reason = `Memory required (${idealRequiredVram.toFixed(1)}GB) exceeds available aggregated VRAM (${availableVram.toFixed(1)}GB).`;
 
     return {
         fitLevel,
         requiredVram: idealRequiredVram,
         availableVram,
         isCompatible,
-        score: Math.round(score),
+        score: Math.round(matchScore),
         estimatedTps: finalTps,
         reason,
-        details: { qualityScore, speedScore, fitScore, contextScore }
+        details: { qualityScore, speedScore, fitScore, contextScore },
+        recommendedVllmConfig
     };
 }
