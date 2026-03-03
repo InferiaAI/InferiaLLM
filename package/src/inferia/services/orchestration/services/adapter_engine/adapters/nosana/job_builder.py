@@ -17,7 +17,7 @@ INTERNAL_API_KEY = settings.internal_api_key or os.getenv("INTERNAL_API_KEY", ""
 
 def create_vllm_job(
     model_id: str,
-    image: str = "docker.io/vllm/vllm-openai:v0.14.0",
+    image: str = "docker.io/vllm/vllm-openai:v0.16.0",
     hf_token: Optional[str] = None,
     api_key: Optional[str] = None,
     # Stability & Hardware
@@ -28,7 +28,6 @@ def create_vllm_job(
     # Advanced Tuning
     max_model_len: int = 8192,
     max_num_seqs: int = 256,
-    enable_chunked_prefill: bool = False,
     quantization: Optional[str] = None,
     # Additional config
     trust_remote_code: bool = True,
@@ -50,7 +49,6 @@ def create_vllm_job(
         min_vram: Minimum VRAM requirement in GB
         max_model_len: Maximum context length
         max_num_seqs: Maximum concurrent sequences
-        enable_chunked_prefill: Enable chunked prefill for long contexts
         quantization: Quantization method (awq, gptq, etc.)
         trust_remote_code: Trust remote code when loading models
         cuda_module_loading: CUDA module loading strategy (LAZY, EAGER)
@@ -126,10 +124,6 @@ def create_vllm_job(
     if enforce_eager:
         cmd_args.append("--enforce-eager")
 
-    # Chunked Prefill
-    if enable_chunked_prefill:
-        cmd_args.append("--enable-chunked-prefill")
-
     container_op = {
         "id": model_id,
         "type": "container/run",
@@ -161,7 +155,6 @@ def create_vllm_job(
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": [
-                "12.8",
                 "12.9",
                 "13.0",
                 "13.1",
@@ -649,13 +642,13 @@ def build_job_definition(
     if engine == "vllm":
         job = create_vllm_job(
             model_id=model_id,
-            image=image or "docker.io/vllm/vllm-openai:v0.14.0",
+            image=image or "docker.io/vllm/vllm-openai:v0.16.0",
             hf_token=hf_token,
             api_key=api_key,
             **{k: v for k, v in kwargs.items() if k in [
-                "gpu_util", "dtype", "enforce_eager", "min_vram", 
-                "max_model_len", "max_num_seqs", "enable_chunked_prefill", 
-                "quantization", "trust_remote_code", "cuda_module_loading", 
+                "gpu_util", "dtype", "enforce_eager", "min_vram",
+                "max_model_len", "max_num_seqs",
+                "quantization", "trust_remote_code", "cuda_module_loading",
                 "nvidia_disable_cuda_compat", "kv_cache_dtype"
             ] and v is not None},
         )

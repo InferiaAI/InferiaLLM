@@ -60,7 +60,7 @@ async def run_test():
                 name=model_name,
                 version="v1",
                 backend="vllm",
-                artifact_uri="docker.io/vllm/vllm-openai:v0.14.0",
+                artifact_uri="docker.io/vllm/vllm-openai:v0.16.0",
                 config_json="""
                 {
                     "task": "text-generation",

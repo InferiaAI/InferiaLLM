@@ -53,12 +53,12 @@ type State = {
     dtype: string;
     enforceEager: boolean;
     maxNumSeqs: string;
-    enableChunkedPrefill: boolean;
     kvCacheDtype: string;
     trustRemoteCode: boolean;
     cudaModuleLoading: string;
     nvidiaDisableCudaCompat: string;
     quantization: string;
+    cudaVersions: string[];
     // Embedding config
     port: string;
     batchSize: string;
@@ -90,12 +90,12 @@ const initialState = (deployment: DeploymentData): State => ({
     dtype: "auto",
     enforceEager: true,
     maxNumSeqs: "128",
-    enableChunkedPrefill: true,
     kvCacheDtype: "auto",
     trustRemoteCode: true,
     cudaModuleLoading: "LAZY",
     nvidiaDisableCudaCompat: "1",
     quantization: "",
+    cudaVersions: ["12.9", "13.0", "13.1", "13.2"],
     // Advanced Embedding defaults
     port: "8080",
     batchSize: "32",
@@ -125,7 +125,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
     const {
         loading, config, replicas, inferenceModel, vllmImage, maxModelLen, gpuUtil,
         gitRepo, trainingScript, datasetUrl, hfToken,
-        dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization
+        dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions
     } = state;
 
     const isTraining = deployment?.workload_type === "training"
@@ -149,12 +149,12 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updates.dtype = c.dtype || "auto";
                 updates.enforceEager = c.enforce_eager ?? true;
                 updates.maxNumSeqs = String(c.max_num_seqs || 128);
-                updates.enableChunkedPrefill = c.enable_chunked_prefill ?? true;
                 updates.kvCacheDtype = c.kv_cache_dtype || "auto";
                 updates.trustRemoteCode = c.trust_remote_code ?? true;
                 updates.cudaModuleLoading = c.cuda_module_loading || "LAZY";
                 updates.nvidiaDisableCudaCompat = c.nvidia_disable_cuda_compat || "1";
                 updates.quantization = c.quantization || "";
+                updates.cudaVersions = c.required_cuda || ["12.9", "13.0", "13.1", "13.2"];
             }
             if (isEmbedding) {
                 updates.port = String(c.port || (deployment.engine === "infinity" ? 7997 : 8080));
@@ -205,7 +205,6 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
 
                     toggleFlag("--trust-remote-code", trustRemoteCode)
                     toggleFlag("--enforce-eager", enforceEager)
-                    toggleFlag("--enable-chunked-prefill", enableChunkedPrefill)
                 }
 
                 if (hfToken) {
@@ -224,12 +223,12 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updatedConfig.dtype = dtype;
                 updatedConfig.enforce_eager = enforceEager;
                 updatedConfig.max_num_seqs = parseInt(maxNumSeqs) || 128;
-                updatedConfig.enable_chunked_prefill = enableChunkedPrefill;
                 updatedConfig.kv_cache_dtype = kvCacheDtype;
                 updatedConfig.trust_remote_code = trustRemoteCode;
                 updatedConfig.cuda_module_loading = cudaModuleLoading || null;
                 updatedConfig.nvidia_disable_cuda_compat = nvidiaDisableCudaCompat || null;
                 updatedConfig.quantization = quantization || null;
+                updatedConfig.required_cuda = cudaVersions.length > 0 ? cudaVersions : null;
             }
             if (isEmbedding) {
                 updatedConfig.port = parseInt(port) || 8080;
@@ -275,12 +274,12 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                                 dtype={dtype}
                                 enforceEager={enforceEager}
                                 maxNumSeqs={maxNumSeqs}
-                                enableChunkedPrefill={enableChunkedPrefill}
                                 kvCacheDtype={kvCacheDtype}
                                 trustRemoteCode={trustRemoteCode}
                                 cudaModuleLoading={cudaModuleLoading}
                                 nvidiaDisableCudaCompat={nvidiaDisableCudaCompat}
                                 quantization={quantization}
+                                cudaVersions={cudaVersions}
                                 isAdvancedOpen={isAdvancedOpen}
                                 setIsAdvancedOpen={setIsAdvancedOpen}
                                 dispatch={dispatch}
@@ -340,13 +339,14 @@ function GeneralSettings({ replicas, inferenceModel, dispatch }: { replicas: num
 
 function VllmSettings({
     vllmImage, maxModelLen, gpuUtil,
-    dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization,
+    dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions,
     isAdvancedOpen, setIsAdvancedOpen, dispatch
 }: {
     vllmImage: string; maxModelLen: string; gpuUtil: string;
     dtype: string; enforceEager: boolean; maxNumSeqs: string;
-    enableChunkedPrefill: boolean; kvCacheDtype: string; trustRemoteCode: boolean;
+    kvCacheDtype: string; trustRemoteCode: boolean;
     cudaModuleLoading: string; nvidiaDisableCudaCompat: string; quantization: string;
+    cudaVersions: string[];
     isAdvancedOpen: boolean; setIsAdvancedOpen: (open: boolean) => void;
     dispatch: React.Dispatch<Action>
 }) {
@@ -355,6 +355,27 @@ function VllmSettings({
             <div className="flex items-center gap-2 mb-6 text-foreground"><Zap className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">vLLM Optimization</h3></div>
             <div className="space-y-6">
                 <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2">
+                    <label className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Required CUDA Versions</label>
+                    <div className="flex flex-wrap gap-2">
+                        {["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"].map(v => (
+                            <label key={v} className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold cursor-pointer transition-colors", cudaVersions.includes(v) ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-400" : "bg-white border-border text-muted-foreground dark:bg-zinc-900 hover:border-emerald-300 dark:hover:border-emerald-700")}>
+                                <input
+                                    type="checkbox"
+                                    checked={cudaVersions.includes(v)}
+                                    onChange={e => {
+                                        const updated = e.target.checked
+                                            ? [...cudaVersions, v].sort()
+                                            : cudaVersions.filter(c => c !== v);
+                                        dispatch({ type: 'SET_FIELD', field: 'cudaVersions', value: updated });
+                                    }}
+                                    className="sr-only"
+                                />
+                                {v}
+                            </label>
+                        ))}
+                    </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
                     <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
@@ -432,17 +453,6 @@ function VllmSettings({
                                     className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
                                 />
                                 <label htmlFor="enforce-eager" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enforce Eager Mode</label>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                                <input
-                                    id="enable-chunked-prefill"
-                                    type="checkbox"
-                                    checked={enableChunkedPrefill}
-                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enableChunkedPrefill', value: e.target.checked })}
-                                    className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
-                                />
-                                <label htmlFor="enable-chunked-prefill" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enable Chunked Prefill</label>
                             </div>
 
                             <div className="flex items-center gap-3">

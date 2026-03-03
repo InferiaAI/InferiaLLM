@@ -83,7 +83,7 @@ const computeEngines = [
     id: "vllm",
     name: "vLLM",
     desc: "High-throughput and memory-efficient LLM serving engine.",
-    image: "docker.io/vllm/vllm-openai:v0.14.0",
+    image: "docker.io/vllm/vllm-openai:v0.16.0",
     icon: Cpu,
     types: ["inference", "multimodal"],
     modelTypes: ["inference", "multimodal"]
@@ -161,6 +161,7 @@ type State = {
   gpuUtil: string;
   hfToken: string;
   vllmImage: string;
+  cudaVersions: string[];
   selectedProvider: string;
   customProviderName: string;
   externalModelName: string;
@@ -170,7 +171,6 @@ type State = {
   dtype: string;
   enforceEager: boolean;
   maxNumSeqs: string;
-  enableChunkedPrefill: boolean;
   kvCacheDtype: string;
   trustRemoteCode: boolean;
   cudaModuleLoading: string;
@@ -238,7 +238,8 @@ const initialState: State = {
   maxModelLen: "4192",
   gpuUtil: "0.90",
   hfToken: "",
-  vllmImage: "docker.io/vllm/vllm-openai:v0.14.0",
+  vllmImage: "docker.io/vllm/vllm-openai:v0.16.0",
+  cudaVersions: ["12.9", "13.0", "13.1", "13.2"],
   selectedProvider: "",
   customProviderName: "",
   externalModelName: "",
@@ -248,7 +249,6 @@ const initialState: State = {
   dtype: "auto",
   enforceEager: true,
   maxNumSeqs: "128",
-  enableChunkedPrefill: true,
   kvCacheDtype: "auto",
   trustRemoteCode: true,
   cudaModuleLoading: "LAZY",
@@ -457,7 +457,7 @@ export default function NewDeployment() {
     maxSequenceLength, maxModelLen, gpuUtil, hfToken, vllmImage,
     selectedProvider, customProviderName, externalModelName, endpointUrl, apiKey,
     // Advanced VLLM config
-    dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization,
+    dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions,
     // Advanced Embedding config
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled
   } = state;
@@ -541,10 +541,6 @@ export default function NewDeployment() {
         cmd.push("--enforce-eager")
       }
 
-      if (enableChunkedPrefill) {
-        cmd.push("--enable-chunked-prefill")
-      }
-
       if (quantization) {
         cmd.push("--quantization", quantization)
       }
@@ -558,6 +554,7 @@ export default function NewDeployment() {
         model_id: finalModelId,
         engine: "vllm",
         image: vllmImage,
+        required_cuda: cudaVersions.length > 0 ? cudaVersions : undefined,
         cmd,
         env,
         expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
@@ -567,7 +564,6 @@ export default function NewDeployment() {
         dtype: dtype,
         enforce_eager: enforceEager,
         max_num_seqs: parseInt(finalMaxNumSeqs) || 128,
-        enable_chunked_prefill: enableChunkedPrefill,
         kv_cache_dtype: kvCacheDtype,
         trust_remote_code: trustRemoteCode,
         cuda_module_loading: cudaModuleLoading,
@@ -624,7 +620,7 @@ export default function NewDeployment() {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled])
+  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -827,8 +823,8 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     deploymentType, modelType, instanceName, selectedEngine, selectedHFModel, modelId,
     vllmImage, maxModelLen, gpuUtil, hfToken, batchSize, maxSequenceLength, gitRepo,
     trainingScript, datasetUrl, baseModel, dtype, enforceEager, maxNumSeqs,
-    enableChunkedPrefill, kvCacheDtype, trustRemoteCode, cudaModuleLoading,
-    nvidiaDisableCudaCompat, quantization, isAdvancedOpen,
+    kvCacheDtype, trustRemoteCode, cudaModuleLoading,
+    nvidiaDisableCudaCompat, quantization, isAdvancedOpen, cudaVersions,
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
     selectedPool
   } = state;
@@ -987,6 +983,27 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">vLLM Configuration</h4></div>
           <div><label htmlFor="vllmImage" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">vLLM Image</label><input id="vllmImage" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Required CUDA Versions</label>
+            <div className="flex flex-wrap gap-2">
+              {["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"].map(v => (
+                <label key={v} className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium cursor-pointer transition-colors", cudaVersions.includes(v) ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-400" : "bg-white border-slate-200 text-slate-500 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-400 hover:border-slate-300 dark:hover:border-zinc-600")}>
+                  <input
+                    type="checkbox"
+                    checked={cudaVersions.includes(v)}
+                    onChange={e => {
+                      const updated = e.target.checked
+                        ? [...cudaVersions, v].sort()
+                        : cudaVersions.filter(c => c !== v);
+                      dispatch({ type: 'SET_FIELD', field: 'cudaVersions', value: updated });
+                    }}
+                    className="sr-only"
+                  />
+                  {v}
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div><label htmlFor="maxModelLen" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Model Length</label><input id="maxModelLen" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
             <div><label htmlFor="gpuUtil" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">GPU Memory Util</label><input id="gpuUtil" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
@@ -1058,16 +1075,6 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                     className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
                   />
                   <label htmlFor="enforceEager" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Enforce Eager Mode</label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="enableChunkedPrefill"
-                    type="checkbox"
-                    checked={enableChunkedPrefill}
-                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enableChunkedPrefill', value: e.target.checked })}
-                    className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
-                  />
-                  <label htmlFor="enableChunkedPrefill" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Enable Chunked Prefill</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <input

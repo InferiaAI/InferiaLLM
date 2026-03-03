@@ -219,7 +219,6 @@ class NosanaAdapter(ProviderAdapter):
                 "enforce_eager": metadata.get("enforce_eager", False),
                 "max_model_len": metadata.get("max_model_len", 8192),
                 "max_num_seqs": metadata.get("max_num_seqs", 256),
-                "enable_chunked_prefill": metadata.get("enable_chunked_prefill", False),
                 "quantization": metadata.get("quantization"),
                 "min_vram": metadata.get("min_vram", 12),
                 # Embedding / Generic Engine Config

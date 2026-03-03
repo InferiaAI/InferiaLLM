@@ -181,7 +181,7 @@ class AkashAdapter(ProviderAdapter):
             # Inference & General Purpose
             service_name = metadata.get("service_name", "app")
             sdl_content = build_inference_sdl(
-                image=image or "docker.io/vllm/vllm-openai:v0.14.0",
+                image=image or "docker.io/vllm/vllm-openai:v0.16.0",
                 service_name=service_name,
                 env=env,
                 command=command,
