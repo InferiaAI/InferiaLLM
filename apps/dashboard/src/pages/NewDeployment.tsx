@@ -941,8 +941,8 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
 
           <div className="grid grid-cols-2 gap-6 pt-5 border-t border-current/15">
             <div className="bg-current/5 p-3 rounded-lg border border-current/10">
-              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Est. Performance</div>
-              <div className="text-lg font-black">{compatibility.estimatedTps.toFixed(1)} <span className="text-xs font-normal opacity-70">tokens/s</span></div>
+              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Est. Throughput (Single GPU)</div>
+              <div className="text-lg font-black">{compatibility.estimatedTps.toFixed(1)} <span className="text-xs font-normal opacity-70">tokens/s (estimated)</span></div>
             </div>
             <div className="bg-current/5 p-3 rounded-lg border border-current/10">
               <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">VRAM Allocation</div>

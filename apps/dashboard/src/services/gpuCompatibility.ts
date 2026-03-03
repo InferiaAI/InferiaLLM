@@ -72,7 +72,7 @@ export const MODEL_PROFILES: Record<string, ModelProfile> = {
 /**
  * Weights per quantization level (BPW / 8)
  */
-export const QUANTIZATION_WEIGHTS = {
+export const QUANTIZATION_WEIGHTS: Record<string, number> = {
     "float16": 2.0,
     "bfloat16": 2.0,
     "float32": 4.0,
@@ -83,6 +83,20 @@ export const QUANTIZATION_WEIGHTS = {
     "q4_0": 0.58,
     "q3_k_m": 0.46,
     "q2_k": 0.37,
+};
+
+const QUANTIZATION_THROUGHPUT_EFFICIENCY: Record<string, number> = {
+    "float32": 0.14,
+    "float16": 0.22,
+    "bfloat16": 0.22,
+    "q8_0": 0.24,
+    "q6_k": 0.23,
+    "q5_k_m": 0.22,
+    "q4_k_m": 0.20,
+    "q4_0": 0.20,
+    "q3_k_m": 0.18,
+    "q2_k": 0.16,
+    "auto": 0.20,
 };
 
 export type FitLevel = "Perfect" | "Good" | "Marginal" | "TooTight";
@@ -134,6 +148,15 @@ const FIT_LEVEL_CONCURRENCY_PENALTY: Record<FitLevel, number> = {
 
 function clampNumber(value: number, min: number, max: number): number {
     return Math.min(Math.max(value, min), max);
+}
+
+function estimateSingleGpuThroughputEfficiency(quantization: string | undefined, totalParamsB: number, contextLength: number): number {
+    const quantEff = QUANTIZATION_THROUGHPUT_EFFICIENCY[quantization || "q4_k_m"] ?? 0.20;
+    // Very small models often hit kernel/scheduler overhead before memory-bound peak.
+    const smallModelPenalty = clampNumber(0.55 + (Math.min(totalParamsB, 7) / 7) * 0.45, 0.55, 1.0);
+    // Longer contexts tend to reduce practical decode throughput.
+    const contextPenalty = clampNumber(Math.pow(4096 / Math.max(contextLength, 1024), 0.08), 0.78, 1.08);
+    return quantEff * smallModelPenalty * contextPenalty;
 }
 
 /**
@@ -246,10 +269,10 @@ export async function fetchExternalRegistry(): Promise<ExternalModel[]> {
  * Calculate required VRAM for KV Cache
  * Formula: 2 * num_layers * hidden_size * context_length * bytes_per_element
  */
-function calculateKVCacheGB(hiddenSize: number, numLayers: number, contextLength: number): number {
+function calculateKVCacheGB(hiddenSize: number, numLayers: number, contextLength: number, bytesPerElement = 2): number {
     if (!hiddenSize || !numLayers) return 1.0; // Default 1GB floor
     const elements = 2 * numLayers * hiddenSize * contextLength;
-    return (elements * 2) / (1024 ** 3); // Assuming 16-bit cache
+    return (elements * bytesPerElement) / (1024 ** 3);
 }
 
 /**
@@ -311,7 +334,7 @@ export function calculateCompatibility(
 
     // 4. Advanced Memory Calculation (llmfit deterministic formulas)
     // Weight Memory calculation ($M_{weights} = (P \times Q) / (8 \times 1024^3)$ gb)
-    const bytesPerParam = (QUANTIZATION_WEIGHTS as any)[quantization || "q4_k_m"] || 0.6;
+    const bytesPerParam = QUANTIZATION_WEIGHTS[quantization || "q4_k_m"] || 0.6;
     const totalModelSizeGB = totalParams * bytesPerParam;
     const effectiveModelSizeGB = activeParams * bytesPerParam;
 
@@ -321,8 +344,7 @@ export function calculateCompatibility(
     const gqaRatio = numKeyValueHeads / numAttentionHeads;
     const kvHiddenDim = hiddenSize * gqaRatio;
     const bytesPerKVCacheElement = 2;
-    const mKvBytes = 2 * numLayers * kvHiddenDim * contextLength * bytesPerKVCacheElement;
-    const kvCacheGB = mKvBytes / (1024 ** 3);
+    const kvCacheGB = calculateKVCacheGB(kvHiddenDim, numLayers, contextLength, bytesPerKVCacheElement);
 
     // requiredVram assumes full model in VRAM for high performance (Perfect Fit)
     // marginalRequiredVram assumes expert offloading (Good Fit) with active params only
@@ -330,15 +352,18 @@ export function calculateCompatibility(
     const offloadRequiredVram = effectiveModelSizeGB + kvCacheGB;
 
     // 5. Speed Estimation (TPS)
-    // Estimated TPS = Memory Bandwidth (GB/s) / M_weights 
+    // Estimated TPS starts from memory-bandwidth bound, then applies
+    // conservative single-GPU efficiency calibration.
     let baseEstimatedTps = rawGpuSpec.bandwidth / Math.max(totalModelSizeGB, 1);
+    const throughputEfficiency = estimateSingleGpuThroughputEfficiency(quantization, totalParams, contextLength);
+    baseEstimatedTps *= throughputEfficiency;
 
     // Mixture-of-Experts (MoE) Special Logic Penalties
     if (isMoE) baseEstimatedTps *= 0.8;
 
     // CPU offload penalty if experts are shipped off to system RAM
     const isOffloading = availableVram < idealRequiredVram && availableVram >= offloadRequiredVram;
-    const finalTps = isOffloading ? baseEstimatedTps * 0.5 : baseEstimatedTps;
+    let finalTps = isOffloading ? baseEstimatedTps * 0.35 : baseEstimatedTps;
 
     // 6. Multi-Dimensional Scoring (0-100) & Fit Classification
     const utilization = (isOffloading ? offloadRequiredVram : idealRequiredVram) / availableVram;
@@ -371,6 +396,10 @@ export function calculateCompatibility(
         fitLevel = "TooTight";
     }
 
+    // Additional fit-level penalties for more realistic throughput estimates.
+    if (fitLevel === "Marginal") finalTps *= 0.8;
+    if (fitLevel === "TooTight") finalTps *= 0.6;
+
     const isCompatible = fitLevel !== "TooTight";
 
     // Sub-scores
@@ -380,31 +409,56 @@ export function calculateCompatibility(
 
     const matchScore = (fitScore * 0.4) + (qualityScore * 0.2) + (speedScore * 0.3) + (contextScore * 0.1);
 
-    // 7. Generate Recommended vLLM Config (Maximize performance setup)
-    const vramForWeights = isOffloading ? effectiveModelSizeGB : totalModelSizeGB;
-    const vramForKV = availableVram * 0.98 - vramForWeights; // Dedicate up to 98% utilization max
+    // 7. Generate Recommended vLLM Config (single-GPU safety-first)
+    // Prefer stable deployment over aggressive utilization that can trigger OOM.
+    const baseGpuUtilByFit: Record<FitLevel, number> = {
+        Perfect: 0.90,
+        Good: 0.88,
+        Marginal: 0.82,
+        TooTight: 0.78,
+    };
+    let recommendedGpuUtil = baseGpuUtilByFit[fitLevel];
+    if (utilization < 0.55) recommendedGpuUtil += 0.03;
+    if (utilization > 0.92) recommendedGpuUtil -= 0.03;
+    if (availableVram >= 80 && fitLevel === "Perfect") recommendedGpuUtil += 0.01;
+    recommendedGpuUtil = clampNumber(recommendedGpuUtil, 0.72, 0.93);
 
-    let recommendedMaxLen = contextLength;
-    if (vramForKV > 0) {
-        // Reverse KV formula (GQA-aware) to find maximum context allowed by leftover VRAM
-        const calcMaxLen = Math.floor((vramForKV * (1024 ** 3)) / (2 * numLayers * kvHiddenDim * bytesPerKVCacheElement));
-        recommendedMaxLen = Math.min(contextLength, Math.max(2048, calcMaxLen));
-    } else {
-        recommendedMaxLen = 2048; // Bare minimum fallback
+    // Runtime reserve absorbs allocator fragmentation, CUDA graph buffers,
+    // framework overhead, and bursty KV growth.
+    const runtimeReserveGB = Math.max(
+        1.5,
+        availableVram * 0.06 + (fitLevel === "Marginal" ? 0.8 : fitLevel === "TooTight" ? 1.2 : 0.4)
+    );
+    const safeBudgetGB = Math.max(0, availableVram * recommendedGpuUtil - runtimeReserveGB);
+
+    // For reliability, assume full weights residency for recommendation.
+    const weightsForRecommendationGB = totalModelSizeGB;
+    const canFitWeightsSafely = weightsForRecommendationGB < safeBudgetGB;
+    const kvBudgetGB = Math.max(0, safeBudgetGB - weightsForRecommendationGB);
+
+    let recommendedMaxLen = 512;
+    if (kvBudgetGB > 0) {
+        const calcMaxLen = Math.floor((kvBudgetGB * (1024 ** 3)) / (2 * numLayers * kvHiddenDim * bytesPerKVCacheElement));
+        const roundedMaxLen = Math.max(512, Math.floor(calcMaxLen / 64) * 64);
+        recommendedMaxLen = Math.min(contextLength, roundedMaxLen);
     }
 
-    const recommendedVllmConfig = {
+    const recommendedVllmConfig = canFitWeightsSafely ? {
         maxModelLen: recommendedMaxLen,
-        gpuMemoryUtilization: fitLevel === "Perfect" ? 0.95 : (fitLevel === "Good" ? 0.98 : 0.99),
-        enforceEager: (fitLevel === "Marginal" || fitLevel === "TooTight"),
+        gpuMemoryUtilization: recommendedGpuUtil,
+        enforceEager: (fitLevel === "Marginal" || fitLevel === "TooTight" || utilization > 0.92),
         dtype: quantization === "float16" || quantization === "bfloat16" ? quantization : "auto"
-    };
+    } : undefined;
 
     let reason = "";
     if (fitLevel === "Perfect") reason = `Fits easily. M_total (${idealRequiredVram.toFixed(1)}GB) < 80% VRAM. High speeds available.`;
     else if (fitLevel === "Good") reason = `M_total < 95% VRAM. Fits with ${isMoE ? "MoE expert active offloading" : "optimized settings"}.`;
     else if (fitLevel === "Marginal") reason = `Tight fit (M_total ~ VRAM). Potential context limit reductions needed.`;
     else reason = `Memory required (${idealRequiredVram.toFixed(1)}GB) exceeds available aggregated VRAM (${availableVram.toFixed(1)}GB).`;
+
+    if (!canFitWeightsSafely) {
+        reason = `Model weights (${totalModelSizeGB.toFixed(1)}GB) exceed safe single-GPU budget (${safeBudgetGB.toFixed(1)}GB). Use smaller model/stronger quantization.`;
+    }
 
     return {
         fitLevel,
