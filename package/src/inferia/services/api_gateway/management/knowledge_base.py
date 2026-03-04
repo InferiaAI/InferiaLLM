@@ -29,6 +29,7 @@ async def list_knowledge_collections(
         response = await client.get(
             f"{settings.data_service_url}/collections",
             params={"org_id": user_ctx.org_id},
+            headers={"X-Internal-API-Key": settings.internal_api_key},
             timeout=5.0,
         )
         if response.status_code == 200:
@@ -57,6 +58,7 @@ async def upload_knowledge_document(
                 f"{settings.data_service_url}/upload",
                 data=data,
                 files=files,
+                headers={"X-Internal-API-Key": settings.internal_api_key},
                 timeout=30.0,
             )
 
@@ -106,6 +108,7 @@ async def list_collection_files(
         response = await client.get(
             f"{settings.data_service_url}/collections/{collection_name}/files",
             params={"org_id": user_ctx.org_id},
+            headers={"X-Internal-API-Key": settings.internal_api_key},
             timeout=10.0,
         )
         if response.status_code == 200:

@@ -110,7 +110,7 @@ class HTTPConfigManager(BaseConfigManager):
 
     async def poll_once(self):
         try:
-            response = await self._http_client.get("/internal/config/provider")
+            response = await self._http_client.get("/internal/config/credentials")
             if response.status_code == 200:
                 data = response.json()
                 if "providers" in data:
