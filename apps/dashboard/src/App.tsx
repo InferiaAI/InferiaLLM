@@ -13,6 +13,7 @@ import AcceptInvite from "@/pages/AcceptInvite";
 import Setup2FA from "@/pages/Auth/Setup2FA";
 import Overview from "@/pages/Overview";
 import Insights from "@/pages/Insights";
+import NotFound from "@/pages/NotFound";
 
 import Deployments from "@/pages/Deployments";
 import NewDeployment from "@/pages/NewDeployment";
@@ -210,6 +211,10 @@ const router = createBrowserRouter([
         ],
       },
     ],
+  },
+  {
+    path: "*",
+    element: <NotFound />,
   },
 ]);
 

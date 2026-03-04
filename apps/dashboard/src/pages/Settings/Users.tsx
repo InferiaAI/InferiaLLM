@@ -186,10 +186,10 @@ export default function Users() {
 
   const copyInviteLink = async (link: string) => {
     try {
-      const normalizedLink = /^https?:\/\//i.test(link)
-        ? link
-        : `${window.location.origin}${link.startsWith("/") ? "" : "/"}${link}`;
-      await navigator.clipboard.writeText(normalizedLink);
+      const fullUrl = link.startsWith("/") 
+        ? `${window.location.origin}${link}` 
+        : link;
+      await navigator.clipboard.writeText(fullUrl);
       toast.success("Invite link copied");
     } catch {
       toast.error("Could not copy invite link");
