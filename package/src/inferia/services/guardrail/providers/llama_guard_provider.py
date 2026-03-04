@@ -72,7 +72,6 @@ class LlamaGuardProvider(GuardrailProvider):
         metadata: Dict[str, Any] = None,
     ) -> GuardrailResult:
         start_time = time.time()
-        self.initialize_client()
 
         if not self.groq_client:
             logger.error(
@@ -131,7 +130,6 @@ class LlamaGuardProvider(GuardrailProvider):
         metadata: Dict[str, Any] = None,
     ) -> GuardrailResult:
         start_time = time.time()
-        self.initialize_client()
 
         if not self.groq_client:
             logger.error(

@@ -96,6 +96,62 @@ class FileParser:
             )
 
     @classmethod
+    def extract_text_from_bytes(cls, content: bytes, filename: str, content_type: str = None) -> str:
+        """Extract text from pre-read file bytes. Avoids double-read of UploadFile."""
+        filename_lower = filename.lower() if filename else ""
+        logger.info(f"Extracting text from bytes: {filename_lower} ({content_type})")
+
+        if content_type == "application/pdf" or filename_lower.endswith(".pdf"):
+            if not pypdf:
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail="PDF parsing not available (pypdf not installed)"
+                )
+            try:
+                pdf_reader = pypdf.PdfReader(BytesIO(content))
+                text = ""
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+                return text
+            except Exception as e:
+                logger.error(f"Error parsing PDF bytes: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to parse PDF: {str(e)}"
+                )
+        elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or filename_lower.endswith(".docx"):
+            if not Document:
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail="DOCX parsing not available (python-docx not installed)"
+                )
+            try:
+                doc = Document(BytesIO(content))
+                return "\n".join([para.text for para in doc.paragraphs])
+            except Exception as e:
+                logger.error(f"Error parsing DOCX bytes: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to parse DOCX: {str(e)}"
+                )
+        elif content_type in ("text/plain", "text/markdown", "application/json", "text/csv") or filename_lower.endswith((".txt", ".md", ".json", ".csv")):
+            try:
+                return content.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    return content.decode("latin-1")
+                except Exception:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Could not decode text file (not UTF-8 or Latin-1)"
+                    )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"Unsupported file type: {content_type}. Supported: PDF, DOCX, TXT, MD, JSON, CSV"
+            )
+
+    @classmethod
     async def extract_text(cls, file: UploadFile) -> str:
         """Determines file type and extracts text."""
         content_type = file.content_type

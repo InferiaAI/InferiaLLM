@@ -44,6 +44,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"Shutting down {settings.app_name}")
     config_manager.stop_polling()
 
+    # Close Lakera HTTP client if it exists
+    lakera = guardrail_engine.providers.get("lakera-guard")
+    if lakera and hasattr(lakera, "close"):
+        await lakera.close()
+
 
 app = FastAPI(
     title=settings.app_name,

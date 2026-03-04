@@ -84,7 +84,7 @@ class DataEngine:
             return parts[2]
         return scoped_name
 
-    async def list_collections(self, org_id: str) -> List[str]:
+    def list_collections(self, org_id: str) -> List[str]:
         """
         List all available collections for the given organization.
         """
@@ -106,7 +106,7 @@ class DataEngine:
             logger.error(f"Error listing collections: {e}")
             return []
 
-    async def list_files(
+    def list_files(
         self, collection_name: str, org_id: str
     ) -> List[Dict[str, Any]]:
         """

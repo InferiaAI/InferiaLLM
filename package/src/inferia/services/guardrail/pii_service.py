@@ -21,37 +21,42 @@ class PIIService:
         self.settings = guardrail_settings
         self.vault = None
         self._anonymize_cache: dict = {}
+        self._lock = asyncio.Lock()
 
-    def _initialize_vault(self):
-        """Lazy initialization of Vault."""
+    async def _initialize_vault(self):
+        """Lazy initialization of Vault with proper locking."""
         if self.vault is None:
-            logger.info("Initializing PII Service (Vault)")
-            self.vault = Vault()
+            async with self._lock:
+                if self.vault is None:
+                    logger.info("Initializing PII Service (Vault)")
+                    self.vault = Vault()
 
-    def _get_anonymize_scanner(self, entity_types: List[str] = None):
+    async def _get_anonymize_scanner(self, entity_types: List[str] = None):
         """Get or create cached Anonymize scanner for given entity types."""
-        # Treat empty list as None to use defaults
         if entity_types is not None and len(entity_types) == 0:
             entity_types = None
 
         logger.info(f"Getting anonymize scanner for {entity_types or 'DEFAULTS'}")
-        self._initialize_vault()
+        await self._initialize_vault()
 
-        # Use sorted tuple as cache key for consistent hashing
         cache_key = tuple(sorted(entity_types)) if entity_types else "default"
 
         if cache_key not in self._anonymize_cache:
-            logger.info(
-                f"Creating new Anonymize scanner for entities: {entity_types or 'ALL'}"
-            )
-            try:
-                self._anonymize_cache[cache_key] = Anonymize(
-                    vault=self.vault, entity_types=entity_types
-                )
-                logger.info("Anonymize scanner created successfully")
-            except Exception as e:
-                logger.error(f"Failed to create Anonymize scanner: {e}", exc_info=True)
-                return None
+            async with self._lock:
+                if cache_key not in self._anonymize_cache:
+                    logger.info(
+                        f"Creating new Anonymize scanner for entities: {entity_types or 'ALL'}"
+                    )
+                    try:
+                        self._anonymize_cache[cache_key] = Anonymize(
+                            vault=self.vault, entity_types=entity_types
+                        )
+                        logger.info("Anonymize scanner created successfully")
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to create Anonymize scanner: {e}", exc_info=True
+                        )
+                        return None
 
         return self._anonymize_cache[cache_key]
 
@@ -61,7 +66,8 @@ class PIIService:
         """
         Scan text for PII and return anonymized text + violations.
         """
-        scanner = self._get_anonymize_scanner(entities)
+        async with self._lock:
+            scanner = await self._get_anonymize_scanner(entities)
         if not scanner:
             # scanner failed to initialize (e.g. missing vault)
             return text, []

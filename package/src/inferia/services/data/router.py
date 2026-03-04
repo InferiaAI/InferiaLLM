@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
 from .api_models import IngestRequest, RetrieveRequest, RetrieveResponse
 from .engine import data_engine
 from .parser import parser
+import asyncio
 import uuid
 import logging
 
@@ -33,7 +34,8 @@ async def upload_document(
         doc_id = str(uuid.uuid4())
         metadata = {"source": file.filename, "type": "file_upload"}
 
-        success = data_engine.add_documents(
+        success = await asyncio.to_thread(
+            data_engine.add_documents,
             collection_name=collection_name,
             documents=[text_content],
             metadatas=[metadata],
@@ -86,7 +88,8 @@ async def ingest_documents(request: IngestRequest):
                 request.metadatas[i] = {"source": "ingest_api_fallback", "index": i}
 
     try:
-        success = data_engine.add_documents(
+        success = await asyncio.to_thread(
+            data_engine.add_documents,
             collection_name=request.collection_name,
             documents=request.documents,
             metadatas=request.metadatas,
@@ -115,7 +118,8 @@ async def retrieve_context(request: RetrieveRequest):
     Retrieve context for a query from the vector database.
     """
     try:
-        context = data_engine.retrieve_context(
+        context = await asyncio.to_thread(
+            data_engine.retrieve_context,
             collection_name=request.collection_name,
             query=request.query,
             n_results=request.n_results,

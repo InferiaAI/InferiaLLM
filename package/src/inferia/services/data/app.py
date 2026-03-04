@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import logging
 from pathlib import Path
+import asyncio
 
 from inferia.common.exception_handlers import register_exception_handlers
 from inferia.common.logger import setup_logging
@@ -170,11 +171,10 @@ async def upload_document(
                 detail="File is empty",
             )
 
-        # 5. Reset file position for parser
-        await file.seek(0)
-
-        # 6. Parse file content
-        text_content = await parser.extract_text(file)
+        # 5. Parse file content from already-read bytes (avoids double-read)
+        text_content = parser.extract_text_from_bytes(
+            file_content, file.filename, file.content_type
+        )
 
         if not text_content.strip():
             raise HTTPException(
@@ -186,7 +186,8 @@ async def upload_document(
         doc_id = str(uuid.uuid4())
         metadata = {"source": file.filename, "type": "file_upload"}
 
-        success = data_engine.add_documents(
+        success = await asyncio.to_thread(
+            data_engine.add_documents,
             collection_name=collection_name,
             documents=[text_content],
             metadatas=[metadata],
@@ -223,7 +224,8 @@ async def retrieve(request: RetrieveRequest):
     Retrieve context from the Vector Database.
     """
     try:
-        results = data_engine.retrieve_context(
+        results = await asyncio.to_thread(
+            data_engine.retrieve_context,
             collection_name=request.collection_name,
             query=request.query,
             org_id=str(request.org_id) if request.org_id else "default",
@@ -241,7 +243,8 @@ async def ingest(request: IngestRequest):
     Ingest documents into the Vector Database.
     """
     try:
-        success = data_engine.add_documents(
+        success = await asyncio.to_thread(
+            data_engine.add_documents,
             collection_name=request.collection_name,
             documents=request.documents,
             metadatas=request.metadatas,
@@ -313,7 +316,7 @@ async def list_collections(org_id: str = "default"):
     List all available collections for an organization.
     """
     try:
-        collections = await data_engine.list_collections(org_id)
+        collections = await asyncio.to_thread(data_engine.list_collections, org_id)
         return {"collections": collections}
     except Exception as e:
         logger.error(f"List collections failed: {e}")
@@ -326,7 +329,7 @@ async def list_collection_files(collection_name: str, org_id: str = "default"):
     List files in a collection.
     """
     try:
-        files = await data_engine.list_files(collection_name, org_id)
+        files = await asyncio.to_thread(data_engine.list_files, collection_name, org_id)
         return {"files": files}
     except Exception as e:
         logger.error(f"List collection files failed: {e}")

@@ -61,63 +61,66 @@ class GuardrailEngine:
         pii_entities: List[str] = None,
         config: dict = None,
     ) -> GuardrailResult:
-        """
-        Scan user input for safety violations.
-        Dispatcher for specific provider implementation.
-        """
+        """Scan user input for safety violations."""
         config = config or {}
+        metadata = {"custom_keywords": custom_keywords, "pii_entities": pii_entities}
+        return await self._execute_scan(prompt, user_id, config, metadata, "input")
 
-        # Determine engine
+    async def _execute_scan(
+        self,
+        text: str,
+        user_id: str,
+        config: dict,
+        metadata: dict,
+        scan_type: str,
+    ) -> GuardrailResult:
+        """Execute guardrail scan with common logic for both input and output."""
         engine_name = config.get(
             "guardrail_engine", self.settings.default_guardrail_engine
         )
 
-        # Explicit override disable
         enabled = self.settings.enable_guardrails
         if "enabled" in config:
             enabled = config["enabled"]
 
         if not enabled:
-            return GuardrailResult(is_valid=True, sanitized_text=prompt)
+            return GuardrailResult(is_valid=True, sanitized_text=text)
 
         provider = self.providers.get(engine_name)
         if not provider:
-            # Fallback to default if specified engine not found, or error
             logger.warning(
                 f"Requested guardrail engine '{engine_name}' not found. Falling back to default."
             )
             provider = self.providers.get(self.settings.default_guardrail_engine)
 
         if not provider:
-            # Emergency fallback if even default is missing
             logger.error("No guardrail providers available.")
-            return GuardrailResult(is_valid=True, sanitized_text=prompt)
-
-        # Prepare metadata
-        metadata = {"custom_keywords": custom_keywords, "pii_entities": pii_entities}
+            return GuardrailResult(is_valid=True, sanitized_text=text)
 
         try:
-            result = await provider.scan_input(prompt, user_id, config, metadata)
+            if scan_type == "input":
+                result = await provider.scan_input(text, user_id, config, metadata)
+            else:
+                result = await provider.scan_output(
+                    metadata.get("prompt", ""), text, user_id, config, metadata
+                )
 
-            # --- PII SCANNING INTEGRATION ---
-            # Check if PII scanning is enabled in config or pii_entities are provided
             pii_enabled = config.get("pii_enabled", False)
-            # Legacy fallback check
             if "pii_enabled" not in config:
-                input_scanners = config.get("input_scanners", [])
-                if "PII" in input_scanners or "Anonymize" in input_scanners:
+                scanner_key = f"{scan_type}_scanners"
+                scanners = config.get(scanner_key, [])
+                if "PII" in scanners or "Anonymize" in scanners:
                     pii_enabled = True
 
+            entities = metadata.get("pii_entities") or config.get("pii_entities")
+
             logger.info(
-                f"PII Check: enabled={pii_enabled}, result_valid={result.is_valid}"
+                f"PII Check ({scan_type}): enabled={pii_enabled}, result_valid={result.is_valid}"
             )
 
             if pii_enabled and self.settings.pii_detection_enabled and result.is_valid:
-                logger.info(
-                    f"Triggering PII scanning for user {user_id}. Entities: {pii_entities}"
-                )
                 sanitized_text, pii_violations = await pii_service.anonymize(
-                    result.sanitized_text or prompt, pii_entities
+                    result.sanitized_text or text, entities
                 )
 
                 if pii_violations:
@@ -129,7 +132,6 @@ class GuardrailEngine:
                 else:
                     logger.info("No PII detected.")
 
-            # Helper logic: Check for 'Proceed on Violation' override
             proceed_on_violation = config.get("proceed_on_violation", False)
 
             if not result.is_valid and proceed_on_violation:
@@ -137,32 +139,26 @@ class GuardrailEngine:
                     f"Guardrail violation detected but 'proceed_on_violation' is active. User: {user_id}"
                 )
 
-                # Construct warning message
                 violations_desc = ", ".join(
                     [f"{v.violation_type} ({v.score:.2f})" for v in result.violations]
                 )
                 warning_suffix = f"\n\n[SYSTEM: Guardrail Violation Detected: {violations_desc}. User Configured to Proceed.]"
 
-                # Override validity
                 result.is_valid = True
-
-                # Append warning to sanitized text
-                current_text = result.sanitized_text or prompt
+                current_text = result.sanitized_text or text
                 result.sanitized_text = current_text + warning_suffix
-
-                # Mark action
                 result.actions_taken.append("proceed_on_violation_warning")
 
             return result
 
         except Exception as e:
             logger.error(
-                f"Error executing scan_input on provider {provider.name}: {e}",
+                f"Error executing {scan_type} scan on provider {provider.name}: {e}",
                 exc_info=True,
             )
             return GuardrailResult(
                 is_valid=False,
-                sanitized_text=prompt,
+                sanitized_text=text,
                 violations=[
                     Violation(
                         scanner="Engine",
@@ -182,112 +178,14 @@ class GuardrailEngine:
         pii_entities: List[str] = None,
         config: dict = None,
     ) -> GuardrailResult:
-        """
-        Scan model output for safety violations.
-        Dispatcher for specific provider implementation.
-        """
+        """Scan model output for safety violations."""
         config = config or {}
-
-        # Determine engine
-        engine_name = config.get(
-            "guardrail_engine", self.settings.default_guardrail_engine
-        )
-
-        # Explicit override disable
-        enabled = self.settings.enable_guardrails
-        if "enabled" in config:
-            enabled = config["enabled"]
-
-        if not enabled:
-            return GuardrailResult(is_valid=True, sanitized_text=output)
-
-        provider = self.providers.get(engine_name)
-        if not provider:
-            logger.warning(
-                f"Requested guardrail engine '{engine_name}' not found. Falling back to default."
-            )
-            provider = self.providers.get(self.settings.default_guardrail_engine)
-
-        if not provider:
-            logger.error("No guardrail providers available.")
-            return GuardrailResult(is_valid=True, sanitized_text=output)
-
-        metadata = {"custom_keywords": custom_keywords}
-
-        try:
-            result = await provider.scan_output(
-                prompt, output, user_id, config, metadata
-            )
-
-            # --- PII SCANNING INTEGRATION ---
-            # Output scan can also detect PII in completion
-            pii_enabled = config.get("pii_enabled", False)
-            if "pii_enabled" not in config:
-                output_scanners = config.get("output_scanners", [])
-                if "PII" in output_scanners or "Anonymize" in output_scanners:
-                    pii_enabled = True
-
-            # Use provided pii_entities or fall back to config
-            entities = pii_entities or config.get("pii_entities")
-
-            logger.info(
-                f"PII Check (Output): enabled={pii_enabled}, result_valid={result.is_valid}"
-            )
-
-            if pii_enabled and self.settings.pii_detection_enabled and result.is_valid:
-                sanitized_text, pii_violations = await pii_service.anonymize(
-                    result.sanitized_text or output, entities
-                )
-
-                if pii_violations:
-                    result.violations.extend(pii_violations)
-                    result.sanitized_text = sanitized_text
-                    if "anonymized" not in result.actions_taken:
-                        result.actions_taken.append("anonymized")
-
-            # Helper logic: Check for 'Proceed on Violation' override
-            proceed_on_violation = config.get("proceed_on_violation", False)
-
-            if not result.is_valid and proceed_on_violation:
-                logger.warning(
-                    f"Guardrail violation detected but 'proceed_on_violation' is active. User: {user_id}"
-                )
-
-                # Construct warning message
-                violations_desc = ", ".join(
-                    [f"{v.violation_type} ({v.score:.2f})" for v in result.violations]
-                )
-                warning_suffix = f"\n\n[SYSTEM: Guardrail Violation Detected: {violations_desc}. User Configured to Proceed.]"
-
-                # Override validity
-                result.is_valid = True
-
-                # Append warning to sanitized text
-                current_text = result.sanitized_text or prompt
-                result.sanitized_text = current_text + warning_suffix
-
-                # Mark action
-                result.actions_taken.append("proceed_on_violation_warning")
-
-            return result
-
-        except Exception as e:
-            logger.error(
-                f"Error executing scan_output on provider {provider.name}: {e}",
-                exc_info=True,
-            )
-            return GuardrailResult(
-                is_valid=False,
-                sanitized_text=output,
-                violations=[
-                    Violation(
-                        scanner="Engine",
-                        violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
-                        score=1.0,
-                        details=f"Guardrail engine error: {str(e)}",
-                    )
-                ],
-            )
+        metadata = {
+            "prompt": prompt,
+            "custom_keywords": custom_keywords,
+            "pii_entities": pii_entities,
+        }
+        return await self._execute_scan(output, user_id, config, metadata, "output")
 
 
 guardrail_engine = GuardrailEngine()

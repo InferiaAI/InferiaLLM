@@ -54,6 +54,27 @@ class GuardrailConfigManager(HTTPConfigManager):
         if "enabled" in guardrails:
             guardrail_settings.enable_guardrails = guardrails["enabled"]
 
+        # Re-initialize providers when their config changes
+        if groq_key or llama_model:
+            try:
+                from inferia.services.guardrail.engine import guardrail_engine
+
+                llama_provider = guardrail_engine.providers.get("llama-guard")
+                if llama_provider:
+                    llama_provider.initialize_client()
+            except Exception as e:
+                logger.error(f"Failed to re-initialize Llama Guard provider: {e}")
+
+        if lakera_key:
+            try:
+                from inferia.services.guardrail.engine import guardrail_engine
+
+                lakera_provider = guardrail_engine.providers.get("lakera-guard")
+                if lakera_provider:
+                    lakera_provider.refresh_config()
+            except Exception as e:
+                logger.error(f"Failed to refresh Lakera provider config: {e}")
+
         logger.debug(
             "Guardrail settings updated from Filtration Service (manually mapped)."
         )

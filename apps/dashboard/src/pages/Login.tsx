@@ -64,7 +64,7 @@ export default function Login() {
             <div className="relative space-y-8">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em]">
                 <Sparkles className="h-3.5 w-3.5" />
-                Startup Console
+                Organisation Console
               </div>
 
               <div className="space-y-4">

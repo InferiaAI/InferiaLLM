@@ -21,6 +21,7 @@ class DataConfigManager(HTTPConfigManager):
             update_callback=self._update_settings,
             poll_interval=15,
         )
+        self._last_chroma_config = None
 
     @classmethod
     def get_instance(cls):
@@ -37,11 +38,12 @@ class DataConfigManager(HTTPConfigManager):
         vectordb = providers.get("vectordb", {})
         chroma = vectordb.get("chroma", {})
 
-        if chroma:
+        if chroma and chroma != self._last_chroma_config:
             try:
                 from inferia.services.data.engine import data_engine
 
                 data_engine.initialize_client()
+                self._last_chroma_config = chroma
             except Exception as e:
                 logger.error(f"Failed to re-initialize data engine: {e}")
 

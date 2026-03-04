@@ -4,6 +4,7 @@ Handles prompt templating, rewriting, and token budget management.
 """
 
 from typing import List, Dict, Any, Optional
+import asyncio
 import tiktoken
 import logging
 from inferia.services.data.prompt_templates import template_registry
@@ -103,7 +104,8 @@ class PromptEngine:
             # Internal call since we are in the same service now
             from inferia.services.data.engine import data_engine
 
-            docs = data_engine.retrieve_context(
+            docs = await asyncio.to_thread(
+                data_engine.retrieve_context,
                 collection_name, query, org_id, n_results
             )
 

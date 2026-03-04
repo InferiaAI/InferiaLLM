@@ -23,6 +23,12 @@ class LakeraProvider(GuardrailProvider):
         self._client = httpx.AsyncClient(timeout=10.0)
         self.refresh_config()
 
+    async def close(self):
+        """Close the underlying httpx client."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
     def refresh_config(self):
         """Refresh configuration from settings."""
         if hasattr(self.settings, "refresh_from_main_settings"):
@@ -136,10 +142,19 @@ class LakeraProvider(GuardrailProvider):
             )
 
         except Exception as e:
-            logger.error(f"Lakera API failed: {e}")
-            # Fail closed? Or Open?
-            # Let's return valid for now to avoid blocking on API error, but log heavily.
-            return GuardrailResult(is_valid=True, sanitized_text=text)
+            logger.error(f"Lakera API failed: {e}", exc_info=True)
+            return GuardrailResult(
+                is_valid=False,
+                sanitized_text=text,
+                violations=[
+                    Violation(
+                        scanner="Lakera",
+                        violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                        score=1.0,
+                        details=f"Lakera API error: {str(e)}",
+                    )
+                ],
+            )
 
     def _map_category(self, category: str) -> ViolationType:
         """Map Lakera category string to ViolationType enum."""
