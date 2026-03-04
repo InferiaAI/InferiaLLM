@@ -184,7 +184,15 @@ class PolicyEngine:
                 if p_type in config and p_config:
                     policy_cfg = p_config.copy()
                     if "enabled" not in policy_cfg:
-                        policy_cfg["enabled"] = True
+                        if p_type in (
+                            "guardrail",
+                            "rag",
+                            "prompt_template",
+                            "rate_limit",
+                        ):
+                            policy_cfg["enabled"] = False
+                        else:
+                            policy_cfg["enabled"] = True
 
                     if p_type == "prompt_engine":
                         pass

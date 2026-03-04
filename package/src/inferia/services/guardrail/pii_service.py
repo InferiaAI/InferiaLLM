@@ -66,8 +66,7 @@ class PIIService:
         """
         Scan text for PII and return anonymized text + violations.
         """
-        async with self._lock:
-            scanner = await self._get_anonymize_scanner(entities)
+        scanner = await self._get_anonymize_scanner(entities)
         if not scanner:
             # scanner failed to initialize (e.g. missing vault)
             return text, []

@@ -148,6 +148,7 @@ type State = {
   selectedEngine: string;
   selectedPool: any;
   userPools: any[];
+  poolsLoading: boolean;
   selectedHFModel: HFModel | null;
   jobDescription: string;
   modelId: string;
@@ -191,6 +192,7 @@ type Action =
   | { type: 'SET_STEP'; payload: number }
   | { type: 'SET_FIELD'; field: keyof State; value: any }
   | { type: 'INIT_POOLS'; payload: any[] }
+  | { type: 'SET_POOLS_LOADING'; payload: boolean }
   | { type: 'SELECT_TYPE'; deploymentType: string; modelType: ModelTypeKey };
 
 // --- Reducer ---
@@ -204,7 +206,9 @@ function deploymentReducer(state: State, action: Action): State {
     case 'SET_FIELD':
       return { ...state, [action.field]: action.value };
     case 'INIT_POOLS':
-      return { ...state, userPools: action.payload };
+      return { ...state, userPools: action.payload, poolsLoading: false };
+    case 'SET_POOLS_LOADING':
+      return { ...state, poolsLoading: action.payload };
     case 'SELECT_TYPE':
       return {
         ...state,
@@ -226,6 +230,7 @@ const initialState: State = {
   selectedEngine: "vllm",
   selectedPool: null,
   userPools: [],
+  poolsLoading: false,
   selectedHFModel: null,
   jobDescription: "",
   modelId: "",
@@ -478,6 +483,7 @@ export default function NewDeployment() {
   useEffect(() => {
     if (mode === "managed" && step === 3) {
       const fetchPools = async () => {
+        dispatch({ type: 'SET_POOLS_LOADING', payload: true });
         try {
           const targetOrgId = user?.org_id || organizations?.[0]?.id;
           if (!targetOrgId) return;
@@ -488,6 +494,8 @@ export default function NewDeployment() {
         } catch (e) {
           console.error("Failed to fetch pools", e)
           toast.error("Failed to list compute pools")
+        } finally {
+          dispatch({ type: 'SET_POOLS_LOADING', payload: false });
         }
       }
       fetchPools()
@@ -738,7 +746,7 @@ function ManagedFlow({ state, dispatch, onLaunch, isPending, externalRegistry }:
 
       {step === 1 && <TypeSelection selectedId={deploymentType} onSelect={(id, mt) => dispatch({ type: 'SELECT_TYPE', deploymentType: id, modelType: mt })} />}
       {step === 2 && <EngineSelection modelType={modelType} selectedEngine={selectedEngine} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
-      {step === 3 && <PoolSelection userPools={userPools} selectedPool={selectedPool} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
+      {step === 3 && <PoolSelection userPools={userPools} poolsLoading={state.poolsLoading} selectedPool={selectedPool} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
       {step === 4 && <ManagedConfig state={state} dispatch={dispatch} onLaunch={onLaunch} isPending={isPending} externalRegistry={externalRegistry} />}
     </>
   )
@@ -799,10 +807,17 @@ function EngineSelection({ modelType, selectedEngine, dispatch, setStep }: { mod
   );
 }
 
-function PoolSelection({ userPools, selectedPool, dispatch, setStep }: { userPools: any[]; selectedPool: any; dispatch: React.Dispatch<Action>; setStep: (s: number) => void }) {
+function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setStep }: { userPools: any[]; poolsLoading: boolean; selectedPool: any; dispatch: React.Dispatch<Action>; setStep: (s: number) => void }) {
   return (
     <div className="space-y-6">
-      {userPools.length === 0 ? (
+      {poolsLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-slate-500 dark:text-zinc-400">Loading compute pools...</p>
+          </div>
+        </div>
+      ) : userPools.length === 0 ? (
         <div className="text-center py-12 bg-slate-50 dark:bg-zinc-900/50 rounded-xl border border-dashed dark:border-zinc-800 flex flex-col items-center">
           <Server className="w-12 h-12 text-slate-300 dark:text-zinc-600 mb-4" />
           <h3 className="text-lg font-medium text-slate-900 dark:text-zinc-100">No Compute Pools Found</h3>
