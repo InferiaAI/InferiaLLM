@@ -196,7 +196,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                     }
 
                     updateFlag("--max-model-len", maxModelLen || "4192")
-                    updateFlag("--gpu-memory-utilization", gpuUtil || "0.90")
+                    updateFlag("--gpu-memory-utilization", gpuUtil || "0.80")
                     updateFlag("--max-num-seqs", maxNumSeqs || "128")
                     updateFlag("--dtype", dtype || "auto")
                     updateFlag("--kv-cache-dtype", kvCacheDtype || "auto")
@@ -428,7 +428,19 @@ function VllmSettings({
                                 <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
                                     <option value="">None</option>
                                     <option value="awq">AWQ</option>
+                                    <option value="awq_marlin">AWQ Marlin</option>
                                     <option value="gptq">GPTQ</option>
+                                    <option value="gptq_marlin">GPTQ Marlin</option>
+                                    <option value="gptq_marlin_24">GPTQ Marlin 24</option>
+                                    <option value="marlin">Marlin</option>
+                                    <option value="fp8">FP8</option>
+                                    <option value="bitsandbytes">BitsAndBytes</option>
+                                    <option value="gguf">GGUF</option>
+                                    <option value="deepspeedfp">DeepSpeedFP</option>
+                                    <option value="eetq">EETQ</option>
+                                    <option value="hqq">HQQ</option>
+                                    <option value="compressed-tensors">Compressed Tensors</option>
+                                    <option value="experts_int8">Experts INT8</option>
                                     <option value="squeezellm">SqueezeLLM</option>
                                 </select>
                             </div>

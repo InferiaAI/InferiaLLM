@@ -411,17 +411,27 @@ export function calculateCompatibility(
 
     // 7. Generate Recommended vLLM Config (single-GPU safety-first)
     // Prefer stable deployment over aggressive utilization that can trigger OOM.
+    // GPU util is intentionally conservative: never above 0.80, max 0.85 only
+    // for super-confident scenarios (Perfect fit with very low utilization).
     const baseGpuUtilByFit: Record<FitLevel, number> = {
-        Perfect: 0.90,
-        Good: 0.88,
-        Marginal: 0.82,
-        TooTight: 0.78,
+        Perfect: 0.78,
+        Good: 0.75,
+        Marginal: 0.72,
+        TooTight: 0.68,
     };
     let recommendedGpuUtil = baseGpuUtilByFit[fitLevel];
-    if (utilization < 0.55) recommendedGpuUtil += 0.03;
-    if (utilization > 0.92) recommendedGpuUtil -= 0.03;
-    if (availableVram >= 80 && fitLevel === "Perfect") recommendedGpuUtil += 0.01;
-    recommendedGpuUtil = clampNumber(recommendedGpuUtil, 0.72, 0.93);
+    // Only allow up to 0.85 for super-confident: Perfect fit + very low utilization + large VRAM
+    const isSuperConfident = fitLevel === "Perfect" && utilization < 0.55 && availableVram >= 48;
+    if (isSuperConfident) {
+        recommendedGpuUtil = 0.85;
+    } else {
+        // Minor adjustments within safe bounds
+        if (utilization < 0.55) recommendedGpuUtil += 0.02;
+        if (utilization > 0.92) recommendedGpuUtil -= 0.03;
+    }
+    // Hard cap: never above 0.80 normally, 0.85 only if super confident
+    const gpuUtilCap = isSuperConfident ? 0.85 : 0.80;
+    recommendedGpuUtil = clampNumber(recommendedGpuUtil, 0.65, gpuUtilCap);
 
     // Runtime reserve absorbs allocator fragmentation, CUDA graph buffers,
     // framework overhead, and bursty KV growth.
@@ -436,11 +446,20 @@ export function calculateCompatibility(
     const canFitWeightsSafely = weightsForRecommendationGB < safeBudgetGB;
     const kvBudgetGB = Math.max(0, safeBudgetGB - weightsForRecommendationGB);
 
-    let recommendedMaxLen = 512;
+    // Context length: min 4096, max from HF config (contextLength).
+    // If calculated max > 20k, recommend only 65% for safety margin.
+    let recommendedMaxLen = 4096;
     if (kvBudgetGB > 0) {
         const calcMaxLen = Math.floor((kvBudgetGB * (1024 ** 3)) / (2 * numLayers * kvHiddenDim * bytesPerKVCacheElement));
-        const roundedMaxLen = Math.max(512, Math.floor(calcMaxLen / 64) * 64);
-        recommendedMaxLen = Math.min(contextLength, roundedMaxLen);
+        const roundedMaxLen = Math.max(4096, Math.floor(calcMaxLen / 64) * 64);
+        let cappedMaxLen = Math.min(contextLength, roundedMaxLen);
+        // If the valid context length exceeds 50k, recommend 40%; above 20k, recommend 65%
+        if (cappedMaxLen > 51200) {
+            cappedMaxLen = Math.floor((cappedMaxLen * 0.40) / 64) * 64;
+        } else if (cappedMaxLen > 20480) {
+            cappedMaxLen = Math.floor((cappedMaxLen * 0.65) / 64) * 64;
+        }
+        recommendedMaxLen = Math.max(4096, cappedMaxLen);
     }
 
     const recommendedVllmConfig = canFitWeightsSafely ? {

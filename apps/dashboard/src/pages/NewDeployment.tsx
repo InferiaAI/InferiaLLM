@@ -242,7 +242,7 @@ const initialState: State = {
   maxSequenceLength: "512",
   batchSize: "32",
   maxModelLen: "4192",
-  gpuUtil: "0.90",
+  gpuUtil: "0.80",
   hfToken: "",
   vllmImage: "docker.io/vllm/vllm-openai:v0.16.0",
   cudaVersions: ["12.9", "13.0", "13.1", "13.2"],
@@ -527,7 +527,7 @@ export default function NewDeployment() {
     if (selectedEngine === "vllm" && modelType === "inference") {
       const finalMaxNumSeqs = maxNumSeqs || "128";
       const finalMaxModelLen = maxModelLen || "4192";
-      const finalGpuUtil = gpuUtil || "0.90";
+      const finalGpuUtil = gpuUtil || "0.80";
       const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
 
       const cmd = [
@@ -568,7 +568,7 @@ export default function NewDeployment() {
         env,
         expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
         gpu: true,
-        gpu_util: parseFloat(finalGpuUtil) || 0.90,
+        gpu_util: parseFloat(finalGpuUtil) || 0.80,
         max_model_len: parseInt(finalMaxModelLen) || 4192,
         dtype: dtype,
         enforce_eager: enforceEager,
@@ -1084,7 +1084,19 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                   <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
                     <option value="">None</option>
                     <option value="awq">AWQ</option>
+                    <option value="awq_marlin">AWQ Marlin</option>
                     <option value="gptq">GPTQ</option>
+                    <option value="gptq_marlin">GPTQ Marlin</option>
+                    <option value="gptq_marlin_24">GPTQ Marlin 24</option>
+                    <option value="marlin">Marlin</option>
+                    <option value="fp8">FP8</option>
+                    <option value="bitsandbytes">BitsAndBytes</option>
+                    <option value="gguf">GGUF</option>
+                    <option value="deepspeedfp">DeepSpeedFP</option>
+                    <option value="eetq">EETQ</option>
+                    <option value="hqq">HQQ</option>
+                    <option value="compressed-tensors">Compressed Tensors</option>
+                    <option value="experts_int8">Experts INT8</option>
                     <option value="squeezellm">SqueezeLLM</option>
                   </select>
                 </div>

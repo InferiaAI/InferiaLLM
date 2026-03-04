@@ -34,6 +34,8 @@ def create_vllm_job(
     cuda_module_loading: str = "LAZY",
     nvidia_disable_cuda_compat: str = "1",
     kv_cache_dtype: str = "auto",
+    # System Requirements
+    required_cuda: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for vLLM inference server.
@@ -153,11 +155,11 @@ def create_vllm_job(
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cuda": [
-                "12.9",
-                "13.0",
-                "13.1",
-                "13.2",
+            "required_cuda": required_cuda
+            or [
+                "12.1",
+                "12.4",
+                "12.6",
             ],
             "required_vram": min_vram,
         },
@@ -171,6 +173,7 @@ def create_ollama_job(
     image: str = "docker.io/ollama/ollama:latest",
     api_key: Optional[str] = None,
     min_vram: int = 4,
+    required_cuda: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for Ollama inference server.
@@ -255,7 +258,8 @@ def create_ollama_job(
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cuda": [
+            "required_cuda": required_cuda
+            or [
                 "12.6",
                 "12.8",
                 "12.9",
@@ -281,6 +285,7 @@ def create_vllm_omni_job(
     max_model_len: int = 8192,
     max_num_seqs: int = 64,
     limit_mm_per_prompt: str = "image=1,video=1",
+    required_cuda: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for vLLM-Omni multimodal inference server.
@@ -363,7 +368,8 @@ def create_vllm_omni_job(
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cuda": [
+            "required_cuda": required_cuda
+            or [
                 "12.6",
                 "12.8",
                 "12.9",
@@ -380,6 +386,7 @@ def create_triton_job(
     image: str = "nvcr.io/nvidia/tritonserver:23.10-py3",
     api_key: Optional[str] = None,
     min_vram: int = 8,
+    required_cuda: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for NVIDIA Triton Inference Server.
@@ -453,7 +460,8 @@ def create_triton_job(
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cuda": [
+            "required_cuda": required_cuda
+            or [
                 "12.6",
                 "12.8",
                 "12.9",
@@ -644,19 +652,37 @@ def build_job_definition(
             image=image or "docker.io/vllm/vllm-openai:v0.16.0",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in [
-                "gpu_util", "dtype", "enforce_eager", "min_vram",
-                "max_model_len", "max_num_seqs",
-                "quantization", "trust_remote_code", "cuda_module_loading",
-                "nvidia_disable_cuda_compat", "kv_cache_dtype"
-            ] and v is not None},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k
+                in [
+                    "gpu_util",
+                    "dtype",
+                    "enforce_eager",
+                    "min_vram",
+                    "max_model_len",
+                    "max_num_seqs",
+                    "quantization",
+                    "trust_remote_code",
+                    "cuda_module_loading",
+                    "nvidia_disable_cuda_compat",
+                    "kv_cache_dtype",
+                    "required_cuda",
+                ]
+                and v is not None
+            },
         )
     elif engine == "ollama":
         job = create_ollama_job(
             model_id=model_id,
             image=image or "docker.io/ollama/ollama:latest",
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["min_vram"] and v is not None},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["min_vram", "required_cuda"] and v is not None
+            },
         )
     elif engine == "vllm-omni":
         job = create_vllm_omni_job(
@@ -664,17 +690,33 @@ def build_job_definition(
             image=image or "docker.io/vllm/vllm-omni:v0.11.0rc1",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in [
-                "gpu_util", "dtype", "enforce_eager", "min_vram", 
-                "max_model_len", "max_num_seqs", "limit_mm_per_prompt"
-            ] and v is not None},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k
+                in [
+                    "gpu_util",
+                    "dtype",
+                    "enforce_eager",
+                    "min_vram",
+                    "max_model_len",
+                    "max_num_seqs",
+                    "limit_mm_per_prompt",
+                    "required_cuda",
+                ]
+                and v is not None
+            },
         )
     elif engine == "triton":
         job = create_triton_job(
             model_id=model_id,
             image=image or "nvcr.io/nvidia/tritonserver:23.10-py3",
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["min_vram"] and v is not None},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["min_vram", "required_cuda"] and v is not None
+            },
         )
     elif engine == "infinity":
         job = create_infinity_job(
@@ -682,7 +724,12 @@ def build_job_definition(
             image=image or "michaelf34/infinity:latest",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["port", "batch_size", "gpu", "required_cpu", "required_ram"] and v is not None},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "batch_size", "gpu", "required_cpu", "required_ram"]
+                and v is not None
+            },
         )
     elif engine == "tei":
         job = create_tei_job(
@@ -690,7 +737,20 @@ def build_job_definition(
             image=image or "ghcr.io/huggingface/text-embeddings-inference:latest",
             hf_token=hf_token,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k in ["port", "max_batch_tokens", "pooling", "gpu", "required_cpu", "required_ram"] and v is not None},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k
+                in [
+                    "port",
+                    "max_batch_tokens",
+                    "pooling",
+                    "gpu",
+                    "required_cpu",
+                    "required_ram",
+                ]
+                and v is not None
+            },
         )
     else:
         raise ValueError(f"Unsupported engine: {engine}")
@@ -715,6 +775,7 @@ def create_training_job(
     # Hardware
     min_vram: int = 24,  # Training usually needs more
     gpu_count: int = 1,
+    required_cuda: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for a Training Job.
@@ -820,7 +881,8 @@ def create_training_job(
         "meta": {
             "trigger": "dashboard",
             "system_requirements": {
-                "required_cuda": [
+                "required_cuda": required_cuda
+                or [
                     "12.6",
                     "12.8",
                     "12.9",

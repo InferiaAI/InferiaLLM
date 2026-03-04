@@ -236,6 +236,8 @@ class NosanaAdapter(ProviderAdapter):
                     "nvidia_disable_cuda_compat", "1"
                 ),
                 "kv_cache_dtype": metadata.get("kv_cache_dtype", "auto"),
+                # CUDA versions from dashboard
+                "required_cuda": metadata.get("required_cuda"),
             }
 
             job_definition = build_job_definition(
