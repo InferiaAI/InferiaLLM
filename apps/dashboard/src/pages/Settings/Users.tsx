@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer } from "react";
 import { rbacService } from "@/services/rbacService";
 import type { User, Role, Invitation } from "@/services/rbacService";
 import { toast } from "sonner";
-import { UserPlus, Shield, Copy, Mail, Users as UsersIcon, Activity } from "lucide-react";
+import { UserPlus, Copy, Users as UsersIcon, Activity } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Pagination } from "@/components/ui/Pagination";
 import type { AxiosError } from "axios";
@@ -29,7 +29,7 @@ type Action =
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_INVITING'; payload: boolean }
   | { type: 'SET_SHOW_MODAL'; payload: boolean }
-  | { type: 'SET_FIELD'; field: keyof State; value: any }
+  | { type: 'SET_FIELD'; field: keyof State; value: State[keyof State] }
   | { type: 'SET_USERS_DATA'; users: User[]; total: number; roles: Role[]; invitations: Invitation[] }
   | { type: 'UPDATE_USER_ROLE'; userId: string; role: string }
   | { type: 'ADD_INVITATION'; invitation: Invitation }
@@ -239,7 +239,8 @@ export default function Users() {
         </div>
 
         <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
-          <table className="w-full text-sm text-left">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[940px] text-sm text-left">
             <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
               <tr>
                 <th className="px-6 py-3 font-medium">User</th>
@@ -275,6 +276,7 @@ export default function Users() {
                         value={user.role}
                         onChange={(event) => handleRoleChange(user.id, event.target.value)}
                         disabled={user.email === currentUser?.email || !canManageRoles}
+                        aria-label={`Set role for ${user.email}`}
                       >
                         {roles.map((role) => (
                           <option key={role.name} value={role.name}>
@@ -295,7 +297,11 @@ export default function Users() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button className="p-1 px-2 rounded hover:bg-muted text-muted-foreground">
+                    <button
+                      type="button"
+                      aria-label={`Open actions for ${user.email}`}
+                      className="p-1 px-2 rounded hover:bg-muted text-muted-foreground"
+                    >
                       ...
                     </button>
                   </td>
@@ -303,13 +309,14 @@ export default function Users() {
               ))}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                     No users found on this page.
                   </td>
                 </tr>
               )}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
 
         {users.length > 0 && (
@@ -330,7 +337,8 @@ export default function Users() {
       <section className="space-y-4">
         <h2 className="text-lg font-medium">Pending Invitations</h2>
         <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
-          <table className="w-full text-sm text-left">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[960px] text-sm text-left">
             <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
               <tr>
                 <th className="px-6 py-3 font-medium">Email</th>
@@ -387,7 +395,8 @@ export default function Users() {
                 </tr>
               )}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -400,12 +409,15 @@ export default function Users() {
                 <label htmlFor="invite-email" className="block text-sm font-medium mb-1">Email Address</label>
                 <input
                   id="invite-email"
+                  name="inviteEmail"
                   type="email"
                   required
                   className="w-full p-2 border rounded bg-background"
                   value={inviteEmail}
                   onChange={(event) => dispatch({ type: 'SET_FIELD', field: 'inviteEmail', value: event.target.value })}
-                  placeholder="colleague@example.com"
+                  autoComplete="email"
+                  spellCheck={false}
+                  placeholder="name@company.com…"
                 />
               </div>
               <div>

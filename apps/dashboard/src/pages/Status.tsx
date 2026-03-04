@@ -103,7 +103,7 @@ export default function Status() {
                     onClick={handleRefresh}
                     disabled={isFetching}
                     className={cn(
-                        "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border transition-all",
+                        "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border transition-colors",
                         "bg-background hover:bg-muted disabled:opacity-50"
                     )}
                 >
@@ -183,7 +183,7 @@ export default function Status() {
                         <div
                             key={service.name}
                             className={cn(
-                                "p-6 bg-card rounded-xl border transition-all hover:shadow-md",
+                                "p-6 bg-card rounded-xl border transition-colors hover:shadow-md",
                                 service.status === "online"
                                     ? "border-l-4 border-l-green-500"
                                     : "border-l-4 border-l-red-500"
@@ -255,7 +255,7 @@ export default function Status() {
                             <div
                                 key={dep.name}
                                 className={cn(
-                                    "p-6 bg-card rounded-xl border transition-all hover:shadow-md",
+                                    "p-6 bg-card rounded-xl border transition-colors hover:shadow-md",
                                     dep.status === "online"
                                         ? "border-l-4 border-l-indigo-500"
                                         : "border-l-4 border-l-red-500"

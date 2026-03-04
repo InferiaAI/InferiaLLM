@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Play,
   RefreshCw,
@@ -6,27 +6,29 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { computeApi } from "@/lib/api";
 
+type PoolSummary = {
+  pool_id: string;
+  pool_name: string;
+  provider: string;
+  is_active: boolean;
+};
+
 export default function Instances() {
-  const navigate = useNavigate();
   const { user, organizations, hasPermission } = useAuth();
   const canCreatePool = hasPermission("deployment:create");
+  const targetOrgId = user?.org_id || organizations?.[0]?.id;
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
-  const [instances, setInstances] = useState<any[]>([]);
+  const [instances, setInstances] = useState<PoolSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const fetchPools = async () => {
+  const fetchPools = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fallback: Use org_id from user, or first organization in list
-      const targetOrgId = user?.org_id || organizations?.[0]?.id;
-
-      console.log("DEBUG Fetching pools for:", targetOrgId);
-
       if (!targetOrgId) {
         setIsLoading(false);
         return;
@@ -41,11 +43,13 @@ export default function Instances() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [targetOrgId]);
 
   useEffect(() => {
-    if (user || organizations.length > 0) fetchPools();
-  }, [user, organizations]);
+    if (targetOrgId) {
+      void fetchPools();
+    }
+  }, [targetOrgId, fetchPools]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -77,23 +81,25 @@ export default function Instances() {
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
               <input
-                placeholder="Search pools..."
+                name="poolSearch"
+                placeholder="Search pools…"
                 className="h-9 w-64 rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm placeholder:text-slate-400 dark:text-zinc-200"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                autoComplete="off"
               />
             </div>
           </div>
 
           {canCreatePool && (
             <div className="flex gap-2">
-              <button
-                onClick={() => navigate("/dashboard/compute/pools/new")}
-                className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-2"
+              <Link
+                to="/dashboard/compute/pools/new"
+                className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-2"
               >
                 <Play className="w-4 h-4" />
                 New
-              </button>
+              </Link>
             </div>
           )}
         </div>
@@ -152,7 +158,7 @@ export default function Instances() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right text-muted-foreground font-mono text-xs">
-                      {instance.pool_id.substring(0, 8)}...
+                      {instance.pool_id.substring(0, 8)}…
                     </td>
                   </tr>
                 ))

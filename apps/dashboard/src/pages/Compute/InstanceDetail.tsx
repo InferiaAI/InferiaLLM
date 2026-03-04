@@ -147,7 +147,7 @@ export default function InstanceDetail() {
               key={tab}
               onClick={() => setActiveTab(tab.toLowerCase() as any)}
               className={cn(
-                "px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                "px-4 py-1.5 rounded-md text-sm font-medium transition-colors",
                 activeTab === tab.toLowerCase()
                   ? "bg-muted text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50",

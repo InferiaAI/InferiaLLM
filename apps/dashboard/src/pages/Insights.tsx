@@ -1,4 +1,4 @@
-import { type ComponentType, type ReactNode, useCallback, useMemo, useReducer } from "react";
+import { type ComponentType, type ReactNode, useCallback, useEffect, useMemo, useReducer } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
     Activity,
@@ -33,13 +33,14 @@ import {
     type InsightsDeploymentType,
     insightsService,
 } from "@/services/insightsService";
+import { useSearchParams } from "react-router-dom";
 
 type TimePreset = "30m" | "1h" | "5h" | "24h" | "7d" | "30d" | "custom";
 
 const QUERY_STALE_TIME = 30 * 1000;
 const IP_DEBOUNCE_DELAY = 300;
-
-const PIE_COLORS = ["#2563eb", "#db2777", "#16a34a", "#9333ea", "#ea580c", "#0891b2"];
+const DEFAULT_PAGE_SIZE = 20;
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
 function toLocalDateTimeInputValue(date: Date): string {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -77,7 +78,7 @@ type State = {
 };
 
 type Action =
-    | { type: 'SET_FIELD'; field: keyof State; value: any }
+    | { type: 'SET_FIELD'; field: keyof State; value: State[keyof State] }
     | { type: 'SET_DEPLOYMENT_TYPE'; payload: InsightsDeploymentType }
     | { type: 'CLEAR_FILTERS' };
 
@@ -90,8 +91,39 @@ const createInitialState = (defaultStart: Date, now: Date): State => ({
     ipAddress: "",
     status: "all",
     page: 1,
-    pageSize: 20,
+    pageSize: DEFAULT_PAGE_SIZE,
 });
+
+function getPositiveParam(value: string | null, fallback: number) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function createInitialStateFromParams(searchParams: URLSearchParams, defaultStart: Date, now: Date): State {
+    const baseState = createInitialState(defaultStart, now);
+    const deploymentType = searchParams.get("deploymentType");
+    const timePreset = searchParams.get("timePreset");
+    const status = searchParams.get("status");
+
+    const page = getPositiveParam(searchParams.get("page"), 1);
+    const parsedPageSize = getPositiveParam(searchParams.get("pageSize"), DEFAULT_PAGE_SIZE);
+
+    return {
+        ...baseState,
+        deploymentType: deploymentType === "embedding" || deploymentType === "all" ? deploymentType : baseState.deploymentType,
+        timePreset:
+            timePreset === "30m" || timePreset === "1h" || timePreset === "5h" || timePreset === "24h" || timePreset === "7d" || timePreset === "30d" || timePreset === "custom"
+                ? timePreset
+                : baseState.timePreset,
+        customStart: searchParams.get("customStart") || baseState.customStart,
+        customEnd: searchParams.get("customEnd") || baseState.customEnd,
+        deploymentId: searchParams.get("deploymentId") || "",
+        ipAddress: searchParams.get("ipAddress") || "",
+        status: status ? (status as InsightsStatus) : baseState.status,
+        page,
+        pageSize: PAGE_SIZE_OPTIONS.includes(parsedPageSize) ? parsedPageSize : DEFAULT_PAGE_SIZE,
+    };
+}
 
 function reducer(state: State, action: Action): State {
     switch (action.type) {
@@ -107,14 +139,45 @@ function reducer(state: State, action: Action): State {
 }
 
 export default function Insights() {
+    const [searchParams, setSearchParams] = useSearchParams();
     const now = new Date();
     const defaultStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const [state, dispatch] = useReducer(reducer, createInitialState(defaultStart, now));
+    const [state, dispatch] = useReducer(
+        reducer,
+        null,
+        () => createInitialStateFromParams(searchParams, defaultStart, now)
+    );
     const {
         deploymentType, timePreset, customStart, customEnd,
         deploymentId, ipAddress, status, page, pageSize
     } = state;
+
+    useEffect(() => {
+        const next = new URLSearchParams(searchParams);
+
+        const setOrDelete = (key: string, value: string | null) => {
+            if (!value) {
+                next.delete(key);
+                return;
+            }
+            next.set(key, value);
+        };
+
+        setOrDelete("deploymentType", deploymentType === "inference" ? null : deploymentType);
+        setOrDelete("timePreset", timePreset === "7d" ? null : timePreset);
+        setOrDelete("customStart", timePreset === "custom" ? customStart : null);
+        setOrDelete("customEnd", timePreset === "custom" ? customEnd : null);
+        setOrDelete("deploymentId", deploymentId || null);
+        setOrDelete("ipAddress", ipAddress.trim() || null);
+        setOrDelete("status", status === "all" ? null : status);
+        setOrDelete("page", page > 1 ? String(page) : null);
+        setOrDelete("pageSize", pageSize !== DEFAULT_PAGE_SIZE ? String(pageSize) : null);
+
+        if (next.toString() !== searchParams.toString()) {
+            setSearchParams(next, { replace: true });
+        }
+    }, [deploymentType, timePreset, customStart, customEnd, deploymentId, ipAddress, status, page, pageSize, searchParams, setSearchParams]);
 
     const debouncedIpAddress = useDebouncedValue(ipAddress.trim(), IP_DEBOUNCE_DELAY);
 
@@ -409,6 +472,7 @@ export default function Insights() {
                         <label htmlFor="insight-time-preset" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Time range</label>
                         <select
                             id="insight-time-preset"
+                            name="timePreset"
                             value={timePreset}
                             onChange={(e) => {
                                 dispatch({ type: 'SET_FIELD', field: 'timePreset', value: e.target.value as TimePreset });
@@ -432,6 +496,7 @@ export default function Insights() {
                                 <label htmlFor="insight-custom-start" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Start</label>
                                 <input
                                     id="insight-custom-start"
+                                    name="customStart"
                                     type="datetime-local"
                                     value={customStart}
                                     onChange={(e) => {
@@ -445,6 +510,7 @@ export default function Insights() {
                                 <label htmlFor="insight-custom-end" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">End</label>
                                 <input
                                     id="insight-custom-end"
+                                    name="customEnd"
                                     type="datetime-local"
                                     value={customEnd}
                                     onChange={(e) => {
@@ -461,6 +527,7 @@ export default function Insights() {
                         <label htmlFor="insight-deployment-id" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Deployment</label>
                         <select
                             id="insight-deployment-id"
+                            name="deploymentId"
                             value={deploymentId}
                             onChange={(e) => {
                                 dispatch({ type: 'SET_FIELD', field: 'deploymentId', value: e.target.value });
@@ -481,6 +548,7 @@ export default function Insights() {
                         <label htmlFor="insight-status" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</label>
                         <select
                             id="insight-status"
+                            name="status"
                             value={status}
                             onChange={(e) => {
                                 dispatch({ type: 'SET_FIELD', field: 'status', value: e.target.value as InsightsStatus });
@@ -500,6 +568,7 @@ export default function Insights() {
                         <label htmlFor="insight-ip-address" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Address</label>
                         <input
                             id="insight-ip-address"
+                            name="ipAddress"
                             type="text"
                             list="insights-ip-options"
                             value={ipAddress}
@@ -508,6 +577,8 @@ export default function Insights() {
                                 dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
                             }}
                             placeholder="All IPs"
+                            autoComplete="off"
+                            spellCheck={false}
                             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         />
                         <datalist id="insights-ip-options">
@@ -535,19 +606,19 @@ export default function Insights() {
                 <MetricCard
                     icon={Activity}
                     title="Requests"
-                    value={isInitialLoading ? "..." : formatNumber(summary?.totals.requests || 0, 0)}
+                    value={isInitialLoading ? "…" : formatNumber(summary?.totals.requests || 0, 0)}
                     subtitle={`${formatNumber(summary?.totals.successful_requests || 0, 0)} successful`}
                 />
                 <MetricCard
                     icon={TrendingUp}
                     title="Success Rate"
-                    value={isInitialLoading ? "..." : `${formatNumber(summary?.totals.success_rate || 0)}%`}
+                    value={isInitialLoading ? "…" : `${formatNumber(summary?.totals.success_rate || 0)}%`}
                     subtitle={`${formatNumber(summary?.totals.failed_requests || 0, 0)} failed`}
                 />
                 <MetricCard
                     icon={Layers3}
                     title={isEmbedding ? "Total Tokens" : "Total Tokens"}
-                    value={isInitialLoading ? "..." : formatNumber(summary?.totals.total_tokens || 0, 0)}
+                    value={isInitialLoading ? "…" : formatNumber(summary?.totals.total_tokens || 0, 0)}
                     subtitle={isEmbedding
                         ? `${formatNumber(summary?.totals.prompt_tokens || 0, 0)} tokens processed`
                         : `In ${formatNumber(summary?.totals.prompt_tokens || 0, 0)} / Out ${formatNumber(summary?.totals.completion_tokens || 0, 0)}`
@@ -556,13 +627,13 @@ export default function Insights() {
                 <MetricCard
                     icon={Gauge}
                     title={isEmbedding ? "Avg Latency" : "Avg Latency (TTFT)"}
-                    value={isInitialLoading ? "..." : `${formatNumber(summary?.latency_ms.avg || 0)} ms`}
+                    value={isInitialLoading ? "…" : `${formatNumber(summary?.latency_ms.avg || 0)} ms`}
                     subtitle={`${formatNumber(summary?.throughput.requests_per_minute || 0)} req/min (active time)`}
                 />
                 <MetricCard
                     icon={Zap}
                     title={isEmbedding ? "Avg Req/min" : "Avg Token/s"}
-                    value={isInitialLoading ? "..." : isEmbedding
+                    value={isInitialLoading ? "…" : isEmbedding
                         ? formatNumber(summary?.throughput.requests_per_minute || 0, 0)
                         : formatNumber(summary?.throughput.avg_tokens_per_second || 0)
                     }
@@ -719,7 +790,7 @@ export default function Insights() {
                             </p>
                         </div>
                         <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
+                            <table className="w-full min-w-[760px] text-sm">
                                 <thead className="bg-muted/40 text-muted-foreground">
                                     <tr>
                                         <th className="px-4 py-3 text-left font-medium">Bucket</th>
@@ -772,7 +843,7 @@ export default function Insights() {
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="w-full min-w-[980px] text-sm">
                         <thead className="bg-muted/40 text-muted-foreground">
                             <tr>
                                 <th className="px-4 py-3 text-left font-medium">Timestamp</th>
@@ -791,7 +862,7 @@ export default function Insights() {
                                         {new Date(log.created_at).toLocaleString()}
                                     </td>
                                     <td className="px-4 py-3 text-xs font-mono">
-                                        {String(log.deployment_id).slice(0, 8)}...
+                                        {String(log.deployment_id).slice(0, 8)}…
                                     </td>
                                     <td className="px-4 py-3">{log.model}</td>
                                     <td className="px-4 py-3 font-mono text-xs">{log.ip_address || "-"}</td>

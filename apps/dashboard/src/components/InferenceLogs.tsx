@@ -111,7 +111,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                 <div
                     key={log.id}
                     className={cn(
-                        "bg-card rounded-lg border shadow-sm overflow-hidden transition-all",
+                        "bg-card rounded-lg border shadow-sm overflow-hidden transition-colors",
                         log.status_code >= 400 && "border-destructive/50"
                     )}
                 >

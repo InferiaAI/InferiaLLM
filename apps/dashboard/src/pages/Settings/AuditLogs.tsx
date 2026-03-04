@@ -104,7 +104,7 @@ export default function AuditLogs() {
                     {logs.map((log) => (
                         <div
                             key={log.id}
-                            className="bg-card rounded-lg border shadow-sm overflow-hidden transition-all"
+                            className="bg-card rounded-lg border shadow-sm overflow-hidden transition-colors"
                         >
                             {/* Main Row */}
                             <div

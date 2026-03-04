@@ -130,7 +130,7 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
 
             {/* Modal */}
             <div className="fixed top-[20%] left-1/2 -translate-x-1/2 w-full max-w-xl z-50 animate-in fade-in zoom-in-95 duration-200">
-                <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border dark:border-zinc-800 overflow-hidden">
+                <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-lg border dark:border-zinc-800 overflow-hidden">
                     {/* Search Input */}
                     <div className="flex items-center px-4 border-b dark:border-zinc-800">
                         <Search className="w-5 h-5 text-slate-400 shrink-0" />

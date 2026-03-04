@@ -1,9 +1,16 @@
-import { useNavigate, useParams } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { ConfigService, type ProvidersConfig } from "@/services/configService";
 import { Check, ChevronRight, Boxes } from "lucide-react";
 
-const PROVIDERS_MAP: Record<string, any[]> = {
+type ProviderOption = {
+    id: string;
+    name: string;
+    description: string;
+    disabled?: boolean;
+};
+
+const PROVIDERS_MAP: Record<string, ProviderOption[]> = {
     cloud: [
         { id: "nosana", name: "Nosana", description: "Decentralized GPU Compute (DePIN)" },
         { id: "akash", name: "Akash Network", description: "Open Cloud Network (DePIN)" },
@@ -23,24 +30,18 @@ const PROVIDERS_MAP: Record<string, any[]> = {
 
 export default function ProviderList() {
     const { category } = useParams();
-    const navigate = useNavigate();
-    const [activeConfig, setActiveConfig] = useState<ProvidersConfig | null>(null);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        loadConfig();
-    }, []);
-
-    const loadConfig = async () => {
-        try {
-            const data = await ConfigService.getProviderConfig();
-            setActiveConfig(data);
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setLoading(false);
-        }
-    };
+    const { data: activeConfig } = useQuery<ProvidersConfig | null>({
+        queryKey: ["provider-config"],
+        queryFn: async () => {
+            try {
+                return await ConfigService.getProviderConfig();
+            } catch (e) {
+                console.error(e);
+                return null;
+            }
+        },
+        staleTime: 5 * 60 * 1000,
+    });
 
     const providers = category ? PROVIDERS_MAP[category] || [] : [];
     const categoryTitle = category ? category.charAt(0).toUpperCase() + category.slice(1).replace("-", " ") : "Providers";
@@ -72,12 +73,17 @@ export default function ProviderList() {
                 {providers.map((provider) => {
                     const configured = isConfigured(provider.id);
                     return (
-                        <button
+                        <Link
                             key={provider.id}
-                            disabled={provider.disabled}
-                            onClick={() => navigate(`/dashboard/settings/providers/${category}/${provider.id}`)}
+                            to={`/dashboard/settings/providers/${category}/${provider.id}`}
+                            aria-disabled={provider.disabled}
+                            onClick={(event) => {
+                                if (provider.disabled) {
+                                    event.preventDefault();
+                                }
+                            }}
                             className={`
-                flex items-center justify-between p-4 rounded-lg border text-left transition-all
+                flex items-center justify-between p-4 rounded-lg border text-left transition-colors
                 ${provider.disabled
                                     ? "opacity-60 cursor-not-allowed bg-muted/50"
                                     : "bg-card hover:bg-accent hover:border-accent-foreground/30 shadow-sm"
@@ -100,8 +106,8 @@ export default function ProviderList() {
                                     <p className="text-sm text-muted-foreground">{provider.description}</p>
                                 </div>
                             </div>
-                            {!provider.disabled && <ChevronRight className="w-5 h-5 text-muted-foreground" />}
-                        </button>
+                            {!provider.disabled && <ChevronRight className="w-5 h-5 text-muted-foreground" aria-hidden="true" />}
+                        </Link>
                     );
                 })}
 

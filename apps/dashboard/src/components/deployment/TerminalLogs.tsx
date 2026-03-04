@@ -199,7 +199,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
     }
 
     return (
-        <div className="flex flex-col h-[600px] bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden shadow-2xl">
+        <div className="flex flex-col h-[600px] bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden shadow-lg">
             {/* Terminal Header */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
                 <div className="flex items-center gap-3">
@@ -208,7 +208,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                         <span className="text-xs font-mono font-medium text-zinc-400">node@nosana-runtime:~</span>
                     </div>
                     {status === "connected" ? (
-                        <div className="flex items-center gap-1.5 ml-2 transition-all duration-500">
+                        <div className="flex items-center gap-1.5 ml-2 transition-colors duration-500">
                             <span className="relative flex h-2 w-2">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
@@ -231,14 +231,14 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={clearLogs}
-                        className="p-1.5 hover:bg-white/5 rounded transition-all group"
+                        className="p-1.5 hover:bg-white/5 rounded transition-colors group"
                         title="Clear Buffer"
                     >
                         <Trash2 className="w-3.5 h-3.5 text-zinc-500 group-hover:text-red-400" />
                     </button>
                     <button
                         onClick={downloadLogs}
-                        className="p-1.5 hover:bg-white/5 rounded transition-all group"
+                        className="p-1.5 hover:bg-white/5 rounded transition-colors group"
                         title="Download Logs"
                     >
                         <Download className="w-3.5 h-3.5 text-zinc-500 group-hover:text-primary" />
@@ -246,7 +246,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                     <button
                         onClick={() => setAutoScroll(!autoScroll)}
                         className={cn(
-                            "p-1.5 rounded transition-all flex items-center gap-1.5 px-2",
+                            "p-1.5 rounded transition-colors flex items-center gap-1.5 px-2",
                             autoScroll ? "bg-primary/10 text-primary border border-primary/20" : "hover:bg-white/5 text-zinc-500"
                         )}
                         title="Toggle Auto-scroll"
@@ -256,7 +256,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                     </button>
                     <button
                         onClick={connect}
-                        className="p-1.5 hover:bg-white/5 rounded transition-all"
+                        className="p-1.5 hover:bg-white/5 rounded transition-colors"
                     >
                         <RefreshCcw className="w-3.5 h-3.5 text-zinc-500" />
                     </button>
@@ -299,7 +299,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                                         <p className="text-xs font-bold text-red-500">{error}</p>
                                         <button
                                             onClick={connect}
-                                            className="text-[10px] px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition-all border border-zinc-700 font-bold"
+                                            className="text-[10px] px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition-colors border border-zinc-700 font-bold"
                                         >
                                             RECONNECT
                                         </button>

@@ -24,7 +24,7 @@ type State = {
 };
 
 type Action =
-  | { type: 'SET_FIELD'; field: keyof State; value: any }
+  | { type: 'SET_FIELD'; field: keyof State; value: State[keyof State] }
   | { type: 'OPEN_CREATE' }
   | { type: 'OPEN_EDIT'; role: Role }
   | { type: 'CLOSE_MODAL' }
@@ -214,7 +214,8 @@ export default function Roles() {
       </div>
 
       <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
-        <table className="w-full text-sm text-left">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-sm text-left">
           <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
             <tr>
               <th className="px-6 py-3 font-medium">Name</th>
@@ -253,6 +254,7 @@ export default function Roles() {
                         onClick={() => dispatch({ type: 'OPEN_EDIT', role })}
                         className="text-muted-foreground hover:text-foreground transition-colors p-1"
                         title="Edit"
+                        aria-label={`Edit role ${role.name}`}
                       >
                         <Edit className="w-4 h-4" />
                       </button>
@@ -263,6 +265,7 @@ export default function Roles() {
                         onClick={() => handleDelete(role.name)}
                         className="text-muted-foreground hover:text-red-500 transition-colors p-1"
                         title="Delete"
+                        aria-label={`Delete role ${role.name}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -279,7 +282,8 @@ export default function Roles() {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {roles.length > 0 && (

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { computeApi } from "@/lib/api";
 import { toast } from "sonner";
 import {
@@ -14,7 +14,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import type { AxiosError } from "axios";
@@ -52,6 +52,11 @@ type ApiErrorResponse = {
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
+function getPositiveParam(value: string | null, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
 function getStatusStyles(status: string) {
   if (status === "READY" || status === "RUNNING") {
     return "border-green-200 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800";
@@ -75,14 +80,16 @@ function getStatusDot(status: string) {
 export default function Deployments() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, organizations, hasPermission } = useAuth();
   const canCreateDeployment = hasPermission("deployment:create");
   const canUpdateDeployment = hasPermission("deployment:update");
   const canDeleteDeployment = hasPermission("deployment:delete");
 
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const search = searchParams.get("q") ?? "";
+  const page = getPositiveParam(searchParams.get("page"), 1);
+  const parsedPageSize = getPositiveParam(searchParams.get("pageSize"), 20);
+  const pageSize = PAGE_SIZE_OPTIONS.includes(parsedPageSize) ? parsedPageSize : 20;
 
   const targetOrgId = user?.org_id || organizations?.[0]?.id;
 
@@ -135,6 +142,20 @@ export default function Deployments() {
   const currentPage = Math.min(page, totalPages);
   const paginated = useMemo(() => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filtered, currentPage, pageSize]);
 
+  const updateSearchParams = (updates: Record<string, string | null>) => {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([key, value]) => {
+      if (!value) {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+    });
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  };
+
   return (
     <div className="space-y-5 font-sans text-slate-900 dark:text-zinc-100">
       <DeploymentHeader
@@ -146,7 +167,19 @@ export default function Deployments() {
       <div className="flex items-center justify-between gap-3">
         <div className="relative w-full max-w-sm">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input placeholder="Search deployments..." className="h-9 w-full rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          <input
+            name="deployment-search"
+            autoComplete="off"
+            placeholder="Search deployments…"
+            className="h-9 w-full rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm"
+            value={search}
+            onChange={(e) => {
+              updateSearchParams({
+                q: e.target.value.trim() ? e.target.value : null,
+                page: "1",
+              });
+            }}
+          />
         </div>
         <div className="text-xs text-muted-foreground">{filtered.length} deployments</div>
       </div>
@@ -168,8 +201,12 @@ export default function Deployments() {
           pageSize={pageSize}
           currentPage={currentPage}
           totalPages={totalPages}
-          onPageChange={setPage}
-          onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          onPageChange={(nextPage) => {
+            updateSearchParams({ page: String(nextPage) });
+          }}
+          onPageSizeChange={(size) => {
+            updateSearchParams({ pageSize: String(size), page: "1" });
+          }}
         />
       </div>
     </div>
@@ -242,34 +279,119 @@ function DeploymentTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[980px] text-sm text-left">
-        <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
-          <tr>
-            <th className="px-6 py-3 font-medium">Deployment</th>
-            <th className="px-6 py-3 font-medium">Model</th>
-            <th className="px-6 py-3 font-medium">Provider</th>
-            <th className="px-6 py-3 font-medium">Status</th>
-            <th className="px-6 py-3 font-medium">Created On</th>
-            <th className="px-6 py-3 font-medium text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {deployments.map((d) => (
-            <DeploymentRow
-              key={d.id}
-              deployment={d}
-              isMutating={isMutating}
-              canUpdateDeployment={canUpdateDeployment}
-              canDeleteDeployment={canDeleteDeployment}
-              onStart={onStart}
-              onStop={onStop}
-              onDelete={onDelete}
-            />
-          ))}
-        </tbody>
-      </table>
+    <div>
+      <div className="divide-y md:hidden">
+        {deployments.map((d) => (
+          <DeploymentCard
+            key={d.id}
+            deployment={d}
+            isMutating={isMutating}
+            canUpdateDeployment={canUpdateDeployment}
+            canDeleteDeployment={canDeleteDeployment}
+            onStart={onStart}
+            onStop={onStop}
+            onDelete={onDelete}
+          />
+        ))}
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full min-w-[980px] text-sm text-left">
+          <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
+            <tr>
+              <th className="px-6 py-3 font-medium">Deployment</th>
+              <th className="px-6 py-3 font-medium">Model</th>
+              <th className="px-6 py-3 font-medium">Provider</th>
+              <th className="px-6 py-3 font-medium">Status</th>
+              <th className="px-6 py-3 font-medium">Created On</th>
+              <th className="px-6 py-3 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {deployments.map((d) => (
+              <DeploymentRow
+                key={d.id}
+                deployment={d}
+                isMutating={isMutating}
+                canUpdateDeployment={canUpdateDeployment}
+                canDeleteDeployment={canDeleteDeployment}
+                onStart={onStart}
+                onStop={onStop}
+                onDelete={onDelete}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+function DeploymentCard({
+  deployment,
+  isMutating,
+  canUpdateDeployment,
+  canDeleteDeployment,
+  onStart,
+  onStop,
+  onDelete,
+}: {
+  deployment: Deployment;
+  isMutating: boolean;
+  canUpdateDeployment: boolean;
+  canDeleteDeployment: boolean;
+  onStart: (id: string) => void;
+  onStop: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <article className="space-y-3 p-4">
+      <div>
+        <Link to={`/dashboard/deployments/${deployment.id}`} className="font-medium text-foreground hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
+          {deployment.name}
+        </Link>
+        <div className="mt-1 text-xs text-muted-foreground font-mono">{(deployment.id || "").slice(0, 12)}…</div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <div className="text-muted-foreground">Model</div>
+          <div className="font-mono">{deployment.modelName}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Provider</div>
+          <div className="capitalize">{deployment.provider}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Created</div>
+          <div>{new Date(deployment.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Status</div>
+          <span className={cn("mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm", getStatusStyles(deployment.status))}>
+            <span className={cn("h-1.5 w-1.5 rounded-full", getStatusDot(deployment.status))} />
+            {deployment.status}
+          </span>
+        </div>
+      </div>
+
+      {deployment.status === "FAILED" && deployment.errorMessage && (
+        <div className="mt-1 flex items-start gap-1 text-[11px] text-red-600 dark:text-red-400">
+          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span className="line-clamp-2">{deployment.errorMessage}</span>
+        </div>
+      )}
+
+      <DeploymentActions
+        deployment={deployment}
+        isMutating={isMutating}
+        canUpdateDeployment={canUpdateDeployment}
+        canDeleteDeployment={canDeleteDeployment}
+        onStart={onStart}
+        onStop={onStop}
+        onDelete={onDelete}
+      />
+    </article>
   );
 }
 
@@ -290,15 +412,11 @@ function DeploymentRow({
   onStop: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const isRunning = ["READY", "RUNNING", "PENDING", "DEPLOYING"].includes(d.status);
-  const canStart = ["STOPPED", "TERMINATED", "FAILED"].includes(d.status);
-  const canDelete = ["STOPPED", "TERMINATED", "FAILED"].includes(d.status);
-
   return (
     <tr className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
       <td className="px-6 py-4">
         <Link to={`/dashboard/deployments/${d.id}`} className="font-medium text-foreground hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">{d.name}</Link>
-        <div className="mt-1 text-xs text-muted-foreground font-mono">{(d.id || "").slice(0, 12)}...</div>
+        <div className="mt-1 text-xs text-muted-foreground font-mono">{(d.id || "").slice(0, 12)}…</div>
       </td>
       <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{d.modelName}</td>
       <td className="px-6 py-4 text-muted-foreground capitalize">{d.provider}</td>
@@ -316,14 +434,51 @@ function DeploymentRow({
       </td>
       <td className="px-6 py-4 text-muted-foreground text-xs">{new Date(d.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
       <td className="px-6 py-4">
-        <div className="flex items-center justify-end gap-2">
-          <Link to={`/dashboard/deployments/${d.id}`} className="inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted text-foreground transition-colors"><Settings className="w-3.5 h-3.5 text-muted-foreground" /> Settings</Link>
-          {canUpdateDeployment && canStart && <button type="button" disabled={isMutating} onClick={() => onStart(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 font-medium disabled:opacity-50 transition-colors"><Play className="w-3.5 h-3.5" /> Start</button>}
-          {canUpdateDeployment && isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-medium disabled:opacity-50 transition-colors"><Square className="w-3.5 h-3.5" /> Stop</button>}
-          {canDeleteDeployment && canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(d.id)} className="inline-flex items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium disabled:opacity-50 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
-        </div>
+        <DeploymentActions
+          deployment={d}
+          isMutating={isMutating}
+          canUpdateDeployment={canUpdateDeployment}
+          canDeleteDeployment={canDeleteDeployment}
+          onStart={onStart}
+          onStop={onStop}
+          onDelete={onDelete}
+          align="end"
+        />
       </td>
     </tr>
+  );
+}
+
+function DeploymentActions({
+  deployment,
+  isMutating,
+  canUpdateDeployment,
+  canDeleteDeployment,
+  onStart,
+  onStop,
+  onDelete,
+  align = "start",
+}: {
+  deployment: Deployment;
+  isMutating: boolean;
+  canUpdateDeployment: boolean;
+  canDeleteDeployment: boolean;
+  onStart: (id: string) => void;
+  onStop: (id: string) => void;
+  onDelete: (id: string) => void;
+  align?: "start" | "end";
+}) {
+  const isRunning = ["READY", "RUNNING", "PENDING", "DEPLOYING"].includes(deployment.status);
+  const canStart = ["STOPPED", "TERMINATED", "FAILED"].includes(deployment.status);
+  const canDelete = ["STOPPED", "TERMINATED", "FAILED"].includes(deployment.status);
+
+  return (
+    <div className={cn("flex flex-wrap items-center gap-2", align === "end" ? "justify-end" : "")}>
+      <Link to={`/dashboard/deployments/${deployment.id}`} className="inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted text-foreground transition-colors"><Settings className="w-3.5 h-3.5 text-muted-foreground" /> Settings</Link>
+      {canUpdateDeployment && canStart && <button type="button" disabled={isMutating} onClick={() => onStart(deployment.id)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 font-medium disabled:opacity-50 transition-colors"><Play className="w-3.5 h-3.5" /> Start</button>}
+      {canUpdateDeployment && isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(deployment.id)} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-medium disabled:opacity-50 transition-colors"><Square className="w-3.5 h-3.5" /> Stop</button>}
+      {canDeleteDeployment && canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(deployment.id)} className="inline-flex items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium disabled:opacity-50 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
+    </div>
   );
 }
 

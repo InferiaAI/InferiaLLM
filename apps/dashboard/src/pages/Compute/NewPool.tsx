@@ -453,7 +453,7 @@ function StepProgress({ currentStep }: { currentStep: number }) {
             {[1, 2, 3].map((s, i) => (
                 <div key={s} className="flex items-center gap-4">
                     <div className={cn("flex items-center gap-2", currentStep >= s && "text-emerald-600 dark:text-emerald-400")}>
-                        <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-all", currentStep >= s ? "bg-emerald-600 text-white border-emerald-600 dark:border-emerald-500 dark:bg-emerald-600" : "border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800")}>{s}</div>
+                        <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors", currentStep >= s ? "bg-emerald-600 text-white border-emerald-600 dark:border-emerald-500 dark:bg-emerald-600" : "border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800")}>{s}</div>
                         {s === 1 ? "Select Provider" : s === 2 ? "Compute Config" : "Review & Create"}
                     </div>
                     {i < 2 && <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />}
@@ -470,7 +470,7 @@ function ProviderCard({ provider: p, onSelect }: { provider: any, onSelect: (id:
                 disabled={p.disabled}
                 onClick={() => onSelect(p.id)}
                 className={cn(
-                    "text-left group relative p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-emerald-500/50 dark:hover:border-emerald-500/50 transition-all hover:shadow-md flex flex-col gap-4",
+                    "text-left group relative p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-emerald-500/50 dark:hover:border-emerald-500/50 transition-colors hover:shadow-md flex flex-col gap-4",
                     p.disabled && "opacity-50 cursor-not-allowed hover:border-slate-200 dark:hover:border-zinc-800 hover:shadow-none bg-slate-50 dark:bg-zinc-900/50"
                 )}
             >
@@ -495,7 +495,7 @@ function ProviderCard({ provider: p, onSelect }: { provider: any, onSelect: (id:
     return (
         <Link
             to={p.configPath}
-            className="text-left group relative p-6 rounded-xl border border-dashed border-slate-300 dark:border-zinc-800 bg-slate-50/30 dark:bg-zinc-900/20 hover:border-slate-400 dark:hover:border-zinc-700 transition-all flex flex-col gap-4"
+            className="text-left group relative p-6 rounded-xl border border-dashed border-slate-300 dark:border-zinc-800 bg-slate-50/30 dark:bg-zinc-900/20 hover:border-slate-400 dark:hover:border-zinc-700 transition-colors flex flex-col gap-4"
         >
             <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center opacity-40 grayscale", p.color)}>
                 <p.icon className="w-6 h-6" />
@@ -517,10 +517,12 @@ function ResourceFilter({ searchQuery, setSearchQuery, minVram, setMinVram, sort
             <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
-                    placeholder="Search GPUs (v100, t4, a100...)"
+                    name="gpuSearch"
+                    placeholder="Search GPUs (v100, t4, a100)…"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all text-sm"
+                    autoComplete="off"
+                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 transition-colors text-sm"
                 />
             </div>
             <select value={minVram} onChange={(e) => setMinVram(Number(e.target.value))} className="px-3 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500/20">
@@ -542,13 +544,12 @@ function ResourceFilter({ searchQuery, setSearchQuery, minVram, setMinVram, sort
 
 function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, isSelected: boolean, onSelect: (r: any) => void }) {
     return (
-        <div
-            role="button"
-            tabIndex={0}
+        <button
+            type="button"
+            aria-pressed={isSelected}
             onClick={() => onSelect(res)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(res) }}
             className={cn(
-                "cursor-pointer p-4 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 transition-all relative",
+                "w-full cursor-pointer p-4 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 transition-colors relative text-left",
                 isSelected ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-sm" : "hover:border-emerald-400/30 dark:hover:border-emerald-600/30"
             )}
         >
@@ -563,7 +564,7 @@ function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, 
             </div>
             {res.pricing_model && res.pricing_model !== 'fixed' && <div className="mt-1"><span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded capitalize">{res.pricing_model}</span></div>}
             {isSelected && <div className="absolute top-4 right-4 w-5 h-5 bg-emerald-600 text-white rounded-full flex items-center justify-center"><Check className="w-3 h-3" /></div>}
-        </div>
+        </button>
     )
 }
 
@@ -599,7 +600,7 @@ function CredentialSelection({ provider, credentials, selectedCredential, setSel
                 <label htmlFor="credential-select" className="text-sm font-medium flex items-center gap-2"><Key className="w-4 h-4" /> {provider === "nosana" ? "Nosana API Key" : provider === "akash" ? "Akash Wallet" : "Provider Credential"}</label>
                 {loading ? <div className="text-sm text-muted-foreground">Loading credentials...</div> : (
                     <select id="credential-select" value={selectedCredential} onChange={(e) => setSelectedCredential(e.target.value)} className="w-full px-3 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-700 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-zinc-100 text-sm">
-                        <option value="">Select a credential...</option>
+                        <option value="">Select a credential…</option>
                         {credentials.filter((key: any) => key.is_active).map((key: any) => <option key={key.name} value={key.name}>{key.name}</option>)}
                     </select>
                 )}

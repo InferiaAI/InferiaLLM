@@ -7,15 +7,15 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
-  ChevronRight,
   Circle,
   Clock,
   ExternalLink,
+  Lock,
   Rocket,
   Server,
   Shield,
   Sparkles,
-  TrendingUp,
+  TriangleAlert,
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -58,18 +58,14 @@ interface InferenceLog {
   status_code?: number;
 }
 
-interface AuditLog {
-  id: string;
-  action: string;
-  resource_type: string;
-  timestamp: string;
-}
+type StatTone = "positive" | "warning" | "danger" | "neutral" | "locked";
 
 interface StatCardProps {
   label: string;
   value: number;
   status: string;
   icon: LucideIcon;
+  tone: StatTone;
 }
 
 interface QuickActionProps {
@@ -81,8 +77,8 @@ interface QuickActionProps {
   bgClass?: string;
 }
 
-function getStatusTone(state: string) {
-  if (["RUNNING", "READY"].includes(state)) return "success";
+function getStatusTone(state: string): StatTone {
+  if (["RUNNING", "READY"].includes(state)) return "positive";
   if (["FAILED", "ERROR"].includes(state)) return "danger";
   if (["DEPLOYING", "PENDING", "STARTING"].includes(state)) return "warning";
   return "neutral";
@@ -93,36 +89,91 @@ function formatState(state?: string): string {
   return state.charAt(0).toUpperCase() + state.slice(1).toLowerCase();
 }
 
-function StatCard({ label, value, status, icon: Icon }: StatCardProps) {
+function getStatToneConfig(tone: StatTone) {
+  switch (tone) {
+    case "positive":
+      return {
+        iconWrap: "bg-emerald-500/12",
+        iconColor: "text-emerald-600 dark:text-emerald-400",
+        statusColor: "text-emerald-700 dark:text-emerald-400",
+        statusIcon: CheckCircle2,
+      };
+    case "warning":
+      return {
+        iconWrap: "bg-amber-500/12",
+        iconColor: "text-amber-600 dark:text-amber-400",
+        statusColor: "text-amber-700 dark:text-amber-400",
+        statusIcon: TriangleAlert,
+      };
+    case "danger":
+      return {
+        iconWrap: "bg-red-500/12",
+        iconColor: "text-red-600 dark:text-red-400",
+        statusColor: "text-red-700 dark:text-red-400",
+        statusIcon: AlertCircle,
+      };
+    case "locked":
+      return {
+        iconWrap: "bg-slate-500/12",
+        iconColor: "text-slate-600 dark:text-slate-300",
+        statusColor: "text-slate-600 dark:text-slate-300",
+        statusIcon: Lock,
+      };
+    case "neutral":
+    default:
+      return {
+        iconWrap: "bg-slate-500/10",
+        iconColor: "text-slate-600 dark:text-slate-300",
+        statusColor: "text-muted-foreground",
+        statusIcon: Circle,
+      };
+  }
+}
+
+function StatCard({ label, value, status, icon: Icon, tone }: StatCardProps) {
+  const toneConfig = getStatToneConfig(tone);
+  const StatusIcon = toneConfig.statusIcon;
+
   return (
-    <div className="rounded-xl border border-border/50 bg-card p-6 shadow-sm hover:border-border transition-colors flex flex-col items-start text-left">
-      <div className="mb-4 rounded-md bg-green-500/10 p-2.5">
-        <Icon className="h-5 w-5 text-green-500 dark:text-green-400" />
+    <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm transition-colors hover:border-border">
+      <div className={cn("mb-4 inline-flex rounded-xl p-2.5", toneConfig.iconWrap)}>
+        <Icon className={cn("h-5 w-5", toneConfig.iconColor)} />
       </div>
-      <div>
-        <p className="text-sm font-medium tracking-wide text-foreground">{label}</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
-      </div>
-      <div className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground w-full pt-4 border-t border-border/50">
-        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+
+      <p className="text-sm font-medium tracking-wide text-foreground">{label}</p>
+      <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{value}</p>
+
+      <div className={cn("mt-4 flex items-center gap-1.5 border-t border-border/60 pt-4 text-xs", toneConfig.statusColor)}>
+        <StatusIcon className="h-3.5 w-3.5" />
         <span>{status}</span>
       </div>
     </div>
   );
 }
 
-function QuickAction({ title, description, href, icon: Icon, colorClass = "text-purple-500 dark:text-purple-400", bgClass = "bg-purple-500/10" }: QuickActionProps) {
+function QuickAction({
+  title,
+  description,
+  href,
+  icon: Icon,
+  colorClass = "text-emerald-600 dark:text-emerald-400",
+  bgClass = "bg-emerald-500/10",
+}: QuickActionProps) {
   return (
     <Link
       to={href}
-      className="group rounded-xl border border-border/50 bg-card p-6 shadow-sm transition-colors hover:border-border/80 flex flex-col items-start h-full"
+      className="group flex h-full flex-col rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition-colors hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
     >
-      <div className={cn("mb-4 rounded-md p-2.5 transition-colors", bgClass)}>
-        <Icon className={cn("h-5 w-5 transition-colors", colorClass)} />
+      <div className={cn("mb-4 inline-flex rounded-xl p-2.5", bgClass)}>
+        <Icon className={cn("h-5 w-5", colorClass)} />
       </div>
       <div className="flex-1">
-        <p className="font-semibold text-lg text-foreground mb-2">{title}</p>
-        <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+        <p className="text-base font-semibold text-foreground">{title}</p>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+      <div className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-primary">
+        Open
+        <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
       </div>
     </Link>
   );
@@ -189,12 +240,8 @@ export default function Overview() {
     enabled: !!orgId && canViewAuditLogs,
   });
 
-  const isLoading =
-    orgLoading ||
-    (canViewDeployments && (poolsLoading || deploymentsLoading || logsLoading));
-  const error =
-    orgError ||
-    (canViewDeployments ? poolsError || deploymentsError : null);
+  const isLoading = orgLoading || (canViewDeployments && (poolsLoading || deploymentsLoading || logsLoading));
+  const error = orgError || (canViewDeployments ? poolsError || deploymentsError : null);
 
   const deploymentList = deployments ?? [];
   const poolList = poolsData?.pools ?? [];
@@ -202,6 +249,31 @@ export default function Overview() {
     ["RUNNING", "READY", "PENDING", "DEPLOYING"].includes((d.state || "").toUpperCase())
   );
   const healthyPools = poolList.filter((pool) => pool.is_active).length;
+  const requestCount = recentLogs?.length ?? 0;
+  const recentTokenCount = (recentLogs ?? []).reduce(
+    (sum, log) => sum + log.prompt_tokens + log.completion_tokens,
+    0
+  );
+
+  const deploymentTone: StatTone = !canViewDeployments
+    ? "locked"
+    : runningDeployments.length > 0
+      ? "positive"
+      : "neutral";
+
+  let poolTone: StatTone = "neutral";
+  if (!canViewDeployments) {
+    poolTone = "locked";
+  } else if (poolList.length > 0 && healthyPools === poolList.length) {
+    poolTone = "positive";
+  } else if (poolList.length > 0 && healthyPools === 0) {
+    poolTone = "danger";
+  } else if (poolList.length > 0) {
+    poolTone = "warning";
+  }
+
+  const requestTone: StatTone = !canViewDeployments ? "locked" : requestCount > 0 ? "positive" : "neutral";
+  const auditTone: StatTone = !canViewAuditLogs ? "locked" : (auditLogs?.length ?? 0) > 0 ? "positive" : "neutral";
 
   if (isLoading) {
     return <OverviewSkeleton />;
@@ -217,14 +289,56 @@ export default function Overview() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in-50 duration-300">
-      <section className="rounded-xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/10 p-6 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="animate-in fade-in-50 space-y-8 duration-300">
+      <section className="relative overflow-hidden rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_hsl(var(--primary)/0.16),_transparent_48%)]" />
+        <div className="relative grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Control Plane Overview</h1>
-            <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
-              Launch intelligent workload agents, configure infrastructure, and observe requests for your {org?.name ? `${org.name} organization` : "organization"}.
+            <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+              <Sparkles className="h-3.5 w-3.5" />
+              Control Plane
+            </div>
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground">{org?.name || "Organization"} Overview</h1>
+            <p className="mt-3 max-w-2xl text-sm text-muted-foreground sm:text-base">
+              Operate deployments, monitor compute readiness, and keep team activity visible from one dashboard surface.
             </p>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              {canCreateDeployment && (
+                <Link
+                  to="/dashboard/deployments/new"
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  Launch deployment
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              )}
+              {canViewDeployments && (
+                <Link
+                  to="/dashboard/insights"
+                  className="inline-flex items-center gap-2 rounded-xl border border-border/70 bg-background/70 px-4 py-2.5 text-sm font-semibold text-foreground transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  View insights
+                </Link>
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+            <div className="rounded-xl border border-border/70 bg-background/70 p-4">
+              <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Active deployments</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">{canViewDeployments ? runningDeployments.length : 0}</p>
+            </div>
+            <div className="rounded-xl border border-border/70 bg-background/70 p-4">
+              <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Pool health</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">
+                {canViewDeployments ? `${healthyPools}/${poolList.length || 0}` : "0/0"}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border/70 bg-background/70 p-4 sm:col-span-2 xl:col-span-1">
+              <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Recent tokens (8 req)</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">{canViewDeployments ? recentTokenCount : 0}</p>
+            </div>
           </div>
         </div>
       </section>
@@ -241,6 +355,7 @@ export default function Overview() {
               : "No access"
           }
           icon={Rocket}
+          tone={deploymentTone}
         />
         <StatCard
           label="Compute Pools"
@@ -253,12 +368,14 @@ export default function Overview() {
               : "No access"
           }
           icon={Server}
+          tone={poolTone}
         />
         <StatCard
           label="Recent Requests"
-          value={recentLogs?.length ?? 0}
+          value={requestCount}
           status={canViewDeployments ? "Latest entries" : "No access"}
           icon={Activity}
+          tone={requestTone}
         />
         <StatCard
           label="Audit Events"
@@ -271,13 +388,14 @@ export default function Overview() {
               : "No access"
           }
           icon={Shield}
+          tone={auditTone}
         />
       </section>
 
       <section className="space-y-4">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-          <h2 className="text-lg font-medium">Quick Setup</h2>
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h2 className="text-lg font-semibold">Quick Setup</h2>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {canCreateDeployment && (
@@ -287,16 +405,16 @@ export default function Overview() {
                 description="Launch an inference or embedding workload."
                 href="/dashboard/deployments/new"
                 icon={Rocket}
-                colorClass="text-green-600 dark:text-green-400"
-                bgClass="bg-green-500/10"
+                colorClass="text-emerald-600 dark:text-emerald-400"
+                bgClass="bg-emerald-500/10"
               />
               <QuickAction
                 title="Add Compute Pool"
                 description="Provision compute capacity for model serving."
                 href="/dashboard/compute/pools/new"
                 icon={Server}
-                colorClass="text-purple-600 dark:text-purple-400"
-                bgClass="bg-purple-500/10"
+                colorClass="text-cyan-600 dark:text-cyan-400"
+                bgClass="bg-cyan-500/10"
               />
             </>
           )}
@@ -306,8 +424,8 @@ export default function Overview() {
               description="Set up cloud, vector DB, and guardrail integrations."
               href="/dashboard/settings/providers"
               icon={Wrench}
-              colorClass="text-red-600 dark:text-red-400"
-              bgClass="bg-red-500/10"
+              colorClass="text-amber-600 dark:text-amber-400"
+              bgClass="bg-amber-500/10"
             />
           )}
           {hasPermission("organization:view") && (
@@ -316,26 +434,29 @@ export default function Overview() {
               description="Update quota, privacy, and organization controls."
               href="/dashboard/settings/organization"
               icon={Shield}
-              colorClass="text-indigo-600 dark:text-indigo-400"
-              bgClass="bg-indigo-500/10"
+              colorClass="text-blue-600 dark:text-blue-400"
+              bgClass="bg-blue-500/10"
             />
           )}
         </div>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-2">
-        <div className="rounded-xl border bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h3 className="text-sm font-medium">Running Deployments</h3>
+        <div className="rounded-2xl border border-border/70 bg-card shadow-sm">
+          <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
+            <h3 className="text-sm font-semibold">Running Deployments</h3>
             {canViewDeployments ? (
-              <Link to="/dashboard/deployments" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+              <Link
+                to="/dashboard/deployments"
+                className="text-xs font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
                 View all
               </Link>
             ) : (
               <span className="text-xs text-muted-foreground">Restricted</span>
             )}
           </div>
-          <div className="divide-y">
+          <div className="divide-y divide-border/70">
             {!canViewDeployments ? (
               <div className="p-6 text-center text-sm text-muted-foreground">
                 <Circle className="mx-auto mb-2 h-7 w-7 opacity-25" />
@@ -354,17 +475,18 @@ export default function Overview() {
                 return (
                   <div key={job.deployment_id} className="flex items-center justify-between px-4 py-3">
                     <div>
-                      <p className="text-sm font-medium">{job.model_name || "Unnamed model"}</p>
+                      <p className="text-sm font-medium text-foreground">{job.model_name || "Unnamed model"}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{formatState(state)}</p>
                     </div>
                     <Link
                       to={`/dashboard/deployments/${job.deployment_id}`}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
-                        tone === "success" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                        tone === "positive" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
                         tone === "warning" && "bg-amber-500/10 text-amber-700 dark:text-amber-400",
                         tone === "danger" && "bg-red-500/10 text-red-700 dark:text-red-400",
-                        tone === "neutral" && "bg-muted text-muted-foreground"
+                        tone === "neutral" && "bg-muted text-muted-foreground",
+                        tone === "locked" && "bg-muted text-muted-foreground"
                       )}
                     >
                       Details
@@ -377,18 +499,21 @@ export default function Overview() {
           </div>
         </div>
 
-        <div className="rounded-xl border bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h3 className="text-sm font-medium">Compute Pool Health</h3>
+        <div className="rounded-2xl border border-border/70 bg-card shadow-sm">
+          <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
+            <h3 className="text-sm font-semibold">Compute Pool Health</h3>
             {canViewDeployments ? (
-              <Link to="/dashboard/compute/pools" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+              <Link
+                to="/dashboard/compute/pools"
+                className="text-xs font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
                 Manage pools
               </Link>
             ) : (
               <span className="text-xs text-muted-foreground">Restricted</span>
             )}
           </div>
-          <div className="divide-y">
+          <div className="divide-y divide-border/70">
             {!canViewDeployments ? (
               <div className="p-6 text-center text-sm text-muted-foreground">
                 <Server className="mx-auto mb-2 h-7 w-7 opacity-25" />
@@ -403,12 +528,12 @@ export default function Overview() {
               poolList.slice(0, 5).map((pool) => (
                 <div key={pool.pool_id} className="flex items-center justify-between px-4 py-3">
                   <div>
-                    <p className="text-sm font-medium">{pool.pool_name}</p>
+                    <p className="text-sm font-medium text-foreground">{pool.pool_name}</p>
                     <p className="mt-1 text-xs capitalize text-muted-foreground">{pool.provider}</p>
                   </div>
                   <span
                     className={cn(
-                      "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium",
+                      "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold",
                       pool.is_active
                         ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                         : "bg-muted text-muted-foreground"
@@ -423,11 +548,14 @@ export default function Overview() {
         </div>
       </section>
 
-      <section className="rounded-xl border bg-card shadow-sm">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h3 className="text-sm font-medium">Recent Inference Activity</h3>
+      <section className="rounded-2xl border border-border/70 bg-card shadow-sm">
+        <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
+          <h3 className="text-sm font-semibold">Recent Inference Activity</h3>
           {canViewDeployments ? (
-            <Link to="/dashboard/insights" className="text-xs font-medium text-emerald-600 hover:underline dark:text-emerald-400">
+            <Link
+              to="/dashboard/insights"
+              className="text-xs font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
               Explore insights
             </Link>
           ) : (
@@ -438,14 +566,14 @@ export default function Overview() {
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-4 py-3 font-medium">Timestamp</th>
-                <th className="px-4 py-3 font-medium">Deployment</th>
-                <th className="px-4 py-3 font-medium">Tokens</th>
-                <th className="px-4 py-3 font-medium">Latency</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                <th scope="col" className="px-4 py-3 font-medium">Timestamp</th>
+                <th scope="col" className="px-4 py-3 font-medium">Deployment</th>
+                <th scope="col" className="px-4 py-3 font-medium">Tokens</th>
+                <th scope="col" className="px-4 py-3 font-medium">Latency</th>
+                <th scope="col" className="px-4 py-3 font-medium">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-border/70">
               {!canViewDeployments ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">
@@ -459,7 +587,7 @@ export default function Overview() {
                 recentLogs.map((log) => {
                   const isSuccess = !log.status_code || log.status_code < 400;
                   return (
-                    <tr key={log.id} className="hover:bg-muted/30">
+                    <tr key={log.id} className="transition hover:bg-muted/30">
                       <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                         <div className="inline-flex items-center gap-2">
                           <Clock className="h-3.5 w-3.5" />
@@ -476,7 +604,7 @@ export default function Overview() {
                       <td className="px-4 py-3">
                         <span
                           className={cn(
-                            "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium",
+                            "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold",
                             isSuccess
                               ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                               : "bg-red-500/10 text-red-700 dark:text-red-400"

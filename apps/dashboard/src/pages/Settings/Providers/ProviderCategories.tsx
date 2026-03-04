@@ -1,9 +1,7 @@
-import { useNavigate } from "react-router-dom";
-import { Cloud, Database, Shield, Cpu, ChevronRight } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Cloud, Database, Shield, ChevronRight } from "lucide-react";
 
 export default function ProviderCategories() {
-    const navigate = useNavigate();
-
     const categories = [
         {
             id: "cloud",
@@ -42,24 +40,24 @@ export default function ProviderCategories() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {categories.map((category) => (
-                    <button
+                    <Link
                         key={category.id}
-                        onClick={() => navigate(`/dashboard/settings/providers/${category.id}`)}
-                        className="flex items-start gap-4 p-6 rounded-xl border border-border bg-card hover:bg-accent/50 hover:border-accent-foreground/20 transition-all text-left group shadow-sm"
+                        to={`/dashboard/settings/providers/${category.id}`}
+                        className="flex items-start gap-4 p-6 rounded-xl border border-border bg-card hover:bg-accent/50 hover:border-accent-foreground/20 transition-colors text-left group shadow-sm"
                     >
                         <div className={`p-3 rounded-lg ${category.bg} ${category.color}`}>
-                            <category.icon className="w-6 h-6" />
+                            <category.icon className="w-6 h-6" aria-hidden="true" />
                         </div>
                         <div className="flex-1">
                             <h3 className="font-semibold text-lg flex items-center gap-2">
                                 {category.title}
-                                <ChevronRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-muted-foreground" />
+                                <ChevronRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-colors text-muted-foreground" aria-hidden="true" />
                             </h3>
                             <p className="text-sm text-muted-foreground mt-1">
                                 {category.description}
                             </p>
                         </div>
-                    </button>
+                    </Link>
                 ))}
             </div>
         </div>

@@ -436,14 +436,14 @@ function ChromaFields({ config, updateField }: { config: ProvidersConfig; update
                     <button
                         type="button"
                         onClick={() => updateField(['vectordb', 'chroma', 'is_local'], true)}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${config.vectordb.chroma.is_local !== false ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${config.vectordb.chroma.is_local !== false ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                     >
                         Local
                     </button>
                     <button
                         type="button"
                         onClick={() => updateField(['vectordb', 'chroma', 'is_local'], false)}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${config.vectordb.chroma.is_local === false ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${config.vectordb.chroma.is_local === false ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                     >
                         Cloud
                     </button>

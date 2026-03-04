@@ -271,7 +271,7 @@ function StepIndicator({ step, current, label }: { step: number; current: number
   return (
     <div className={cn("flex items-center gap-2", isActive && "text-emerald-600 dark:text-emerald-400")}>
       <div className={cn(
-        "w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-all",
+        "w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors",
         isActive ? "bg-emerald-600 text-white border-emerald-600 dark:border-emerald-500 dark:bg-emerald-600" : "border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
       )}>
         {current}
@@ -684,13 +684,13 @@ export default function NewDeployment() {
         <div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner">
           <button
             onClick={() => { dispatch({ type: 'SET_MODE', payload: "managed" }); }}
-            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2", mode === "managed" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
+            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2", mode === "managed" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
           >
             <Layers className="w-4 h-4" /> Deploy on Compute
           </button>
           <button
             onClick={() => { dispatch({ type: 'SET_MODE', payload: "external" }); }}
-            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-all flex items-center gap-2", mode === "external" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
+            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2", mode === "external" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
           >
             <Globe className="w-4 h-4" /> External Provider
           </button>
@@ -748,12 +748,19 @@ function TypeSelection({ selectedId, onSelect }: { selectedId: string; onSelect:
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {deploymentTypes.map(type => (
-        <div
+        <button
+          type="button"
           key={type.id}
-          role="button"
-          tabIndex={type.active ? 0 : -1}
+          disabled={!type.active}
+          aria-pressed={selectedId === type.id}
           onClick={() => type.active && onSelect(type.id, type.modelType)}
-          className={cn("p-5 rounded-xl border relative transition-all outline-none", type.active ? "cursor-pointer bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm focus:ring-2 focus:ring-emerald-500/40" : "opacity-50 cursor-not-allowed bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800", selectedId === type.id && type.active ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "")}
+          className={cn(
+            "w-full p-5 rounded-xl border relative transition-colors outline-none text-left",
+            type.active
+              ? "cursor-pointer bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm focus:ring-2 focus:ring-emerald-500/40"
+              : "opacity-50 cursor-not-allowed bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800",
+            selectedId === type.id && type.active ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : ""
+          )}
         >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -763,7 +770,7 @@ function TypeSelection({ selectedId, onSelect }: { selectedId: string; onSelect:
             {type.badge && <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded-full uppercase tracking-wide">{type.badge}</span>}
           </div>
           <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{type.desc}</p>
-        </div>
+        </button>
       ))}
     </div>
   );
@@ -776,7 +783,7 @@ function EngineSelection({ modelType, selectedEngine, dispatch, setStep }: { mod
         <button type="button" onClick={() => setStep(1)} className="text-sm text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium mb-4 flex items-center gap-1">← Back to Type</button>
       </div>
       {computeEngines.filter(e => e.modelTypes.includes(modelType)).map(e => (
-        <div key={e.id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id })} className={cn("cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-emerald-500/40", selectedEngine === e.id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm")}>
+        <button type="button" key={e.id} aria-pressed={selectedEngine === e.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-colors outline-none text-left focus:ring-2 focus:ring-emerald-500/40", selectedEngine === e.id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm")}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               {e.icon && <e.icon className="w-5 h-5 text-slate-700 dark:text-zinc-200" />}
@@ -785,7 +792,7 @@ function EngineSelection({ modelType, selectedEngine, dispatch, setStep }: { mod
             {selectedEngine === e.id && <Check className="w-5 h-5 text-emerald-600 dark:text-emerald-500" />}
           </div>
           <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{e.desc}</p>
-        </div>
+        </button>
       ))}
       <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => setStep(3)} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors font-medium">Continue</button></div>
     </div>
@@ -805,12 +812,12 @@ function PoolSelection({ userPools, selectedPool, dispatch, setStep }: { userPoo
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {userPools.map(pool => (
-            <div key={pool.pool_id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-all outline-none focus:ring-2 focus:ring-emerald-500/40", selectedPool?.pool_id === pool.pool_id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}>
+            <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-colors outline-none text-left focus:ring-2 focus:ring-emerald-500/40", selectedPool?.pool_id === pool.pool_id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}>
               <div className="flex items-start justify-between">
                 <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-slate-500 dark:text-zinc-400 font-mono mt-1">{pool.provider}</div></div>
                 <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", pool.is_active ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-slate-50 text-slate-500 border-slate-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700")}>{pool.is_active ? "Active" : "Inactive"}</div>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -875,7 +882,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     <div className="max-w-2xl mx-auto space-y-8">
       <div className="space-y-4">
         <label htmlFor="instanceName" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Deployment Name</label>
-        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. Production Llama 3" />
+        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none transition-colors bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. Production Llama 3" />
       </div>
 
       <div className="space-y-4">
@@ -892,7 +899,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
       </div>
 
       {compatibility && (
-        <div className={cn("mt-4 p-5 rounded-xl border-2 transition-all animate-in fade-in slide-in-from-top-4", getFitColor(compatibility.fitLevel))}>
+        <div className={cn("mt-4 p-5 rounded-xl border-2 transition-colors animate-in fade-in slide-in-from-top-4", getFitColor(compatibility.fitLevel))}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-current/10">
@@ -931,7 +938,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                 </div>
                 <div className="h-1.5 w-full bg-current/10 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-current transition-all duration-1000 ease-out"
+                    className="h-full bg-current transition-colors duration-1000 ease-out"
                     style={{ width: `${stat.value}%` }}
                   />
                 </div>
@@ -966,7 +973,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                     dispatch({ type: 'SET_FIELD', field: 'dtype', value: cfg.dtype });
                     toast.success("Applied vLLM optimizations for this hardware.");
                   }}
-                  className="px-3 py-1 bg-current/10 hover:bg-current/20 rounded-md text-[10px] font-black uppercase transition-all border border-current/20 active:scale-95"
+                  className="px-3 py-1 bg-current/10 hover:bg-current/20 rounded-md text-[10px] font-black uppercase transition-colors border border-current/20 active:scale-95"
                 >
                   Apply Settings
                 </button>
@@ -1179,7 +1186,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         </div>
       )}
 
-      <div className="flex gap-4 pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} className="flex-1 py-2.5 border rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium transition-colors text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-70 font-medium shadow-sm transition-all flex justify-center items-center gap-2">{isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}</button></div>
+      <div className="flex gap-4 pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} className="flex-1 py-2.5 border rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium transition-colors text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-70 font-medium shadow-sm transition-colors flex justify-center items-center gap-2">{isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}</button></div>
     </div>
   );
 }
@@ -1199,8 +1206,8 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
 
       {step === 1 && (
         <div className="space-y-6">
-          <div className="flex justify-center"><div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner"><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2", externalModelType === "inference" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><MessageSquare className="w-4 h-4" /> Inference</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2", externalModelType === "embedding" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><Database className="w-4 h-4" /> Embeddings</button></div></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<div key={p.id} role="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-all outline-none", selectedProvider === p.id ? "border-emerald-600 shadow-md" : "hover:border-emerald-300")}><div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg"><p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p></div></div>))}</div>
+          <div className="flex justify-center"><div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner"><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "inference" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><MessageSquare className="w-4 h-4" /> Inference</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "embedding" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><Database className="w-4 h-4" /> Embeddings</button></div></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<button type="button" key={p.id} aria-pressed={selectedProvider === p.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-colors outline-none text-left", selectedProvider === p.id ? "border-emerald-600 shadow-md" : "hover:border-emerald-300")}><div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg"><p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p></div></button>))}</div>
           <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} disabled={!selectedProvider} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
         </div>
       )}
