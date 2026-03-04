@@ -90,7 +90,8 @@ class ModelDeploymentController:
     ) -> UUID:
         model_id = None
 
-        if self.pool_repo:
+        is_external = workload_type == "external"
+        if self.pool_repo and not is_external:
             pool = await self.pool_repo.get(pool_id)
             if not pool:
                 raise ValueError(f"Pool {pool_id} not found")
@@ -124,7 +125,6 @@ class ModelDeploymentController:
         deployment_id = uuid4()
 
         # External deployments (API passthrough) don't need worker processing
-        is_external = workload_type == "external"
         initial_state = "RUNNING" if is_external else "PENDING"
 
         # --- transactional intent creation ---
