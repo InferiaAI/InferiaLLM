@@ -1,7 +1,9 @@
 from uuid import UUID
 
-class PlacementRepository:
+EPHEMERAL_PROVIDERS = {"nosana", "akash"}
 
+
+class PlacementRepository:
     def __init__(self, db):
         self.db = db
 
@@ -12,7 +14,17 @@ class PlacementRepository:
         vcpu_req: int = 0,
         ram_req: int = 0,
     ):
-        query = """
+        async with self.db.acquire() as conn:
+            pool_row = await conn.fetchrow(
+                "SELECT provider FROM compute_pools WHERE id = $1",
+                pool_id,
+            )
+            if not pool_row:
+                return []
+            provider = pool_row["provider"]
+            is_ephemeral = provider.lower() in EPHEMERAL_PROVIDERS
+
+        base_query = """
         SELECT
             ci.id AS node_id,
             ci.provider,
@@ -36,6 +48,19 @@ class PlacementRepository:
                 (ci.last_heartbeat IS NULL AND ci.created_at > now() - INTERVAL '2 minutes')
             )
         """
+
+        if is_ephemeral:
+            ephemeral_filter = """
+            AND NOT EXISTS (
+                SELECT 1 FROM model_deployments md
+                WHERE md.node_ids @> ARRAY[ci.id]::uuid[]
+                AND md.state IN ('RUNNING', 'READY', 'PROVISIONING')
+            )
+            """
+            query = base_query + ephemeral_filter
+        else:
+            query = base_query
+
         async with self.db.acquire() as conn:
             return await conn.fetch(
                 query,
