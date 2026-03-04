@@ -171,7 +171,7 @@ export default function Templates() {
                             </tr>
                         </thead>
                         <tbody className="divide-y relative">
-                            {templates.map(tmpl => (
+                            {templates.filter(t => t.template_id !== "unknown").map(tmpl => (
                                 <tr key={tmpl.template_id} className="hover:bg-muted/30 transition-colors group">
                                     <td className="p-4 font-medium flex items-center gap-2">
                                         <FileText className="w-4 h-4 text-primary" />
@@ -192,7 +192,7 @@ export default function Templates() {
                                     </td>
                                 </tr>
                             ))}
-                            {templates.length === 0 && (
+                            {templates.filter(t => t.template_id !== "unknown").length === 0 && (
                                 <tr>
                                     <td colSpan={4} className="p-8 text-center text-muted-foreground">No templates found.</td>
                                 </tr>

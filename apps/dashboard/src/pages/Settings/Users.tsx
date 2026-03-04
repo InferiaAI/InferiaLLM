@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer } from "react";
 import { rbacService } from "@/services/rbacService";
 import type { User, Role, Invitation } from "@/services/rbacService";
 import { toast } from "sonner";
-import { UserPlus, Copy, Users as UsersIcon, Activity } from "lucide-react";
+import { UserPlus, Copy, Users as UsersIcon } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Pagination } from "@/components/ui/Pagination";
 import type { AxiosError } from "axios";
@@ -248,7 +248,6 @@ export default function Users() {
                 <th className="px-6 py-3 font-medium">Email</th>
                 <th className="px-6 py-3 font-medium">Role</th>
                 <th className="px-6 py-3 font-medium">Joined On</th>
-                <th className="px-6 py-3 font-medium">Status</th>
                 <th className="px-6 py-3"></th>
               </tr>
             </thead>
@@ -290,12 +289,6 @@ export default function Users() {
                   <td className="px-6 py-4 text-muted-foreground">
                     {user.created_at ? new Date(user.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "-"}
                   </td>
-                  <td className="px-6 py-4">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-medium">
-                      <Activity className="w-3 h-3" />
-                      Active
-                    </span>
-                  </td>
                   <td className="px-6 py-4 text-right">
                     <button
                       type="button"
@@ -307,9 +300,9 @@ export default function Users() {
                   </td>
                 </tr>
               ))}
-              {users.length === 0 && (
+                {users.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
                     No users found on this page.
                   </td>
                 </tr>
