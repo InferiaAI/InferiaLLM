@@ -72,18 +72,11 @@ class SkyPilotAdapter(ProviderAdapter):
             )
 
             common_gpus = [
-                {"gpu_type": "A100", "gpu_memory_gb": 80, "vcpu": 12, "ram_gb": 85},
-                {
-                    "gpu_type": "A100-80GB",
-                    "gpu_memory_gb": 80,
-                    "vcpu": 12,
-                    "ram_gb": 85,
-                },
-                {"gpu_type": "A10G", "gpu_memory_gb": 24, "vcpu": 4, "ram_gb": 16},
-                {"gpu_type": "V100", "gpu_memory_gb": 16, "vcpu": 8, "ram_gb": 61},
-                {"gpu_type": "T4", "gpu_memory_gb": 16, "vcpu": 4, "ram_gb": 16},
-                {"gpu_type": "L4", "gpu_memory_gb": 24, "vcpu": 8, "ram_gb": 32},
                 {"gpu_type": "H100", "gpu_memory_gb": 80, "vcpu": 26, "ram_gb": 200},
+                {"gpu_type": "A100", "gpu_memory_gb": 80, "vcpu": 12, "ram_gb": 85},
+                {"gpu_type": "L4", "gpu_memory_gb": 24, "vcpu": 8, "ram_gb": 32},
+                {"gpu_type": "T4", "gpu_memory_gb": 16, "vcpu": 4, "ram_gb": 16},
+                {"gpu_type": "V100", "gpu_memory_gb": 16, "vcpu": 8, "ram_gb": 61},
             ]
 
             resources = []

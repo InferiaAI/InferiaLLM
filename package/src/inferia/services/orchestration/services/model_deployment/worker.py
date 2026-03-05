@@ -175,16 +175,38 @@ class ModelDeploymentWorker:
                         model_name=d.get("model_name"),
                     )
 
+                # Resolve real cluster specs from adapter
+                cluster_status = await adapter.get_cluster_status(
+                    cluster_id=cluster_id,
+                    provider_credential_name=pool.get("provider_credential_name"),
+                )
+
+                # GPU type specs for fallback (per GPU)
+                GPU_TYPE_SPECS = {
+                    "A100": {"vcpu": 12, "ram_gb": 85},
+                    "A100-80GB": {"vcpu": 12, "ram_gb": 85},
+                    "A10G": {"vcpu": 4, "ram_gb": 16},
+                    "T4": {"vcpu": 4, "ram_gb": 16},
+                    "L4": {"vcpu": 8, "ram_gb": 32},
+                    "V100": {"vcpu": 8, "ram_gb": 61},
+                    "H100": {"vcpu": 26, "ram_gb": 200},
+                }
+                gpu_type = (pool.get("allowed_gpu_types") or [""])[0]
+                gpu_count = pool.get("gpu_count") or 1
+                type_specs = GPU_TYPE_SPECS.get(gpu_type, {"vcpu": 8, "ram_gb": 32})
+                cluster_vcpu = type_specs["vcpu"] * gpu_count
+                cluster_ram = type_specs["ram_gb"] * gpu_count
+
                 # Register service in inventory (not a real node, but tracks the deployment)
                 node_id = await self.inventory.register_node(
                     pool_id=d["pool_id"],
                     provider=pool["provider"],
                     provider_instance_id=f"{cluster_id}/{service_name}",  # Composite ID
                     provider_resource_id=None,
-                    hostname=cluster_id,
-                    gpu_total=pool.get("gpu_count") or 1,
-                    vcpu_total=8,
-                    ram_gb_total=32,
+                    hostname=cluster_status.get("head_ip") or cluster_id,
+                    gpu_total=gpu_count,
+                    vcpu_total=cluster_vcpu,
+                    ram_gb_total=cluster_ram,
                     state="ready",
                     node_class="cluster",
                     metadata={

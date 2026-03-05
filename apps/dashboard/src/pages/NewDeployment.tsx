@@ -20,7 +20,7 @@ import {
   type HFModel,
   type ModelTypeKey
 } from "@/services/huggingfaceService"
-import { calculateCompatibility, fetchExternalRegistry, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
+import { calculateCompatibility, fetchExternalRegistry, GPU_SPECS, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 
 // --- Constants ---
@@ -826,14 +826,24 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {userPools.map(pool => (
-            <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-colors outline-none text-left focus:ring-2 focus:ring-emerald-500/40", selectedPool?.pool_id === pool.pool_id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}>
+          {userPools.filter(pool => pool.lifecycle_state === "running").length === 0 && (
+            <div className="col-span-full text-center py-8 text-slate-500 dark:text-zinc-400">
+              <p className="text-sm">No ready pools available. Pools may still be provisioning.</p>
+              <Link to="/dashboard/compute/pools/new" className="text-emerald-600 text-sm font-medium mt-2 inline-block hover:underline">Create New Pool</Link>
+            </div>
+          )}
+          {userPools.map(pool => {
+            const isReady = pool.lifecycle_state === "running" && pool.is_active;
+            const isProvisioning = pool.lifecycle_state === "provisioning" || (!pool.cluster_id && pool.pool_type === "cluster");
+            return (
+            <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} disabled={!isReady} onClick={() => isReady && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-colors outline-none text-left focus:ring-2 focus:ring-emerald-500/40", !isReady && "opacity-50 cursor-not-allowed", selectedPool?.pool_id === pool.pool_id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}>
               <div className="flex items-start justify-between">
-                <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-slate-500 dark:text-zinc-400 font-mono mt-1">{pool.provider}</div></div>
-                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", pool.is_active ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-slate-50 text-slate-500 border-slate-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700")}>{pool.is_active ? "Active" : "Inactive"}</div>
+                <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-slate-500 dark:text-zinc-400 font-mono mt-1">{pool.provider}{pool.gpu_count > 1 ? ` (${pool.gpu_count}x GPU)` : ''}</div></div>
+                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", isProvisioning ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-900/50" : isReady ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-slate-50 text-slate-500 border-slate-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700")}>{isProvisioning ? "Provisioning..." : isReady ? "Ready" : "Inactive"}</div>
               </div>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
       <div className="flex justify-between pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => setStep(2)} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => selectedPool && setStep(4)} disabled={!selectedPool} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
@@ -866,13 +876,33 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
   const hfNumAttentionHeads = hfConfig?.num_attention_heads;
   const hfNumKeyValueHeads = hfConfig?.num_key_value_heads; // GQA: e.g. Llama 3 uses 8 KV heads vs 32 attention heads
 
+  // For multi-GPU pools, resolve GPU specs and aggregate VRAM/bandwidth
+  const poolGpuCount = selectedPool?.gpu_count || 1;
+  const gpuKey = selectedPool?.allowed_gpu_types?.[0]?.toUpperCase().replace(/[\s-]/g, "") || "";
+  const gpuSpecKey = Object.keys(GPU_SPECS).find(k => {
+    const nk = k.toUpperCase().replace(/[\s-]/g, "");
+    return gpuKey.includes(nk) || nk.includes(gpuKey);
+  });
+
+  const singleGpuVram = selectedPool?.gpu_specs?.[0]?.vram || (gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.vram : 0) || 0;
+  // Only pass aggregated vram override when gpu_count > 1 (multi-GPU),
+  // otherwise let calculateCompatibility use its own GPU_SPECS lookup for single GPU
+  const aggregatedVram = poolGpuCount > 1 ? singleGpuVram * poolGpuCount : undefined;
+
+  const baseBandwidth = gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.bandwidth : undefined;
+  // Multi-GPU bandwidth scales ~0.85x per GPU due to interconnect overhead
+  const aggregatedBandwidth = (poolGpuCount > 1 && baseBandwidth)
+    ? baseBandwidth * poolGpuCount * 0.85
+    : undefined;
+
   const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"))
     ? calculateCompatibility(
       modelId,
       selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
       quantization || dtype,
       {
-        vram: selectedPool.gpu_specs?.[0]?.vram,
+        vram: aggregatedVram,
+        bandwidth: aggregatedBandwidth,
         contextLength: hfContextLength,
         hiddenSize: hfHiddenSize,
         numLayers: hfNumLayers,

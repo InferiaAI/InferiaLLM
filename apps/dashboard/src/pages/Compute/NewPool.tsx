@@ -51,12 +51,11 @@ const gcpRegions = [
 
 // GPU types for GCP/SkyPilot
 const gcpGpuTypes = [
+    { gpu_type: "H100", gpu_memory_gb: 80, vcpu: 26, ram_gb: 200, description: "NVIDIA H100 80GB" },
     { gpu_type: "A100", gpu_memory_gb: 80, vcpu: 12, ram_gb: 85, description: "NVIDIA A100 80GB" },
-    { gpu_type: "A10G", gpu_memory_gb: 24, vcpu: 4, ram_gb: 16, description: "NVIDIA A10G" },
-    { gpu_type: "T4", gpu_memory_gb: 16, vcpu: 4, ram_gb: 16, description: "NVIDIA T4" },
     { gpu_type: "L4", gpu_memory_gb: 24, vcpu: 8, ram_gb: 32, description: "NVIDIA L4" },
-    { gpu_type: "V100", gpu_memory_gb: 16, vcpu: 8, ram_gb: 61, description: "NVIDIA V100" },
-    { gpu_type: "H100", gpu_memory_gb: 80, vcpu: 26, ram_gb: 200, description: "NVIDIA H100" },
+    { gpu_type: "T4", gpu_memory_gb: 16, vcpu: 4, ram_gb: 16, description: "NVIDIA T4" },
+    { gpu_type: "V100", gpu_memory_gb: 16, vcpu: 8, ram_gb: 61, description: "NVIDIA V100 16GB" },
 ]
 
 interface NewPoolState {

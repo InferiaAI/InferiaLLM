@@ -45,7 +45,8 @@ export const GPU_SPECS: Record<string, GpuSpec> = {
     // Budget & Legacy
     "T4": { name: "NVIDIA T4", vram: 16, bandwidth: 320 },
     "L4": { name: "NVIDIA L4", vram: 24, bandwidth: 300 },
-    "V100": { name: "NVIDIA V100", vram: 32, bandwidth: 900 },
+    "V100-32GB": { name: "NVIDIA V100 32GB", vram: 32, bandwidth: 900 },
+    "V100": { name: "NVIDIA V100", vram: 16, bandwidth: 900 },
     "GENERIC-GPU": { name: "Generic GPU", vram: 16, bandwidth: 300 },
 };
 
