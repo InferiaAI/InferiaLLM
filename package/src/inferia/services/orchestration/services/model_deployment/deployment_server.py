@@ -616,6 +616,7 @@ async def list_pools(owner_id: str | None = None):
                 "provider_credential_name": p.provider_credential_name,
                 "cluster_id": p.cluster_id,
                 "pool_type": p.pool_type,
+                "gpu_count": p.gpu_count or 1,
                 "lifecycle_state": pool_state_map.get(
                     p.pool_id, POOL_STATE_RUNNING
                 ),
@@ -649,6 +650,7 @@ async def list_pools(owner_id: str | None = None):
                     "provider_credential_name": p.provider_credential_name,
                     "cluster_id": p.cluster_id,
                     "pool_type": p.pool_type,
+                    "gpu_count": p.gpu_count or 1,
                     "lifecycle_state": POOL_STATE_RUNNING,
                     "created_at": p.created_at,
                     "updated_at": p.updated_at,
@@ -697,6 +699,7 @@ async def get_pool(pool_id: str):
         "provider_credential_name": p.provider_credential_name,
         "cluster_id": p.cluster_id,
         "pool_type": p.pool_type,
+        "gpu_count": p.gpu_count or 1,
         "lifecycle_state": lifecycle_state,
         "created_at": p.created_at,
         "updated_at": p.updated_at,

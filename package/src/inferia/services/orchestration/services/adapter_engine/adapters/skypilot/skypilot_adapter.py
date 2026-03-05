@@ -316,15 +316,15 @@ class SkyPilotAdapter(ProviderAdapter):
         """
         logger.info(f"Deploying service {service_name} on cluster {cluster_id}")
 
-        port_mappings = ", ".join([f"{p['port']}:{p['port']}" for p in ports])
-        env_vars = " ".join([f"-e {k}={v}" for k, v in (env or {}).items()])
+        port_flags = " ".join([f"-p {p['port']}:{p['port']}" for p in ports])
+        env_flags = " ".join([f"-e {k}={v}" for k, v in (env or {}).items()])
 
         gpu_flags = ""
         if "vllm" in image.lower() or "cuda" in image.lower() or "ollama" in image.lower():
             gpu_flags = "--gpus all --shm-size 1g --ipc=host"
 
         docker_cmd = (
-            f"docker run -d --name {service_name} {gpu_flags} {env_vars} -p {port_mappings} {image}"
+            f"docker run -d --name {service_name} {gpu_flags} {env_flags} {port_flags} {image}"
         )
         if cmd:
             docker_cmd += f" {' '.join(cmd)}"
