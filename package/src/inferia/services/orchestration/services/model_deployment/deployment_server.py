@@ -5,6 +5,8 @@ from pydantic import BaseModel
 import asyncpg
 import grpc
 import json
+import asyncio
+from uuid import UUID
 
 from inferia.services.orchestration.v1 import (
     model_deployment_pb2,
@@ -28,6 +30,10 @@ POSTGRES_DSN = os.getenv(
 GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
 
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
+
+POOL_STATE_RUNNING = "running"
+POOL_STATE_TERMINATING = "terminating"
+POOL_STATE_TERMINATED = "terminated"
 
 
 # status start stop
@@ -138,6 +144,87 @@ async def log_audit_event(
         )
     except Exception as e:
         print(f"Failed to write audit log: {e}")
+    finally:
+        if conn:
+            await conn.close()
+
+
+async def _get_pool_lifecycle_state(pool_id: UUID) -> str | None:
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        lifecycle_state = await conn.fetchval(
+            """
+            SELECT lifecycle_state::text
+            FROM compute_pools
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_id,
+        )
+        if not lifecycle_state:
+            return None
+        return lifecycle_state
+    finally:
+        if conn:
+            await conn.close()
+
+
+async def _terminate_pool_background(pool_id: UUID):
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        pool = await conn.fetchrow(
+            """
+            SELECT id, pool_name, provider, pool_type, cluster_id, provider_credential_name, lifecycle_state, is_active
+            FROM compute_pools
+            WHERE id = $1
+            """,
+            pool_id,
+        )
+        if not pool or not pool["is_active"]:
+            return
+
+        lifecycle_state = (pool["lifecycle_state"] or POOL_STATE_RUNNING).lower()
+        if lifecycle_state != POOL_STATE_TERMINATING:
+            return
+
+        # Cluster pools require provider teardown; job pools can transition immediately.
+        if pool["pool_type"] == "cluster" and pool["cluster_id"]:
+            adapter = get_adapter(pool["provider"])
+            capabilities = adapter.get_capabilities()
+            if capabilities and capabilities.supports_cluster_mode:
+                logger.info(
+                    f"Stopping pool '{pool['pool_name']}' by terminating cluster '{pool['cluster_id']}'"
+                )
+                await adapter.terminate_cluster(
+                    cluster_id=pool["cluster_id"],
+                    provider_credential_name=pool["provider_credential_name"],
+                )
+
+        await conn.execute(
+            """
+            UPDATE compute_pools
+            SET lifecycle_state = $2,
+                updated_at = now()
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_id,
+            POOL_STATE_TERMINATED,
+        )
+        logger.info(f"Pool {pool_id} transitioned to terminated")
+    except Exception as e:
+        logger.exception(f"Failed to stop pool {pool_id}: {e}")
+        if conn:
+            await conn.execute(
+                """
+                UPDATE compute_pools
+                SET lifecycle_state = $2,
+                    updated_at = now()
+                WHERE id = $1 AND is_active = TRUE
+                """,
+                pool_id,
+                POOL_STATE_RUNNING,
+            )
     finally:
         if conn:
             await conn.close()
@@ -499,6 +586,17 @@ async def list_pools(owner_id: str | None = None):
         # Fetch available GPU specs
         resources = await conn.fetch("SELECT DISTINCT gpu_type, gpu_memory_gb FROM provider_resources WHERE gpu_type IS NOT NULL")
         gpu_resource_map = {r['gpu_type'].upper(): r['gpu_memory_gb'] for r in resources}
+        pool_states = await conn.fetch(
+            """
+            SELECT id::text AS pool_id, lifecycle_state::text AS lifecycle_state
+            FROM compute_pools
+            WHERE is_active = TRUE
+            """
+        )
+        pool_state_map = {
+            row["pool_id"]: row["lifecycle_state"] or POOL_STATE_RUNNING
+            for row in pool_states
+        }
 
         for p in resp.pools:
             pool_dict = {
@@ -516,6 +614,9 @@ async def list_pools(owner_id: str | None = None):
                 "provider_credential_name": p.provider_credential_name,
                 "cluster_id": p.cluster_id,
                 "pool_type": p.pool_type,
+                "lifecycle_state": pool_state_map.get(
+                    p.pool_id, POOL_STATE_RUNNING
+                ),
                 "created_at": p.created_at,
                 "updated_at": p.updated_at,
                 "gpu_specs": []
@@ -546,6 +647,7 @@ async def list_pools(owner_id: str | None = None):
                     "provider_credential_name": p.provider_credential_name,
                     "cluster_id": p.cluster_id,
                     "pool_type": p.pool_type,
+                    "lifecycle_state": POOL_STATE_RUNNING,
                     "created_at": p.created_at,
                     "updated_at": p.updated_at,
                 }
@@ -571,6 +673,13 @@ async def get_pool(pool_id: str):
                 raise HTTPException(status_code=404, detail="Pool not found")
             raise HTTPException(status_code=500, detail=e.details())
 
+    try:
+        lifecycle_state = (
+            await _get_pool_lifecycle_state(UUID(pool_id))
+        ) or POOL_STATE_RUNNING
+    except Exception:
+        lifecycle_state = POOL_STATE_RUNNING
+
     return {
         "pool_id": p.pool_id,
         "pool_name": p.pool_name,
@@ -586,19 +695,86 @@ async def get_pool(pool_id: str):
         "provider_credential_name": p.provider_credential_name,
         "cluster_id": p.cluster_id,
         "pool_type": p.pool_type,
+        "lifecycle_state": lifecycle_state,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
     }
 
 
+@router.post("/stoppool/{pool_id}")
+async def stop_pool(pool_id: str):
+    try:
+        pool_uuid = UUID(pool_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pool_id")
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        pool = await conn.fetchrow(
+            """
+            SELECT id, lifecycle_state, is_active
+            FROM compute_pools
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_uuid,
+        )
+        if not pool:
+            raise HTTPException(status_code=404, detail="Pool not found")
+
+        lifecycle_state = (pool["lifecycle_state"] or POOL_STATE_RUNNING).lower()
+        if lifecycle_state == POOL_STATE_TERMINATED:
+            return {"pool_id": pool_id, "status": "TERMINATED"}
+        if lifecycle_state == POOL_STATE_TERMINATING:
+            return {"pool_id": pool_id, "status": "TERMINATING"}
+
+        await conn.execute(
+            """
+            UPDATE compute_pools
+            SET lifecycle_state = $2,
+                updated_at = now()
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_uuid,
+            POOL_STATE_TERMINATING,
+        )
+    finally:
+        if conn:
+            await conn.close()
+
+    asyncio.create_task(_terminate_pool_background(pool_uuid))
+    return {"pool_id": pool_id, "status": "TERMINATING"}
+
+
 @router.post("/deletepool/{pool_id}")
 async def delete_pool(pool_id: str):
+    try:
+        pool_uuid = UUID(pool_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pool_id")
+
+    lifecycle_state = await _get_pool_lifecycle_state(pool_uuid)
+    if lifecycle_state is None:
+        raise HTTPException(status_code=404, detail="Pool not found")
+    if lifecycle_state != POOL_STATE_TERMINATED:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pool is '{lifecycle_state}'. Stop it first and wait for "
+                f"'{POOL_STATE_TERMINATED}' state before deleting."
+            ),
+        )
+
     async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
             await stub.DeletePool(compute_pool_pb2.DeletePoolRequest(pool_id=pool_id))
         except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                raise HTTPException(status_code=404, detail="Pool not found")
+            if e.code() == grpc.StatusCode.FAILED_PRECONDITION:
+                raise HTTPException(status_code=409, detail=e.details())
             raise HTTPException(status_code=500, detail=e.details())
 
     return {"pool_id": pool_id, "status": "DELETED"}

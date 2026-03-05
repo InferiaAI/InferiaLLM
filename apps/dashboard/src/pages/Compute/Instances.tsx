@@ -17,6 +17,7 @@ type PoolSummary = {
   is_active: boolean;
   pool_type?: string;
   cluster_id?: string;
+  lifecycle_state?: "running" | "terminating" | "terminated";
 };
 
 export default function Instances() {
@@ -150,6 +151,16 @@ export default function Instances() {
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-xs font-medium text-amber-600 dark:text-amber-400 shadow-sm">
                           <RefreshCw className="h-3 w-3 animate-spin" />
                           Provisioning
+                        </span>
+                      ) : instance.lifecycle_state === "terminating" ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-xs font-medium text-amber-600 dark:text-amber-400 shadow-sm">
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          Terminating
+                        </span>
+                      ) : instance.lifecycle_state === "terminated" ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-slate-500/20 text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-500/10 shadow-sm">
+                          <div className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+                          Terminated
                         </span>
                       ) : (
                         <span className={cn(

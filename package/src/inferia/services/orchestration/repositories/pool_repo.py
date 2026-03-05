@@ -35,9 +35,10 @@ class ComputePoolRepository:
             provider_credential_name,
             cluster_id,
             region_constraint,
-            is_active
+            is_active,
+            lifecycle_state
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         RETURNING id
         """
         async with self.db.acquire() as conn:
@@ -57,6 +58,7 @@ class ComputePoolRepository:
                 data.get("cluster_id"),
                 data.get("region_constraint"),
                 data.get("is_active", True),
+                data.get("lifecycle_state", "running"),
             )
 
     async def update_pool(self, pool_id: UUID, data: dict):
@@ -156,6 +158,7 @@ class ComputePoolRepository:
             provider_credential_name,
             cluster_id,
             region_constraint,
+            lifecycle_state,
             updated_at,
             created_at
         FROM compute_pools
@@ -201,3 +204,13 @@ class ComputePoolRepository:
         """
         async with self.db.acquire() as conn:
             await conn.execute(query, pool_id, is_active)
+
+    async def set_pool_lifecycle_state(self, pool_id: UUID, lifecycle_state: str):
+        query = """
+        UPDATE compute_pools
+        SET lifecycle_state = $2,
+            updated_at = now()
+        WHERE id = $1 AND is_active = TRUE
+        """
+        async with self.db.acquire() as conn:
+            await conn.execute(query, pool_id, lifecycle_state)

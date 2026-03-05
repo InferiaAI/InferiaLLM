@@ -78,6 +78,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         # Create pool in DB FIRST
         # is_active=True means 'exists/not deleted' in this system
         pool_data["is_active"] = True
+        pool_data["lifecycle_state"] = "running"
 
         try:
             pool_id = await self.repo.create_pool(pool_data)
@@ -210,27 +211,21 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
     async def DeletePool(self, request, context):
         pool_id = UUID(request.pool_id)
 
-        # Get pool info to check if it's a cluster-based pool
+        # Final delete is only allowed after explicit stop -> terminated lifecycle.
         pool = await self.repo.get(pool_id)
+        if not pool:
+            await context.abort(
+                grpc.StatusCode.NOT_FOUND, f"Pool '{request.pool_id}' not found"
+            )
+            return
 
-        # Terminate cluster if it's a cluster-based pool
-        if pool and pool.get("pool_type") == "cluster" and pool.get("cluster_id"):
-            try:
-                adapter = get_adapter(pool["provider"])
-                capabilities = adapter.get_capabilities()
-                if capabilities and capabilities.supports_cluster_mode:
-                    logger.info(
-                        f"Terminating cluster '{pool['cluster_id']}' for pool '{pool['pool_name']}'"
-                    )
-                    await adapter.terminate_cluster(
-                        cluster_id=pool["cluster_id"],
-                        provider_credential_name=pool.get("provider_credential_name"),
-                    )
-            except Exception as e:
-                logger.error(
-                    f"Failed to terminate cluster '{pool.get('cluster_id')}': {e}"
-                )
-                # Don't abort - continue with pool deletion even if cluster termination fails
+        lifecycle_state = pool.get("lifecycle_state") or "running"
+        if lifecycle_state != "terminated":
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"Pool '{request.pool_id}' is '{lifecycle_state}'. Stop it first.",
+            )
+            return
 
         # Cascade cleanup: Delete/Terminate deployments in this pool
         if self.deployment_repo:

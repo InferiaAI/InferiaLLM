@@ -64,6 +64,12 @@ CREATE TYPE pool_lifecycle_type AS ENUM (
     'cluster'    -- Persistent: cluster stays alive, deployments run as services (SkyPilot)
 );
 
+CREATE TYPE pool_lifecycle_state AS ENUM (
+    'running',
+    'terminating',
+    'terminated'
+);
+
 CREATE TYPE node_state AS ENUM (
     'provisioning',
     'ready',
@@ -159,6 +165,7 @@ CREATE TABLE IF NOT EXISTS public.compute_pools
     security_policy jsonb,
     is_dedicated boolean DEFAULT false,
     is_active boolean DEFAULT true,
+    lifecycle_state pool_lifecycle_state NOT NULL DEFAULT 'running',
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     provider_pool_id text COLLATE pg_catalog."default",

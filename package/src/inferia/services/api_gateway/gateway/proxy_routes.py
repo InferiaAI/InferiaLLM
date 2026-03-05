@@ -32,6 +32,9 @@ def _require_proxy_permission(user_context: UserContext, method: str, path: str)
         if normalized_path.startswith("deployment/deletepool"):
             authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
             return
+        if normalized_path.startswith("deployment/stoppool"):
+            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
+            return
         if normalized_path.startswith("deployment/deploy") or normalized_path.startswith("deployment/createpool"):
             authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
             return

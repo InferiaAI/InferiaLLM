@@ -839,10 +839,51 @@ async def _cleanup_provider_resources(
         except Exception as e:
             logger.error(f"Error terminating deployments for pool {pool_id}: {e}")
 
-        # 3. Delete the pool
+        # 3. Stop the pool first
+        try:
+            logger.info(f"Stopping compute pool {pool_id}")
+            stop_resp = await client.post(f"{orch_url}/deployment/stoppool/{pool_id}")
+            if stop_resp.status_code not in (200, 202):
+                logger.error(
+                    f"Failed to stop pool {pool_id}: {stop_resp.status_code} {stop_resp.text}"
+                )
+                continue
+        except Exception as e:
+            logger.error(f"Error stopping pool {pool_id}: {e}")
+            continue
+
+        # 4. Wait until pool reaches terminated lifecycle state
+        terminated = False
+        for _ in range(30):
+            await asyncio.sleep(2)
+            try:
+                pool_resp = await client.get(f"{orch_url}/deployment/pool/{pool_id}")
+                if pool_resp.status_code != 200:
+                    continue
+
+                lifecycle_state = (
+                    pool_resp.json().get("lifecycle_state", "running").lower()
+                )
+                if lifecycle_state == "terminated":
+                    terminated = True
+                    break
+            except Exception:
+                continue
+
+        if not terminated:
+            logger.error(
+                f"Timed out waiting for pool {pool_id} to reach terminated state"
+            )
+            continue
+
+        # 5. Delete terminated pool
         try:
             logger.info(f"Deleting compute pool {pool_id}")
-            await client.post(f"{orch_url}/deployment/deletepool/{pool_id}")
+            delete_resp = await client.post(f"{orch_url}/deployment/deletepool/{pool_id}")
+            if delete_resp.status_code not in (200, 202):
+                logger.error(
+                    f"Failed to delete pool {pool_id}: {delete_resp.status_code} {delete_resp.text}"
+                )
         except Exception as e:
             logger.error(f"Error deleting pool {pool_id}: {e}")
 
