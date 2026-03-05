@@ -90,6 +90,7 @@ class ModelDeploymentWorker:
         pool = await self.pools.get(d["pool_id"])
         resources_required = await self.inventory.get_resource_requirement(d["pool_id"])
 
+        node_spec = None
         try:
             # Determine resource needs (default to full node if not specified, or hardcoded fallback)
             vcpu_req = resources_required["vcpu_total"] if resources_required else 8
@@ -338,6 +339,25 @@ class ModelDeploymentWorker:
 
         except Exception as e:
             log.error(f"Unhandled error during provisioning for {deployment_id}: {e}")
+
+            # Cleanup: if we provisioned a node but failed afterwards (e.g. DB error),
+            # deprovision the cloud resources to avoid orphaned VMs.
+            if node_spec and node_spec.get("provider_instance_id"):
+                try:
+                    cleanup_adapter = get_adapter(pool["provider"])
+                    log.info(
+                        f"Cleaning up orphaned node {node_spec['provider_instance_id']} "
+                        f"after provisioning failure for {deployment_id}"
+                    )
+                    await cleanup_adapter.deprovision_node(
+                        provider_instance_id=node_spec["provider_instance_id"],
+                        provider_credential_name=pool.get("provider_credential_name"),
+                    )
+                except Exception as cleanup_err:
+                    log.warning(
+                        f"Failed to cleanup orphaned node for {deployment_id}: {cleanup_err}"
+                    )
+
             await self.deployments.update_state(
                 deployment_id,
                 "FAILED",

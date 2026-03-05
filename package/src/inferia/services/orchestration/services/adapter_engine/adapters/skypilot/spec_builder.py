@@ -5,22 +5,24 @@ def build_skypilot_spec(
     entrypoint: str,
 ) -> dict:
     """
+    Build a SkyPilot-compatible spec from a placement dict.
+
     placement example:
     {
-        "cloud": "aws",
-        "gpu_type": "A100",
+        "cloud": "gcp",
+        "gpu_type": "L4",
         "gpu_count": 1,
         "spot": True,
-        "region": "us-east-1",
+        "region": "us-central1",
     }
     """
+    cloud = placement.get("cloud", "aws")
+    region = placement.get("region")
 
     return {
         "deployment_id": deployment_id,
-        "cloud": placement.get("cloud", "aws"),
-        "accelerator": placement["gpu_type"],
-        "gpu_count": placement["gpu_count"],
+        "infra": f"{cloud}/{region}" if region else cloud,
+        "accelerator": f"{placement['gpu_type']}:{placement['gpu_count']}",
         "use_spot": placement.get("spot", False),
-        "region": placement.get("region"),
         "command": entrypoint,
     }

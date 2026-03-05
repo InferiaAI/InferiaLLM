@@ -16,11 +16,18 @@ class SkyPilotAdapter(ProviderAdapter):
     """
     SkyPilot adapter for cloud providers (AWS, GCP, Azure, etc.).
     Stateless infrastructure adapter - no DB access, no side effects beyond provisioning.
+
+    Compatible with SkyPilot v0.10.x API:
+    - sky.launch/down/status return RequestId (non-blocking)
+    - Use sky.stream_and_get() or sky.get() to resolve results
+    - Resources uses `infra` (str) instead of `cloud` (Cloud object)
+    - Status returns List[StatusResponse] (Pydantic models, not dicts)
     """
 
     ADAPTER_TYPE = "cloud"
 
-    def __init__(self):
+    def __init__(self, cloud: str = "aws"):
+        self.cloud = cloud
         self.workdir = os.getcwd()
 
     # -------------------------------------------------
@@ -31,16 +38,12 @@ class SkyPilotAdapter(ProviderAdapter):
         Discover available GPU resources from SkyPilot-supported clouds.
         Returns a list of normalized resources.
         """
-        # SkyPilot supports multiple clouds; return common GPU types
-        # In production, you could query `sky.check` for available resources
         try:
             loop = asyncio.get_running_loop()
-            # Get enabled clouds
             enabled_clouds = await loop.run_in_executor(
                 None, sky.check.get_cloud_credential_file_mounts
             )
 
-            # Return common GPU resources available across clouds
             common_gpus = [
                 {"gpu_type": "A100", "gpu_memory_gb": 80, "vcpu": 12, "ram_gb": 85},
                 {
@@ -60,18 +63,18 @@ class SkyPilotAdapter(ProviderAdapter):
             for gpu in common_gpus:
                 resources.append(
                     {
-                        "provider": "skypilot",
+                        "provider": self.cloud,
                         "provider_resource_id": gpu["gpu_type"],
                         "gpu_type": gpu["gpu_type"],
                         "gpu_count": 1,
                         "gpu_memory_gb": gpu["gpu_memory_gb"],
                         "vcpu": gpu["vcpu"],
                         "ram_gb": gpu["ram_gb"],
-                        "region": "auto",  # SkyPilot auto-selects region
+                        "region": "auto",
                         "pricing_model": "on_demand",
-                        "price_per_hour": 0.0,  # Varies by cloud/region
+                        "price_per_hour": 0.0,
                         "metadata": {
-                            "clouds": ["aws", "gcp", "azure"],
+                            "cloud": self.cloud,
                         },
                     }
                 )
@@ -98,29 +101,37 @@ class SkyPilotAdapter(ProviderAdapter):
         """
         Provision a compute node via SkyPilot.
         """
-        task_name = f"skypilot-{uuid.uuid4().hex[:8]}"
+        cluster_name = f"inferia-{uuid.uuid4().hex[:8]}"
 
         task = Task(
-            name=task_name,
+            name=cluster_name,
             run="echo READY",
-            workdir=self.workdir,
         ).set_resources(
             Resources(
-                cloud="aws",
-                accelerators={provider_resource_id: 1},
+                infra=f"{self.cloud}/{region}" if region else self.cloud,
+                accelerators=f"{provider_resource_id}:1",
                 use_spot=use_spot,
-                region=region,
             )
         )
 
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: sky.launch(task))
 
-        instance_data = await self._wait_for_instance(task_name, timeout=300)
+        # sky.launch returns a RequestId; stream_and_get blocks until done
+        request_id = await loop.run_in_executor(
+            None,
+            lambda: sky.launch(task, cluster_name=cluster_name),
+        )
+        await loop.run_in_executor(
+            None,
+            lambda: sky.stream_and_get(request_id),
+        )
+
+        instance_data = await self._wait_for_instance(cluster_name, timeout=300)
 
         return {
-            "provider": "skypilot",
+            "provider": self.cloud,
             "provider_instance_id": instance_data["instance_id"],
+            "hostname": instance_data["instance_id"],
             "instance_type": provider_resource_id,
             "gpu_total": 1,
             "vcpu_total": instance_data.get("vcpu", 8),
@@ -128,7 +139,7 @@ class SkyPilotAdapter(ProviderAdapter):
             "region": instance_data.get("region", region),
             "node_class": "spot" if use_spot else "on_demand",
             "metadata": {
-                "task_name": task_name,
+                "cluster_name": cluster_name,
                 "instance_type": instance_data.get("instance_type"),
                 "zone": instance_data.get("zone"),
             },
@@ -161,7 +172,12 @@ class SkyPilotAdapter(ProviderAdapter):
         """
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: sky.down(provider_instance_id))
+            request_id = await loop.run_in_executor(
+                None, lambda: sky.down(provider_instance_id)
+            )
+            await loop.run_in_executor(
+                None, lambda: sky.stream_and_get(request_id)
+            )
         except Exception:
             logger.exception("SkyPilot deprovision error")
             raise
@@ -169,35 +185,41 @@ class SkyPilotAdapter(ProviderAdapter):
     # -------------------------------------------------
     # HELPERS
     # -------------------------------------------------
-    def status(self, task_name: str):
-        return sky.status(task_name)
+    def status(self, cluster_name: str):
+        request_id = sky.status(cluster_names=[cluster_name])
+        return sky.get(request_id)
 
-    async def _wait_for_instance(self, task_name: str, timeout=600):
+    async def _wait_for_instance(self, cluster_name: str, timeout=600):
         """Wait for SkyPilot cluster to be UP."""
         start = time.time()
         loop = asyncio.get_running_loop()
 
         while True:
+            request_id = await loop.run_in_executor(
+                None,
+                lambda: sky.status(cluster_names=[cluster_name]),
+            )
             records = await loop.run_in_executor(
-                None, lambda: sky.status(cluster_names=[task_name])
+                None,
+                lambda: sky.get(request_id),
             )
 
             s = records[0] if records else None
 
-            if s and s.get("status") == sky.ClusterStatus.UP:
-                handle = s.get("handle")
-                r = s.get("resources")
+            if s and s.status == sky.ClusterStatus.UP:
                 return {
-                    "instance_id": handle.cluster_name if handle else task_name,
-                    "instance_type": r.instance_type if r else None,
-                    "vcpu": r.cpus if r else 8,
-                    "ram_gb": r.memory if r else 32,
-                    "region": getattr(handle, "region", None) if handle else None,
-                    "zone": getattr(handle, "zone", None) if handle else None,
+                    "instance_id": s.name,
+                    "instance_type": s.resources_str,
+                    "vcpu": int(float(s.cpus)) if s.cpus else 8,
+                    "ram_gb": int(float(s.memory)) if s.memory else 32,
+                    "region": s.region,
+                    "zone": None,
                 }
 
             if time.time() - start > timeout:
-                raise RuntimeError(f"SkyPilot provisioning timeout for {task_name}")
+                raise RuntimeError(
+                    f"SkyPilot provisioning timeout for {cluster_name}"
+                )
 
             await asyncio.sleep(10)
 
@@ -213,7 +235,6 @@ class SkyPilotAdapter(ProviderAdapter):
         """
         Fetch logs from a SkyPilot cluster.
         """
-        # In actual SkyPilot, this usually requires 'sky.logs cluster_name'
         return {
             "logs": [
                 "SkyPilot logs are currently available via CLI: sky logs "
@@ -232,6 +253,6 @@ class SkyPilotAdapter(ProviderAdapter):
         """
         return {
             "ws_url": None,
-            "provider": "skypilot",
+            "provider": self.cloud,
             "subscription": {"cluster_name": provider_instance_id},
         }
