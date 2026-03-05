@@ -358,11 +358,22 @@ class ModelDeploymentWorker:
                         f"Failed to cleanup orphaned node for {deployment_id}: {cleanup_err}"
                     )
 
-            await self.deployments.update_state(
-                deployment_id,
-                "FAILED",
-                error_message=str(e),
-            )
+            # Only mark as FAILED if the deployment hasn't moved to a terminal state
+            # (e.g. terminate handler may have already set STOPPED/TERMINATED)
+            d_current = await self.deployments.get(deployment_id)
+            if d_current and d_current["state"] not in (
+                "STOPPED", "TERMINATED", "TERMINATING",
+            ):
+                await self.deployments.update_state(
+                    deployment_id,
+                    "FAILED",
+                    error_message=str(e),
+                )
+            else:
+                log.info(
+                    f"Skipping FAILED state update for {deployment_id} — "
+                    f"already in terminal state: {d_current['state'] if d_current else 'deleted'}"
+                )
             raise e
 
     async def handle_terminate_requested(self, deployment_id: UUID):

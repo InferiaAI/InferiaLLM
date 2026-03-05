@@ -185,7 +185,7 @@ async def run_test():
                         deployment_id=deployment_id
                     )
                 )
-                if resp.state in ("TERMINATED", "DELETED"):
+                if resp.state in ("TERMINATED", "DELETED", "STOPPED"):
                     print(f"   Deployment state: {resp.state}")
                     break
                 print(f"   Teardown in progress... state={resp.state}")
