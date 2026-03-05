@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
+    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # Server Settings
     host: str = "0.0.0.0"

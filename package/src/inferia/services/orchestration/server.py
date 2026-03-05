@@ -22,12 +22,14 @@ from inferia.common.app_setup import setup_cors, add_standard_health_routes
 from inferia.services.orchestration.config import settings
 
 # Configure logging
-setup_logging(
+logger = setup_logging(
     level="INFO",
     service_name="orchestration-service",
-    use_json=not settings.is_development
+    use_json=not settings.is_development,
+    logstash_host=settings.logstash_host,
+    logstash_port=settings.logstash_port,
+    logger_name="inferia.services.orchestration",
 )
-logger = logging.getLogger("orchestration-service")
 
 # Import from absolute paths
 from inferia.services.orchestration.services.inventory_manager.http import (

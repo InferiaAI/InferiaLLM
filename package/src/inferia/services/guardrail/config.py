@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     port: int = 8002
     reload: bool = False
     log_level: str = "INFO"
+    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
+    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # CORS Settings
     allowed_origins: str = Field(

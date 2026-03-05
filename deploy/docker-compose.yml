@@ -50,6 +50,8 @@ services:
       - INFERENCE_URL=${INFERENCE_URL:-}
       - WEB_SOCKET_URL=${WEB_SOCKET_URL:-}
       - SIDECAR_URL=${SIDECAR_URL:-}
+      - LOGSTASH_HOST=${LOGSTASH_HOST:-}
+      - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
     volumes:
       - appdata:/data
     ports:
@@ -68,6 +70,32 @@ services:
         condition: service_healthy
     networks:
       - inferia-net
+
+  # ---------------------------------------------------------------------------
+  # Logstash  (optional — enable with: docker compose --profile logstash up)
+  # ---------------------------------------------------------------------------
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.4
+    container_name: inferia-logstash
+    profiles: ["logstash"]
+    restart: unless-stopped
+    environment:
+      - LS_JAVA_OPTS=-Xmx512m -Xms256m
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-}
+      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+    volumes:
+      - ../docker/logstash/pipeline:/usr/share/logstash/pipeline:ro
+    ports:
+      - "${LOGSTASH_PORT:-5959}:5959"   # TCP input for python-logstash
+    networks:
+      - inferia-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9600 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
 volumes:
   pgdata:
