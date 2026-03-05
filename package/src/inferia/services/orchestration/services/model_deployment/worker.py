@@ -144,8 +144,8 @@ class ModelDeploymentWorker:
                 # Get image from metadata or use default
                 image = metadata.get("image", "vllm/vllm:latest")
 
-                # Prepare ports
-                ports = metadata.get("ports", [{"port": 8000, "type": "http"}])
+                # Prepare ports (handle both 'ports' and 'expose' keys)
+                ports = metadata.get("ports") or metadata.get("expose") or [{"port": 8000, "type": "http"}]
 
                 # Prepare environment variables
                 env = metadata.get("env", {})

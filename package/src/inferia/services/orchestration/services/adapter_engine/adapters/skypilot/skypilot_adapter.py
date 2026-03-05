@@ -318,8 +318,12 @@ class SkyPilotAdapter(ProviderAdapter):
         port_mappings = ", ".join([f"{p['port']}:{p['port']}" for p in ports])
         env_vars = " ".join([f"-e {k}={v}" for k, v in (env or {}).items()])
 
+        gpu_flags = ""
+        if "vllm" in image.lower() or "cuda" in image.lower() or "ollama" in image.lower():
+            gpu_flags = "--gpus all --shm-size 1g --ipc=host"
+
         docker_cmd = (
-            f"docker run -d --name {service_name} {env_vars} -p {port_mappings} {image}"
+            f"docker run -d --name {service_name} {gpu_flags} {env_vars} -p {port_mappings} {image}"
         )
         if cmd:
             docker_cmd += f" {' '.join(cmd)}"
@@ -529,12 +533,36 @@ class SkyPilotAdapter(ProviderAdapter):
         *,
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> Dict:
         """
-        Returns info for SkyPilot log streaming.
+        Returns info for SkyPilot log streaming via Orchestrator WebSocket.
         """
+        # We'll point to the orchestrator's websocket.
+        # Dashboard will try to connect to this.
+        
+        # Determine the WS URL base
+        if base_url:
+            ws_base = base_url.replace("http://", "ws://").replace("https://", "wss://")
+            # Ensure it ends with /api/v1 if we're behind a gateway, or just / if direct
+            # But the orchestrator router is prefix=/deployment, and server includes it directly.
+            # So if base_url is http://localhost:8080/, path is /deployment/ws
+            ws_url = f"{ws_base.rstrip('/')}/deployment/ws"
+        else:
+            ws_url = "ws://localhost:8080/deployment/ws"
+        
+        cluster_id = provider_instance_id
+        service_name = None
+        if "/" in provider_instance_id:
+            cluster_id, service_name = provider_instance_id.split("/", 1)
+
         return {
-            "ws_url": None,
-            "provider": self.cloud,
-            "subscription": {"cluster_name": provider_instance_id},
+            "ws_url": ws_url,
+            "provider": "skypilot",
+            "subscription": {
+                "type": "subscribe_logs",
+                "provider": "skypilot",
+                "cluster_id": cluster_id,
+                "service_name": service_name,
+            },
         }

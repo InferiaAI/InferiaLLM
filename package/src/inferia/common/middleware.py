@@ -31,20 +31,34 @@ def create_internal_auth_middleware(
         path = request.url.path
         
         try:
+            # Normalize path for comparison (remove trailing slash)
+            norm_path = path.rstrip("/") if path != "/" else path
+            # Normalize skip_paths
+            norm_skip_paths = [p.rstrip("/") if p != "/" else p for p in (skip_paths or [])]
+
             # 2. Skip validation for specific paths (e.g., /health)
-            if skip_paths and path in skip_paths:
+            if norm_path in norm_skip_paths:
+                logger.info(f"Skipping auth for whitelisted path: {path}")
                 response = await call_next(request)
-                response.headers["X-Request-ID"] = request_id
+                if hasattr(response, "headers"):
+                    response.headers["X-Request-ID"] = request_id
                 return response
                 
+            # WebSocket handshake check - browsers can't set custom headers for WS
+            upgrade_header = request.headers.get("upgrade", "").lower()
+            if upgrade_header == "websocket":
+                logger.info(f"Allowing WebSocket handshake for {path}")
+                response = await call_next(request)
+                return response
+
             # 3. Only check if path prefix matches (if provided)
             if check_path_prefix and not path.startswith(check_path_prefix):
                 response = await call_next(request)
-                response.headers["X-Request-ID"] = request_id
+                if hasattr(response, "headers"):
+                    response.headers["X-Request-ID"] = request_id
                 return response
             
             # 3. Validate internal API key
-            # Support both standard header and custom one
             api_key = request.headers.get("X-Internal-API-Key") or request.headers.get(
                 "X-Internal-Key"
             )
@@ -66,7 +80,8 @@ def create_internal_auth_middleware(
                 )
 
             response = await call_next(request)
-            response.headers["X-Request-ID"] = request_id
+            if hasattr(response, "headers"):
+                response.headers["X-Request-ID"] = request_id
             return response
         finally:
             request_id_ctx.reset(token)

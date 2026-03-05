@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Request
+import logging
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 import asyncpg
 import grpc
@@ -723,7 +725,7 @@ async def get_deployment_logs(deployment_id: str):
 
 
 @router.get("/logs/{deployment_id}/stream")
-async def get_deployment_log_stream_info(deployment_id: str):
+async def get_deployment_log_stream_info(deployment_id: str, request: Request):
     """
     Get WebSocket connection details for log streaming.
     """
@@ -769,8 +771,18 @@ async def get_deployment_log_stream_info(deployment_id: str):
         # 2. Call Adapter for streaming info
         try:
             adapter = get_adapter(provider)
+            
+            # Pass base_url to adapter if it supports it to construct absolute WS URL
+            extra_args = {}
+            if hasattr(adapter, "get_log_streaming_info"):
+                import inspect
+                sig = inspect.signature(adapter.get_log_streaming_info)
+                if "base_url" in sig.parameters:
+                    extra_args["base_url"] = str(request.base_url)
+
             stream_info = await adapter.get_log_streaming_info(
-                provider_instance_id=provider_instance_id
+                provider_instance_id=provider_instance_id,
+                **extra_args
             )
             return stream_info
         except Exception as e:
@@ -983,3 +995,112 @@ async def list_models(model_name: str | None = None):
             for m in resp.models
         ]
     }
+
+
+@router.websocket("/ws")
+async def websocket_logs_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for log streaming.
+    Supported providers: skypilot
+    """
+    await websocket.accept()
+    logger.info("WebSocket connection accepted")
+
+    stream_task = None
+    process = None
+
+    try:
+        # 1. Wait for subscription message
+        message = await websocket.receive_text()
+        data = json.loads(message)
+
+        if data.get("type") != "subscribe_logs":
+            await websocket.send_json(
+                {"type": "error", "message": "First message must be a subscription"}
+            )
+            await websocket.close()
+            return
+
+        provider = data.get("provider")
+
+        if provider == "skypilot":
+            cluster_id = data.get("cluster_id")
+            service_name = data.get("service_name")
+
+            if not cluster_id or not service_name:
+                await websocket.send_json(
+                    {"type": "error", "message": "Missing cluster_id or service_name"}
+                )
+                await websocket.close()
+                return
+
+            logger.info(
+                f"Streaming logs for SkyPilot cluster {cluster_id}, service {service_name}"
+            )
+
+            # Start streaming process
+            # Use 'sky exec' to tail docker logs
+            cmd = [
+                "sky",
+                "exec",
+                cluster_id,
+                "--",
+                f"docker logs --tail 100 -f {service_name}",
+            ]
+
+            import asyncio
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+
+            async def read_logs():
+                try:
+                    while True:
+                        line = await process.stdout.readline()
+                        if not line:
+                            break
+                        await websocket.send_json(
+                            {"type": "log", "data": line.decode().strip()}
+                        )
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error reading logs: {e}")
+
+            stream_task = asyncio.create_task(read_logs())
+
+            # Wait for client to close or process to end
+            while True:
+                # Keep connection alive and wait for client messages (like close)
+                try:
+                    await websocket.receive_text()
+                except WebSocketDisconnect:
+                    break
+
+        else:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": f"Provider {provider} not supported for direct streaming",
+                }
+            )
+            await websocket.close()
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except:
+            pass
+    finally:
+        if stream_task:
+            stream_task.cancel()
+        if process and process.returncode is None:
+            try:
+                process.terminate()
+            except:
+                pass
+        logger.info("WebSocket connection closed")
