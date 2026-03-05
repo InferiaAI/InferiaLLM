@@ -6,14 +6,30 @@ Handles dashboard → orchestration service proxying.
 from typing import Dict, Optional
 import httpx
 import logging
+import asyncio
+import websockets
 
-from fastapi import APIRouter, Request, Response, HTTPException, Depends
+from fastapi import (
+    APIRouter,
+    Request,
+    Response,
+    HTTPException,
+    Depends,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from inferia.services.api_gateway.rbac.middleware import get_current_user_from_request
 from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.authorization import authz_service
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.gateway.http_client import gateway_http_client
 from inferia.services.api_gateway.gateway.rate_limiter import rate_limiter
+from inferia.services.api_gateway.db.database import AsyncSessionLocal
+from inferia.services.api_gateway.rbac.auth import auth_service
+from inferia.services.api_gateway.db.models import Role
+from inferia.services.api_gateway.rbac.permissions import normalize_permissions
+from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +68,33 @@ def _require_proxy_permission(user_context: UserContext, method: str, path: str)
         authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
     else:
         authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+
+
+async def _get_ws_user_context(token: str) -> UserContext:
+    async with AsyncSessionLocal() as db:
+        user, org_id, roles = await auth_service.get_current_user(db, token)
+
+        permissions_set = set()
+        if roles:
+            stmt = select(Role).where(Role.name.in_(roles))
+            result = await db.execute(stmt)
+            role_records = result.scalars().all()
+            for role_record in role_records:
+                if role_record.permissions:
+                    permissions_set.update(role_record.permissions)
+
+        permissions, _, _ = normalize_permissions(permissions_set)
+
+        return UserContext(
+            user_id=user.id,
+            username=user.email,
+            email=user.email,
+            roles=roles,
+            permissions=permissions,
+            org_id=org_id,
+            quota_limit=10000,
+            quota_used=0,
+        )
 
 
 async def proxy_request(
@@ -104,6 +147,84 @@ async def proxy_request(
     except httpx.RequestError as e:
         logger.error(f"Proxy request failed: {e}")
         raise HTTPException(status_code=503, detail=f"Service unavailable: {e}")
+
+
+@router.websocket("/deployment/ws")
+async def proxy_deployment_ws(websocket: WebSocket):
+    token = websocket.query_params.get("access_token") or websocket.query_params.get(
+        "token"
+    )
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    try:
+        user_context = await _get_ws_user_context(token)
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    except Exception as e:
+        logger.warning(f"Rejected deployment WS connection: {e}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+
+    upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace(
+        "https://", "wss://"
+    )
+    upstream_ws_url = f"{upstream_base.rstrip('/')}/deployment/ws"
+    upstream_headers = {
+        "X-Internal-API-Key": settings.internal_api_key,
+        "X-Gateway-Request": "true",
+        "X-User-ID": str(user_context.user_id),
+        "X-Organization-ID": str(user_context.org_id or ""),
+    }
+
+    try:
+        async with websockets.connect(
+            upstream_ws_url,
+            additional_headers=upstream_headers,
+        ) as upstream:
+
+            async def client_to_upstream():
+                while True:
+                    payload = await websocket.receive()
+                    event_type = payload.get("type")
+                    if event_type == "websocket.disconnect":
+                        break
+                    if payload.get("text") is not None:
+                        await upstream.send(payload["text"])
+                    elif payload.get("bytes") is not None:
+                        await upstream.send(payload["bytes"])
+
+            async def upstream_to_client():
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            tasks = {
+                asyncio.create_task(client_to_upstream()),
+                asyncio.create_task(upstream_to_client()),
+            }
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                exc = task.exception()
+                if exc:
+                    raise exc
+    except WebSocketDisconnect:
+        logger.info("Client WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"Deployment WS proxy error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.api_route(

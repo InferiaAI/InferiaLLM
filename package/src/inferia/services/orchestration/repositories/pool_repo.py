@@ -36,9 +36,10 @@ class ComputePoolRepository:
             cluster_id,
             region_constraint,
             is_active,
-            lifecycle_state
+            lifecycle_state,
+            gpu_count
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         RETURNING id
         """
         async with self.db.acquire() as conn:
@@ -59,6 +60,7 @@ class ComputePoolRepository:
                 data.get("region_constraint"),
                 data.get("is_active", True),
                 data.get("lifecycle_state", "running"),
+                data.get("gpu_count", 1),
             )
 
     async def update_pool(self, pool_id: UUID, data: dict):
@@ -159,6 +161,7 @@ class ComputePoolRepository:
             cluster_id,
             region_constraint,
             lifecycle_state,
+            gpu_count,
             updated_at,
             created_at
         FROM compute_pools

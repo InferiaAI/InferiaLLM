@@ -196,6 +196,7 @@ class ProviderAdapter(ABC):
         *,
         cluster_name: str,
         gpu_type: str,
+        gpu_count: int = 1,
         region: Optional[str] = None,
         use_spot: bool = False,
         provider_credential_name: Optional[str] = None,
@@ -209,6 +210,7 @@ class ProviderAdapter(ABC):
         Args:
             cluster_name: Unique name for the cluster
             gpu_type: GPU type (A100, A10G, etc.)
+            gpu_count: Number of GPUs to provision (default 1)
             region: Cloud region
             use_spot: Use spot instances
             provider_credential_name: Named credential to use

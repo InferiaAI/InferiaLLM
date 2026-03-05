@@ -45,6 +45,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
             list(request.region_constraint) if request.region_constraint else []
         )
         use_spot = request.use_spot if hasattr(request, "use_spot") else False
+        gpu_count = request.gpu_count if hasattr(request, "gpu_count") and request.gpu_count > 0 else 1
 
         pool_data = {
             "pool_name": request.pool_name,
@@ -60,6 +61,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                 request.scheduling_policy_json or '{"strategy":"best_fit"}'
             ),
             "region_constraint": region_constraint,
+            "gpu_count": gpu_count,
         }
 
         if request.provider_credential_name:
@@ -109,6 +111,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                         if request.allowed_gpu_types
                         else "A100"
                     ),
+                    gpu_count=gpu_count,
                     region=region_constraint[0] if region_constraint else None,
                     use_spot=use_spot,
                     provider_name=request.provider,
@@ -138,6 +141,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         pool_name: str,
         adapter,
         gpu_type: str,
+        gpu_count: int,
         region: Optional[str],
         use_spot: bool,
         provider_name: str,
@@ -145,13 +149,14 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
     ):
         """Background task to provision a cluster and update the pool record."""
         try:
-            logger.info(f"Provisioning cluster for pool '{pool_name}' (ID: {pool_id})")
+            logger.info(f"Provisioning cluster for pool '{pool_name}' (ID: {pool_id}), gpu_count={gpu_count}")
 
             cluster_name = f"inferia-{provider_name}-{uuid_module.uuid4().hex[:8]}"
 
             cluster_info = await adapter.provision_cluster(
                 cluster_name=cluster_name,
                 gpu_type=gpu_type,
+                gpu_count=gpu_count,
                 region=region,
                 use_spot=use_spot,
                 provider_credential_name=provider_credential_name,
@@ -206,6 +211,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
             cluster_id=row.get("cluster_id") or "",
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
+            gpu_count=row.get("gpu_count") or 1,
         )
 
     async def DeletePool(self, request, context):
@@ -267,18 +273,25 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         def utcnow_naive():
             return datetime.now(timezone.utc).replace(tzinfo=None)
 
-        rows = await self.repo.list_pool_inventory(UUID(request.pool_id))
+        pool_id = UUID(request.pool_id)
+        rows = await self.repo.list_pool_inventory(pool_id)
+
+        # Cluster-based pools don't have heartbeat agents, skip staleness check
+        pool = await self.repo.get(pool_id)
+        is_cluster_pool = pool and pool.get("pool_type") == "cluster"
+
         now = utcnow_naive()
         filtered_nodes = []
         for r in rows:
-            check_time = r["last_heartbeat"] or r["created_at"]
-            if check_time:
-                hb = check_time
-                if hb.tzinfo is not None:
-                    hb = hb.replace(tzinfo=None)
+            if not is_cluster_pool:
+                check_time = r["last_heartbeat"] or r["created_at"]
+                if check_time:
+                    hb = check_time
+                    if hb.tzinfo is not None:
+                        hb = hb.replace(tzinfo=None)
 
-                if (now - hb) > timedelta(minutes=2):
-                    continue
+                    if (now - hb) > timedelta(minutes=2):
+                        continue
 
             if r["state"] == "terminated":
                 continue
@@ -324,6 +337,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                     updated_at=row["updated_at"].isoformat()
                     if row["updated_at"]
                     else "",
+                    gpu_count=row.get("gpu_count") or 1,
                 )
                 for row in rows
             ]

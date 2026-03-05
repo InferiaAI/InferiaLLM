@@ -81,6 +81,7 @@ message RegisterPoolRequest {
   string provider_credential_name = 10;
   repeated string region_constraint = 11;  // For SkyPilot: region preference
   bool use_spot = 12;  // For SkyPilot: use spot instances
+  int32 gpu_count = 13;  // Number of GPUs per node (default 1)
 }
 
 message GetPoolRequest {
@@ -109,6 +110,7 @@ message PoolResponse {
   string pool_type = 15;  // 'job' or 'cluster'
   string cluster_id = 16;  // For cluster-based pools
   repeated string region_constraint = 17;
+  int32 gpu_count = 18;  // Number of GPUs per node
 }
 
 message ListPoolsResponse {

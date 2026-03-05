@@ -83,6 +83,7 @@ class CreatePoolRequest(BaseModel):
     provider_credential_name: str | None = (
         None  # Generic: which credential to use for this provider
     )
+    gpu_count: int = 1  # Number of GPUs per node (for cluster provisioning)
 
 
 class ModelRegistryRequest(BaseModel):
@@ -501,6 +502,7 @@ async def create_pool(req: CreatePoolRequest):
                     provider_credential_name=req.provider_credential_name
                     if req.provider_credential_name
                     else "",
+                    gpu_count=req.gpu_count,
                 )
             )
 
@@ -953,7 +955,10 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
             if hasattr(adapter, "get_log_streaming_info"):
                 import inspect
                 sig = inspect.signature(adapter.get_log_streaming_info)
-                if "base_url" in sig.parameters:
+                via_gateway = (
+                    request.headers.get("x-gateway-request", "").lower() == "true"
+                )
+                if "base_url" in sig.parameters and via_gateway:
                     extra_args["base_url"] = str(request.base_url)
 
             stream_info = await adapter.get_log_streaming_info(

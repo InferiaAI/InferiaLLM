@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS public.compute_pools
     provider provider_type NOT NULL,
     pool_type pool_lifecycle_type NOT NULL DEFAULT 'job',  -- 'job' = ephemeral (Nosana), 'cluster' = persistent (SkyPilot)
     allowed_gpu_types text[] COLLATE pg_catalog."default",
+    gpu_count integer NOT NULL DEFAULT 1,  -- Number of GPUs to provision per node
     min_gpu_count integer DEFAULT 0,
     max_gpu_count integer,
     max_cost_per_hour numeric(10,4),

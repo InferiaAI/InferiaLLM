@@ -77,6 +77,7 @@ interface NewPoolState {
     selectedRegion: string;
     useSpot: boolean;
     isClusterProvider: boolean;
+    gpuCount: number;
 }
 
 type NewPoolAction =
@@ -95,7 +96,8 @@ type NewPoolAction =
     | { type: "SET_LOADING_CREDENTIALS"; payload: boolean }
     | { type: "SET_REGION"; payload: string }
     | { type: "SET_USE_SPOT"; payload: boolean }
-    | { type: "SET_CLUSTER_PROVIDER"; payload: boolean };
+    | { type: "SET_CLUSTER_PROVIDER"; payload: boolean }
+    | { type: "SET_GPU_COUNT"; payload: number };
 
 const initialState: NewPoolState = {
     step: 1,
@@ -114,6 +116,7 @@ const initialState: NewPoolState = {
     selectedRegion: "",
     useSpot: false,
     isClusterProvider: false,
+    gpuCount: 1,
 };
 
 function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
@@ -134,6 +137,7 @@ function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
         case "SET_REGION": return { ...state, selectedRegion: action.payload };
         case "SET_USE_SPOT": return { ...state, useSpot: action.payload };
         case "SET_CLUSTER_PROVIDER": return { ...state, isClusterProvider: action.payload };
+        case "SET_GPU_COUNT": return { ...state, gpuCount: action.payload };
         default: return state;
     }
 }
@@ -159,6 +163,7 @@ export default function NewPool() {
         selectedRegion,
         useSpot,
         isClusterProvider,
+        gpuCount,
     } = state;
 
     // Fetch provider configuration
@@ -368,8 +373,9 @@ export default function NewPool() {
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
                 payload.region_constraint = [selectedRegion];
                 payload.use_spot = useSpot;
+                payload.gpu_count = gpuCount;
                 // Estimate cost (for GCP, we don't have real-time pricing without API call)
-                payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot);
+                payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
                 payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
             } else {
                 // Job-based provider (Nosana, Akash)
@@ -506,6 +512,32 @@ export default function NewPool() {
                             </div>
                         </div>
 
+                        {/* GPU Count Selection */}
+                        <div className="mb-6">
+                            <label className="text-sm font-medium mb-2 block">Number of GPUs</label>
+                            <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
+                                {[1, 2, 4, 8].map((count) => (
+                                    <button
+                                        key={count}
+                                        onClick={() => dispatch({ type: "SET_GPU_COUNT", payload: count })}
+                                        className={cn(
+                                            "p-3 rounded-lg border text-center font-bold transition-colors",
+                                            gpuCount === count
+                                                ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20"
+                                                : "border-slate-200 dark:border-zinc-700 hover:border-emerald-400"
+                                        )}
+                                    >
+                                        {count}x
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">
+                                {gpuCount > 1
+                                    ? `${gpuCount} GPUs will be provisioned on a single node (multi-GPU).`
+                                    : "Single GPU per node."}
+                            </p>
+                        </div>
+
                         {/* Spot Toggle */}
                         <div className="p-4 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
                             <div className="flex items-center justify-between">
@@ -528,7 +560,7 @@ export default function NewPool() {
                             </div>
                             {useSpot && (
                                 <div className="mt-2 text-xs text-emerald-600">
-                                    Estimated cost: ~${estimateGcpCost(selectedResource?.gpu_type || 'A100', true).toFixed(2)}/hr (60% savings)
+                                    Estimated cost: ~${(estimateGcpCost(selectedResource?.gpu_type || 'A100', true) * gpuCount).toFixed(2)}/hr (60% savings)
                                 </div>
                             )}
                         </div>
@@ -537,11 +569,11 @@ export default function NewPool() {
                         {selectedRegion && selectedResource && (
                             <div className="mt-4 p-4 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
                                 <div className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
-                                    Summary: {selectedResource.gpu_type} in {selectedRegion}
+                                    Summary: {gpuCount}x {selectedResource.gpu_type} in {selectedRegion}
                                     {useSpot && " (Spot)"}
                                 </div>
                                 <div className="text-xs text-emerald-600 dark:text-emerald-400">
-                                    Estimated: ${estimateGcpCost(selectedResource.gpu_type, useSpot).toFixed(2)}/hr
+                                    Estimated: ${(estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount).toFixed(2)}/hr
                                 </div>
                             </div>
                         )}

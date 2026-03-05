@@ -182,7 +182,7 @@ class ModelDeploymentWorker:
                     provider_instance_id=f"{cluster_id}/{service_name}",  # Composite ID
                     provider_resource_id=None,
                     hostname=cluster_id,
-                    gpu_total=1,  # Simplified - could get from cluster info
+                    gpu_total=pool.get("gpu_count") or 1,
                     vcpu_total=8,
                     ram_gb_total=32,
                     state="ready",
@@ -375,27 +375,27 @@ class ModelDeploymentWorker:
                     expose_url=expose_url,
                 )
 
+                # Attach node to deployment so terminate handler can find it
+                if node_id:
+                    await self.deployments.attach_runtime(
+                        deployment_id=deployment_id,
+                        allocation_ids=[],
+                        node_ids=[node_id],
+                        runtime=pool["provider"],
+                    )
+                    log.info(
+                        f"Deployment {deployment_id} on {pool['provider']} attached node_id {node_id}."
+                    )
+                else:
+                    log.warning(
+                        f"Deployment {deployment_id} on {pool['provider']} "
+                        f"has no node_id returned from register_node."
+                    )
+
                 await self.deployments.update_state(deployment_id, "RUNNING")
 
                 # For ephemeral providers (DePIN, spot instances), deployment is complete once provisioned
-                # Attach the node_id so terminate handler can find the job to stop
                 if capabilities.is_ephemeral:
-                    if node_id:
-                        await self.deployments.attach_runtime(
-                            deployment_id=deployment_id,
-                            allocation_ids=[],
-                            node_ids=[node_id],
-                            runtime=pool["provider"],
-                        )
-                        log.info(
-                            f"Ephemeral deployment {deployment_id} on {pool['provider']} is RUNNING. "
-                            f"Attached node_id {node_id}."
-                        )
-                    else:
-                        log.warning(
-                            f"Ephemeral deployment {deployment_id} on {pool['provider']} is RUNNING "
-                            f"but no node_id returned from register_node."
-                        )
                     return
 
             # -------- PLACEMENT --------

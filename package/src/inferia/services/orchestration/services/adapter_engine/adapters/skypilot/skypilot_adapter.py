@@ -218,6 +218,7 @@ class SkyPilotAdapter(ProviderAdapter):
         *,
         cluster_name: str,
         gpu_type: str,
+        gpu_count: int = 1,
         region: Optional[str] = None,
         use_spot: bool = False,
         provider_credential_name: Optional[str] = None,
@@ -228,7 +229,7 @@ class SkyPilotAdapter(ProviderAdapter):
         Called when creating a cluster-based pool (SkyPilot).
         The cluster persists until explicitly terminated.
         """
-        logger.info(f"Provisioning SkyPilot cluster: {cluster_name} on {self.cloud}")
+        logger.info(f"Provisioning SkyPilot cluster: {cluster_name} on {self.cloud} with {gpu_count}x {gpu_type}")
 
         task = Task(
             name=cluster_name,
@@ -236,7 +237,7 @@ class SkyPilotAdapter(ProviderAdapter):
         ).set_resources(
             Resources(
                 infra=f"{self.cloud}/{region}" if region else self.cloud,
-                accelerators=f"{gpu_type}:1",
+                accelerators=f"{gpu_type}:{gpu_count}",
                 use_spot=use_spot,
                 ports=["8000-9000"],  # Open a range for multiple deployments
             )
@@ -261,7 +262,7 @@ class SkyPilotAdapter(ProviderAdapter):
             "provider": self.cloud,
             "hostname": cluster_info["instance_id"],
             "instance_type": cluster_info.get("instance_type", gpu_type),
-            "gpu_total": 1,
+            "gpu_total": gpu_count,
             "gpu_type": gpu_type,
             "vcpu_total": cluster_info.get("vcpu", 8),
             "ram_gb_total": cluster_info.get("ram_gb", 32),
@@ -543,11 +544,9 @@ class SkyPilotAdapter(ProviderAdapter):
         
         # Determine the WS URL base
         if base_url:
-            ws_base = base_url.replace("http://", "ws://").replace("https://", "wss://")
-            # Ensure it ends with /api/v1 if we're behind a gateway, or just / if direct
-            # But the orchestrator router is prefix=/deployment, and server includes it directly.
-            # So if base_url is http://localhost:8080/, path is /deployment/ws
-            ws_url = f"{ws_base.rstrip('/')}/deployment/ws"
+            # When requested via gateway, we return a relative URL
+            # The gateway is mounted at /api/v1, and proxy route is /deployment/ws
+            ws_url = "/api/v1/deployment/ws"
         else:
             ws_url = "ws://localhost:8080/deployment/ws"
         
