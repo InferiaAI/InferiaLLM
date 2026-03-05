@@ -109,6 +109,16 @@ async def log_audit_event(
     conn = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
+
+        # Proactive check for user_id existence to avoid FK violation
+        # if the ID passed is actually an Org ID or other identifier
+        if user_id:
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", user_id
+            )
+            if not exists:
+                user_id = None  # Don't try to link to non-existent user
+
         # Manually insert since we don't have the AuditLog model here
         await conn.execute(
             """
@@ -502,6 +512,8 @@ async def list_pools(owner_id: str | None = None):
                 "scheduling_policy_json": p.scheduling_policy_json,
                 "provider_pool_id": p.provider_pool_id,
                 "provider_credential_name": p.provider_credential_name,
+                "cluster_id": p.cluster_id,
+                "pool_type": p.pool_type,
                 "created_at": p.created_at,
                 "updated_at": p.updated_at,
                 "gpu_specs": []
@@ -530,6 +542,8 @@ async def list_pools(owner_id: str | None = None):
                     "scheduling_policy_json": p.scheduling_policy_json,
                     "provider_pool_id": p.provider_pool_id,
                     "provider_credential_name": p.provider_credential_name,
+                    "cluster_id": p.cluster_id,
+                    "pool_type": p.pool_type,
                     "created_at": p.created_at,
                     "updated_at": p.updated_at,
                 }
@@ -568,6 +582,8 @@ async def get_pool(pool_id: str):
         "scheduling_policy_json": p.scheduling_policy_json,
         "provider_pool_id": p.provider_pool_id,
         "provider_credential_name": p.provider_credential_name,
+        "cluster_id": p.cluster_id,
+        "pool_type": p.pool_type,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
     }

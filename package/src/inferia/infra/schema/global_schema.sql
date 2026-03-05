@@ -46,7 +46,9 @@ CREATE TYPE provider_type AS ENUM (
     'aws',
     'gcp',
     'azure',
+    'skypilot',  -- Multi-cloud orchestration (AWS, GCP, Azure, Lambda, etc.)
     'nosana',
+    'akash',
     'on_prem',
     'other'
 );
@@ -55,6 +57,11 @@ CREATE TYPE pool_owner_type AS ENUM (
     'system',
     'organization',
     'user'
+);
+
+CREATE TYPE pool_lifecycle_type AS ENUM (
+    'job',       -- Ephemeral: provider manages node lifecycle (Nosana, Akash)
+    'cluster'    -- Persistent: cluster stays alive, deployments run as services (SkyPilot)
 );
 
 CREATE TYPE node_state AS ENUM (
@@ -141,6 +148,7 @@ CREATE TABLE IF NOT EXISTS public.compute_pools
     owner_type pool_owner_type NOT NULL,
     owner_id text COLLATE pg_catalog."default",
     provider provider_type NOT NULL,
+    pool_type pool_lifecycle_type NOT NULL DEFAULT 'job',  -- 'job' = ephemeral (Nosana), 'cluster' = persistent (SkyPilot)
     allowed_gpu_types text[] COLLATE pg_catalog."default",
     min_gpu_count integer DEFAULT 0,
     max_gpu_count integer,
@@ -155,6 +163,7 @@ CREATE TABLE IF NOT EXISTS public.compute_pools
     updated_at timestamp with time zone DEFAULT now(),
     provider_pool_id text COLLATE pg_catalog."default",
     provider_credential_name text COLLATE pg_catalog."default",  -- References provider_credentials.name for this pool
+    cluster_id text COLLATE pg_catalog."default",  -- For cluster-based pools: SkyPilot cluster name
     CONSTRAINT compute_pools_pkey PRIMARY KEY (id),
     CONSTRAINT compute_pools_pool_name_owner_type_owner_id_key UNIQUE (pool_name, owner_type, owner_id)
 );

@@ -15,7 +15,7 @@ const PROVIDERS_MAP: Record<string, ProviderOption[]> = {
         { id: "nosana", name: "Nosana", description: "Decentralized GPU Compute (DePIN)" },
         { id: "akash", name: "Akash Network", description: "Open Cloud Network (DePIN)" },
         { id: "aws", name: "Amazon Web Services", description: "AWS SDK & S3 Integration", disabled: true },
-        { id: "gcp", name: "Google Cloud Platform", description: "Coming Soon", disabled: true },
+        { id: "gcp", name: "Google Cloud Platform", description: "GCP with SkyPilot orchestration" },
         { id: "azure", name: "Microsoft Azure", description: "Coming Soon", disabled: true },
     ],
     "vector-db": [
@@ -50,6 +50,7 @@ export default function ProviderList() {
         if (!activeConfig) return false;
         switch (providerId) {
             case "aws": return !!activeConfig.cloud?.aws?.access_key_id;
+            case "gcp": return !!activeConfig.cloud?.gcp?.project_id || !!activeConfig.cloud?.gcp?.service_account_json;
             case "chroma": return activeConfig.vectordb?.chroma?.is_local !== false ? (!!activeConfig.vectordb?.chroma?.url) : !!activeConfig.vectordb?.chroma?.api_key;
             case "groq": return !!activeConfig.guardrails?.groq?.api_key;
             case "lakera": return !!activeConfig.guardrails?.lakera?.api_key;

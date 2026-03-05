@@ -86,7 +86,10 @@ export default function ProviderConfigPage() {
             const data = await ConfigService.getProviderConfig();
             // Merge with initial to ensure structure exists
             const merged = {
-                cloud: { aws: { ...initialProviderConfig.cloud.aws, ...data.cloud?.aws } },
+                cloud: { 
+                    aws: { ...initialProviderConfig.cloud.aws, ...data.cloud?.aws },
+                    gcp: { ...initialProviderConfig.cloud.gcp, ...data.cloud?.gcp }
+                },
                 vectordb: { chroma: { ...initialProviderConfig.vectordb.chroma, ...data.vectordb?.chroma } },
                 guardrails: {
                     groq: { ...initialProviderConfig.guardrails.groq, ...data.guardrails?.groq },
@@ -173,6 +176,7 @@ export default function ProviderConfigPage() {
         if (!pid) return false;
         switch (pid) {
             case "aws": return !!data.cloud.aws.access_key_id;
+            case "gcp": return !!data.cloud.gcp?.project_id || !!data.cloud.gcp?.service_account_json;
             case "chroma": return data.vectordb.chroma.is_local !== false ? (!!data.vectordb.chroma.url) : !!data.vectordb.chroma.api_key;
             case "groq": return !!data.guardrails.groq.api_key;
             case "lakera": return !!data.guardrails.lakera.api_key;
@@ -421,6 +425,51 @@ function AWSFields({ config, updateField }: { config: ProvidersConfig; updateFie
                 />
             </div>
         </>
+    );
+}
+
+function GCPFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void }) {
+    return (
+        <div className="space-y-4">
+            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                GCP uses SkyPilot for cluster orchestration. Configure your GCP credentials below.
+                SkyPilot will use your default GCP credentials if service account JSON is not provided.
+            </div>
+            <div className="space-y-2">
+                <label htmlFor="gcp-project" className="text-sm font-medium">Project ID</label>
+                <input
+                    id="gcp-project"
+                    value={config.cloud.gcp?.project_id || ""}
+                    onChange={(e) => updateField(['cloud', 'gcp', 'project_id'], e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    placeholder="my-gcp-project"
+                />
+            </div>
+            <div className="space-y-2">
+                <label htmlFor="gcp-region" className="text-sm font-medium">Default Region</label>
+                <input
+                    id="gcp-region"
+                    value={config.cloud.gcp?.region || "us-central1"}
+                    onChange={(e) => updateField(['cloud', 'gcp', 'region'], e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    placeholder="us-central1"
+                />
+            </div>
+            <div className="space-y-2">
+                <label htmlFor="gcp-sa-json" className="text-sm font-medium">Service Account JSON (Optional)</label>
+                <textarea
+                    id="gcp-sa-json"
+                    value={config.cloud.gcp?.service_account_json || ""}
+                    onChange={(e) => updateField(['cloud', 'gcp', 'service_account_json'], e.target.value)}
+                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[100px] font-mono text-xs"
+                    placeholder='{"type": "service_account", ...}'
+                />
+                <p className="text-xs text-muted-foreground">
+                    Paste your GCP service account JSON key. If not provided, SkyPilot will use 
+                    your default gcloud credentials (run <code>gcloud auth application-default login</code>).
+                </p>
+            </div>
+        </div>
     );
 }
 
@@ -765,6 +814,8 @@ function ProviderFormFields({
     switch (providerId) {
         case "aws":
             return <AWSFields config={config} updateField={updateField} />;
+        case "gcp":
+            return <GCPFields config={config} updateField={updateField} />;
         case "chroma":
             return <ChromaFields config={config} updateField={updateField} />;
         case "groq":

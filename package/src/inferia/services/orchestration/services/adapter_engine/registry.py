@@ -15,9 +15,11 @@ from inferia.services.orchestration.services.adapter_engine.adapters.akash.akash
 ADAPTER_REGISTRY = {
     "aws": SkyPilotAdapter,
     "gcp": SkyPilotAdapter,
+    "azure": SkyPilotAdapter,
+    "lambda": SkyPilotAdapter,
+    "runpod": SkyPilotAdapter,
     "nosana": NosanaAdapter,
     "k8s": KubernetesAdapter,
-    "skypilot": SkyPilotAdapter,
     "akash": AkashAdapter,
 }
 

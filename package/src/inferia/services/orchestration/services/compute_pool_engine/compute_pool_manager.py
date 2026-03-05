@@ -1,7 +1,14 @@
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 import grpc
+import logging
+import uuid as uuid_module
+import asyncio
+from typing import Optional
 from inferia.services.orchestration.v1 import compute_pool_pb2, compute_pool_pb2_grpc
+from inferia.services.orchestration.services.adapter_engine.registry import get_adapter
+
+logger = logging.getLogger(__name__)
 
 
 class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer):
@@ -11,53 +18,155 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         self.controller = controller
 
     async def RegisterPool(self, request, context):
+        # Determine pool type based on provider capabilities
+        adapter = None
+        capabilities = None
         try:
-            pool_data = {
-                "pool_name": request.pool_name,
-                "owner_type": request.owner_type,
-                "owner_id": request.owner_id,
-                "provider": request.provider,
-                "allowed_gpu_types": list(request.allowed_gpu_types),
-                "max_cost_per_hour": request.max_cost_per_hour,
-                "is_dedicated": request.is_dedicated,
-                "provider_pool_id": request.provider_pool_id,
-                "scheduling_policy": (
-                    request.scheduling_policy_json or '{"strategy":"best_fit"}'
-                ),
-            }
+            adapter = get_adapter(request.provider)
+            capabilities = adapter.get_capabilities()
+        except ValueError:
+            logger.warning(f"No adapter found for provider '{request.provider}'")
 
-            # Include provider_credential_name if provided (works for any provider: nosana, akash, etc.)
-            if request.provider_credential_name:
-                # Validate that the credential exists
-                credential_exists = await self.repo.credential_exists(
-                    request.provider, request.provider_credential_name
+        pool_type = (
+            "cluster" if capabilities and capabilities.supports_cluster_mode else "job"
+        )
+
+        # Check if pool already exists (to prevent long provisioning for a duplicate)
+        existing_pools = await self.repo.list_pools(owner_id=request.owner_id)
+        for p in existing_pools:
+            if p["pool_name"] == request.pool_name and p["owner_type"] == request.owner_type:
+                await context.abort(
+                    grpc.StatusCode.ALREADY_EXISTS,
+                    f"Pool '{request.pool_name}' already exists for this owner.",
                 )
-                if not credential_exists:
-                    context.abort(
-                        grpc.StatusCode.FAILED_PRECONDITION,
-                        f"Credential '{request.provider_credential_name}' not found or inactive for provider '{request.provider}'",
-                    )
-                pool_data["provider_credential_name"] = request.provider_credential_name
+                return
 
+        region_constraint = (
+            list(request.region_constraint) if request.region_constraint else []
+        )
+        use_spot = request.use_spot if hasattr(request, "use_spot") else False
+
+        pool_data = {
+            "pool_name": request.pool_name,
+            "owner_type": request.owner_type,
+            "owner_id": request.owner_id,
+            "provider": request.provider,
+            "pool_type": pool_type,
+            "allowed_gpu_types": list(request.allowed_gpu_types),
+            "max_cost_per_hour": request.max_cost_per_hour,
+            "is_dedicated": request.is_dedicated,
+            "provider_pool_id": request.provider_pool_id,
+            "scheduling_policy": (
+                request.scheduling_policy_json or '{"strategy":"best_fit"}'
+            ),
+            "region_constraint": region_constraint,
+        }
+
+        if request.provider_credential_name:
+            credential_exists = await self.repo.credential_exists(
+                request.provider, request.provider_credential_name
+            )
+            if not credential_exists:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"Credential '{request.provider_credential_name}' not found or inactive for provider '{request.provider}'",
+                )
+                return
+            pool_data["provider_credential_name"] = request.provider_credential_name
+
+        # Create pool in DB FIRST
+        # Create pool in DB FIRST
+        # is_active=True means 'exists/not deleted' in this system
+        pool_data["is_active"] = True
+
+        try:
             pool_id = await self.repo.create_pool(pool_data)
+        except Exception as e:
+            if "UniqueViolationError" in type(e).__name__:
+                await context.abort(
+                    grpc.StatusCode.ALREADY_EXISTS,
+                    f"Pool '{request.pool_name}' already exists for this owner.",
+                )
+                return
+            raise e
 
+        # Handle provisioning
+        if (
+            pool_type == "cluster"
+            and adapter
+            and capabilities
+            and capabilities.supports_cluster_mode
+        ):
+            # Background the provisioning for cluster-based providers
+            asyncio.create_task(
+                self._provision_cluster_task(
+                    pool_id=pool_id,
+                    pool_name=request.pool_name,
+                    adapter=adapter,
+                    gpu_type=(
+                        request.allowed_gpu_types[0]
+                        if request.allowed_gpu_types
+                        else "A100"
+                    ),
+                    region=region_constraint[0] if region_constraint else None,
+                    use_spot=use_spot,
+                    provider_name=request.provider,
+                    provider_credential_name=request.provider_credential_name,
+                )
+            )
+
+            # Return immediately for clusters
             return compute_pool_pb2.PoolResponse(
                 pool_id=str(pool_id),
                 pool_name=request.pool_name,
                 provider=request.provider,
                 is_active=True,
             )
+
+        # For job-based providers, we are done
+        return compute_pool_pb2.PoolResponse(
+            pool_id=str(pool_id),
+            pool_name=request.pool_name,
+            provider=request.provider,
+            is_active=True,
+        )
+
+    async def _provision_cluster_task(
+        self,
+        pool_id: uuid_module.UUID,
+        pool_name: str,
+        adapter,
+        gpu_type: str,
+        region: Optional[str],
+        use_spot: bool,
+        provider_name: str,
+        provider_credential_name: Optional[str],
+    ):
+        """Background task to provision a cluster and update the pool record."""
+        try:
+            logger.info(f"Provisioning cluster for pool '{pool_name}' (ID: {pool_id})")
+
+            cluster_name = f"inferia-{provider_name}-{uuid_module.uuid4().hex[:8]}"
+
+            cluster_info = await adapter.provision_cluster(
+                cluster_name=cluster_name,
+                gpu_type=gpu_type,
+                region=region,
+                use_spot=use_spot,
+                provider_credential_name=provider_credential_name,
+            )
+
+            cluster_id = cluster_info["cluster_id"]
+            await self.repo.update_pool_cluster_id(pool_id, cluster_id)
+            # await self.repo.set_pool_active(pool_id, True) # Already True
+
+            logger.info(
+                f"Cluster '{cluster_id}' provisioned successfully for pool '{pool_name}'"
+            )
+
         except Exception as e:
-            # Check for asyncpg unique violation by string name or specific type if imported
-            # Since we don't want to depend tightly on asyncpg here if not necessary,
-            # we can inspect the exception type name or just import it.
-            # However, for stability, let's assume asyncpg is available as the repo uses it.
-            if "UniqueViolationError" in type(e).__name__:
-                context.abort(
-                    grpc.StatusCode.ALREADY_EXISTS,
-                    f"Pool '{request.pool_name}' already exists for this owner.",
-                )
-            raise e
+            logger.error(f"Failed to provision cluster for pool '{pool_name}': {e}")
+            # We don't mark as inactive here for now, but we could add a state field later
 
     async def UpdatePool(self, request, context):
         await self.repo.update_pool(
@@ -74,13 +183,16 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
     async def GetPool(self, request, context):
         row = await self.repo.get(UUID(request.pool_id))
         if not row:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"Pool '{request.pool_id}' not found")
+            context.abort(
+                grpc.StatusCode.NOT_FOUND, f"Pool '{request.pool_id}' not found"
+            )
             return
 
         return compute_pool_pb2.PoolResponse(
             pool_id=str(row["id"]),
             pool_name=row["pool_name"],
             provider=row["provider"],
+            pool_type=row.get("pool_type", "job"),
             is_active=row["is_active"],
             owner_type=row["owner_type"],
             owner_id=row["owner_id"],
@@ -90,12 +202,35 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
             scheduling_policy_json=row["scheduling_policy"] or "",
             provider_pool_id=row["provider_pool_id"] or "",
             provider_credential_name=row["provider_credential_name"] or "",
+            cluster_id=row.get("cluster_id") or "",
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
         )
 
     async def DeletePool(self, request, context):
         pool_id = UUID(request.pool_id)
+
+        # Get pool info to check if it's a cluster-based pool
+        pool = await self.repo.get(pool_id)
+
+        # Terminate cluster if it's a cluster-based pool
+        if pool and pool.get("pool_type") == "cluster" and pool.get("cluster_id"):
+            try:
+                adapter = get_adapter(pool["provider"])
+                capabilities = adapter.get_capabilities()
+                if capabilities and capabilities.supports_cluster_mode:
+                    logger.info(
+                        f"Terminating cluster '{pool['cluster_id']}' for pool '{pool['pool_name']}'"
+                    )
+                    await adapter.terminate_cluster(
+                        cluster_id=pool["cluster_id"],
+                        provider_credential_name=pool.get("provider_credential_name"),
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Failed to terminate cluster '{pool.get('cluster_id')}': {e}"
+                )
+                # Don't abort - continue with pool deletion even if cluster termination fails
 
         # Cascade cleanup: Delete/Terminate deployments in this pool
         if self.deployment_repo:
@@ -104,19 +239,16 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                 for dep in deployments:
                     dep_id = dep["deployment_id"]
                     if dep["state"] in ("STOPPED", "TERMINATED", "FAILED", "PENDING"):
-                        # If it's already stopped or hasn't started, just delete it
                         await self.deployment_repo.delete(dep_id)
                     elif self.controller:
-                        # If running, request termination
                         try:
                             await self.controller.request_delete(dep_id)
                         except Exception:
-                            # If termination fails, at least we tried. 
-                            # We might consider force-deleting anyway if the pool is going away.
                             pass
             except Exception as e:
-                # Log error but don't block pool deletion
-                print(f"Error during deployment cascade cleanup for pool {pool_id}: {e}")
+                logger.error(
+                    f"Error during deployment cascade cleanup for pool {pool_id}: {e}"
+                )
 
         await self.repo.soft_delete_pool(pool_id)
         return compute_pool_pb2.poolEmpty()
@@ -146,7 +278,6 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         for r in rows:
             check_time = r["last_heartbeat"] or r["created_at"]
             if check_time:
-                # Ensure hb is naive for comparison with now
                 hb = check_time
                 if hb.tzinfo is not None:
                     hb = hb.replace(tzinfo=None)
@@ -181,6 +312,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                     pool_id=str(row["id"]),
                     pool_name=row["pool_name"],
                     provider=row["provider"],
+                    pool_type=row.get("pool_type", "job"),
                     is_active=row["is_active"],
                     owner_type=row["owner_type"],
                     owner_id=row["owner_id"],
@@ -190,8 +322,13 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                     scheduling_policy_json=row["scheduling_policy"] or "",
                     provider_pool_id=row["provider_pool_id"] or "",
                     provider_credential_name=row["provider_credential_name"] or "",
-                    created_at=row["created_at"].isoformat() if row["created_at"] else "",
-                    updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
+                    cluster_id=row.get("cluster_id") or "",
+                    created_at=row["created_at"].isoformat()
+                    if row["created_at"]
+                    else "",
+                    updated_at=row["updated_at"].isoformat()
+                    if row["updated_at"]
+                    else "",
                 )
                 for row in rows
             ]

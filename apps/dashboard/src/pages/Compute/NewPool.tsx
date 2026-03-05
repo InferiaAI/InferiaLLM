@@ -1,5 +1,5 @@
 import { useReducer, useEffect, useMemo } from "react"
-import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key } from "lucide-react"
+import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
@@ -13,6 +13,7 @@ const providerIcons: Record<string, React.ComponentType<{ className?: string }>>
     nosana: Globe,
     akash: Cpu,
     aws: Server,
+    gcp: Cloud,
     k8s: Server,
     skypilot: Server,
 }
@@ -22,6 +23,7 @@ const providerColors: Record<string, string> = {
     nosana: "text-green-500 bg-green-500/10",
     akash: "text-purple-500 bg-purple-500/10",
     aws: "text-emerald-500 bg-emerald-500/10",
+    gcp: "text-blue-500 bg-blue-500/10",
     k8s: "text-orange-500 bg-orange-500/10",
     skypilot: "text-cyan-500 bg-cyan-500/10",
 }
@@ -31,9 +33,31 @@ const providerDescriptions: Record<string, string> = {
     nosana: "Decentralized GPU Compute grid. Cheapest and fastest for inference.",
     akash: "Decentralized cloud compute. Open-source marketplace for GPUs.",
     aws: "Managed EC2 instances. High reliability, higher cost.",
+    gcp: "Google Cloud Platform with SkyPilot. Unified multi-cloud orchestration.",
     k8s: "On-premises Kubernetes cluster. Full control and privacy.",
     skypilot: "Multi-cloud orchestration. Unified interface for AWS/GCP/Azure.",
 }
+
+// GCP regions for SkyPilot
+const gcpRegions = [
+    { id: "us-central1", name: "Iowa (us-central1)", available: true },
+    { id: "us-east1", name: "South Carolina (us-east1)", available: true },
+    { id: "us-west1", name: "Oregon (us-west1)", available: true },
+    { id: "europe-west1", name: "Belgium (europe-west1)", available: true },
+    { id: "europe-west4", name: "Netherlands (europe-west4)", available: true },
+    { id: "asia-east1", name: "Taiwan (asia-east1)", available: true },
+    { id: "asia-southeast1", name: "Singapore (asia-southeast1)", available: true },
+]
+
+// GPU types for GCP/SkyPilot
+const gcpGpuTypes = [
+    { gpu_type: "A100", gpu_memory_gb: 80, vcpu: 12, ram_gb: 85, description: "NVIDIA A100 80GB" },
+    { gpu_type: "A10G", gpu_memory_gb: 24, vcpu: 4, ram_gb: 16, description: "NVIDIA A10G" },
+    { gpu_type: "T4", gpu_memory_gb: 16, vcpu: 4, ram_gb: 16, description: "NVIDIA T4" },
+    { gpu_type: "L4", gpu_memory_gb: 24, vcpu: 8, ram_gb: 32, description: "NVIDIA L4" },
+    { gpu_type: "V100", gpu_memory_gb: 16, vcpu: 8, ram_gb: 61, description: "NVIDIA V100" },
+    { gpu_type: "H100", gpu_memory_gb: 80, vcpu: 26, ram_gb: 200, description: "NVIDIA H100" },
+]
 
 interface NewPoolState {
     step: number;
@@ -49,6 +73,10 @@ interface NewPoolState {
     providerCredentials: NosanaApiKeyResponse[];
     selectedCredential: string;
     loadingCredentials: boolean;
+    // New fields for SkyPilot/GCP
+    selectedRegion: string;
+    useSpot: boolean;
+    isClusterProvider: boolean;
 }
 
 type NewPoolAction =
@@ -64,7 +92,10 @@ type NewPoolAction =
     | { type: "SET_SORT"; payload: "price_asc" | "price_desc" | "memory" }
     | { type: "SET_CREDENTIALS"; payload: NosanaApiKeyResponse[] }
     | { type: "SET_SELECTED_CREDENTIAL"; payload: string }
-    | { type: "SET_LOADING_CREDENTIALS"; payload: boolean };
+    | { type: "SET_LOADING_CREDENTIALS"; payload: boolean }
+    | { type: "SET_REGION"; payload: string }
+    | { type: "SET_USE_SPOT"; payload: boolean }
+    | { type: "SET_CLUSTER_PROVIDER"; payload: boolean };
 
 const initialState: NewPoolState = {
     step: 1,
@@ -80,12 +111,15 @@ const initialState: NewPoolState = {
     providerCredentials: [],
     selectedCredential: "",
     loadingCredentials: false,
+    selectedRegion: "",
+    useSpot: false,
+    isClusterProvider: false,
 };
 
 function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
     switch (action.type) {
         case "SET_STEP": return { ...state, step: action.payload };
-        case "SET_PROVIDER": return { ...state, selectedProvider: action.payload };
+        case "SET_PROVIDER": return { ...state, selectedProvider: action.payload, selectedResource: null };
         case "SET_RESOURCE": return { ...state, selectedResource: action.payload };
         case "SET_POOL_NAME": return { ...state, poolName: action.payload };
         case "SET_CREATING": return { ...state, isCreating: action.payload };
@@ -97,6 +131,9 @@ function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
         case "SET_CREDENTIALS": return { ...state, providerCredentials: action.payload };
         case "SET_SELECTED_CREDENTIAL": return { ...state, selectedCredential: action.payload };
         case "SET_LOADING_CREDENTIALS": return { ...state, loadingCredentials: action.payload };
+        case "SET_REGION": return { ...state, selectedRegion: action.payload };
+        case "SET_USE_SPOT": return { ...state, useSpot: action.payload };
+        case "SET_CLUSTER_PROVIDER": return { ...state, isClusterProvider: action.payload };
         default: return state;
     }
 }
@@ -118,7 +155,10 @@ export default function NewPool() {
         sortBy,
         providerCredentials,
         selectedCredential,
-        loadingCredentials
+        loadingCredentials,
+        selectedRegion,
+        useSpot,
+        isClusterProvider,
     } = state;
 
     // Fetch provider configuration
@@ -156,6 +196,16 @@ export default function NewPool() {
                     configPath: "/dashboard/settings/providers/depin/nosana"
                 },
                 {
+                    id: "gcp",
+                    name: "Google Cloud (GCP)",
+                    description: providerDescriptions.gcp,
+                    icon: providerIcons.gcp,
+                    color: providerColors.gcp,
+                    category: "cloud",
+                    clusterMode: true,
+                    configPath: "/dashboard/settings/providers/cloud/gcp"
+                },
+                {
                     id: "akash",
                     name: "Akash Network",
                     description: providerDescriptions.akash,
@@ -186,6 +236,7 @@ export default function NewPool() {
             category: data.adapter_type || "cloud",
             configPath: `/dashboard/settings/providers/${data.adapter_type || 'cloud'}/${id}`,
             capabilities: data.capabilities,
+            clusterMode: data.capabilities?.supports_cluster_mode || false,
             recommended: data.adapter_type === 'depin' && id === 'nosana',
         }))
     }, [providersData]);
@@ -200,6 +251,8 @@ export default function NewPool() {
                 return !!(depin.nosana?.wallet_private_key || depin.nosana?.api_key || (depin.nosana?.api_keys && depin.nosana.api_keys.length > 0));
             case "akash":
                 return !!depin.akash?.mnemonic;
+            case "gcp":
+                return true; // GCP uses gcloud default credentials
             case "aws":
                 return !!cloud.aws?.access_key_id;
             case "k8s":
@@ -214,13 +267,29 @@ export default function NewPool() {
         isConfigured: isProviderConfigured(p.id)
     })), [providerMeta, config]);
 
+    // Determine if selected provider is a cluster-based provider
+    useEffect(() => {
+        if (selectedProvider) {
+            const provider = providers.find(p => p.id === selectedProvider);
+            const isCluster = provider?.clusterMode || 
+                provider?.capabilities?.supports_cluster_mode ||
+                ["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider);
+            dispatch({ type: "SET_CLUSTER_PROVIDER", payload: isCluster });
+        }
+    }, [selectedProvider, providers]);
+
     useEffect(() => {
         if (selectedProvider && step === 2) {
             const fetchResources = async () => {
                 dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
                 try {
-                    const res = await computeApi.get(`/deployment/provider/resources?provider=${selectedProvider}`)
-                    dispatch({ type: "SET_RESOURCES", payload: res.data.resources || [] })
+                    // For cluster providers, use predefined GPU types (no API call needed)
+                    if (["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider)) {
+                        dispatch({ type: "SET_RESOURCES", payload: [] })
+                    } else {
+                        const res = await computeApi.get(`/deployment/provider/resources?provider=${selectedProvider}`)
+                        dispatch({ type: "SET_RESOURCES", payload: res.data.resources || [] })
+                    }
                 } catch (error) {
                     toast.error("Failed to load compute resources")
                     console.error(error)
@@ -251,7 +320,7 @@ export default function NewPool() {
             }
 
             void fetchResources()
-            if (["nosana", "akash"].includes(selectedProvider)) {
+            if (["nosana", "akash", "gcp", "skypilot"].includes(selectedProvider)) {
                 void loadProviderCredentials()
             }
         }
@@ -260,6 +329,18 @@ export default function NewPool() {
     const handleCreate = async () => {
         if (!poolName) {
             toast.error("Please give your pool a name")
+            return
+        }
+
+        // For cluster providers, validate region selection
+        if (isClusterProvider && !selectedRegion) {
+            toast.error("Please select a region")
+            return
+        }
+
+        // For cluster providers, validate GPU selection
+        if (isClusterProvider && !selectedResource) {
+            toast.error("Please select a GPU type")
             return
         }
 
@@ -272,16 +353,29 @@ export default function NewPool() {
         dispatch({ type: "SET_CREATING", payload: true })
 
         try {
+            // Build payload based on provider type
             const payload: any = {
                 pool_name: poolName,
                 owner_type: "user",
                 owner_id: targetOrgId,
                 provider: selectedProvider,
-                allowed_gpu_types: [selectedResource.gpu_type],
-                max_cost_per_hour: selectedResource.price_per_hour,
                 is_dedicated: false,
-                provider_pool_id: selectedResource.metadata?.market_address || selectedResource.provider_resource_id,
                 scheduling_policy_json: JSON.stringify({ strategy: "best_fit" })
+            }
+
+            if (isClusterProvider) {
+                // Cluster-based provider (GCP/SkyPilot) - include region and spot settings
+                payload.allowed_gpu_types = [selectedResource.gpu_type];
+                payload.region_constraint = [selectedRegion];
+                payload.use_spot = useSpot;
+                // Estimate cost (for GCP, we don't have real-time pricing without API call)
+                payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot);
+                payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
+            } else {
+                // Job-based provider (Nosana, Akash)
+                payload.allowed_gpu_types = [selectedResource.gpu_type];
+                payload.max_cost_per_hour = selectedResource.price_per_hour;
+                payload.provider_pool_id = selectedResource.metadata?.market_address || selectedResource.provider_resource_id;
             }
 
             if (selectedCredential) {
@@ -289,7 +383,13 @@ export default function NewPool() {
             }
 
             await computeApi.post("/deployment/createpool", payload)
-            toast.success("Compute Pool created successfully!")
+            
+            // For cluster providers, show different success message
+            if (isClusterProvider) {
+                toast.success(`Pool created! GPU cluster provisioning in ${selectedRegion}...`)
+            } else {
+                toast.success("Compute Pool created successfully!")
+            }
             navigate("/dashboard/compute/pools")
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message
@@ -298,6 +398,21 @@ export default function NewPool() {
         } finally {
             dispatch({ type: "SET_CREATING", payload: false })
         }
+    }
+
+    // Estimate GCP cost (rough approximation)
+    const estimateGcpCost = (gpuType: string, isSpot: boolean): number => {
+        const baseCosts: Record<string, number> = {
+            "A100": 3.67,    // per hour
+            "A10G": 0.77,
+            "T4": 0.35,
+            "L4": 0.55,
+            "V100": 2.48,
+            "H100": 4.50,
+        };
+        const base = baseCosts[gpuType] || 1.0;
+        // Spot instances are ~60% cheaper
+        return isSpot ? base * 0.4 : base;
     }
 
     if (loadingConfig || loadingProviders) {
@@ -337,8 +452,121 @@ export default function NewPool() {
                 </div>
             )}
 
-            {/* Step 2: Configure Compute */}
-            {step === 2 && (
+            {/* Step 2: Configure Compute - Cluster Providers (GCP/SkyPilot) */}
+            {step === 2 && isClusterProvider && (
+                <div className="space-y-6">
+                    <div className="p-6 rounded-xl border bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <Cloud className="w-5 h-5" />
+                            {selectedProvider === 'gcp' ? 'Google Cloud Platform' : 'SkyPilot'} Configuration
+                        </h3>
+                        
+                        {/* Region Selection */}
+                        <div className="mb-6">
+                            <label className="text-sm font-medium mb-2 block">Select Region</label>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                {gcpRegions.map((region) => (
+                                    <button
+                                        key={region.id}
+                                        onClick={() => dispatch({ type: "SET_REGION", payload: region.id })}
+                                        className={cn(
+                                            "p-3 rounded-lg border text-left text-sm transition-colors",
+                                            selectedRegion === region.id
+                                                ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20"
+                                                : "border-slate-200 dark:border-zinc-700 hover:border-emerald-400"
+                                        )}
+                                    >
+                                        <div className="font-medium">{region.name}</div>
+                                        <div className="text-xs text-slate-500">{region.id}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* GPU Selection */}
+                        <div className="mb-6">
+                            <label className="text-sm font-medium mb-2 block">Select GPU Type</label>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                {gcpGpuTypes.map((gpu) => (
+                                    <button
+                                        key={gpu.gpu_type}
+                                        onClick={() => dispatch({ type: "SET_RESOURCE", payload: { gpu_type: gpu.gpu_type, gpu_memory_gb: gpu.gpu_memory_gb, vcpu: gpu.vcpu, ram_gb: gpu.ram_gb, price_per_hour: estimateGcpCost(gpu.gpu_type, useSpot) }})}
+                                        className={cn(
+                                            "p-3 rounded-lg border text-left transition-colors",
+                                            selectedResource?.gpu_type === gpu.gpu_type
+                                                ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20"
+                                                : "border-slate-200 dark:border-zinc-700 hover:border-emerald-400"
+                                        )}
+                                    >
+                                        <div className="font-bold">{gpu.gpu_type}</div>
+                                        <div className="text-xs text-slate-500">{gpu.gpu_memory_gb}GB VRAM</div>
+                                        <div className="text-xs text-slate-400">{gpu.vcpu} vCPU</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Spot Toggle */}
+                        <div className="p-4 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="font-medium">Use Spot Instances</div>
+                                    <div className="text-xs text-slate-500">Up to 60% cheaper, but may be interrupted</div>
+                                </div>
+                                <button
+                                    onClick={() => dispatch({ type: "SET_USE_SPOT", payload: !useSpot })}
+                                    className={cn(
+                                        "relative w-12 h-6 rounded-full transition-colors",
+                                        useSpot ? "bg-emerald-600" : "bg-slate-300 dark:bg-zinc-600"
+                                    )}
+                                >
+                                    <div className={cn(
+                                        "absolute top-1 w-4 h-4 bg-white rounded-full transition-transform",
+                                        useSpot ? "translate-x-7" : "translate-x-1"
+                                    )} />
+                                </button>
+                            </div>
+                            {useSpot && (
+                                <div className="mt-2 text-xs text-emerald-600">
+                                    Estimated cost: ~${estimateGcpCost(selectedResource?.gpu_type || 'A100', true).toFixed(2)}/hr (60% savings)
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Summary */}
+                        {selectedRegion && selectedResource && (
+                            <div className="mt-4 p-4 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                                <div className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                                    Summary: {selectedResource.gpu_type} in {selectedRegion}
+                                    {useSpot && " (Spot)"}
+                                </div>
+                                <div className="text-xs text-emerald-600 dark:text-emerald-400">
+                                    Estimated: ${estimateGcpCost(selectedResource.gpu_type, useSpot).toFixed(2)}/hr
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex justify-between pt-6">
+                        <button
+                            onClick={() => dispatch({ type: "SET_STEP", payload: 1 })}
+                            className="px-4 py-2 text-sm font-medium text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200"
+                        >
+                            Back
+                        </button>
+                        <button
+                            onClick={() => selectedRegion && selectedResource && dispatch({ type: "SET_STEP", payload: 3 })}
+                            disabled={!selectedRegion || !selectedResource}
+                            className="px-6 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Continue
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Step 2: Configure Compute - Job Providers (Nosana, Akash) */}
+            {step === 2 && !isClusterProvider && (
                 <div className="space-y-6">
                     <ResourceFilter
                         searchQuery={searchQuery}
@@ -404,7 +632,7 @@ export default function NewPool() {
                             <input
                                 id="pool-name"
                                 className="w-full px-3 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-700 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-zinc-100"
-                                placeholder="e.g. My Nosana Pool"
+                                placeholder={isClusterProvider ? "e.g. My GCP Production Pool" : "e.g. My Nosana Pool"}
                                 value={poolName}
                                 onChange={(e) => dispatch({ type: "SET_POOL_NAME", payload: e.target.value })}
                             />
@@ -413,7 +641,23 @@ export default function NewPool() {
                         <PoolDetails
                             providerName={providers.find(p => p.id === selectedProvider)?.name}
                             resource={selectedResource}
+                            isClusterProvider={isClusterProvider}
+                            region={selectedRegion}
+                            useSpot={useSpot}
                         />
+
+                        {/* Cluster-specific info */}
+                        {isClusterProvider && (
+                            <div className="pt-4 border-t border-slate-200/60 dark:border-zinc-800/60">
+                                <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                                    <Cloud className="w-4 h-4" />
+                                    <span className="font-medium">Cluster-based provisioning</span>
+                                </div>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    A persistent GPU cluster will be created. Deployments run on the cluster and can be started/stopped without recreating infrastructure.
+                                </p>
+                            </div>
+                        )}
 
                         {providerCredentials.length > 0 && (
                             <CredentialSelection
@@ -435,10 +679,14 @@ export default function NewPool() {
                         </button>
                         <button
                             onClick={handleCreate}
-                            disabled={isCreating}
+                            disabled={isCreating || !poolName}
                             className="flex-[2] px-6 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2"
                         >
-                            {isCreating ? <>Creating Pool...</> : <><Zap className="w-4 h-4" /> Create Pool</>}
+                            {isCreating ? (
+                                <>Creating Pool...</>
+                            ) : (
+                                <>{isClusterProvider ? <><Cloud className="w-4 h-4" /> Create GPU Cluster</> : <><Zap className="w-4 h-4" /> Create Pool</>}</>
+                            )}
                         </button>
                     </div>
                 </div>
@@ -568,27 +816,54 @@ function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, 
     )
 }
 
-function PoolDetails({ providerName, resource }: { providerName?: string, resource: any }) {
+function PoolDetails({ providerName, resource, isClusterProvider, region, useSpot }: { 
+    providerName?: string, 
+    resource: any,
+    isClusterProvider?: boolean,
+    region?: string,
+    useSpot?: boolean
+}) {
     return (
         <div className="pt-4 border-t border-slate-200/60 dark:border-zinc-800/60 space-y-3">
             <div className="flex justify-between text-sm">
                 <span className="text-slate-500 dark:text-zinc-400">Provider</span>
                 <span className="font-medium capitalize">{providerName}</span>
             </div>
-            <div className="flex justify-between text-sm">
-                <span className="text-slate-500 dark:text-zinc-400">GPU Type</span>
-                <span className="font-medium">{resource?.gpu_type}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-                <span className="text-slate-500 dark:text-zinc-400">Cost per Hour</span>
-                <span className="font-medium">${resource?.price_per_hour}</span>
-            </div>
-            {resource?.pricing_model && resource?.pricing_model !== 'fixed' && (
-                <div className="flex justify-between text-sm">
-                    <span className="text-slate-500 dark:text-zinc-400">Pricing Model</span>
-                    <span className="font-medium capitalize">{resource?.pricing_model}</span>
-                </div>
+            
+            {isClusterProvider ? (
+                <>
+                    <div className="flex justify-between text-sm">
+                        <span className="text-slate-500 dark:text-zinc-400">Region</span>
+                        <span className="font-medium">{region || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                        <span className="text-slate-500 dark:text-zinc-400">GPU Type</span>
+                        <span className="font-medium">{resource?.gpu_type || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                        <span className="text-slate-500 dark:text-zinc-400">Instance Type</span>
+                        <span className="font-medium capitalize">{useSpot ? 'Spot' : 'On-demand'}</span>
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className="flex justify-between text-sm">
+                        <span className="text-slate-500 dark:text-zinc-400">GPU Type</span>
+                        <span className="font-medium">{resource?.gpu_type}</span>
+                    </div>
+                    {resource?.pricing_model && resource?.pricing_model !== 'fixed' && (
+                        <div className="flex justify-between text-sm">
+                            <span className="text-slate-500 dark:text-zinc-400">Pricing Model</span>
+                            <span className="font-medium capitalize">{resource?.pricing_model}</span>
+                        </div>
+                    )}
+                </>
             )}
+            
+            <div className="flex justify-between text-sm">
+                <span className="text-slate-500 dark:text-zinc-400">Est. Cost per Hour</span>
+                <span className="font-medium">${resource?.price_per_hour || '0.00'}</span>
+            </div>
         </div>
     )
 }
