@@ -66,7 +66,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 # 2. Install the package WITHOUT [all-providers] (removes AWS/GCP/Azure SDKs)
 #    We install with --no-deps for torch to avoid overwriting the CPU version
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir '.[logstash]'
 
 # Copy entrypoint script
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh

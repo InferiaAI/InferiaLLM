@@ -150,7 +150,32 @@ services:
       - inferia-net
 
   # ---------------------------------------------------------------------------
-  # Logstash  (optional — enable with: docker compose --profile logstash up)
+  # Elasticsearch
+  # ---------------------------------------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: inferia-elasticsearch
+    profiles: ["logstash"]
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - inferia-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Logstash
   # ---------------------------------------------------------------------------
   logstash:
     image: docker.elastic.co/logstash/logstash:8.13.4
@@ -159,13 +184,17 @@ services:
     restart: unless-stopped
     environment:
       - LS_JAVA_OPTS=-Xmx512m -Xms256m
-      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-}
+      - xpack.monitoring.enabled=false
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
       - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
     volumes:
       - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
     ports:
-      - "${LOGSTASH_PORT:-5959}:5959"   # TCP input for python-logstash
+      - "${LOGSTASH_PORT:-5959}:5959"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
     networks:
       - inferia-net
     healthcheck:
@@ -175,8 +204,27 @@ services:
       retries: 5
       start_period: 60s
 
+  # ---------------------------------------------------------------------------
+  # Kibana (Log Dashboard)
+  # ---------------------------------------------------------------------------
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.4
+    container_name: inferia-kibana
+    profiles: ["logstash"]
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - inferia-net
+
 volumes:
   pgdata:
+  esdata:
 
 networks:
   inferia-net:
