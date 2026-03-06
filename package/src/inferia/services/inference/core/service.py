@@ -209,13 +209,13 @@ class GatewayService:
         # Strip trailing slashes from endpoint
         endpoint = endpoint_url.rstrip("/")
 
-        # If endpoint already contains the full chat path, use it as-is
-        if endpoint.endswith("/chat/completions") or endpoint.endswith("/messages"):
+        # If endpoint already contains the full path, use it as-is
+        if endpoint.endswith("/chat/completions") or endpoint.endswith("/messages") or endpoint.endswith("/embeddings"):
             return endpoint
 
-        # If endpoint already contains /v1, don't add it again
-        if endpoint.endswith("/v1"):
-            # chat_path is like /v1/chat/completions, so we only need /chat/completions
+        # If endpoint already contains /v1 or /openai (e.g. Groq, Cerebras, Gemini),
+        # strip /v1 from the path to avoid duplication
+        if endpoint.endswith("/v1") or endpoint.endswith("/openai"):
             if chat_path.startswith("/v1"):
                 return endpoint + chat_path[3:]  # Skip the /v1 part
             return endpoint + chat_path

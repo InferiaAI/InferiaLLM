@@ -129,6 +129,7 @@ const computeEngines = [
 
 const externalProviders = [
   { id: "openai", name: "OpenAI", desc: "GPT + text-embedding models", icon: Globe, defaultEndpoint: "https://api.openai.com", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
+  { id: "gemini", name: "Google Gemini", desc: "Gemini models via OpenAI-compatible API", icon: Globe, defaultEndpoint: "https://generativelanguage.googleapis.com/v1beta/openai", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
   { id: "anthropic", name: "Anthropic", desc: "Claude chat/completion models", icon: Globe, defaultEndpoint: "https://api.anthropic.com", modelTypes: ["inference"] as ModelTypeKey[] },
   { id: "cohere", name: "Cohere", desc: "Command + embedding models", icon: Globe, defaultEndpoint: "https://api.cohere.ai", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
   { id: "groq", name: "Groq", desc: "Fast inference via OpenAI-compatible API", icon: Globe, defaultEndpoint: "https://api.groq.com/openai/v1", modelTypes: ["inference"] as ModelTypeKey[] },

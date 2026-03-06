@@ -90,10 +90,26 @@ class OrchestrationService:
 
         adapter = get_adapter(engine)
 
-        # For embedding engines (Infinity, TEI), use the internal API key
-        from inferia.services.inference.config import settings
-
-        provider_key = settings.api_gateway_internal_key or ""
+        # For external providers, use their API key from configuration
+        # For compute engines (Infinity, TEI), use the internal API key
+        if is_external_engine(engine):
+            credentials = (
+                deployment.get("credentials_json") or deployment.get("configuration") or {}
+            )
+            provider_key = str(
+                credentials.get("api_key")
+                or credentials.get("key")
+                or credentials.get("token")
+                or ""
+            )
+            # Resolve model name from configuration
+            if credentials.get("model"):
+                body["model"] = credentials["model"]
+            elif deployment.get("inference_model"):
+                body["model"] = deployment["inference_model"]
+        else:
+            from inferia.services.inference.config import settings
+            provider_key = settings.api_gateway_internal_key or ""
 
         provider_headers = adapter.get_headers(provider_key)
         provider_payload = adapter.transform_request(body.copy())
@@ -105,13 +121,14 @@ class OrchestrationService:
 
         try:
             # Call upstream embedding endpoint
-            # Note: Infinity and TEI serve embeddings at /embeddings (not /v1/embeddings)
+            # External providers use /v1/embeddings, compute engines (Infinity, TEI) use /embeddings
+            embedding_path = "/v1/embeddings" if is_external_engine(engine) else "/embeddings"
             response_data = await GatewayService.call_upstream(
                 endpoint_url,
                 provider_payload,
                 provider_headers,
                 engine,
-                path="/embeddings",
+                path=embedding_path,
                 concurrency_key=concurrency_key,
             )
 
