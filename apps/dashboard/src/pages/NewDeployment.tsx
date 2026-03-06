@@ -127,6 +127,21 @@ const computeEngines = [
   },
 ]
 
+const geminiModelCatalog = {
+  inference: [
+    { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", desc: "Most intelligent model for complex problem-solving.", badge: "New" },
+    { id: "gemini-3-flash-preview", name: "Gemini 3 Flash", desc: "Frontier-class performance with high speed and low cost.", badge: "New" },
+    { id: "gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash-Lite", desc: "Ultra-fast, high-volume model for lightweight tasks.", badge: "New" },
+    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", desc: "Advanced reasoning and coding capabilities." },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", desc: "Fast and versatile model for everyday tasks." },
+    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite", desc: "Cost-efficient model for high-throughput workloads." },
+  ],
+  embedding: [
+    { id: "text-embedding-004", name: "Text Embedding 004", desc: "Latest Gemini text embedding model." },
+    { id: "embedding-001", name: "Embedding 001", desc: "General-purpose embedding model." },
+  ],
+} as const;
+
 const externalProviders = [
   { id: "openai", name: "OpenAI", desc: "GPT + text-embedding models", icon: Globe, defaultEndpoint: "https://api.openai.com", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
   { id: "gemini", name: "Google Gemini", desc: "Gemini models via OpenAI-compatible API", icon: Globe, defaultEndpoint: "https://generativelanguage.googleapis.com/v1beta/openai", modelTypes: ["inference", "embedding"] as ModelTypeKey[] },
@@ -1251,6 +1266,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
 
 function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders, externalModelType }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean; filteredProviders: any[]; externalModelType: string }) {
   const { step, selectedProvider, customProviderName, externalModelName, endpointUrl, apiKey, instanceName } = state;
+  const [geminiCustomMode, setGeminiCustomMode] = useState(false);
+  const catalogModels = selectedProvider === 'gemini' ? (geminiModelCatalog[externalModelType as keyof typeof geminiModelCatalog] ?? []) : [];
+  const isInCatalog = catalogModels.some(m => m.id === externalModelName);
 
   return (
     <>
@@ -1265,7 +1283,7 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
       {step === 1 && (
         <div className="space-y-6">
           <div className="flex justify-center"><div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner"><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "inference" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><MessageSquare className="w-4 h-4" /> Inference</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "embedding" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><Database className="w-4 h-4" /> Embeddings</button></div></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<button type="button" key={p.id} aria-pressed={selectedProvider === p.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-colors outline-none text-left", selectedProvider === p.id ? "border-emerald-600 shadow-md" : "hover:border-emerald-300")}><div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg"><p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p></div></button>))}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<button type="button" key={p.id} aria-pressed={selectedProvider === p.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-colors outline-none text-left", selectedProvider === p.id ? "border-emerald-600 dark:border-emerald-500 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20 bg-emerald-50 dark:bg-emerald-900/20 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}><div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg"><p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p></div></button>))}</div>
           <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} disabled={!selectedProvider} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
         </div>
       )}
@@ -1273,7 +1291,79 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
       {step === 2 && (
         <div className="max-w-2xl mx-auto space-y-6 bg-white dark:bg-zinc-900 p-8 rounded-xl border dark:border-zinc-800 shadow-sm">
           {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="customProviderName" className="block text-sm font-medium">Provider Name</label><input id="customProviderName" value={customProviderName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'customProviderName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. My Custom Provider" /></div>)}
-          <div className="space-y-4"><label htmlFor="externalModelName" className="block text-sm font-medium">Model Name</label><input id="externalModelName" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3" : "e.g. gpt-4o"} /></div>
+
+          {/* Gemini model catalog */}
+          {selectedProvider === 'gemini' ? (
+            <div className="space-y-4">
+              <label className="block text-sm font-medium">Select a Model</label>
+              <div className="space-y-2">
+                {catalogModels.map(m => (
+                  <button
+                    type="button"
+                    key={m.id}
+                    onClick={() => { setGeminiCustomMode(false); dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: m.id }); }}
+                    className={cn(
+                      "w-full text-left px-4 py-3 rounded-lg border transition-all flex items-center justify-between gap-3",
+                      externalModelName === m.id && !geminiCustomMode
+                        ? "border-emerald-600 dark:border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20"
+                        : "border-slate-200 dark:border-zinc-700 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-zinc-800/50"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm">{m.name}</span>
+                        <span className="text-xs text-slate-400 dark:text-zinc-500 font-mono">{m.id}</span>
+                        {'badge' in m && m.badge && <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400">{m.badge}</span>}
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">{m.desc}</p>
+                    </div>
+                    <div className="flex-shrink-0">
+                      {externalModelName === m.id && !geminiCustomMode ? (
+                        <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
+                      ) : (
+                        <div className="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-zinc-600" />
+                      )}
+                    </div>
+                  </button>
+                ))}
+                {/* Custom model option */}
+                <button
+                  type="button"
+                  onClick={() => { setGeminiCustomMode(true); dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: '' }); }}
+                  className={cn(
+                    "w-full text-left px-4 py-3 rounded-lg border transition-all flex items-center justify-between gap-3",
+                    geminiCustomMode
+                      ? "border-emerald-600 dark:border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20"
+                      : "border-dashed border-slate-300 dark:border-zinc-700 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-zinc-800/50"
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <span className="font-medium text-sm">Other Model</span>
+                    <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">Enter a custom Gemini model ID</p>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {geminiCustomMode ? (
+                      <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
+                    ) : (
+                      <div className="w-5 h-5 rounded-full border-2 border-dashed border-slate-300 dark:border-zinc-600" />
+                    )}
+                  </div>
+                </button>
+                {geminiCustomMode && (
+                  <input
+                    autoFocus
+                    value={externalModelName}
+                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white border-slate-200 dark:border-zinc-700 text-sm"
+                    placeholder="e.g. gemini-2.0-flash"
+                  />
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4"><label htmlFor="externalModelName" className="block text-sm font-medium">Model Name</label><input id="externalModelName" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3" : "e.g. gpt-4o"} /></div>
+          )}
+
           <div className="space-y-4"><label htmlFor="apiKey" className="block text-sm font-medium">API Key</label><input id="apiKey" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white font-mono" placeholder="sk-..." /></div>
           {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="endpointUrl" className="block text-sm font-medium">Endpoint URL</label><input id="endpointUrl" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="https://..." /></div>)}
           <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && (!customProviderName || !endpointUrl))} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
