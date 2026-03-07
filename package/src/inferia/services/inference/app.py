@@ -20,12 +20,14 @@ from inferia.common.logger import setup_logging
 from inferia.common.app_setup import setup_cors, add_standard_health_routes
 
 # Configure logging
-setup_logging(
-    level="INFO",
+logger = setup_logging(
+    level=settings.log_level,
     service_name="inference-gateway",
-    use_json=not settings.is_development
+    use_json=not settings.is_development,
+    logstash_host=settings.logstash_host,
+    logstash_port=settings.logstash_port,
+    logger_name="inferia.services.inference",
 )
-logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.app_name,

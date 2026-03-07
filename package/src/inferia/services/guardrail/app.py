@@ -18,12 +18,14 @@ from inferia.services.guardrail.models import GuardrailResult, ScanType
 from inferia.services.guardrail.middleware import internal_auth_middleware
 
 # Configure logging
-setup_logging(
+logger = setup_logging(
     level=settings.log_level,
     service_name="guardrail-service",
-    use_json=not settings.is_development
+    use_json=not settings.is_development,
+    logstash_host=settings.logstash_host,
+    logstash_port=settings.logstash_port,
+    logger_name="inferia.services.guardrail",
 )
-logger = logging.getLogger("guardrail-service")
 
 
 @asynccontextmanager

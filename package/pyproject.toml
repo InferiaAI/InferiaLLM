@@ -112,6 +112,9 @@ all-providers = [
   "boto3==1.42.10",
   "skypilot[aws,gcp,azure,lambda,runpod,kubernetes]",
 ]
+logstash = [
+  "python-logstash>=0.4.6",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov",
