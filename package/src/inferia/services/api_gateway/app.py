@@ -41,13 +41,15 @@ from inferia.services.api_gateway.gateway.proxy_routes import router as proxy_ro
 from inferia.services.api_gateway.gateway.health_routes import router as health_router
 
 # Configure logging
-setup_logging(
+logger = setup_logging(
     level=settings.log_level,
     service_name="api-gateway",
     use_json=not settings.is_development,
-    log_file="debug.log"
+    log_file="debug.log",
+    logstash_host=settings.logstash_host,
+    logstash_port=settings.logstash_port,
+    logger_name="inferia.services.api_gateway",
 )
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager

@@ -15,12 +15,14 @@ from inferia.services.data.prompt_engine import prompt_engine
 from inferia.services.data.middleware import internal_auth_middleware
 
 # Configure logging
-setup_logging(
+logger = setup_logging(
     level=settings.log_level,
     service_name="data-service",
-    use_json=not settings.is_development
+    use_json=not settings.is_development,
+    logstash_host=settings.logstash_host,
+    logstash_port=settings.logstash_port,
+    logger_name="inferia.services.data",
 )
-logger = logging.getLogger("data-service")
 
 # File upload security configuration
 ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".md", ".json", ".csv"}

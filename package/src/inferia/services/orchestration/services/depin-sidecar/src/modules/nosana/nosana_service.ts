@@ -1430,6 +1430,7 @@ export class NosanaService {
 
                     const tooShort = runtime < MIN_RUNTIME_FOR_REDEPLOY_MS;
                     const instanceId = currentDepInfo.jobAddresses[0] || deploymentId;
+                    let redeploySuccess = false;
 
                     if (currentDepInfo.userStopped) {
                         // User requested stop, don't redeploy
@@ -1502,6 +1503,7 @@ export class NosanaService {
                                 });
 
                                 success = true;
+                                redeploySuccess = true;
                                 console.log(`[auto-redeploy] Successfully redeployed ${deploymentId} to ${newDeploymentId}`);
                             } catch (redeployErr: any) {
                                 retryCount++;
@@ -1551,24 +1553,28 @@ export class NosanaService {
                         }
                     }
 
-                    // Send terminated heartbeat
-                    try {
-                        const payload = {
-                            provider: "nosana",
-                            provider_instance_id: instanceId,
-                            deployment_id: deploymentId,
-                            gpu_allocated: 0,
-                            vcpu_allocated: 0,
-                            ram_gb_allocated: 0,
-                            health_score: 0,
-                            state: "terminated",
-                        };
-                        await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
-                            body: JSON.stringify(payload),
-                        });
-                    } catch (err) { }
+                    // Only send terminated heartbeat if we did NOT successfully redeploy
+                    // Sending terminated for the old node after a successful redeploy causes
+                    // the orchestrator to mark the deployment as FAILED before the new node checks in
+                    if (!redeploySuccess) {
+                        try {
+                            const payload = {
+                                provider: "nosana",
+                                provider_instance_id: instanceId,
+                                deployment_id: deploymentId,
+                                gpu_allocated: 0,
+                                vcpu_allocated: 0,
+                                ram_gb_allocated: 0,
+                                health_score: 0,
+                                state: "terminated",
+                            };
+                            await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
+                                body: JSON.stringify(payload),
+                            });
+                        } catch (err) { }
+                    }
 
                     this.watchedDeployments.delete(deploymentId);
                     return;
@@ -1717,6 +1723,7 @@ export class NosanaService {
                         runtime >= MIN_RUNTIME_FOR_REDEPLOY_MS;
 
                     const tooShort = runtime < MIN_RUNTIME_FOR_REDEPLOY_MS;
+                    let redeploySuccess = false;
 
                     if (currentInfo.userStopped) {
                         // User stopped, do nothing
@@ -1775,6 +1782,7 @@ export class NosanaService {
                                 deploymentUuid: newJob.deploymentUuid,
                                 resources_allocated: currentInfo.resources,
                             });
+                            redeploySuccess = true;
                         } catch (redeployErr: any) {
                             console.error(`[auto-redeploy] Failed:`, redeployErr);
                             try {
@@ -1798,24 +1806,26 @@ export class NosanaService {
                         }
                     }
 
-                    // Send terminated heartbeat
-                    try {
-                        const payload = {
-                            provider: "nosana",
-                            provider_instance_id: jobAddress,
-                            gpu_allocated: 0,
-                            vcpu_allocated: 0,
-                            ram_gb_allocated: 0,
-                            health_score: 0,
-                            state: "terminated",
-                        };
-                        await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
-                            body: JSON.stringify(payload),
-                        });
-                    } catch (err: any) {
-                        console.error(`[heartbeat] Failed to send terminated heartbeat for ${jobAddress}:`, err.message || err);
+                    // Only send terminated heartbeat if we did NOT successfully redeploy
+                    if (!redeploySuccess) {
+                        try {
+                            const payload = {
+                                provider: "nosana",
+                                provider_instance_id: jobAddress,
+                                gpu_allocated: 0,
+                                vcpu_allocated: 0,
+                                ram_gb_allocated: 0,
+                                health_score: 0,
+                                state: "terminated",
+                            };
+                            await fetch(`${orchestratorUrl}/inventory/heartbeat`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", "X-Internal-API-Key": process.env.INTERNAL_API_KEY || "dev-internal-key" },
+                                body: JSON.stringify(payload),
+                            });
+                        } catch (err: any) {
+                            console.error(`[heartbeat] Failed to send terminated heartbeat for ${jobAddress}:`, err.message || err);
+                        }
                     }
 
                     this.watchedDeployments.delete(depInfo.deploymentId);
