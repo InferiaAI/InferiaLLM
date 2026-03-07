@@ -66,6 +66,24 @@ class InventoryRepository:
         incoming_state = NodeState.from_incoming(data["state"])
 
         async with self.db.acquire() as conn:
+            # Handle redeployment: if old_provider_instance_id is provided, swap the
+            # old node record to the new provider_instance_id so the deployment's
+            # node_ids reference stays valid and heartbeats continue on the same row.
+            old_instance_id = data.get("old_provider_instance_id")
+            if old_instance_id:
+                await conn.execute(
+                    """
+                    UPDATE compute_inventory
+                    SET provider_instance_id = $1,
+                        updated_at = now()
+                    WHERE provider = $2
+                      AND provider_instance_id = $3
+                    """,
+                    data["provider_instance_id"],
+                    data["provider"],
+                    old_instance_id,
+                )
+
             row = await conn.fetchrow(
                 query,
                 data["provider"],

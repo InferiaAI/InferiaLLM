@@ -67,6 +67,7 @@ docs/_build/
 # --- PyBuilder ---
 .pybuilder/
 target/
+key.json
 
 # --- IPython ---
 profile_default/
