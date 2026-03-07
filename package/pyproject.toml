@@ -80,7 +80,6 @@ dependencies = [
 
   # Orchestration Core
   "python-multipart",
-  "skypilot",
   "kubernetes==33.1.0",
 ]
 
@@ -92,6 +91,9 @@ Documentation = "https://docs.inferia.ai/docs"
 # Optional: Compute Providers
 # ---------------------------------
 [project.optional-dependencies]
+skypilot = [
+  "skypilot[all]",
+]
 aws = [
   "boto3==1.42.10",
   "skypilot[aws]",
