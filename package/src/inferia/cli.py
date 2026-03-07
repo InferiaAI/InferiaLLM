@@ -217,6 +217,80 @@ def run_nosana_sidecar(queue=None, env: str = "production"):
             queue.put(ServiceFailed("nosana-sidecar", str(e)))
 
 
+def run_skypilot_server(queue=None):
+    """
+    Starts the SkyPilot API server (required for cloud provider orchestration).
+    Only starts if skypilot is installed.
+    """
+    from inferia.startup_events import ServiceStarting, ServiceStarted, ServiceFailed
+
+    try:
+        if queue:
+            queue.put(ServiceStarting("SkyPilot API Server"))
+
+        # Check if skypilot is installed
+        import importlib.util
+        if importlib.util.find_spec("sky") is None:
+            msg = "SkyPilot not installed. Skipping. Install with: pip install 'skypilot[gcp]'"
+            print(f"[SkyPilot] {msg}")
+            if queue:
+                queue.put(ServiceFailed("SkyPilot API Server", error=msg))
+            return
+
+        # Check if already running
+        import sky
+        try:
+            sky.status()
+            # If this succeeds, server is already running
+            print("[SkyPilot] API server already running.")
+            if queue:
+                queue.put(ServiceStarted("SkyPilot API Server", detail="Already running"))
+            return
+        except Exception:
+            pass
+
+        # Start the server
+        print("[SkyPilot] Starting API server...")
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "sky.api.cli", "start"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Wait briefly for it to start
+        import time
+        time.sleep(5)
+
+        if proc.poll() is not None:
+            # Process exited, try alternative command
+            proc = subprocess.Popen(
+                ["sky", "api", "start"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            time.sleep(5)
+
+        if proc.poll() is None or proc.returncode == 0:
+            print("[SkyPilot] API server started successfully.")
+            if queue:
+                queue.put(ServiceStarted("SkyPilot API Server", detail="Running"))
+        else:
+            stderr = proc.stderr.read().decode() if proc.stderr else ""
+            if "already running" in stderr.lower():
+                print("[SkyPilot] API server already running.")
+                if queue:
+                    queue.put(ServiceStarted("SkyPilot API Server", detail="Already running"))
+            else:
+                print(f"[SkyPilot] Failed to start: {stderr}")
+                if queue:
+                    queue.put(ServiceFailed("SkyPilot API Server", error=stderr[:200]))
+
+    except Exception as e:
+        print(f"[SkyPilot] Error: {e}")
+        if queue:
+            queue.put(ServiceFailed("SkyPilot API Server", error=str(e)))
+
+
 def run_dashboard(queue=None):
     """
     Runs the Dashboard on a separate HTTP server (port 3001).
@@ -401,9 +475,12 @@ def run_orchestration_stack(env: str = "production"):
         multiprocessing.Process(
             target=run_nosana_sidecar, name="nosana-sidecar", args=(queue, env)
         ),
+        multiprocessing.Process(
+            target=run_skypilot_server, name="skypilot-api", args=(queue,)
+        ),
     ]
 
-    print("[CLI] Starting Orchestration Stack (API, Worker, DePIN Sidecar)...")
+    print("[CLI] Starting Orchestration Stack (API, Worker, DePIN Sidecar, SkyPilot)...")
     for p in processes:
         p.start()
 
@@ -422,7 +499,7 @@ def run_orchestration_stack(env: str = "production"):
 def run_all(env: str = "production"):
     # Run all services efficiently by spawning them as direct children
     queue = multiprocessing.Queue()
-    ui = StartupUI(queue, total=8)
+    ui = StartupUI(queue, total=9)
 
     processes = [
         # Core Gateway
@@ -462,6 +539,11 @@ def run_all(env: str = "production"):
             target=run_nosana_sidecar,
             name="nosana-sidecar",
             args=(queue, env),
+        ),
+        multiprocessing.Process(
+            target=run_skypilot_server,
+            name="skypilot-api",
+            args=(queue,),
         ),
         # Dashboard
         multiprocessing.Process(
@@ -532,6 +614,7 @@ def main(argv=None):
             "orchestration",
             "guardrail",
             "data",
+            "skypilot",
         ],
         help="Service to start (default: all)",
     )
@@ -587,6 +670,9 @@ def main(argv=None):
 
             elif service == "data":
                 run_data_service()
+
+            elif service == "skypilot":
+                run_skypilot_server()
 
         elif cmd == "init":
             env = getattr(args, "env", "production")

@@ -77,11 +77,15 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     # Create a copy to mask
     masked = config.model_copy(deep=True)
 
-    # Cloud
+    # Cloud - AWS
     if masked.cloud.aws.secret_access_key:
         masked.cloud.aws.secret_access_key = "********"
     if masked.cloud.aws.access_key_id:
         masked.cloud.aws.access_key_id = _mask_secret(masked.cloud.aws.access_key_id)
+
+    # Cloud - GCP
+    if masked.cloud.gcp.service_account_json:
+        masked.cloud.gcp.service_account_json = "********"
 
     # VectorDB
     if masked.vectordb.chroma.api_key:

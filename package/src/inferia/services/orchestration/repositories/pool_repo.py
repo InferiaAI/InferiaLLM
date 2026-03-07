@@ -1,9 +1,47 @@
+import json
+import logging
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 
 class ComputePoolRepository:
     def __init__(self, db):
         self.db = db
+
+    async def get_provider_config(self, provider: str) -> dict:
+        """
+        Read provider config from system_settings (shared DB with API Gateway).
+        Returns the config dict for the given provider, or empty dict.
+        """
+        query = """
+        SELECT value FROM system_settings WHERE key = 'providers_config' LIMIT 1
+        """
+        try:
+            async with self.db.acquire() as conn:
+                raw = await conn.fetchval(query)
+                if not raw:
+                    return {}
+                data = json.loads(raw) if isinstance(raw, str) else raw
+                providers = data.get("providers", data)
+
+                # Map provider to config path
+                config_paths = {
+                    "gcp": ("cloud", "gcp"),
+                    "aws": ("cloud", "aws"),
+                    "nosana": ("depin", "nosana"),
+                    "akash": ("depin", "akash"),
+                }
+                path = config_paths.get(provider)
+                if not path:
+                    return {}
+                section = providers
+                for key in path:
+                    section = section.get(key, {})
+                return section
+        except Exception as e:
+            logger.warning(f"Could not read provider config from DB: {e}")
+            return {}
 
     async def credential_exists(self, provider: str, credential_name: str) -> bool:
         """

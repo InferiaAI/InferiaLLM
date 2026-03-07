@@ -151,6 +151,11 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         try:
             logger.info(f"Provisioning cluster for pool '{pool_name}' (ID: {pool_id}), gpu_count={gpu_count}")
 
+            # Load provider config from DB and apply credentials
+            db_config = await self.repo.get_provider_config(provider_name)
+            if db_config and hasattr(adapter, 'apply_config'):
+                adapter.apply_config(db_config)
+
             cluster_name = f"inferia-{provider_name}-{uuid_module.uuid4().hex[:8]}"
 
             cluster_info = await adapter.provision_cluster(

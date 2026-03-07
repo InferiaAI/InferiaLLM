@@ -4,6 +4,8 @@ import uuid
 import asyncio
 import time
 import os
+import json
+import tempfile
 import logging
 from typing import List, Dict, Optional
 
@@ -56,6 +58,82 @@ class SkyPilotAdapter(ProviderAdapter):
     def __init__(self, cloud: str = "gcp"):
         self.cloud = cloud
         self.workdir = os.getcwd()
+        self._credentials_configured = False
+        self._setup_cloud_credentials()
+
+    def _setup_cloud_credentials(self):
+        """
+        Set up cloud credentials from orchestration config.
+        Uses service_account_json if provided, otherwise falls back to host gcloud auth.
+        """
+        try:
+            from inferia.services.orchestration.config import settings
+            provider_config = settings.get_provider_config(self.cloud)
+        except Exception:
+            logger.debug(f"Could not load provider config for {self.cloud}, using host credentials")
+            return
+
+        if self.cloud == "gcp":
+            project_id = provider_config.get("project_id", "")
+            sa_json = provider_config.get("service_account_json", "")
+
+            if project_id:
+                os.environ["CLOUDSDK_CORE_PROJECT"] = project_id
+                os.environ["GCP_PROJECT_ID"] = project_id
+                logger.info(f"Set GCP project to {project_id}")
+
+            if sa_json:
+                # Write service account JSON to a temp file for SkyPilot/gcloud to use
+                try:
+                    sa_data = json.loads(sa_json) if isinstance(sa_json, str) else sa_json
+                    sa_file = os.path.join(tempfile.gettempdir(), "inferia_gcp_sa.json")
+                    with open(sa_file, "w") as f:
+                        json.dump(sa_data, f)
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = sa_file
+                    logger.info(f"Set GOOGLE_APPLICATION_CREDENTIALS from stored service account")
+                    self._credentials_configured = True
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"Invalid GCP service account JSON: {e}")
+            else:
+                logger.info("No GCP service account JSON provided, using host gcloud credentials")
+
+        elif self.cloud == "aws":
+            region = provider_config.get("region", "")
+            if region:
+                os.environ.setdefault("AWS_DEFAULT_REGION", region)
+
+    def apply_config(self, config: Dict):
+        """
+        Apply provider config from DB (dashboard-stored credentials).
+        Called before provisioning to ensure credentials are set.
+        """
+        if self.cloud == "gcp":
+            project_id = config.get("project_id", "")
+            sa_json = config.get("service_account_json", "")
+
+            if project_id:
+                os.environ["CLOUDSDK_CORE_PROJECT"] = project_id
+                os.environ["GCP_PROJECT_ID"] = project_id
+
+            if sa_json and not sa_json.startswith("*"):  # Skip masked values
+                try:
+                    sa_data = json.loads(sa_json) if isinstance(sa_json, str) else sa_json
+                    sa_file = os.path.join(tempfile.gettempdir(), "inferia_gcp_sa.json")
+                    with open(sa_file, "w") as f:
+                        json.dump(sa_data, f)
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = sa_file
+                    self._credentials_configured = True
+                    logger.info("Applied GCP credentials from dashboard config")
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"Invalid GCP service account JSON from DB: {e}")
+
+        elif self.cloud == "aws":
+            if config.get("access_key_id") and not config["access_key_id"].startswith("*"):
+                os.environ["AWS_ACCESS_KEY_ID"] = config["access_key_id"]
+            if config.get("secret_access_key") and not config["secret_access_key"].startswith("*"):
+                os.environ["AWS_SECRET_ACCESS_KEY"] = config["secret_access_key"]
+            if config.get("region"):
+                os.environ["AWS_DEFAULT_REGION"] = config["region"]
 
     # -------------------------------------------------
     # DISCOVERY

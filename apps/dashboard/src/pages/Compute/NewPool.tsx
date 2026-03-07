@@ -256,7 +256,7 @@ export default function NewPool() {
             case "akash":
                 return !!depin.akash?.mnemonic;
             case "gcp":
-                return true; // GCP uses gcloud default credentials
+                return !!(cloud.gcp?.project_id || cloud.gcp?.service_account_json);
             case "aws":
                 return !!cloud.aws?.access_key_id;
             case "k8s":
