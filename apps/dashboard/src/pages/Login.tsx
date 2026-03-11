@@ -35,8 +35,11 @@ export default function Login() {
 
       const { data } = await api.post("/auth/login", payload);
       await login(data.access_token);
-      const returnUrl = searchParams.get("returnUrl");
-      navigate(returnUrl || "/dashboard");
+      // Validate returnUrl is a safe relative path (prevents open redirect via //evil.com)
+      const rawReturn = searchParams.get("returnUrl");
+      const returnUrl =
+        rawReturn && /^\/[^/\\]/.test(rawReturn) ? rawReturn : "/dashboard";
+      navigate(returnUrl);
     } catch (error: unknown) {
       console.error(error);
       const axiosError = error as AxiosError<{ detail?: string }>;
