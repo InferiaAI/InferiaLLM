@@ -65,11 +65,10 @@ async def login(
     Supports TOTP 2FA.
     Rate limited: 5 attempts per minute.
     """
-    # Rate limiting check
+    # Rate limiting check — use ASGI-level client IP only.
+    # Never trust X-Forwarded-For from the client; if behind a reverse proxy,
+    # configure uvicorn with --proxy-headers so it sets request.client correctly.
     client_ip = http_request.client.host if http_request.client else "unknown"
-    forwarded = http_request.headers.get("X-Forwarded-For")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
 
     is_allowed, retry_after = login_rate_limiter.is_allowed(request.username, client_ip)
     if not is_allowed:
@@ -136,11 +135,8 @@ async def register_invite(
     Register a new user via invitation.
     Rate limited: 3 attempts per hour per IP.
     """
-    # Rate limiting check
+    # Rate limiting check — use ASGI-level client IP only.
     client_ip = http_request.client.host if http_request.client else "unknown"
-    forwarded = http_request.headers.get("X-Forwarded-For")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
 
     is_allowed, retry_after = register_rate_limiter.is_allowed("invite", client_ip)
     if not is_allowed:
