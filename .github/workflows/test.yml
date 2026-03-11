@@ -67,6 +67,15 @@ jobs:
             package/src/inferia/services/guardrail/tests/test_engine_orchestration.py \
             package/src/inferia/services/data/tests/test_chunker.py \
             package/src/inferia/services/data/tests/test_prompt_engine.py \
+            package/src/inferia/services/orchestration/test/placement_test/test_placement_scoring.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_controller_errors.py \
+            package/src/inferia/services/orchestration/test/autoscaler/test_autoscaler_logic.py \
+            package/src/inferia/services/inference/tests/test_stream_processor.py \
+            package/src/inferia/services/inference/tests/test_service_error_handling.py \
+            package/src/inferia/services/api_gateway/tests/test_policy_engine_errors.py \
+            package/src/inferia/services/data/tests/test_upload_security.py \
+            package/src/inferia/services/data/tests/test_engine_error_handling.py \
+            package/src/inferia/services/guardrail/tests/test_scan_endpoint_security.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
             --cov=package/src/inferia \
