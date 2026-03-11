@@ -13,7 +13,6 @@ from inferia.services.inference.config import settings
 from inferia.services.inference.core.http_client import http_client
 from inferia.services.inference.core.orchestrator import OrchestrationService
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 
 from inferia.common.exception_handlers import register_exception_handlers
 from inferia.common.logger import setup_logging
@@ -38,14 +37,9 @@ app = FastAPI(
 # Register standard exception handlers
 register_exception_handlers(app)
 
-# CORS configuration (Allow All)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS configuration (Standardized)
+import os
+setup_cors(app, os.getenv("ALLOWED_ORIGINS", ""), settings.is_development)
 
 
 # Add standard / and /health routes
