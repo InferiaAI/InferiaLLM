@@ -44,6 +44,17 @@ def create_internal_auth_middleware(
                 return response
             
             # 3. Validate internal API key
+            # Explicitly reject if no key is configured — fail closed.
+            if not internal_api_key:
+                logger.error(
+                    f"Internal endpoint {path} accessed but INTERNAL_API_KEY is not configured"
+                )
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={"detail": "Internal API key not configured"},
+                )
+
             # Support both standard header and custom one
             api_key = request.headers.get("X-Internal-API-Key") or request.headers.get(
                 "X-Internal-Key"
@@ -61,7 +72,7 @@ def create_internal_auth_middleware(
                 logger.warning(f"Unauthorized access attempt to {path}: Invalid API Key")
                 from fastapi.responses import JSONResponse
                 return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN, 
+                    status_code=status.HTTP_403_FORBIDDEN,
                     content={"detail": "Invalid internal API key"},
                 )
 
