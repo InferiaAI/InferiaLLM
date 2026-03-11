@@ -414,8 +414,9 @@ def create_triton_job(
     # Base Triton command
     # We use --model-control-mode=explicit (or poll) usually, but default is fine.
     # Essential to point to model repository.
+    safe_model_id = shlex.quote(model_id)
     triton_cmd = (
-        f"tritonserver --model-repository={model_id} "
+        f"tritonserver --model-repository={safe_model_id} "
         "--disable-auto-complete "
         "--http-port=8000 --grpc-port=8001 --metrics-port=8002"
     )
@@ -514,12 +515,13 @@ def create_infinity_job(
 
     # Construct command for Infinity v2 using shell to ensure proper execution
     # The infinity_emb CLI needs to be called with 'v2' subcommand
+    safe_model_id = shlex.quote(model_id)
     cmd_str = (
-        f"infinity_emb v2 --model-id {model_id} --port {port} --batch-size {batch_size}"
+        f"infinity_emb v2 --model-id {safe_model_id} --port {port} --batch-size {batch_size}"
     )
 
     if effective_api_key:
-        cmd_str += f" --api-key {effective_api_key}"
+        cmd_str += f" --api-key {shlex.quote(effective_api_key)}"
 
     # Keep container alive
     cmd_str += " && tail -f /dev/null"
@@ -816,6 +818,11 @@ def create_training_job(
     # OR we construct a shell command here to do it.
     # For robustness, let's construct a shell command sequence.
 
+    # Sanitize all user-supplied values to prevent command injection
+    safe_git_repo = shlex.quote(git_repo) if git_repo else None
+    safe_dataset_url = shlex.quote(dataset_url) if dataset_url else None
+    safe_training_script = shlex.quote(training_script)
+
     cmd_parts = []
 
     # Harden command:
@@ -824,7 +831,7 @@ def create_training_job(
 
     # 2. Clone Repo
     if git_repo:
-        cmd_parts.append(f"git clone {git_repo} /workspace/repo && cd /workspace/repo")
+        cmd_parts.append(f"git clone {safe_git_repo} /workspace/repo && cd /workspace/repo")
         # 3. Install Python Dependencies
         cmd_parts.append(
             "if [ -f requirements.txt ]; then pip install -r requirements.txt; fi"
@@ -845,17 +852,17 @@ def create_training_job(
     # 4. Download Dataset
     if dataset_url:
         cmd_parts.append(
-            f"wget -O dataset.tar.gz {dataset_url} && tar -xvf dataset.tar.gz"
+            f"wget -O dataset.tar.gz {safe_dataset_url} && tar -xvf dataset.tar.gz"
         )
 
     # 5. Run Script
     # If training_script looks like a file path, python it. If it's a command, run it.
     if training_script.endswith(".py"):
-        cmd_parts.append(f"python {training_script}")
+        cmd_parts.append(f"python {safe_training_script}")
     elif training_script.endswith(".sh"):
-        cmd_parts.append(f"bash {training_script}")
+        cmd_parts.append(f"bash {safe_training_script}")
     else:
-        cmd_parts.append(training_script)  # Raw command
+        cmd_parts.append(safe_training_script)
 
     # Wrap the entire chain in a subshell catch to keep container alive on failure for debugging
     # "set -e" ensures we abort the chain on first error, jumping to || sleep

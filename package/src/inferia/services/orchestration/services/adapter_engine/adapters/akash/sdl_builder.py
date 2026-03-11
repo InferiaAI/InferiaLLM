@@ -4,6 +4,7 @@ Generates Stack Definition Language (YAML) for Akash deployments.
 """
 
 from typing import Dict, Any, List, Optional
+import shlex
 import yaml
 
 
@@ -170,12 +171,13 @@ def build_training_sdl(
         for k, v in env.items():
             envs.append(f"{k}={v}")
 
+    # Sanitize user-supplied values before setting as env vars
     if git_repo:
-        envs.append(f"GIT_REPO={git_repo}")
+        envs.append(f"GIT_REPO={shlex.quote(git_repo)}")
     if dataset_url:
-        envs.append(f"DATASET_URL={dataset_url}")
+        envs.append(f"DATASET_URL={shlex.quote(dataset_url)}")
     if training_script:
-        envs.append(f"TRAINING_SCRIPT={training_script}")
+        envs.append(f"TRAINING_SCRIPT={shlex.quote(training_script)}")
 
     # Training jobs generally don't need public exposure, but we might want SSH or Tensorboard
     # For now, let's expose one port just in case (e.g. 6006 for tensorboard)
@@ -188,9 +190,9 @@ def build_training_sdl(
                 "command": [
                     "bash",
                     "-c",
-                    'if [ -n "$GIT_REPO" ]; then git clone $GIT_REPO /workspace; cd /workspace; fi; '
-                    'if [ -n "$DATASET_URL" ]; then wget $DATASET_URL -O dataset.tar.gz; tar -xvf dataset.tar.gz; fi; '
-                    'if [ -n "$TRAINING_SCRIPT" ]; then $TRAINING_SCRIPT; else sleep infinity; fi',
+                    'if [ -n "$GIT_REPO" ]; then git clone "$GIT_REPO" /workspace; cd /workspace; fi; '
+                    'if [ -n "$DATASET_URL" ]; then wget "$DATASET_URL" -O dataset.tar.gz; tar -xvf dataset.tar.gz; fi; '
+                    'if [ -n "$TRAINING_SCRIPT" ]; then eval "$TRAINING_SCRIPT"; else sleep infinity; fi',
                 ],
                 "expose": [
                     {
