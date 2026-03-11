@@ -247,11 +247,11 @@ class GatewayService:
                     async for chunk in response.aiter_raw():
                         yield chunk
         except httpx.HTTPStatusError as e:
-            logger.error(f"Upstream Error {e.response.status_code}")
-            yield f'data: {{"error": "Upstream Error: {e.response.status_code}"}}\n\n'.encode()
+            logger.error(f"Upstream Error {e.response.status_code}: {e.response.text}")
+            yield b'data: {"error": "Upstream provider returned an error"}\n\n'
         except Exception as e:
             logger.error(f"Streaming Exception: {e}")
-            yield f'data: {{"error": "Streaming Failed: {str(e)}"}}\n\n'.encode()
+            yield b'data: {"error": "Streaming connection failed"}\n\n'
 
     @staticmethod
     async def call_upstream(
@@ -287,10 +287,10 @@ class GatewayService:
             logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
             raise HTTPException(
                 status_code=e.response.status_code,
-                detail=f"Provider error: {e.response.text}",
+                detail="Upstream provider returned an error",
             )
         except Exception as e:
             logger.error(f"Provider request failed: {e}")
             raise HTTPException(
-                status_code=502, detail=f"Upstream provider error: {str(e)}"
+                status_code=502, detail="Upstream provider is unavailable"
             )
