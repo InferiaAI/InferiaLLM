@@ -1,0 +1,58 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: package/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./package[dev]"
+
+      - name: Run unit tests
+        run: |
+          pytest \
+            package/src/inferia/services/api_gateway/tests/test_rbac.py \
+            package/src/inferia/services/api_gateway/tests/test_audit.py \
+            package/src/inferia/services/api_gateway/tests/test_gateway.py \
+            package/src/inferia/services/api_gateway/tests/test_integration.py \
+            package/src/inferia/services/api_gateway/tests/test_management_insights.py \
+            package/src/inferia/services/orchestration/test/test_traffic_router.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_command_injection.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_start_deployment_controller.py \
+            -p no:twisted -p no:trio -p no:tornasync \
+            --junitxml=junit/test-results.xml \
+            --cov=package/src/inferia \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: junit/test-results.xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
