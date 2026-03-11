@@ -58,18 +58,29 @@ def mock_db_session():
 @pytest_asyncio.fixture
 async def client(mock_db_session):
     """Async test client with mocked DB."""
-    # Override get_db dependency
+    # Override get_db dependency for route handlers
     app.dependency_overrides[get_db] = lambda: mock_db_session
 
-    # Patch get_current_user to bypass DB lookup in middleware (and return valid user)
+    # Patch get_current_user to bypass DB lookup in middleware
     async def mock_get_current_user(db, token):
         payload = auth_service.decode_token(token)
         user = DBUser(id=payload.sub, email=payload.sub + "@test.com")
         return user, "org_default", payload.roles
 
-    # Patch AsyncSessionLocal for middleware usage — must match the import path
-    # used in rbac/middleware.py
-    mock_session_maker = MagicMock(return_value=mock_db_session)
+    # Create a separate mock session for the auth middleware.
+    # The middleware queries Role objects after get_current_user, so this
+    # session must return mock Role records with a permissions attribute.
+    middleware_session = AsyncMock()
+    mock_role = MagicMock()
+    mock_role.permissions = ["admin:all"]  # grants all canonical permissions
+    mock_role_result = MagicMock()
+    mock_role_result.scalars.return_value.all.return_value = [mock_role]
+    middleware_session.execute.return_value = mock_role_result
+    middleware_session.close = AsyncMock()
+    middleware_session.__aenter__ = AsyncMock(return_value=middleware_session)
+    middleware_session.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session_maker = MagicMock(return_value=middleware_session)
 
     with (
         patch.object(
