@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     reload: bool = Field(default=False, validation_alias="DEBUG_RELOAD")
     workers: int = Field(default=1, validation_alias="API_GATEWAY_WORKERS")
 
+    # Reverse Proxy Settings
+    # Enable proxy_headers so uvicorn trusts X-Forwarded-For from allowed proxies.
+    # FORWARDED_ALLOW_IPS: comma-separated IPs/CIDRs of trusted proxies, or "*" to trust all.
+    # Default "" disables proxy header processing (safe for direct-to-internet deployments).
+    proxy_headers: bool = Field(default=True, validation_alias="PROXY_HEADERS")
+    forwarded_allow_ips: Optional[str] = Field(
+        default=None, validation_alias="FORWARDED_ALLOW_IPS"
+    )
+
     # Multi-tenancy / Organization Settings
     default_org_name: str = "Default Organization"
 
