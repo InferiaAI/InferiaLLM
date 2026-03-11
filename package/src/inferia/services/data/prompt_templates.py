@@ -5,7 +5,7 @@ Handles prompt construction via templates and variable substitution.
 
 from typing import Dict, Any, Optional
 import logging
-from jinja2 import Template
+from jinja2.sandbox import SandboxedEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +19,16 @@ class PromptTemplate:
         self.content = content
         self.description = description
         
+    # Shared sandboxed environment prevents SSTI attacks by blocking
+    # access to dangerous attributes (__class__, __subclasses__, etc.)
+    _sandbox = SandboxedEnvironment()
+
     def render(self, variables: Dict[str, Any]) -> str:
         """
         Substitute variables into the template content using Jinja2.
         """
         try:
-            # Create a Jinja2 template from the content
-            template = Template(self.content)
-            # Render with the provided variables
+            template = self._sandbox.from_string(self.content)
             return template.render(**variables)
         except Exception as e:
             logger.error(f"Error rendering template '{self.template_id}': {e}")
