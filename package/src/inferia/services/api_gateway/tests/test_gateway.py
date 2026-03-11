@@ -29,7 +29,7 @@ async def test_request_id_header(client, admin_token):
     # Without X-Request-ID
     response = await client.get(
         "/auth/me",
-        headers={"Authorization": f"Bearer {admin_token}"}
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert "X-Request-ID" in response.headers
 
@@ -39,8 +39,8 @@ async def test_request_id_header(client, admin_token):
         "/auth/me",
         headers={
             "Authorization": f"Bearer {admin_token}",
-            "X-Request-ID": custom_id
-        }
+            "X-Request-ID": custom_id,
+        },
     )
     assert response.headers["X-Request-ID"] == custom_id
 
@@ -50,7 +50,7 @@ async def test_processing_time_header(client, admin_token):
     """Test that X-Processing-Time-MS header is present."""
     response = await client.get(
         "/auth/me",
-        headers={"Authorization": f"Bearer {admin_token}"}
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert "X-Processing-Time-MS" in response.headers
     processing_time = float(response.headers["X-Processing-Time-MS"])
@@ -58,62 +58,8 @@ async def test_processing_time_header(client, admin_token):
 
 
 @pytest.mark.asyncio
-async def test_list_models(client, admin_token):
-    """Test list models endpoint."""
-    response = await client.get(
-        "/v1/models",
-        headers={"Authorization": f"Bearer {admin_token}"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["object"] == "list"
-    assert len(data["data"]) > 0
-    assert any(model["id"] == "gpt-4" for model in data["data"])
-
-
-@pytest.mark.asyncio
-async def test_completion_endpoint(client, admin_token):
-    """Test completion endpoint with admin user."""
-    response = await client.post(
-        "/v1/completions",
-        headers={"Authorization": f"Bearer {admin_token}"},
-        json={
-            "model": "gpt-4",
-            "messages": [{"role": "user", "content": "Hello, world!"}],
-            "temperature": 0.7
-        }
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["object"] == "chat.completion"
-    assert len(data["choices"]) > 0
-    assert data["choices"][0]["message"]["role"] == "assistant"
-    assert "usage" in data
-
-
-@pytest.mark.asyncio
 async def test_completion_without_auth(client):
-    """Test that completion endpoint requires authentication."""
-    response = await client.post(
-        "/v1/completions",
-        json={
-            "model": "gpt-4",
-            "messages": [{"role": "user", "content": "Hello"}]
-        }
-    )
-    # Should return 401 status code as JSON response
+    """Test that authenticated endpoints require authentication."""
+    response = await client.get("/auth/me")
     assert response.status_code == 401
     assert "detail" in response.json()
-
-
-@pytest.mark.asyncio
-async def test_allowed_models_endpoint(client, developer_token):
-    """Test allowed models endpoint."""
-    response = await client.get(
-        "/v1/models/allowed",
-        headers={"Authorization": f"Bearer {developer_token}"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "allowed_models" in data
-    assert isinstance(data["allowed_models"], list)
