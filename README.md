@@ -213,6 +213,40 @@ Essential for protecting your gateways and dashboard.
 | `SUPERADMIN_EMAIL` | Initial admin user email (used for Dashboard login) |
 | `SUPERADMIN_PASSWORD` | Initial admin user password (used for Dashboard login) |
 
+#### Internal API Key (`INTERNAL_API_KEY`)
+
+All internal communication between InferiaLLM microservices is authenticated via the `INTERNAL_API_KEY` environment variable. This single shared secret protects:
+
+- **HTTP internal endpoints** (`/internal/*` routes on the API Gateway) — validated via the `X-Internal-API-Key` request header
+- **gRPC services** (orchestration server on port 50051) — validated via the `x-internal-api-key` gRPC metadata header
+- **Audit internal endpoint** (`/audit/internal/log`) — validated via the `X-Internal-API-Key` request header
+
+Generate and set a strong random key (minimum 32 characters) in your `.env` file:
+
+```bash
+# Generate a key
+openssl rand -hex 32
+
+# Add to .env
+INTERNAL_API_KEY="<paste-generated-key-here>"
+```
+
+This key must be the **same value** across all services (API Gateway, Inference, Orchestration, etc.) since they use it to authenticate calls to each other.
+
+> [!CAUTION]
+> If `INTERNAL_API_KEY` is not set, all internal endpoints return **503 Service Unavailable** and the gRPC server returns **UNAVAILABLE** for all calls. The system fails closed — missing configuration is treated as an error, not a bypass.
+
+#### Reverse Proxy Configuration
+
+The application does **not** trust the `X-Forwarded-For` header from clients (to prevent rate-limit bypass via header spoofing). If you deploy behind a reverse proxy (nginx, Caddy, ALB, etc.), set the `FORWARDED_ALLOW_IPS` environment variable so that uvicorn trusts your proxy and resolves real client IPs:
+
+```bash
+# In your .env file — set to the IP(s) of your reverse proxy
+FORWARDED_ALLOW_IPS="10.0.0.1"
+```
+
+Without this, all requests behind a proxy will appear to come from the proxy's IP, and rate limiting will apply to the proxy rather than individual clients.
+
 ### 3. Service Connectivity
 
 URLs and credentials for core infrastructure.

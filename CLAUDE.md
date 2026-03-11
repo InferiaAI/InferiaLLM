@@ -91,49 +91,6 @@ Each service follows: `main.py` → `start_api()` → `uvicorn.run("app:app")`. 
 - Design for scalability: prefer approaches that handle growing checkpoint counts, concurrent restores, and large archives without rearchitecting.
 - Always use the superpowers plugin for planning and implementing features, debugging, and continuous development.
 
-## Internal API Key (Service-to-Service Auth)
-
-All internal communication between InferiaLLM microservices is authenticated via the `INTERNAL_API_KEY` environment variable. This single shared secret protects:
-
-- **HTTP internal endpoints** (`/internal/*` routes on the API Gateway) — validated via the `X-Internal-API-Key` request header
-- **gRPC services** (orchestration server on port 50051) — validated via the `x-internal-api-key` gRPC metadata header
-- **Audit internal endpoint** (`/audit/internal/log`) — validated via the `X-Internal-API-Key` request header
-
-### Configuration
-
-Set a strong random key (minimum 32 characters) in your `.env` file:
-
-```bash
-# Generate a key
-openssl rand -hex 32
-
-# Add to .env
-INTERNAL_API_KEY="<paste-generated-key-here>"
-```
-
-This key must be the **same value** across all services (API Gateway, Inference, Orchestration, etc.) since they use it to authenticate calls to each other.
-
-### What happens when it's not set
-
-- **HTTP `/internal/*` endpoints** return `503 Service Unavailable` — fail closed
-- **gRPC server** returns `UNAVAILABLE` for all calls — fail closed
-- **The system will not silently degrade** — missing configuration is treated as an error, not a bypass
-
-### Docker / Production
-
-The key is passed through all docker-compose files via the `INTERNAL_API_KEY` environment variable. Set it in your `.env` file before running `docker compose up`.
-
-## Reverse Proxy / Load Balancer Note
-
-The application does **not** trust the `X-Forwarded-For` header from clients (to prevent rate limit bypass via header spoofing). If you deploy behind a reverse proxy (nginx, Caddy, ALB, etc.), you must configure uvicorn to trust your proxy so that `request.client.host` reflects the real client IP:
-
-```bash
-# Tell uvicorn to read proxy headers from a trusted proxy
-uvicorn app:app --proxy-headers --forwarded-allow-ips="<proxy-ip-or-cidr>"
-```
-
-Without this, all requests behind a proxy will appear to come from the proxy's IP. See the [uvicorn proxy docs](https://www.uvicorn.org/settings/#http) for details.
-
 ## Environment
 
 Copy `.env.sample` to `.env` for local development. Key variables: `DATABASE_URL`, `REDIS_HOST`, `JWT_SECRET_KEY`, `INTERNAL_API_KEY`, `SECRET_ENCRYPTION_KEY`. Set `DATABASE_SSL=false` for local dev.
