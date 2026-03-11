@@ -91,17 +91,6 @@ Each service follows: `main.py` → `start_api()` → `uvicorn.run("app:app")`. 
 - Design for scalability: prefer approaches that handle growing checkpoint counts, concurrent restores, and large archives without rearchitecting.
 - Always use the superpowers plugin for planning and implementing features, debugging, and continuous development.
 
-## Reverse Proxy / Load Balancer Note
-
-The application does **not** trust the `X-Forwarded-For` header from clients (to prevent rate limit bypass via header spoofing). If you deploy behind a reverse proxy (nginx, Caddy, ALB, etc.), you must configure uvicorn to trust your proxy so that `request.client.host` reflects the real client IP:
-
-```bash
-# Tell uvicorn to read proxy headers from a trusted proxy
-uvicorn app:app --proxy-headers --forwarded-allow-ips="<proxy-ip-or-cidr>"
-```
-
-Without this, all requests behind a proxy will appear to come from the proxy's IP. See the [uvicorn proxy docs](https://www.uvicorn.org/settings/#http) for details.
-
 ## Environment
 
 Copy `.env.sample` to `.env` for local development. Key variables: `DATABASE_URL`, `REDIS_HOST`, `JWT_SECRET_KEY`, `INTERNAL_API_KEY`, `SECRET_ENCRYPTION_KEY`. Set `DATABASE_SSL=false` for local dev.
