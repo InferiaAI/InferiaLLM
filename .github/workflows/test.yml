@@ -54,6 +54,19 @@ jobs:
             package/src/inferia/services/inference/tests/test_provider_error_sanitization.py \
             package/src/inferia/services/guardrail/tests/test_guardrail_fail_closed.py \
             package/src/inferia/services/orchestration/test/test_llmd_spec_builder.py \
+            package/src/inferia/common/tests/test_middleware.py \
+            package/src/inferia/common/tests/test_rate_limit.py \
+            package/src/inferia/common/tests/test_errors.py \
+            package/src/inferia/common/tests/test_circuit_breaker.py \
+            package/src/inferia/common/tests/test_exception_handlers.py \
+            package/src/inferia/common/tests/test_http_client.py \
+            package/src/inferia/services/api_gateway/tests/test_auth_security.py \
+            package/src/inferia/services/api_gateway/tests/test_encryption.py \
+            package/src/inferia/services/api_gateway/tests/test_db_security.py \
+            package/src/inferia/services/guardrail/tests/test_engine_error_handling.py \
+            package/src/inferia/services/guardrail/tests/test_engine_orchestration.py \
+            package/src/inferia/services/data/tests/test_chunker.py \
+            package/src/inferia/services/data/tests/test_prompt_engine.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
             --cov=package/src/inferia \
