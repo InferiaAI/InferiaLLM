@@ -76,6 +76,11 @@ jobs:
             package/src/inferia/services/data/tests/test_upload_security.py \
             package/src/inferia/services/data/tests/test_engine_error_handling.py \
             package/src/inferia/services/guardrail/tests/test_scan_endpoint_security.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_worker_lifecycle.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_injection_expanded.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_sdl_injection.py \
+            package/src/inferia/services/orchestration/test/compute_pools_nodes/test_pool_manager.py \
+            package/src/inferia/services/api_gateway/tests/test_gateway_error_handling.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
             --cov=package/src/inferia \
