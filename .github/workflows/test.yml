@@ -28,7 +28,7 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest --junitxml=junit/test-results.xml --cov --cov-report=xml --cov-report=term-missing
+          pytest -p no:twisted -p no:trio -p no:tornasync --junitxml=junit/test-results.xml --cov --cov-report=xml --cov-report=term-missing
 
       - name: Upload test results
         if: always()
