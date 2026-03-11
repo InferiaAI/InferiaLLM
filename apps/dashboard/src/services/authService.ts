@@ -1,4 +1,5 @@
 import api from "@/lib/api";
+import { setToken } from "@/lib/tokenStore";
 
 export interface RegisterRequest {
     email: string;
@@ -50,10 +51,7 @@ export const authService = {
     acceptInvite: async (token: string) => {
         const { data } = await api.post<AuthResponse>(`/auth/accept-invite?token=${token}`);
         if (data.access_token) {
-            localStorage.setItem("token", data.access_token);
-            if (data.refresh_token) {
-                localStorage.setItem("refresh_token", data.refresh_token);
-            }
+            setToken(data.access_token);
         }
         return data;
     },

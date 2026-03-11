@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance } from "axios";
 import { toast } from "sonner";
+import { getToken, clearToken } from "@/lib/tokenStore";
 
 // Runtime config injected via /config.js at container startup.
 // Falls back to VITE_ build-time env vars, then to localhost defaults.
@@ -31,10 +32,10 @@ const createApiClient = (baseURL: string): AxiosInstance => {
         },
     });
 
-    // Request Interceptor: Attach Token
+    // Request Interceptor: Attach Token (from in-memory store, not localStorage)
     instance.interceptors.request.use(
         (config) => {
-            const token = localStorage.getItem("token");
+            const token = getToken();
             if (token) {
                 config.headers.Authorization = `Bearer ${token}`;
             }
@@ -52,7 +53,7 @@ const createApiClient = (baseURL: string): AxiosInstance => {
             if (error.response?.status === 401) {
                 // Check current path to avoid redirect loop
                 if (window.location.pathname !== "/auth/login") {
-                    localStorage.removeItem("token");
+                    clearToken();
                     window.location.href = "/auth/login";
                 }
             } else if (status === 403) {
