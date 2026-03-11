@@ -54,6 +54,7 @@ services:
       - SIDECAR_URL=${SIDECAR_URL:-}
       - LOGSTASH_HOST=${LOGSTASH_HOST:-}
       - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
     ports:
       - "8000:8000"
       - "8001:8001"
@@ -90,6 +91,7 @@ services:
       - SERVICE_TYPE=api_gateway
       - LOGSTASH_HOST=${LOGSTASH_HOST:-}
       - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
     ports:
       - "8000:8000"
     depends_on:

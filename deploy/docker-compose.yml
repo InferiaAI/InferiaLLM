@@ -52,6 +52,7 @@ services:
       - SIDECAR_URL=${SIDECAR_URL:-}
       - LOGSTASH_HOST=${LOGSTASH_HOST:-}
       - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
     volumes:
       - appdata:/data
     ports:

@@ -150,11 +150,14 @@ app.include_router(health_router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "app:app",
+    uvicorn_kwargs = dict(
         host=settings.host,
         port=settings.port,
         reload=settings.reload,
         workers=settings.workers,
         log_level=settings.log_level.lower(),
+        proxy_headers=settings.proxy_headers,
     )
+    if settings.forwarded_allow_ips is not None:
+        uvicorn_kwargs["forwarded_allow_ips"] = settings.forwarded_allow_ips
+    uvicorn.run("app:app", **uvicorn_kwargs)
