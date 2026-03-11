@@ -355,8 +355,8 @@ async def test_filters_endpoint_returns_deployments_and_models():
 
     deployments_result = MagicMock()
     deployments_result.all.return_value = [
-        SimpleNamespace(id=uuid4(), model_name="llama3"),
-        SimpleNamespace(id=uuid4(), model_name="mixtral"),
+        SimpleNamespace(id=uuid4(), model_name="llama3", model_type="inference"),
+        SimpleNamespace(id=uuid4(), model_name="mixtral", model_type="inference"),
     ]
     models_result = MagicMock()
     models_result.all.return_value = [

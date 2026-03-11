@@ -67,14 +67,18 @@ async def client(mock_db_session):
         user = DBUser(id=payload.sub, email=payload.sub + "@test.com")
         return user, "org_default", payload.roles
 
-    # Patch AsyncSessionLocal for middleware usage
+    # Patch AsyncSessionLocal for middleware usage — must match the import path
+    # used in rbac/middleware.py
     mock_session_maker = MagicMock(return_value=mock_db_session)
 
     with (
         patch.object(
             auth_service, "get_current_user", side_effect=mock_get_current_user
         ),
-        patch("db.database.AsyncSessionLocal", mock_session_maker),
+        patch(
+            "inferia.services.api_gateway.rbac.middleware.AsyncSessionLocal",
+            mock_session_maker,
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app, raise_app_exceptions=False),

@@ -1,39 +1,41 @@
 """Unit tests for API Gateway functionality."""
 
 import pytest
-from fastapi.testclient import TestClient
 
 
-def test_health_check(client):
+@pytest.mark.asyncio
+async def test_health_check(client):
     """Test health check endpoint."""
-    response = client.get("/health")
+    response = await client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
     assert "version" in data
 
 
-def test_root_endpoint(client):
+@pytest.mark.asyncio
+async def test_root_endpoint(client):
     """Test root endpoint."""
-    response = client.get("/")
+    response = await client.get("/")
     assert response.status_code == 200
     data = response.json()
     assert "service" in data
     assert "version" in data
 
 
-def test_request_id_header(client, admin_token):
+@pytest.mark.asyncio
+async def test_request_id_header(client, admin_token):
     """Test that X-Request-ID is generated or preserved."""
     # Without X-Request-ID
-    response = client.get(
+    response = await client.get(
         "/auth/me",
         headers={"Authorization": f"Bearer {admin_token}"}
     )
     assert "X-Request-ID" in response.headers
-    
+
     # With custom X-Request-ID
     custom_id = "test-request-123"
-    response = client.get(
+    response = await client.get(
         "/auth/me",
         headers={
             "Authorization": f"Bearer {admin_token}",
@@ -43,9 +45,10 @@ def test_request_id_header(client, admin_token):
     assert response.headers["X-Request-ID"] == custom_id
 
 
-def test_processing_time_header(client, admin_token):
+@pytest.mark.asyncio
+async def test_processing_time_header(client, admin_token):
     """Test that X-Processing-Time-MS header is present."""
-    response = client.get(
+    response = await client.get(
         "/auth/me",
         headers={"Authorization": f"Bearer {admin_token}"}
     )
@@ -54,9 +57,10 @@ def test_processing_time_header(client, admin_token):
     assert processing_time > 0
 
 
-def test_list_models(client, admin_token):
+@pytest.mark.asyncio
+async def test_list_models(client, admin_token):
     """Test list models endpoint."""
-    response = client.get(
+    response = await client.get(
         "/v1/models",
         headers={"Authorization": f"Bearer {admin_token}"}
     )
@@ -67,9 +71,10 @@ def test_list_models(client, admin_token):
     assert any(model["id"] == "gpt-4" for model in data["data"])
 
 
-def test_completion_endpoint(client, admin_token):
+@pytest.mark.asyncio
+async def test_completion_endpoint(client, admin_token):
     """Test completion endpoint with admin user."""
-    response = client.post(
+    response = await client.post(
         "/v1/completions",
         headers={"Authorization": f"Bearer {admin_token}"},
         json={
@@ -86,9 +91,10 @@ def test_completion_endpoint(client, admin_token):
     assert "usage" in data
 
 
-def test_completion_without_auth(client):
+@pytest.mark.asyncio
+async def test_completion_without_auth(client):
     """Test that completion endpoint requires authentication."""
-    response = client.post(
+    response = await client.post(
         "/v1/completions",
         json={
             "model": "gpt-4",
@@ -100,9 +106,10 @@ def test_completion_without_auth(client):
     assert "detail" in response.json()
 
 
-def test_allowed_models_endpoint(client, developer_token):
+@pytest.mark.asyncio
+async def test_allowed_models_endpoint(client, developer_token):
     """Test allowed models endpoint."""
-    response = client.get(
+    response = await client.get(
         "/v1/models/allowed",
         headers={"Authorization": f"Bearer {developer_token}"}
     )
