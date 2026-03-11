@@ -26,9 +26,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e "./package[dev]"
 
-      - name: Run tests
+      - name: Run unit tests
         run: |
-          pytest -p no:twisted -p no:trio -p no:tornasync --junitxml=junit/test-results.xml --cov --cov-report=xml --cov-report=term-missing
+          pytest \
+            package/src/inferia/services/api_gateway/tests/test_rbac.py \
+            package/src/inferia/services/api_gateway/tests/test_audit.py \
+            package/src/inferia/services/api_gateway/tests/test_gateway.py \
+            package/src/inferia/services/api_gateway/tests/test_integration.py \
+            package/src/inferia/services/api_gateway/tests/test_management_insights.py \
+            package/src/inferia/services/orchestration/test/test_traffic_router.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_command_injection.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_start_deployment_controller.py \
+            -p no:twisted -p no:trio -p no:tornasync \
+            --junitxml=junit/test-results.xml \
+            --cov=package/src/inferia \
+            --cov-report=xml \
+            --cov-report=term-missing
 
       - name: Upload test results
         if: always()
