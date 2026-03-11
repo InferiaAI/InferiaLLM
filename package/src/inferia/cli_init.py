@@ -163,12 +163,13 @@ async def _init():
 
         if not role_exists:
             print(f"[inferia:init] Creating role: {inferia_user}")
+            # Use quote_literal() to safely escape the password and prevent
+            # SQL injection from passwords containing single quotes.
+            escaped_pw = await conn.fetchval(
+                "SELECT quote_literal($1)", inferia_password
+            )
             await conn.execute(
-                f"""
-                CREATE ROLE {inferia_user}
-                LOGIN
-                PASSWORD '{inferia_password}'
-                """
+                f"CREATE ROLE {inferia_user} LOGIN PASSWORD {escaped_pw}"
             )
         else:
             print(f"[inferia:init] Role exists: {inferia_user}")
