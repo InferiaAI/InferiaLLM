@@ -114,11 +114,19 @@ class LlamaGuardProvider(GuardrailProvider):
 
         except Exception as e:
             logger.error(f"Error scanning input (Llama Guard): {e}", exc_info=True)
-            # Fail open
+            # Fail closed — do not let content through when scanner errors
             return GuardrailResult(
-                is_valid=True,
+                is_valid=False,
                 sanitized_text=text,
                 scan_time_ms=(time.time() - start_time) * 1000,
+                violations=[
+                    Violation(
+                        scanner="LlamaGuard",
+                        violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                        score=1.0,
+                        details=f"Llama Guard input scan failed: {e}",
+                    )
+                ],
             )
 
     async def scan_output(
@@ -174,10 +182,19 @@ class LlamaGuardProvider(GuardrailProvider):
 
         except Exception as e:
             logger.error(f"Error scanning output (Llama Guard): {e}", exc_info=True)
+            # Fail closed — do not let content through when scanner errors
             return GuardrailResult(
-                is_valid=True,
+                is_valid=False,
                 sanitized_text=output,
                 scan_time_ms=(time.time() - start_time) * 1000,
+                violations=[
+                    Violation(
+                        scanner="LlamaGuard",
+                        violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                        score=1.0,
+                        details=f"Llama Guard output scan failed: {e}",
+                    )
+                ],
             )
 
     def _parse_llama_guard_response(
