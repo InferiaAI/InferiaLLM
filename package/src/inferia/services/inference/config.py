@@ -102,6 +102,20 @@ class Settings(BaseSettings):
         validation_alias="UPSTREAM_SLOT_ACQUIRE_TIMEOUT_SECONDS",
     )
 
+    # Upstream Security
+    upstream_allowed_internal_hosts: str = Field(
+        default="",
+        alias="UPSTREAM_ALLOWED_INTERNAL_HOSTS",
+        validation_alias="UPSTREAM_ALLOWED_INTERNAL_HOSTS",
+        description="Comma-separated hostnames that bypass private-IP SSRF checks",
+    )
+    upstream_max_response_bytes: int = Field(
+        default=52_428_800,
+        alias="UPSTREAM_MAX_RESPONSE_BYTES",
+        validation_alias="UPSTREAM_MAX_RESPONSE_BYTES",
+        description="Maximum upstream response body size (default 50MB)",
+    )
+
     # Context Cache Settings
     # Cache duration for resolved API key contexts (deployment, guardrails, etc.)
     context_cache_ttl: int = Field(
