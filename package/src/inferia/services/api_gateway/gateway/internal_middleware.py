@@ -9,5 +9,5 @@ from inferia.services.api_gateway.config import settings
 # This middleware only checks routes starting with /internal
 internal_api_key_middleware = create_internal_auth_middleware(
     internal_api_key=settings.internal_api_key,
-    check_path_prefix="/internal"
+    check_path_prefix="/internal/"
 )

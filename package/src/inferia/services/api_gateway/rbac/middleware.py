@@ -39,7 +39,7 @@ async def auth_middleware(request: Request, call_next):
     ]
     if (
         request.url.path in public_paths
-        or request.url.path.startswith("/internal")
+        or request.url.path.startswith("/internal/")
         or request.url.path.startswith("/auth/invitations/")
         or request.method == "OPTIONS"
     ):
