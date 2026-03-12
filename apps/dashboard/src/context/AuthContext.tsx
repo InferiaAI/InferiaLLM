@@ -20,6 +20,7 @@ interface AuthContextType {
     isLoading: boolean;
     login: (token: string) => Promise<void>;
     logout: () => void;
+    refreshUser: () => Promise<void>;
     isAuthenticated: boolean;
     organizations: OrganizationBasicInfo[];
     hasPermission: (permission: string) => boolean;
@@ -82,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 isLoading,
                 login,
                 logout,
+                refreshUser: fetchUser,
                 isAuthenticated: !!user,
                 organizations,
                 hasPermission,

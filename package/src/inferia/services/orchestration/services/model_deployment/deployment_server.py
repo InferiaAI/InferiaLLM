@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import asyncpg
+import collections
 import grpc
 import json
 
@@ -24,6 +25,35 @@ POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia"
 )
 GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
+
+# ── gRPC client auth ────────────────────────────────────────────────
+_INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+
+_GrpcClientCallDetails = collections.namedtuple(
+    "_GrpcClientCallDetails",
+    ("method", "timeout", "metadata", "credentials", "wait_for_ready"),
+)
+
+
+class _AuthInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
+    """Attaches x-internal-api-key metadata to all outgoing gRPC calls."""
+
+    async def intercept_unary_unary(self, continuation, client_call_details, request):
+        metadata = list(client_call_details.metadata or [])
+        metadata.append(("x-internal-api-key", _INTERNAL_API_KEY))
+        new_details = _GrpcClientCallDetails(
+            method=client_call_details.method,
+            timeout=client_call_details.timeout,
+            metadata=metadata,
+            credentials=client_call_details.credentials,
+            wait_for_ready=client_call_details.wait_for_ready,
+        )
+        return await continuation(new_details, request)
+
+
+def _auth_channel():
+    """Create a gRPC channel that automatically attaches the internal API key."""
+    return grpc.aio.insecure_channel(GRPC_ADDR, interceptors=[_AuthInterceptor()])
 
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
 
@@ -133,7 +163,7 @@ async def log_audit_event(
 
 @router.post("/deploy")
 async def deploy_model(req: DeployModelRequest):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
         # pool_id = uuid.uuid4() # No longer generating random pool_id
@@ -187,7 +217,7 @@ async def deploy_model(req: DeployModelRequest):
 
 @router.get("/status/{deployment_id}")
 async def get_deployment_status(deployment_id: str):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
         try:
@@ -220,7 +250,7 @@ async def get_deployment_status(deployment_id: str):
 
 @router.patch("/update/{deployment_id}")
 async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
         try:
@@ -258,7 +288,7 @@ async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
 
 @router.post("/terminate")
 async def terminate_deployment(req: TerminateDeploymentRequest):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
         try:
@@ -285,7 +315,7 @@ async def terminate_deployment(req: TerminateDeploymentRequest):
 async def start_deployment(
     req: TerminateDeploymentRequest,
 ):  # Reusing same request body structure
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
         try:
@@ -384,7 +414,7 @@ async def create_pool(req: CreatePoolRequest):
             status_code=400, detail=f"Invalid provider '{req.provider}'. {str(e)}"
         )
 
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
@@ -435,7 +465,7 @@ async def create_pool(req: CreatePoolRequest):
 
 @router.get("/list/pool/{pool_id}/inventory")
 async def list_pool_inventory(pool_id: str):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
@@ -469,7 +499,7 @@ async def list_pool_inventory(pool_id: str):
 
 @router.get("/listPools/{owner_id}")
 async def list_pools(owner_id: str | None = None):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
@@ -545,7 +575,7 @@ async def list_pools(owner_id: str | None = None):
 
 @router.get("/pool/{pool_id}")
 async def get_pool(pool_id: str):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
@@ -575,7 +605,7 @@ async def get_pool(pool_id: str):
 
 @router.post("/deletepool/{pool_id}")
 async def delete_pool(pool_id: str):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
@@ -592,7 +622,7 @@ async def list_deployments(pool_id: str | None = None):
     List all deployments.
     Optionally filter by pool_id.
     """
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
         try:
@@ -775,7 +805,7 @@ async def list_all_deployments(org_id: str | None = None):
     logger = logging.getLogger("deployment-server")
     logger.info(f"list_all_deployments called for org_id: {org_id}")
 
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
         try:
             logger.info("Calling gRPC ListDeployments...")
@@ -865,7 +895,7 @@ async def list_provider_resources(provider: str | None = None):
 
 @router.post("/registerModel")
 async def register_model(req: ModelRegistryRequest):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_registry_pb2_grpc.ModelRegistryServiceStub(channel)
 
         try:
@@ -892,7 +922,7 @@ async def register_model(req: ModelRegistryRequest):
 
 @router.get("/getModel/{model_name}/{model_version}")
 async def get_model(model_name: str, model_version: str):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_registry_pb2_grpc.ModelRegistryServiceStub(channel)
 
         try:
@@ -920,7 +950,7 @@ async def get_model(model_name: str, model_version: str):
 
 @router.delete("/deleteModel")
 async def delete_model(req: DeleteModelRequest):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_registry_pb2_grpc.ModelRegistryServiceStub(channel)
 
         try:
@@ -941,7 +971,7 @@ async def delete_model(req: DeleteModelRequest):
 
 @router.get("/listModels/{model_name}")
 async def list_models(model_name: str | None = None):
-    async with grpc.aio.insecure_channel(GRPC_ADDR) as channel:
+    async with _auth_channel() as channel:
         stub = model_registry_pb2_grpc.ModelRegistryServiceStub(channel)
 
         try:

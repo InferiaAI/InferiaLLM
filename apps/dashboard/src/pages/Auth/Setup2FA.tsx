@@ -25,7 +25,7 @@ interface ValidationErrorDetail {
 
 export default function Setup2FA() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { logout, refreshUser } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [setupData, setSetupData] = useState<TOTPSetupResponse | null>(null);
   const [verifyCode, setVerifyCode] = useState("");
@@ -78,6 +78,7 @@ export default function Setup2FA() {
     setIsSubmitting(true);
     try {
       await api.post("/auth/totp/verify", { totp_code: verifyCode });
+      await refreshUser();
       toast.success("2FA setup complete");
       navigate("/", { replace: true });
     } catch (error: unknown) {
