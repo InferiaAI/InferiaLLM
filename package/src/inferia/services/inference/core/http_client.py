@@ -1,7 +1,11 @@
+import logging
+
 import httpx
 from typing import Optional
 
 from inferia.services.inference.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class HttpClientManager:
@@ -22,6 +26,11 @@ class HttpClientManager:
                 ),
                 verify=settings.verify_ssl,
             )
+            if not settings.verify_ssl:
+                logger.warning(
+                    "TLS verification disabled for upstream connections. "
+                    "Do not use in production."
+                )
         return cls._client
 
     @classmethod
