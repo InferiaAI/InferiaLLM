@@ -56,10 +56,12 @@ export default function AcceptInvite() {
 
     setProcessing(true);
     try {
-      await authService.acceptInvite(token);
+      const response = await authService.acceptInvite(token);
+      if (response.access_token) {
+        await login(response.access_token);
+      }
       toast.success("Invitation accepted!");
       navigate("/dashboard");
-      window.location.reload();
     } catch (err: unknown) {
       toast.error(getErrorMessage(err, "Failed to accept"));
     } finally {

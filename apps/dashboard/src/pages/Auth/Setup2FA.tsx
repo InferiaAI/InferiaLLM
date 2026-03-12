@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AxiosError } from "axios";
+import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import {
@@ -23,6 +24,7 @@ interface ValidationErrorDetail {
 }
 
 export default function Setup2FA() {
+  const navigate = useNavigate();
   const { logout } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [setupData, setSetupData] = useState<TOTPSetupResponse | null>(null);
@@ -77,7 +79,7 @@ export default function Setup2FA() {
     try {
       await api.post("/auth/totp/verify", { totp_code: verifyCode });
       toast.success("2FA setup complete");
-      window.location.href = "/";
+      navigate("/", { replace: true });
     } catch (error: unknown) {
       console.error(error);
       toast.error(getApiErrorMessage(error, "Verification failed"));
