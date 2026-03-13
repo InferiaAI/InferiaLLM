@@ -211,8 +211,13 @@ class GatewayService:
         # Strip trailing slashes from endpoint
         endpoint = endpoint_url.rstrip("/")
 
-        # If endpoint already contains the full chat path, use it as-is
-        if endpoint.endswith("/chat/completions") or endpoint.endswith("/messages"):
+        # If endpoint already contains a known API path suffix, use it as-is
+        known_suffixes = (
+            "/chat/completions", "/messages", "/embeddings",
+            "/images/generations", "/videos/generations",
+            "/audio/speech", "/audio/transcriptions",
+        )
+        if any(endpoint.endswith(s) for s in known_suffixes):
             return endpoint
 
         # If endpoint already contains /v1, don't add it again
@@ -330,6 +335,119 @@ class GatewayService:
 
                 # Transform response back to OpenAI format
                 return adapter.transform_response(raw_response)
+        except HTTPException:
+            raise
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Upstream provider returned an error",
+            )
+        except Exception as e:
+            logger.error(f"Provider request failed: {e}")
+            raise HTTPException(
+                status_code=502, detail="Upstream provider is unavailable"
+            )
+
+    @staticmethod
+    async def call_upstream_raw(
+        endpoint_url: str,
+        payload: Dict,
+        headers: Dict,
+        path: str = "/v1/audio/speech",
+        concurrency_key: str = "default",
+    ) -> bytes:
+        """
+        Call upstream and return raw bytes (no JSON parsing).
+        Used for endpoints that return binary data (e.g., audio speech).
+        """
+        full_url = GatewayService._build_full_url(endpoint_url, path)
+
+        try:
+            full_url = validate_upstream_url(
+                full_url, GatewayService._get_allowed_hosts()
+            )
+            headers = sanitize_headers(headers)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        max_bytes = settings.upstream_max_response_bytes
+        client = http_client.get_client()
+        try:
+            async with upstream_concurrency_limiter.limit(concurrency_key):
+                resp = await client.post(
+                    full_url, json=payload, headers=headers
+                )
+                resp.raise_for_status()
+
+                content_length = resp.headers.get("content-length")
+                if content_length:
+                    check_response_size(int(content_length), max_bytes)
+                body = resp.content
+                if len(body) > max_bytes:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Upstream response exceeded size limit",
+                    )
+                return body
+        except HTTPException:
+            raise
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Upstream provider returned an error",
+            )
+        except Exception as e:
+            logger.error(f"Provider request failed: {e}")
+            raise HTTPException(
+                status_code=502, detail="Upstream provider is unavailable"
+            )
+
+    @staticmethod
+    async def call_upstream_multipart(
+        endpoint_url: str,
+        files: Dict,
+        data: Dict,
+        headers: Dict,
+        path: str = "/v1/audio/transcriptions",
+        concurrency_key: str = "default",
+    ) -> Dict:
+        """
+        Call upstream with multipart/form-data (for file uploads).
+        Used for audio transcription endpoints.
+        """
+        full_url = GatewayService._build_full_url(endpoint_url, path)
+
+        try:
+            full_url = validate_upstream_url(
+                full_url, GatewayService._get_allowed_hosts()
+            )
+            # Remove Content-Type for multipart — httpx sets it with boundary
+            headers = sanitize_headers(headers)
+            headers.pop("Content-Type", None)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        max_bytes = settings.upstream_max_response_bytes
+        client = http_client.get_client()
+        try:
+            async with upstream_concurrency_limiter.limit(concurrency_key):
+                resp = await client.post(
+                    full_url, files=files, data=data, headers=headers
+                )
+                resp.raise_for_status()
+
+                content_length = resp.headers.get("content-length")
+                if content_length:
+                    check_response_size(int(content_length), max_bytes)
+                body = resp.content
+                if len(body) > max_bytes:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Upstream response exceeded size limit",
+                    )
+                return resp.json()
         except HTTPException:
             raise
         except httpx.HTTPStatusError as e:

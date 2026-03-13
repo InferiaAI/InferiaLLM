@@ -4,7 +4,13 @@ from uuid import UUID
 from inferia.services.orchestration.v1 import model_registry_pb2, model_registry_pb2_grpc
 
 
-ALLOWED_BACKENDS = {"vllm", "trt", "gguf"}
+ALLOWED_BACKENDS = {
+    "vllm", "trt", "gguf",
+    "diffusers", "sdxl", "comfyui",
+    "diffusers-video", "modelscope",
+    "whisper", "bark", "tts",
+    "localai",
+}
 
 
 class ModelRegistryService(

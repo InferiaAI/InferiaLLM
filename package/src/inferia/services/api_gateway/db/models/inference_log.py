@@ -36,5 +36,9 @@ class InferenceLog(Base):
     error_message = Column(String, nullable=True)
     is_streaming = Column(Boolean, default=False)
     applied_policies = Column(JSON, nullable=True)  # List of policies applied (e.g. guardrail, pii, template)
-    
+
+    # Request type and media metadata (for image, video, audio generation)
+    request_type = Column(String, default="llm", index=True)  # llm, embedding, image_generation, video_generation, audio_speech, audio_transcription
+    media_metadata = Column(JSON, nullable=True)  # Type-specific metadata (size, n, quality, voice, format, etc.)
+
     created_at = Column(DateTime, default=func.now(), index=True)

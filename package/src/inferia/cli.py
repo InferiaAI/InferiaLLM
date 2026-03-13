@@ -16,6 +16,7 @@ from inferia.inferiadocs import (
 
 KNOWN_COMMANDS = {
     "init",
+    "migrate",
     "start",
 }
 
@@ -184,7 +185,9 @@ def run_nosana_sidecar(queue=None, env: str = "production"):
                 subprocess.run(["npm", "install"], cwd=sidecar_dir, check=True)
             else:
                 print("[DePIN] Installing production dependencies...")
-                subprocess.run(["npm", "install", "--omit=dev"], cwd=sidecar_dir, check=True)
+                subprocess.run(
+                    ["npm", "install", "--omit=dev"], cwd=sidecar_dir, check=True
+                )
 
         node_env = os.environ.copy()
         if not node_env.get("API_GATEWAY_URL"):
@@ -258,14 +261,14 @@ def run_dashboard(queue=None):
                 """Override to handle SPA routing."""
                 # Get the physical path for the request
                 path = self.translate_path(self.path)
-                
+
                 # If path doesn't exist, check if we should serve index.html
                 if not os.path.exists(path):
                     # Only fallback if it's not a request for a static asset (no extension or .html)
                     _, ext = os.path.splitext(self.path)
                     if not ext or ext.lower() in [".html", ".htm"]:
                         self.path = "/index.html"
-                
+
                 return super().do_GET()
 
             def log_message(self, format, *args):
@@ -290,6 +293,7 @@ def run_dashboard(queue=None):
         if queue:
             queue.put(ServiceFailed("Dashboard", str(e)))
 
+
 def build_dashboard():
     """
     Builds the Dashboard.
@@ -302,7 +306,9 @@ def build_dashboard():
 
     if os.path.isdir(dashboard_dest):
         shutil.rmtree(dashboard_dest)
-        print(f"[inferia:init] Info: Dashboard directory already exists at {dashboard_dest}, rebuilding.")
+        print(
+            f"[inferia:init] Info: Dashboard directory already exists at {dashboard_dest}, rebuilding."
+        )
 
     # Locate the apps/dashboard source directory
     # base_dir is <repo>/package/src/inferia, walk up to repo root
@@ -310,7 +316,9 @@ def build_dashboard():
     dashboard_src = os.path.join(repo_root, "apps", "dashboard")
 
     if not os.path.isdir(dashboard_src):
-        print(f"[inferia:init] Error: Dashboard source directory not found at {dashboard_src}")
+        print(
+            f"[inferia:init] Error: Dashboard source directory not found at {dashboard_src}"
+        )
         return
 
     print(f"[inferia:init] Building Dashboard from {dashboard_src}")
@@ -338,6 +346,7 @@ def build_dashboard():
         print(f"[inferia:init] Dashboard build failed: {e}")
     except Exception as e:
         print(f"[inferia:init] Error building dashboard: {e}")
+
 
 def build_sidecar():
     """
@@ -384,6 +393,54 @@ def run_init(env: str = "production"):
         build_sidecar()
     else:
         print("[inferia:init] Running in production mode: skipping builds.")
+
+
+def run_migrate():
+    import asyncio
+    import asyncpg
+    from pathlib import Path
+
+    dsn = os.getenv(
+        "DATABASE_URL", "postgresql://inferia:inferia@localhost:5432/inferia"
+    )
+    base_dir = Path(__file__).parent
+    migrations_dir = base_dir / "infra" / "schema" / "migrations"
+
+    async def _apply():
+        print(f"[migrations] Connecting to: {dsn}")
+        conn = await asyncpg.connect(dsn)
+
+        migration_files = sorted(migrations_dir.glob("*.sql"))
+        print(f"[migrations] Found {len(migration_files)} migration files")
+
+        for migration_file in migration_files:
+            label = migration_file.stem
+            print(f"[migrations] Applying: {label}")
+            sql = migration_file.read_text()
+
+            try:
+                await conn.execute("BEGIN")
+                await conn.execute(sql)
+                await conn.execute("COMMIT")
+                print(f"[migrations] Applied: {label}")
+            except (
+                asyncpg.DuplicateTableError,
+                asyncpg.DuplicateObjectError,
+                asyncpg.UniqueViolationError,
+            ) as e:
+                await conn.execute("ROLLBACK")
+                print(
+                    f"[migrations] Skipped (already applied): {label} - {e.__class__.__name__}"
+                )
+            except Exception as e:
+                await conn.execute("ROLLBACK")
+                print(f"[migrations] Failed: {label} - {e}")
+                raise
+
+        await conn.close()
+        print("[migrations] Complete")
+
+    asyncio.run(_apply())
 
 
 def run_orchestration_stack(env: str = "production"):
@@ -519,6 +576,8 @@ def main(argv=None):
         help="Environment to initialize for (default: production)",
     )
 
+    migrate_parser = sub.add_parser("migrate", help="Apply database migrations")
+
     # --- New START Command ---
     start_parser = sub.add_parser("start", help="Start Inferia services")
     start_parser.add_argument(
@@ -591,6 +650,9 @@ def main(argv=None):
         elif cmd == "init":
             env = getattr(args, "env", "production")
             run_init(env=env)
+
+        elif cmd == "migrate":
+            run_migrate()
 
         else:
             print(f"Unknown command: {cmd}")

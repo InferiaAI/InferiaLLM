@@ -2,7 +2,8 @@
 Nosana Job Builder Module
 
 Constructs container job definitions for Nosana DePIN deployments.
-Supports vLLM, Ollama, and vLLM-Omni engines.
+Supports vLLM, Ollama, vLLM-Omni, Triton, Infinity, TEI,
+Diffusers, ComfyUI, Diffusers-Video, Whisper, Bark, and LocalAI engines.
 """
 
 from typing import Dict, Any, Optional, List
@@ -626,6 +627,309 @@ def create_tei_job(
     return {"op": container_op, "meta": meta_data}
 
 
+def create_diffusers_job(
+    model_id: str,
+    image: str = "ghcr.io/huggingface/diffusers-server:latest",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 8000,
+    pipeline_type: str = "text-to-image",
+    min_vram: int = 12,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for Diffusers image generation server.
+
+    Args:
+        model_id: HuggingFace model ID (e.g., "stabilityai/stable-diffusion-xl-base-1.0")
+        image: Docker image for the diffusers server
+        hf_token: HuggingFace token for gated models
+        api_key: API key for authentication
+        port: Port to expose
+        pipeline_type: Pipeline type (text-to-image, image-to-image, inpainting)
+        min_vram: Minimum VRAM requirement in GB
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    envs: Dict[str, str] = {
+        "MODEL_ID": model_id,
+        "PIPELINE_TYPE": pipeline_type,
+        "PORT": str(port),
+    }
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+    if effective_api_key:
+        envs["API_KEY"] = effective_api_key
+
+    safe_model_id = shlex.quote(model_id)
+    cmd_str = (
+        f"python -m diffusers_server --model-id {safe_model_id}"
+        f" --pipeline {shlex.quote(pipeline_type)}"
+        f" --port {port}"
+    )
+    if effective_api_key:
+        cmd_str += f" --api-key {shlex.quote(effective_api_key)}"
+    cmd_str += " && tail -f /dev/null"
+
+    container_op = {
+        "type": "container/run",
+        "id": "diffusers-service",
+        "args": {
+            "image": image,
+            "entrypoint": ["/bin/sh"],
+            "cmd": ["-c", cmd_str],
+            "env": envs,
+            "gpu": True,
+            "expose": port,
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {"min_vram": min_vram},
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
+def create_comfyui_job(
+    model_id: str,
+    image: str = "comfyanonymous/comfyui:latest",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 8188,
+    min_vram: int = 12,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for ComfyUI image generation server.
+    """
+    envs: Dict[str, str] = {"MODEL_ID": model_id}
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+
+    container_op = {
+        "type": "container/run",
+        "id": "comfyui-service",
+        "args": {
+            "image": image,
+            "cmd": ["--listen", "0.0.0.0", "--port", str(port)],
+            "env": envs,
+            "gpu": True,
+            "expose": port,
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {"min_vram": min_vram},
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
+def create_diffusers_video_job(
+    model_id: str,
+    image: str = "ghcr.io/huggingface/diffusers-server:latest",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 8000,
+    min_vram: int = 24,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for Diffusers video generation server.
+    Uses the same base image as diffusers but with video pipeline.
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    envs: Dict[str, str] = {
+        "MODEL_ID": model_id,
+        "PIPELINE_TYPE": "text-to-video",
+        "PORT": str(port),
+    }
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+    if effective_api_key:
+        envs["API_KEY"] = effective_api_key
+
+    safe_model_id = shlex.quote(model_id)
+    cmd_str = (
+        f"python -m diffusers_server --model-id {safe_model_id}"
+        f" --pipeline text-to-video --port {port}"
+    )
+    if effective_api_key:
+        cmd_str += f" --api-key {shlex.quote(effective_api_key)}"
+    cmd_str += " && tail -f /dev/null"
+
+    container_op = {
+        "type": "container/run",
+        "id": "diffusers-video-service",
+        "args": {
+            "image": image,
+            "entrypoint": ["/bin/sh"],
+            "cmd": ["-c", cmd_str],
+            "env": envs,
+            "gpu": True,
+            "expose": port,
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {"min_vram": min_vram},
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
+def create_whisper_job(
+    model_id: str,
+    image: str = "fedirz/faster-whisper-server:latest",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 8000,
+    gpu: bool = True,
+    required_cpu: int = 4,
+    required_ram: int = 8192,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for Whisper speech-to-text server.
+    Uses faster-whisper-server which provides an OpenAI-compatible API.
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    envs: Dict[str, str] = {
+        "WHISPER__MODEL": model_id,
+        "WHISPER__PORT": str(port),
+    }
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+    if effective_api_key:
+        envs["API_KEY"] = effective_api_key
+
+    container_op = {
+        "type": "container/run",
+        "id": "whisper-service",
+        "args": {
+            "image": image,
+            "env": envs,
+            "gpu": gpu,
+            "expose": port,
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {
+            "required_cpu": required_cpu,
+            "required_ram": required_ram,
+        },
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
+def create_bark_job(
+    model_id: str,
+    image: str = "suno/bark-server:latest",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 8000,
+    gpu: bool = True,
+    required_cpu: int = 4,
+    required_ram: int = 8192,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for Bark text-to-speech server.
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    envs: Dict[str, str] = {
+        "MODEL_ID": model_id,
+        "PORT": str(port),
+    }
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+    if effective_api_key:
+        envs["API_KEY"] = effective_api_key
+
+    container_op = {
+        "type": "container/run",
+        "id": "bark-service",
+        "args": {
+            "image": image,
+            "env": envs,
+            "gpu": gpu,
+            "expose": port,
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {
+            "required_cpu": required_cpu,
+            "required_ram": required_ram,
+        },
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
+def create_localai_job(
+    model_id: str,
+    image: str = "localai/localai:latest-gpu-nvidia-cuda-12",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port: int = 8080,
+    gpu: bool = True,
+    min_vram: int = 8,
+    threads: int = 4,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for LocalAI all-in-one inference server.
+    LocalAI supports LLMs, embeddings, image generation, audio, and more.
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    envs: Dict[str, str] = {
+        "MODELS": model_id,
+        "PORT": str(port),
+        "THREADS": str(threads),
+    }
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+    if effective_api_key:
+        envs["API_KEY"] = effective_api_key
+
+    container_op = {
+        "type": "container/run",
+        "id": "localai-service",
+        "args": {
+            "image": image,
+            "env": envs,
+            "gpu": gpu,
+            "expose": port,
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {"min_vram": min_vram},
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
 def build_job_definition(
     engine: str,
     model_id: str,
@@ -638,7 +942,9 @@ def build_job_definition(
     High-level factory function to build job definitions based on engine type.
 
     Args:
-        engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton")
+        engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton",
+                "tei", "diffusers", "sdxl", "comfyui", "diffusers-video", "modelscope",
+                "whisper", "bark", "tts", "localai")
         model_id: Model identifier
         image: Optional custom docker image
         hf_token: HuggingFace token
@@ -752,6 +1058,78 @@ def build_job_definition(
                     "required_ram",
                 ]
                 and v is not None
+            },
+        )
+    elif engine == "diffusers" or engine == "sdxl":
+        job = create_diffusers_job(
+            model_id=model_id,
+            image=image or "ghcr.io/huggingface/diffusers-server:latest",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "pipeline_type", "min_vram"] and v is not None
+            },
+        )
+    elif engine == "comfyui":
+        job = create_comfyui_job(
+            model_id=model_id,
+            image=image or "comfyanonymous/comfyui:latest",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "min_vram"] and v is not None
+            },
+        )
+    elif engine == "diffusers-video" or engine == "modelscope":
+        job = create_diffusers_video_job(
+            model_id=model_id,
+            image=image or "ghcr.io/huggingface/diffusers-server:latest",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "min_vram"] and v is not None
+            },
+        )
+    elif engine == "whisper":
+        job = create_whisper_job(
+            model_id=model_id,
+            image=image or "fedirz/faster-whisper-server:latest",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "gpu", "required_cpu", "required_ram"] and v is not None
+            },
+        )
+    elif engine == "bark" or engine == "tts":
+        job = create_bark_job(
+            model_id=model_id,
+            image=image or "suno/bark-server:latest",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "gpu", "required_cpu", "required_ram"] and v is not None
+            },
+        )
+    elif engine == "localai":
+        job = create_localai_job(
+            model_id=model_id,
+            image=image or "localai/localai:latest-gpu-nvidia-cuda-12",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "gpu", "min_vram", "threads"] and v is not None
             },
         )
     else:

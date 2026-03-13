@@ -146,6 +146,440 @@ class OrchestrationService:
             )
 
     @staticmethod
+    async def handle_image_generation(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+    ):
+        """
+        Handle image generation requests (OpenAI-compatible).
+        Simplified flow: No guardrails, no streaming, no templates.
+        Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = body.get("model")
+        prompt = body.get("prompt")
+        if not model or not prompt:
+            raise HTTPException(status_code=400, detail="Model and prompt are required")
+
+        # 1. Resolve Context
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="image_generation"
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute Image Generation Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "diffusers")
+
+        adapter = get_adapter(engine, model_type="image_generation")
+        provider_key = settings.api_gateway_internal_key or ""
+        provider_headers = adapter.get_headers(provider_key)
+
+        status_code = 200
+        error_message = None
+        n = body.get("n", 1)
+        size = body.get("size", "1024x1024")
+
+        try:
+            response_data = await GatewayService.call_upstream(
+                endpoint_url,
+                body,
+                provider_headers,
+                engine,
+                path="/v1/images/generations",
+                concurrency_key=concurrency_key,
+            )
+            return response_data
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_media_request,
+                deployment_id=deployment_id,
+                user_id=user_context_id,
+                model=model,
+                request_payload=body,
+                start_time=start_time,
+                applied_policies=applied_policies,
+                log_payloads=log_payloads,
+                ip_address=ip_address,
+                request_type="image_generation",
+                media_metadata={"size": size, "n": n, "quality": body.get("quality", "standard")},
+                status_code=status_code,
+                error_message=error_message,
+            )
+
+    @staticmethod
+    async def handle_video_generation(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+    ):
+        """
+        Handle video generation requests.
+        Simplified flow: No guardrails, no streaming, no templates.
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = body.get("model")
+        prompt = body.get("prompt")
+        if not model or not prompt:
+            raise HTTPException(status_code=400, detail="Model and prompt are required")
+
+        # 1. Resolve Context
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="video_generation"
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute Video Generation Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "diffusers-video")
+
+        adapter = get_adapter(engine, model_type="video_generation")
+        provider_key = settings.api_gateway_internal_key or ""
+        provider_headers = adapter.get_headers(provider_key)
+
+        status_code = 200
+        error_message = None
+
+        try:
+            response_data = await GatewayService.call_upstream(
+                endpoint_url,
+                body,
+                provider_headers,
+                engine,
+                path="/v1/videos/generations",
+                concurrency_key=concurrency_key,
+            )
+            return response_data
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_media_request,
+                deployment_id=deployment_id,
+                user_id=user_context_id,
+                model=model,
+                request_payload=body,
+                start_time=start_time,
+                applied_policies=applied_policies,
+                log_payloads=log_payloads,
+                ip_address=ip_address,
+                request_type="video_generation",
+                media_metadata={
+                    "size": body.get("size", "1024x1024"),
+                    "duration_seconds": body.get("duration_seconds", 4),
+                    "fps": body.get("fps", 24),
+                },
+                status_code=status_code,
+                error_message=error_message,
+            )
+
+    @staticmethod
+    async def handle_audio_speech(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+    ):
+        """
+        Handle text-to-speech requests (OpenAI-compatible).
+        Returns binary audio data as a streaming response.
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = body.get("model")
+        input_text = body.get("input")
+        if not model or not input_text:
+            raise HTTPException(status_code=400, detail="Model and input are required")
+
+        # 1. Resolve Context
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="audio_generation"
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute TTS Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "bark")
+
+        adapter = get_adapter(engine, model_type="audio_generation")
+        provider_key = settings.api_gateway_internal_key or ""
+        provider_headers = adapter.get_headers(provider_key)
+
+        response_format = body.get("response_format", "mp3")
+        content_type_map = {
+            "mp3": "audio/mpeg",
+            "opus": "audio/opus",
+            "aac": "audio/aac",
+            "flac": "audio/flac",
+            "wav": "audio/wav",
+            "pcm": "audio/pcm",
+        }
+        content_type = content_type_map.get(response_format, "audio/mpeg")
+
+        status_code = 200
+        error_message = None
+
+        try:
+            audio_bytes = await GatewayService.call_upstream_raw(
+                endpoint_url,
+                body,
+                provider_headers,
+                path="/v1/audio/speech",
+                concurrency_key=concurrency_key,
+            )
+            return StreamingResponse(
+                iter([audio_bytes]),
+                media_type=content_type,
+                headers={"Content-Disposition": f"attachment; filename=speech.{response_format}"},
+            )
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_media_request,
+                deployment_id=deployment_id,
+                user_id=user_context_id,
+                model=model,
+                request_payload=body if log_payloads else None,
+                start_time=start_time,
+                applied_policies=applied_policies,
+                log_payloads=log_payloads,
+                ip_address=ip_address,
+                request_type="audio_speech",
+                media_metadata={
+                    "voice": body.get("voice", "alloy"),
+                    "response_format": response_format,
+                    "speed": body.get("speed", 1.0),
+                },
+                status_code=status_code,
+                error_message=error_message,
+            )
+
+    @staticmethod
+    async def handle_audio_transcription(
+        api_key: str,
+        form_data: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+    ):
+        """
+        Handle audio transcription requests (OpenAI-compatible).
+        Accepts multipart form data with audio file.
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = form_data.get("model")
+        file_data = form_data.get("file")
+        if not model or not file_data:
+            raise HTTPException(status_code=400, detail="Model and file are required")
+
+        # 1. Resolve Context
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="audio_generation"
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers_resp = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers_resp,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute Transcription Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "whisper")
+
+        adapter = get_adapter(engine, model_type="audio_generation")
+        provider_key = settings.api_gateway_internal_key or ""
+        provider_headers = adapter.get_headers(provider_key)
+
+        # Build multipart files and data
+        file_content = await file_data.read()
+        files = {"file": (file_data.filename, file_content, file_data.content_type or "audio/mpeg")}
+        data = {"model": model}
+        if form_data.get("language"):
+            data["language"] = form_data["language"]
+        if form_data.get("prompt"):
+            data["prompt"] = form_data["prompt"]
+        if form_data.get("response_format"):
+            data["response_format"] = form_data["response_format"]
+        if form_data.get("temperature"):
+            data["temperature"] = str(form_data["temperature"])
+
+        status_code = 200
+        error_message = None
+
+        try:
+            response_data = await GatewayService.call_upstream_multipart(
+                endpoint_url,
+                files=files,
+                data=data,
+                headers=provider_headers,
+                path="/v1/audio/transcriptions",
+                concurrency_key=concurrency_key,
+            )
+            return response_data
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_media_request,
+                deployment_id=deployment_id,
+                user_id=user_context_id,
+                model=model,
+                request_payload=None,  # Don't log file content
+                start_time=start_time,
+                applied_policies=applied_policies,
+                log_payloads=False,  # Never log binary file content
+                ip_address=ip_address,
+                request_type="audio_transcription",
+                media_metadata={
+                    "filename": file_data.filename,
+                    "content_type": file_data.content_type,
+                    "response_format": form_data.get("response_format", "json"),
+                },
+                status_code=status_code,
+                error_message=error_message,
+            )
+
+    @staticmethod
     async def handle_completion(
         api_key: str,
         body: Dict,
@@ -163,8 +597,20 @@ class OrchestrationService:
                 status_code=400, detail="Model and messages are required"
             )
 
+        # Detect multimodal content (image_url blocks in messages)
+        model_type = "inference"
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "image_url":
+                        model_type = "multimodal"
+                        break
+                if model_type == "multimodal":
+                    break
+
         # 1. Resolve Context
-        context = await GatewayService.resolve_context(api_key, model)
+        context = await GatewayService.resolve_context(api_key, model, model_type=model_type)
 
         deployment = context["deployment"]
         deployment_id = deployment.get("id")
@@ -554,6 +1000,61 @@ class OrchestrationService:
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
+                },
+            ),
+        )
+
+    @staticmethod
+    async def _log_media_request(
+        deployment_id,
+        user_id,
+        model,
+        request_payload,
+        start_time,
+        applied_policies,
+        log_payloads,
+        ip_address=None,
+        request_type="image_generation",
+        media_metadata=None,
+        status_code=200,
+        error_message=None,
+    ):
+        """
+        Log media generation request details (image, video, audio).
+        Simplified logging — no token tracking, no streaming.
+        """
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
+
+        final_payload = request_payload if log_payloads else None
+
+        await asyncio.gather(
+            api_gateway_client.log_inference(
+                deployment_id=deployment_id,
+                user_id=user_id,
+                model=model,
+                request_payload=final_payload,
+                latency_ms=latency_ms,
+                ttft_ms=None,
+                tokens_per_second=None,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                status_code=status_code,
+                error_message=error_message,
+                is_streaming=False,
+                applied_policies=applied_policies,
+                ip_address=ip_address,
+                request_type=request_type,
+                media_metadata=media_metadata,
+            ),
+            api_gateway_client.track_usage(
+                user_id,
+                model,
+                {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
                 },
             ),
         )

@@ -56,8 +56,15 @@ const deploymentTypes = [
     desc: "Deploy Stable Diffusion and image generation models.",
     icon: Image,
     modelType: "image_generation" as ModelTypeKey,
-    active: false,
-    badge: "Soon"
+    active: true
+  },
+  {
+    id: "video",
+    name: "Video Generation",
+    desc: "Deploy text-to-video and image-to-video models.",
+    icon: Layers,
+    modelType: "video_generation" as ModelTypeKey,
+    active: true
   },
   {
     id: "multimodal",
@@ -65,17 +72,15 @@ const deploymentTypes = [
     desc: "Deploy vision-language models.",
     icon: Eye,
     modelType: "multimodal" as ModelTypeKey,
-    active: false,
-    badge: "Soon"
+    active: true
   },
   {
     id: "audio",
     name: "Audio",
     desc: "Deploy speech recognition and TTS models.",
     icon: Volume2,
-    modelType: "audio" as ModelTypeKey,
-    active: false,
-    badge: "Soon"
+    modelType: "audio_generation" as ModelTypeKey,
+    active: true
   },
 ]
 
@@ -124,6 +129,60 @@ const computeEngines = [
     icon: Brain,
     types: ["training"],
     modelTypes: ["training"]
+  },
+  {
+    id: "diffusers",
+    name: "Diffusers Server",
+    desc: "Hugging Face Diffusers for Stable Diffusion, SDXL, FLUX.",
+    image: "ghcr.io/huggingface/diffusers-server:latest",
+    icon: Image,
+    types: ["inference"],
+    modelTypes: ["image_generation"]
+  },
+  {
+    id: "comfyui",
+    name: "ComfyUI",
+    desc: "Node-based UI and server for advanced image generation workflows.",
+    image: "comfyanonymous/comfyui:latest",
+    icon: Image,
+    types: ["inference"],
+    modelTypes: ["image_generation"]
+  },
+  {
+    id: "diffusers-video",
+    name: "Diffusers Video",
+    desc: "Video generation via Diffusers (Stable Video Diffusion, CogVideo).",
+    image: "ghcr.io/huggingface/diffusers-server:latest",
+    icon: Layers,
+    types: ["inference"],
+    modelTypes: ["video_generation"]
+  },
+  {
+    id: "whisper",
+    name: "Whisper",
+    desc: "OpenAI Whisper for speech recognition and transcription.",
+    image: "fedirz/faster-whisper-server:latest",
+    icon: Volume2,
+    types: ["inference"],
+    modelTypes: ["audio_generation"]
+  },
+  {
+    id: "bark",
+    name: "Bark TTS",
+    desc: "Suno Bark for text-to-speech generation.",
+    image: "suno/bark-server:latest",
+    icon: Volume2,
+    types: ["inference"],
+    modelTypes: ["audio_generation"]
+  },
+  {
+    id: "localai",
+    name: "LocalAI",
+    desc: "All-in-one local inference: LLM, image, audio, embeddings.",
+    image: "localai/localai:latest-gpu-nvidia-cuda-12",
+    icon: Server,
+    types: ["inference"],
+    modelTypes: ["inference", "embedding", "image_generation", "video_generation", "audio_generation", "multimodal"]
   },
 ]
 

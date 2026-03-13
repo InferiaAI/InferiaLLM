@@ -166,6 +166,8 @@ async def _persist_log_background(
             error_message=log_data.error_message,
             is_streaming=log_data.is_streaming,
             applied_policies=log_data.applied_policies,
+            request_type=log_data.request_type,
+            media_metadata=log_data.media_metadata,
         )
         db.add(log)
         await db.commit()

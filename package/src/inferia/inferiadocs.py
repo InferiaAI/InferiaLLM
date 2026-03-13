@@ -86,6 +86,9 @@ def show_inferia():
     print(f"  {Colors.GREEN}inferiallm init{Colors.ENDC}")
     print("      Initialize databases, roles, and control-plane schemas\n")
 
+    print(f"  {Colors.GREEN}inferiallm migrate{Colors.ENDC}")
+    print("      Apply database schema migrations\n")
+
     print(f"  {Colors.GREEN}inferiallm start{Colors.ENDC}")
     print("      Start all gateways, workers, and sidecars")
 

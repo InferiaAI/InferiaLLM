@@ -149,14 +149,17 @@ class ApiGatewayClient:
         ip_address: Optional[str] = None,
         request_type: str = "llm",
         input_count: Optional[int] = None,
+        media_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Log inference request details (fire and forget).
         Uses asyncio.create_task to avoid blocking the response.
 
         Args:
-            request_type: "llm" for chat completions, "embedding" for embedding requests
+            request_type: "llm", "embedding", "image_generation", "video_generation",
+                          "audio_speech", "audio_transcription"
             input_count: Number of inputs (for embeddings - number of texts embedded)
+            media_metadata: Type-specific metadata (image size, audio duration, etc.)
         """
         client = self._get_client()
 
@@ -183,8 +186,12 @@ class ApiGatewayClient:
                 }
 
                 # Add embedding-specific fields
-                if request_type == "embedding" and input_count is not None:
+                if input_count is not None:
                     log_data["input_count"] = input_count
+
+                # Add media-specific metadata
+                if media_metadata is not None:
+                    log_data["media_metadata"] = media_metadata
 
                 await client.post(
                     "/internal/logs/create",

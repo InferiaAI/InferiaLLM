@@ -142,3 +142,91 @@ async def create_embeddings(
         background_tasks=background_tasks,
         ip_address=client_ip,
     )
+
+
+@app.post("/v1/images/generations")
+async def create_image(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Image generation endpoint - OpenAI compatible.
+    Supports diffusion models deployed via Diffusers Server, ComfyUI, or LocalAI.
+    """
+    api_key = extract_api_key(authorization)
+    body = await request.json()
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_image_generation(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )
+
+
+@app.post("/v1/videos/generations")
+async def create_video(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Video generation endpoint.
+    Supports video diffusion models deployed via Diffusers-Video or ModelScope.
+    """
+    api_key = extract_api_key(authorization)
+    body = await request.json()
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_video_generation(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )
+
+
+@app.post("/v1/audio/speech")
+async def create_speech(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Text-to-speech endpoint - OpenAI compatible.
+    Supports TTS models deployed via Bark, TTS, or LocalAI.
+    """
+    api_key = extract_api_key(authorization)
+    body = await request.json()
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_audio_speech(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )
+
+
+@app.post("/v1/audio/transcriptions")
+async def create_transcription(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Audio transcription endpoint - OpenAI compatible.
+    Supports speech-to-text models deployed via Whisper or LocalAI.
+    """
+    api_key = extract_api_key(authorization)
+    form = await request.form()
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_audio_transcription(
+        api_key=api_key,
+        form_data=form,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )

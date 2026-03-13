@@ -20,6 +20,8 @@ class InferenceLogCreate(BaseModel):
     error_message: Optional[str] = None
     is_streaming: bool = False
     applied_policies: Optional[List[str]] = None
+    request_type: str = "llm"
+    media_metadata: Optional[Dict[str, Any]] = None
 
 
 class InferenceLogResponse(BaseModel):
@@ -41,6 +43,8 @@ class InferenceLogResponse(BaseModel):
     error_message: Optional[str] = None
     is_streaming: bool
     applied_policies: Optional[List[str]] = None
+    request_type: str = "llm"
+    media_metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
 
 

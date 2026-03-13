@@ -513,8 +513,10 @@ CREATE TABLE inference_logs (
     error_message VARCHAR, 
     is_streaming BOOLEAN, 
     applied_policies JSON,
-    created_at TIMESTAMP WITHOUT TIME ZONE, 
-    PRIMARY KEY (id), 
+    request_type TEXT DEFAULT 'llm',
+    media_metadata JSONB,
+    created_at TIMESTAMP WITHOUT TIME ZONE,
+    PRIMARY KEY (id),
     FOREIGN KEY(deployment_id) REFERENCES model_deployments (deployment_id) ON DELETE CASCADE
 );
 CREATE INDEX ix_inference_logs_user_id ON inference_logs (user_id);
@@ -523,6 +525,7 @@ CREATE INDEX ix_inference_logs_id ON inference_logs (id);
 CREATE INDEX ix_inference_logs_model ON inference_logs (model);
 CREATE INDEX ix_inference_logs_created_at ON inference_logs (created_at);
 CREATE INDEX ix_inference_logs_deployment_id ON inference_logs (deployment_id);
+CREATE INDEX idx_inference_logs_request_type ON inference_logs (request_type);
 
 CREATE TABLE invitations (
     id VARCHAR NOT NULL, 

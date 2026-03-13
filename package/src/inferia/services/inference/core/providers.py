@@ -17,7 +17,12 @@ _ADAPTER_CACHE: Dict[str, "ProviderAdapter"] = {}
 
 # Engine categories for routing
 EXTERNAL_ENGINES = {"openai", "anthropic", "cohere", "groq"}
-COMPUTE_ENGINES = {"vllm", "ollama", "generic"}
+COMPUTE_ENGINES = {
+    "vllm", "ollama", "generic", "localai",
+    "diffusers", "sdxl", "comfyui",
+    "diffusers-video", "modelscope",
+    "whisper", "bark", "tts",
+}
 
 
 class ProviderAdapter(ABC):
@@ -284,48 +289,113 @@ class EmbeddingAdapter(OpenAIAdapter):
         return False
 
 
-def get_adapter(engine: str) -> ProviderAdapter:
+class ImageAdapter(ComputeAdapter):
+    """
+    Adapter for image generation backends (Diffusers Server, SDXL, ComfyUI, LocalAI).
+    These serve OpenAI-compatible /v1/images/generations endpoints.
+    """
+
+    def get_chat_path(self) -> str:
+        return "/v1/images/generations"
+
+
+class VideoAdapter(ComputeAdapter):
+    """
+    Adapter for video generation backends (Diffusers-Video, ModelScope).
+    Serves /v1/videos/generations endpoints following the same pattern as images.
+    """
+
+    def get_chat_path(self) -> str:
+        return "/v1/videos/generations"
+
+
+class AudioAdapter(ComputeAdapter):
+    """
+    Adapter for audio backends (Whisper, Bark, TTS, LocalAI).
+    Supports both speech synthesis and transcription endpoints.
+    """
+
+    def get_chat_path(self) -> str:
+        return "/v1/audio/speech"
+
+    def get_transcription_path(self) -> str:
+        return "/v1/audio/transcriptions"
+
+
+def get_adapter(engine: str, model_type: str = None) -> ProviderAdapter:
     """
     Factory function to get the appropriate adapter for an engine.
     Adapter instances are cached for reuse since they are stateless.
 
+    For multi-purpose engines like 'localai', the model_type param determines
+    which adapter to return (e.g., ImageAdapter for image_generation).
+
     Args:
-        engine: The engine type (openai, anthropic, cohere, groq, vllm, ollama, etc.)
+        engine: The engine type (openai, anthropic, vllm, diffusers, localai, etc.)
+        model_type: Optional model type for multi-purpose engines (e.g., "image_generation")
 
     Returns:
         An appropriate ProviderAdapter instance
     """
     engine_lower = (engine or "").lower()
+    cache_key = f"{engine_lower}:{model_type}" if model_type else engine_lower
 
     # Check cache first
-    if engine_lower in _ADAPTER_CACHE:
-        return _ADAPTER_CACHE[engine_lower]
+    if cache_key in _ADAPTER_CACHE:
+        return _ADAPTER_CACHE[cache_key]
 
-    # Create adapter instance
-    adapters = {
-        # External providers
-        "openai": OpenAIAdapter(),
-        "groq": OpenAIAdapter(),  # Groq is OpenAI-compatible
-        "anthropic": AnthropicAdapter(),
-        "cohere": CohereAdapter(),
-        # Compute engines (OpenAI-compatible)
-        "vllm": ComputeAdapter(),
-        "ollama": ComputeAdapter(),
-        "generic": ComputeAdapter(),
-        # Embedding engines (OpenAI-compatible for embeddings)
-        "infinity": EmbeddingAdapter(),
-        "tei": EmbeddingAdapter(),
-    }
-
-    adapter = adapters.get(engine_lower)
+    # For multi-purpose engines, route based on model_type
+    if engine_lower == "localai" and model_type:
+        adapter = _LOCALAI_MODEL_TYPE_MAP.get(model_type, ComputeAdapter())
+    else:
+        adapter = _ENGINE_ADAPTERS.get(engine_lower)
 
     if adapter is None:
         logger.warning(f"Unknown engine '{engine}', defaulting to ComputeAdapter")
         adapter = ComputeAdapter()
 
     # Cache and return
-    _ADAPTER_CACHE[engine_lower] = adapter
+    _ADAPTER_CACHE[cache_key] = adapter
     return adapter
+
+
+# Static adapter instances (stateless, safe to share)
+_ENGINE_ADAPTERS: Dict[str, ProviderAdapter] = {
+    # External providers
+    "openai": OpenAIAdapter(),
+    "groq": OpenAIAdapter(),
+    "anthropic": AnthropicAdapter(),
+    "cohere": CohereAdapter(),
+    # Compute engines (OpenAI-compatible)
+    "vllm": ComputeAdapter(),
+    "ollama": ComputeAdapter(),
+    "generic": ComputeAdapter(),
+    "localai": ComputeAdapter(),
+    # Embedding engines
+    "infinity": EmbeddingAdapter(),
+    "tei": EmbeddingAdapter(),
+    # Image generation engines
+    "diffusers": ImageAdapter(),
+    "sdxl": ImageAdapter(),
+    "comfyui": ImageAdapter(),
+    # Video generation engines
+    "diffusers-video": VideoAdapter(),
+    "modelscope": VideoAdapter(),
+    # Audio engines
+    "whisper": AudioAdapter(),
+    "bark": AudioAdapter(),
+    "tts": AudioAdapter(),
+}
+
+# LocalAI model_type routing — localai is a universal engine
+_LOCALAI_MODEL_TYPE_MAP: Dict[str, ProviderAdapter] = {
+    "inference": ComputeAdapter(),
+    "multimodal": ComputeAdapter(),
+    "embedding": EmbeddingAdapter(),
+    "image_generation": ImageAdapter(),
+    "video_generation": VideoAdapter(),
+    "audio_generation": AudioAdapter(),
+}
 
 
 def is_external_engine(engine: str) -> bool:

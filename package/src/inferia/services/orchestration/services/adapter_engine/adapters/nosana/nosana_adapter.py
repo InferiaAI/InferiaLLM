@@ -229,6 +229,9 @@ class NosanaAdapter(ProviderAdapter):
                 "gpu": metadata.get("gpu", engine not in ["infinity", "tei"]),
                 "required_cpu": metadata.get("required_cpu", 2),
                 "required_ram": metadata.get("required_ram", 4096),
+                # Media engine config (diffusers, whisper, bark, localai)
+                "pipeline_type": metadata.get("pipeline_type", "text-to-image"),
+                "threads": metadata.get("threads", 4),
                 # Additional config
                 "trust_remote_code": metadata.get("trust_remote_code", True),
                 "cuda_module_loading": metadata.get("cuda_module_loading", "LAZY"),
