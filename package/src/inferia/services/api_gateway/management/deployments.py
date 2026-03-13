@@ -39,12 +39,13 @@ async def create_deployment(
         )
 
     new_deployment = DBDeployment(
-        name=deployment_data.name,
+        llmd_resource_name=deployment_data.name,
         model_name=deployment_data.model_name,
-        provider=deployment_data.provider,
-        endpoint_url=deployment_data.endpoint_url,
-        credentials_json=deployment_data.credentials_json,
+        engine=deployment_data.provider,
+        endpoint=deployment_data.endpoint_url,
+        configuration=deployment_data.credentials_json,
         org_id=user_ctx.org_id,
+        model_type=deployment_data.model_type,
     )
 
     db.add(new_deployment)
@@ -105,9 +106,9 @@ async def create_deployment(
             resource_type="deployment",
             resource_id=new_deployment.id,
             details={
-                "name": new_deployment.name,
+                "name": new_deployment.llmd_resource_name,
                 "model": new_deployment.model_name,
-                "provider": new_deployment.provider,
+                "provider": new_deployment.engine,
             },
             status="success",
         ),
