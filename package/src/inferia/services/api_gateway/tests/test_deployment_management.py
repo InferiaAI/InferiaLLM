@@ -35,16 +35,15 @@ class TestCreateDeployment:
         # DB flush/refresh return a mock deployment
         mock_dep = MagicMock()
         mock_dep.id = "dep-001"
-        mock_dep.name = "test-dep"
-        mock_dep.model_name = "llama-3"
-        mock_dep.provider = "openai"
-        mock_dep.endpoint_url = "https://api.openai.com/v1"
-        mock_dep.credentials_json = None
+        mock_dep.model_name = "test-dep"
+        mock_dep.inference_model = "llama-3"
+        mock_dep.engine = "openai"
+        mock_dep.endpoint = "https://api.openai.com/v1"
+        mock_dep.configuration = None
         mock_dep.org_id = "org-001"
         mock_dep.state = "PENDING"
         mock_dep.created_at = None
         mock_dep.updated_at = None
-        mock_dep.llmd_resource_name = None
         mock_dep.model_type = "inference"
         mock_db.refresh = AsyncMock(return_value=None)
 

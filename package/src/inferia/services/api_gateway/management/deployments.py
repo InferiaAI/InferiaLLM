@@ -39,8 +39,8 @@ async def create_deployment(
         )
 
     new_deployment = DBDeployment(
-        llmd_resource_name=deployment_data.name,
-        model_name=deployment_data.model_name,
+        model_name=deployment_data.name,
+        inference_model=deployment_data.model_name,
         engine=deployment_data.provider,
         endpoint=deployment_data.endpoint_url,
         configuration=deployment_data.credentials_json,
@@ -106,9 +106,9 @@ async def create_deployment(
             resource_type="deployment",
             resource_id=new_deployment.id,
             details={
-                "name": new_deployment.llmd_resource_name,
-                "model": new_deployment.model_name,
-                "provider": new_deployment.engine,
+                "name": new_deployment.model_name,
+                "model": new_deployment.inference_model,
+                "engine": new_deployment.engine,
             },
             status="success",
         ),
@@ -269,7 +269,7 @@ async def delete_deployment(
             action="deployment.delete",
             resource_type="deployment",
             resource_id=deployment_id,
-            details={"name": deployment.llmd_resource_name, "model": deployment.model_name},
+            details={"name": deployment.model_name, "model": deployment.inference_model},
             status="success",
         ),
     )
@@ -298,7 +298,7 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
             id=d.model_name,
             created=int(d.created_at.timestamp()) if d.created_at else 0,
             owned_by=d.org_id,
-            description=f"Active deployment: {d.llmd_resource_name or d.model_name}",
+            description=f"Active deployment: {d.model_name}",
         )
         for d in deployments
     ]
