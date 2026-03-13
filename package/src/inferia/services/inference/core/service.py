@@ -1,11 +1,13 @@
 from fastapi import HTTPException
 from inferia.services.inference.client import api_gateway_client
+from inferia.services.inference.config import settings
 from typing import Dict, Any, List, AsyncGenerator
 import logging
 import httpx
 from .http_client import http_client
 from .providers import get_adapter
 from .concurrency_limiter import upstream_concurrency_limiter
+from .validators import validate_upstream_url, sanitize_headers, check_response_size
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +226,14 @@ class GatewayService:
         return endpoint + chat_path
 
     @staticmethod
+    def _get_allowed_hosts() -> list[str]:
+        """Parse allowed internal hosts from config."""
+        raw = settings.upstream_allowed_internal_hosts
+        if not raw:
+            return []
+        return [h.strip() for h in raw.split(",") if h.strip()]
+
+    @staticmethod
     async def stream_upstream(
         endpoint_url: str,
         payload: Dict,
@@ -236,6 +246,18 @@ class GatewayService:
         transformed_payload = adapter.transform_request(payload)
         full_url = GatewayService._build_full_url(endpoint_url, chat_path)
 
+        # Validate URL and headers before making upstream request
+        try:
+            full_url = validate_upstream_url(
+                full_url, GatewayService._get_allowed_hosts()
+            )
+            headers = sanitize_headers(headers)
+        except ValueError as e:
+            logger.error(f"Upstream validation failed: {e}")
+            yield b'data: {"error": "Invalid upstream configuration"}\n\n'
+            return
+
+        max_bytes = settings.upstream_max_response_bytes
         client = http_client.get_client()
         try:
             async with upstream_concurrency_limiter.limit(concurrency_key):
@@ -243,15 +265,19 @@ class GatewayService:
                     "POST", full_url, json=transformed_payload, headers=headers
                 ) as response:
                     response.raise_for_status()
-                    # Use aiter_raw() for unbuffered streaming (important for SSE)
+                    total_bytes = 0
                     async for chunk in response.aiter_raw():
+                        total_bytes += len(chunk)
+                        if total_bytes > max_bytes:
+                            yield b'data: {"error": "Upstream response exceeded size limit"}\n\n'
+                            return
                         yield chunk
         except httpx.HTTPStatusError as e:
-            logger.error(f"Upstream Error {e.response.status_code}")
-            yield f'data: {{"error": "Upstream Error: {e.response.status_code}"}}\n\n'.encode()
+            logger.error(f"Upstream Error {e.response.status_code}: {e.response.text}")
+            yield b'data: {"error": "Upstream provider returned an error"}\n\n'
         except Exception as e:
             logger.error(f"Streaming Exception: {e}")
-            yield f'data: {{"error": "Streaming Failed: {str(e)}"}}\n\n'.encode()
+            yield b'data: {"error": "Streaming connection failed"}\n\n'
 
     @staticmethod
     async def call_upstream(
@@ -270,7 +296,17 @@ class GatewayService:
             chat_path = adapter.get_chat_path()
             full_url = GatewayService._build_full_url(endpoint_url, chat_path)
 
+        # Validate URL and headers before making upstream request
+        try:
+            full_url = validate_upstream_url(
+                full_url, GatewayService._get_allowed_hosts()
+            )
+            headers = sanitize_headers(headers)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         transformed_payload = adapter.transform_request(payload)
+        max_bytes = settings.upstream_max_response_bytes
 
         client = http_client.get_client()
         try:
@@ -279,18 +315,31 @@ class GatewayService:
                     full_url, json=transformed_payload, headers=headers
                 )
                 resp.raise_for_status()
+
+                # Check response size before parsing
+                content_length = resp.headers.get("content-length")
+                if content_length:
+                    check_response_size(int(content_length), max_bytes)
+                body = resp.content
+                if len(body) > max_bytes:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Upstream response exceeded size limit",
+                    )
                 raw_response = resp.json()
 
                 # Transform response back to OpenAI format
                 return adapter.transform_response(raw_response)
+        except HTTPException:
+            raise
         except httpx.HTTPStatusError as e:
             logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
             raise HTTPException(
                 status_code=e.response.status_code,
-                detail=f"Provider error: {e.response.text}",
+                detail="Upstream provider returned an error",
             )
         except Exception as e:
             logger.error(f"Provider request failed: {e}")
             raise HTTPException(
-                status_code=502, detail=f"Upstream provider error: {str(e)}"
+                status_code=502, detail="Upstream provider is unavailable"
             )

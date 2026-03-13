@@ -72,6 +72,9 @@ from inferia.services.orchestration.repositories.inventory_repo import (
 
 from inferia.services.orchestration.infra.redis_event_bus import RedisEventBus
 from inferia.services.orchestration.middleware import InternalAuthMiddleware
+from inferia.services.orchestration.grpc_auth_interceptor import (
+    InternalAPIKeyInterceptor,
+)
 
 
 async def create_db_pool():
@@ -98,11 +101,13 @@ async def check_db_health(db_pool):
 async def serve():
     """Main server entry point - starts both HTTP and gRPC servers."""
 
-    # Create gRPC server
+    # Create gRPC server with API key authentication interceptor
+    grpc_auth = InternalAPIKeyInterceptor(settings.internal_api_key)
     server = grpc.aio.server(
+        interceptors=[grpc_auth],
         options=[
             ("grpc.max_concurrent_streams", 10000),
-        ]
+        ],
     )
 
     # Initialize database and event bus
@@ -151,7 +156,7 @@ async def serve():
         app=app,
         app_name=settings.app_name,
         app_version=settings.app_version,
-        environment=settings.environment
+        environment=settings.environment,
     )
 
     # Note: Dashboard now runs on its own port (3001) via the CLI
@@ -198,7 +203,7 @@ async def serve():
         logger.info("Shutting down servers...")
         shutdown_event.set()
         await event_bus.close()
-        db_pool.close()
+        await db_pool.close()
         await http_server.shutdown()
 
     asyncio.create_task(http_server.serve())

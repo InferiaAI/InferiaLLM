@@ -4,8 +4,11 @@ Uses Pydantic Settings for environment-based configuration.
 """
 
 from typing import Literal, Optional, Any, Dict, List
+import logging
 from pydantic import Field, BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 # --- Nested Configuration Models ---
 
@@ -118,6 +121,15 @@ class Settings(BaseSettings):
     reload: bool = Field(default=False, validation_alias="DEBUG_RELOAD")
     workers: int = Field(default=1, validation_alias="API_GATEWAY_WORKERS")
 
+    # Reverse Proxy Settings
+    # Enable proxy_headers so uvicorn trusts X-Forwarded-For from allowed proxies.
+    # FORWARDED_ALLOW_IPS: comma-separated IPs/CIDRs of trusted proxies, or "*" to trust all.
+    # Default "" disables proxy header processing (safe for direct-to-internet deployments).
+    proxy_headers: bool = Field(default=True, validation_alias="PROXY_HEADERS")
+    forwarded_allow_ips: Optional[str] = Field(
+        default=None, validation_alias="FORWARDED_ALLOW_IPS"
+    )
+
     # Multi-tenancy / Organization Settings
     default_org_name: str = "Default Organization"
 
@@ -214,12 +226,26 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
+    _PLACEHOLDER_JWT_SECRET = "placeholder-secret-key-at-least-32-chars-long"
+
     def model_post_init(self, __context: Any) -> None:
         """
         Initialization logic.
         Note: DB config loading is handled by ConfigManager asynchronously.
         """
-        pass
+        if self.jwt_secret_key == self._PLACEHOLDER_JWT_SECRET:
+            if self.is_production:
+                raise RuntimeError(
+                    "FATAL: JWT_SECRET_KEY is set to the default placeholder. "
+                    "Set a strong secret via environment variable before running in production. "
+                    "Generate one with: openssl rand -hex 32"
+                )
+            else:
+                logger.warning(
+                    "JWT_SECRET_KEY is using the default placeholder. "
+                    "This is insecure and must not be used in production. "
+                    "Generate a secret with: openssl rand -hex 32"
+                )
 
     @property
     def sqlalchemy_database_url(self) -> str:

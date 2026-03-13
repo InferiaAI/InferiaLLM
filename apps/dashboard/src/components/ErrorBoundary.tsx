@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertCircle, RefreshCw } from "lucide-react";
+import { clearToken } from "@/lib/tokenStore";
 
 interface Props {
     children?: ReactNode;
@@ -47,6 +48,7 @@ export class ErrorBoundary extends Component<Props, State> {
                         </button>
                         <button
                             onClick={() => {
+                                clearToken();
                                 localStorage.clear();
                                 window.location.href = "/auth/login";
                             }}

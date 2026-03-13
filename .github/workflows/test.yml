@@ -1,0 +1,108 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache Python packages
+        id: cache-python
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.pythonLocation }}
+          key: py-${{ runner.os }}-${{ env.pythonLocation }}-${{ hashFiles('package/pyproject.toml') }}
+
+      - name: Install dependencies
+        if: steps.cache-python.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./package[dev]"
+
+      - name: Run unit tests
+        run: |
+          pytest \
+            package/src/inferia/services/api_gateway/tests/test_rbac.py \
+            package/src/inferia/services/api_gateway/tests/test_audit.py \
+            package/src/inferia/services/api_gateway/tests/test_gateway.py \
+            package/src/inferia/services/api_gateway/tests/test_integration.py \
+            package/src/inferia/services/api_gateway/tests/test_management_insights.py \
+            package/src/inferia/services/orchestration/test/test_traffic_router.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_command_injection.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_start_deployment_controller.py \
+            package/src/inferia/services/data/tests/test_prompt_templates.py \
+            package/src/inferia/services/api_gateway/tests/test_config_security.py \
+            package/src/inferia/services/api_gateway/tests/test_rate_limit_bypass.py \
+            package/src/inferia/tests/test_cli_init_sql_injection.py \
+            package/src/inferia/services/api_gateway/tests/test_internal_auth_bypass.py \
+            package/src/inferia/services/orchestration/test/test_grpc_auth_interceptor.py \
+            package/src/inferia/services/inference/tests/test_cors_config.py \
+            package/src/inferia/common/tests/test_app_setup.py \
+            package/src/inferia/services/inference/tests/test_provider_error_sanitization.py \
+            package/src/inferia/services/guardrail/tests/test_guardrail_fail_closed.py \
+            package/src/inferia/services/orchestration/test/test_llmd_spec_builder.py \
+            package/src/inferia/common/tests/test_middleware.py \
+            package/src/inferia/common/tests/test_rate_limit.py \
+            package/src/inferia/common/tests/test_errors.py \
+            package/src/inferia/common/tests/test_circuit_breaker.py \
+            package/src/inferia/common/tests/test_exception_handlers.py \
+            package/src/inferia/common/tests/test_http_client.py \
+            package/src/inferia/services/api_gateway/tests/test_auth_security.py \
+            package/src/inferia/services/api_gateway/tests/test_encryption.py \
+            package/src/inferia/services/api_gateway/tests/test_db_security.py \
+            package/src/inferia/services/guardrail/tests/test_engine_error_handling.py \
+            package/src/inferia/services/guardrail/tests/test_engine_orchestration.py \
+            package/src/inferia/services/data/tests/test_chunker.py \
+            package/src/inferia/services/data/tests/test_prompt_engine.py \
+            package/src/inferia/services/orchestration/test/placement_test/test_placement_scoring.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_controller_errors.py \
+            package/src/inferia/services/orchestration/test/autoscaler/test_autoscaler_logic.py \
+            package/src/inferia/services/inference/tests/test_stream_processor.py \
+            package/src/inferia/services/inference/tests/test_service_error_handling.py \
+            package/src/inferia/services/api_gateway/tests/test_policy_engine_errors.py \
+            package/src/inferia/services/data/tests/test_upload_security.py \
+            package/src/inferia/services/data/tests/test_engine_error_handling.py \
+            package/src/inferia/services/guardrail/tests/test_scan_endpoint_security.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_worker_lifecycle.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_injection_expanded.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_sdl_injection.py \
+            package/src/inferia/services/orchestration/test/compute_pools_nodes/test_pool_manager.py \
+            package/src/inferia/services/api_gateway/tests/test_gateway_error_handling.py \
+            package/src/inferia/services/inference/tests/test_upstream_security.py \
+            package/src/inferia/services/api_gateway/tests/test_api_key_security.py \
+            package/src/inferia/services/api_gateway/tests/test_deployment_management.py \
+            package/src/inferia/services/api_gateway/tests/test_inference_routing.py \
+            package/src/inferia/services/inference/tests/test_routing_logic.py \
+            package/src/inferia/services/orchestration/test/adapter_test/test_adapter_error_handling.py \
+            -p no:twisted -p no:trio -p no:tornasync \
+            --junitxml=junit/test-results.xml \
+            --cov=package/src/inferia \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: junit/test-results.xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml

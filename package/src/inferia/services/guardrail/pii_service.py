@@ -68,8 +68,16 @@ class PIIService:
         """
         scanner = await self._get_anonymize_scanner(entities)
         if not scanner:
-            # scanner failed to initialize (e.g. missing vault)
-            return text, []
+            # Fail closed — scanner failed to initialize (e.g. missing vault)
+            logger.error("PII scanner unavailable — failing closed")
+            return text, [
+                Violation(
+                    scanner="Anonymize",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details="PII scanner failed to initialize",
+                )
+            ]
 
         try:
             loop = asyncio.get_event_loop()
@@ -95,7 +103,15 @@ class PIIService:
 
         except Exception as e:
             logger.error(f"Error in PIIService.anonymize: {e}", exc_info=True)
-            return text, []
+            # Fail closed — do not return unredacted text when scanner errors
+            return text, [
+                Violation(
+                    scanner="Anonymize",
+                    violation_type=ViolationType.EXTERNAL_SERVICE_ERROR,
+                    score=1.0,
+                    details=f"PII scan failed: {e}",
+                )
+            ]
 
 
 pii_service = PIIService()

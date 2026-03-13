@@ -144,11 +144,10 @@ def rate_limit_auth(limiter: RateLimiter, identifier_param: str = "username"):
                 if hasattr(body, identifier_param):
                     identifier = getattr(body, identifier_param, "")
 
-            # Get client IP
+            # Get client IP — use ASGI-level client IP only.
+            # Never trust X-Forwarded-For from the client; configure
+            # uvicorn with --proxy-headers for reverse proxy setups.
             client_ip = request.client.host if request.client else "unknown"
-            forwarded = request.headers.get("X-Forwarded-For")
-            if forwarded:
-                client_ip = forwarded.split(",")[0].strip()
 
             # Check rate limit
             is_allowed, retry_after = limiter.is_allowed(
