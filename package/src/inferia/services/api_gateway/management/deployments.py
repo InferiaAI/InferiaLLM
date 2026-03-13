@@ -269,7 +269,7 @@ async def delete_deployment(
             action="deployment.delete",
             resource_type="deployment",
             resource_id=deployment_id,
-            details={"name": deployment.name, "model": deployment.model_name},
+            details={"name": deployment.llmd_resource_name, "model": deployment.model_name},
             status="success",
         ),
     )
@@ -298,7 +298,7 @@ async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
             id=d.model_name,
             created=int(d.created_at.timestamp()) if d.created_at else 0,
             owned_by=d.org_id,
-            description=f"Active deployment: {d.name}",
+            description=f"Active deployment: {d.llmd_resource_name or d.model_name}",
         )
         for d in deployments
     ]
