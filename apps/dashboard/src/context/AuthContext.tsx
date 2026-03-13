@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { authService, type OrganizationBasicInfo } from "@/services/authService";
+import { getToken, setToken, clearToken } from "@/lib/tokenStore";
 
 interface User {
     user_id: string;
@@ -19,6 +20,7 @@ interface AuthContextType {
     isLoading: boolean;
     login: (token: string) => Promise<void>;
     logout: () => void;
+    refreshUser: () => Promise<void>;
     isAuthenticated: boolean;
     organizations: OrganizationBasicInfo[];
     hasPermission: (permission: string) => boolean;
@@ -48,8 +50,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (token) {
+        // Token lives in memory only — a page refresh means re-login
+        if (getToken()) {
             fetchUser();
         } else {
             setIsLoading(false);
@@ -57,14 +59,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const login = async (token: string) => {
-        localStorage.setItem("token", token);
+        setToken(token);
         await fetchUser();
         toast.success("Welcome back!");
     };
 
-
     const logout = () => {
-        localStorage.removeItem("token");
+        clearToken();
         setUser(null);
         setOrganizations([]);
         toast.info("Logged out");
@@ -82,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 isLoading,
                 login,
                 logout,
+                refreshUser: fetchUser,
                 isAuthenticated: !!user,
                 organizations,
                 hasPermission,

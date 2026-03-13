@@ -262,7 +262,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
     return (
         <LazyMotion features={domAnimation}>
             <m.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                <Header loading={loading} onSave={handleSave} />
+                <Header loading={loading} onSave={handleSave} onRefresh={onUpdate} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
                         <GeneralSettings replicas={replicas} inferenceModel={inferenceModel} dispatch={dispatch} />
@@ -310,7 +310,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
     )
 }
 
-function Header({ loading, onSave }: { loading: boolean; onSave: () => void }) {
+function Header({ loading, onSave, onRefresh }: { loading: boolean; onSave: () => void; onRefresh?: () => void }) {
     return (
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -318,7 +318,7 @@ function Header({ loading, onSave }: { loading: boolean; onSave: () => void }) {
                 <div><h2 className="text-xl font-bold tracking-tight">Deployment Configuration</h2><p className="text-sm text-muted-foreground font-mono">Customize engine parameters and runtime settings</p></div>
             </div>
             <div className="flex items-center gap-2">
-                <button onClick={() => window.location.reload()} className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"><RotateCcw className="w-5 h-5" /></button>
+                <button onClick={() => onRefresh?.()} className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"><RotateCcw className="w-5 h-5" /></button>
                 <button onClick={onSave} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition-colors shadow-lg shadow-emerald-500/20 active:scale-95 disabled:opacity-50">{loading ? <Zap className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes</button>
             </div>
         </div>
