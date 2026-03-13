@@ -76,9 +76,12 @@ message RegisterPoolRequest {
   repeated string allowed_gpu_types = 5;
   double max_cost_per_hour = 6;
   bool is_dedicated = 7;
-  string scheduling_policy_json = 8; // NEW
+  string scheduling_policy_json = 8;
   string provider_pool_id = 9;
-  string provider_credential_name = 10;  // Generic: which credential to use for this provider
+  string provider_credential_name = 10;
+  repeated string region_constraint = 11;  // For SkyPilot: region preference
+  bool use_spot = 12;  // For SkyPilot: use spot instances
+  int32 gpu_count = 13;  // Number of GPUs per node (default 1)
 }
 
 message GetPoolRequest {
@@ -104,6 +107,10 @@ message PoolResponse {
   string provider_credential_name = 12;
   string created_at = 13;
   string updated_at = 14;
+  string pool_type = 15;  // 'job' or 'cluster'
+  string cluster_id = 16;  // For cluster-based pools
+  repeated string region_constraint = 17;
+  int32 gpu_count = 18;  // Number of GPUs per node
 }
 
 message ListPoolsResponse {

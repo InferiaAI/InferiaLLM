@@ -16,7 +16,7 @@ _ADAPTER_CACHE: Dict[str, "ProviderAdapter"] = {}
 
 
 # Engine categories for routing
-EXTERNAL_ENGINES = {"openai", "anthropic", "cohere", "groq"}
+EXTERNAL_ENGINES = {"openai", "anthropic", "cohere", "groq", "gemini", "openrouter", "cerebras"}
 COMPUTE_ENGINES = {"vllm", "ollama", "generic"}
 
 
@@ -306,6 +306,9 @@ def get_adapter(engine: str) -> ProviderAdapter:
         # External providers
         "openai": OpenAIAdapter(),
         "groq": OpenAIAdapter(),  # Groq is OpenAI-compatible
+        "gemini": OpenAIAdapter(),  # Gemini OpenAI-compatible endpoint
+        "openrouter": OpenAIAdapter(),  # OpenRouter is OpenAI-compatible
+        "cerebras": OpenAIAdapter(),  # Cerebras is OpenAI-compatible
         "anthropic": AnthropicAdapter(),
         "cohere": CohereAdapter(),
         # Compute engines (OpenAI-compatible)

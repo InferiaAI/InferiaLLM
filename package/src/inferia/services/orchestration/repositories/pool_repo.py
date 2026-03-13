@@ -1,9 +1,47 @@
+import json
+import logging
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 
 class ComputePoolRepository:
     def __init__(self, db):
         self.db = db
+
+    async def get_provider_config(self, provider: str) -> dict:
+        """
+        Read provider config from system_settings (shared DB with API Gateway).
+        Returns the config dict for the given provider, or empty dict.
+        """
+        query = """
+        SELECT value FROM system_settings WHERE key = 'providers_config' LIMIT 1
+        """
+        try:
+            async with self.db.acquire() as conn:
+                raw = await conn.fetchval(query)
+                if not raw:
+                    return {}
+                data = json.loads(raw) if isinstance(raw, str) else raw
+                providers = data.get("providers", data)
+
+                # Map provider to config path
+                config_paths = {
+                    "gcp": ("cloud", "gcp"),
+                    "aws": ("cloud", "aws"),
+                    "nosana": ("depin", "nosana"),
+                    "akash": ("depin", "akash"),
+                }
+                path = config_paths.get(provider)
+                if not path:
+                    return {}
+                section = providers
+                for key in path:
+                    section = section.get(key, {})
+                return section
+        except Exception as e:
+            logger.warning(f"Could not read provider config from DB: {e}")
+            return {}
 
     async def credential_exists(self, provider: str, credential_name: str) -> bool:
         """
@@ -26,14 +64,20 @@ class ComputePoolRepository:
             owner_type,
             owner_id,
             provider,
+            pool_type,
             allowed_gpu_types,
             max_cost_per_hour,
             is_dedicated,
             scheduling_policy,
             provider_pool_id,
-            provider_credential_name
+            provider_credential_name,
+            cluster_id,
+            region_constraint,
+            is_active,
+            lifecycle_state,
+            gpu_count
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         RETURNING id
         """
         async with self.db.acquire() as conn:
@@ -43,12 +87,18 @@ class ComputePoolRepository:
                 data["owner_type"],
                 data["owner_id"],
                 data["provider"],
+                data.get("pool_type", "job"),
                 data["allowed_gpu_types"],
                 data["max_cost_per_hour"],
                 data["is_dedicated"],
                 data["scheduling_policy"],
                 data["provider_pool_id"],
                 data.get("provider_credential_name"),
+                data.get("cluster_id"),
+                data.get("region_constraint"),
+                data.get("is_active", True),
+                data.get("lifecycle_state", "running"),
+                data.get("gpu_count", 1),
             )
 
     async def update_pool(self, pool_id: UUID, data: dict):
@@ -136,6 +186,7 @@ class ComputePoolRepository:
             id,
             pool_name,
             provider,
+            pool_type,
             is_active,
             owner_type,
             owner_id,
@@ -145,6 +196,10 @@ class ComputePoolRepository:
             scheduling_policy,
             provider_pool_id,
             provider_credential_name,
+            cluster_id,
+            region_constraint,
+            lifecycle_state,
+            gpu_count,
             updated_at,
             created_at
         FROM compute_pools
@@ -159,3 +214,44 @@ class ComputePoolRepository:
 
         async with self.db.acquire() as conn:
             return await conn.fetch(query, *params)
+
+    async def update_pool_cluster_id(self, pool_id: UUID, cluster_id: str):
+        """Update the cluster_id for a cluster-based pool."""
+        query = """
+        UPDATE compute_pools
+        SET cluster_id = $2,
+            updated_at = now()
+        WHERE id = $1
+        """
+        async with self.db.acquire() as conn:
+            await conn.execute(query, pool_id, cluster_id)
+
+    async def get_cluster_id(self, pool_id: UUID) -> str | None:
+        """Get the cluster_id for a pool."""
+        query = """
+        SELECT cluster_id
+        FROM compute_pools
+        WHERE id = $1
+        """
+        async with self.db.acquire() as conn:
+            return await conn.fetchval(query, pool_id)
+    async def set_pool_active(self, pool_id: UUID, is_active: bool):
+        """Set the active status of a pool."""
+        query = """
+        UPDATE compute_pools
+        SET is_active = $2,
+            updated_at = now()
+        WHERE id = $1
+        """
+        async with self.db.acquire() as conn:
+            await conn.execute(query, pool_id, is_active)
+
+    async def set_pool_lifecycle_state(self, pool_id: UUID, lifecycle_state: str):
+        query = """
+        UPDATE compute_pools
+        SET lifecycle_state = $2,
+            updated_at = now()
+        WHERE id = $1 AND is_active = TRUE
+        """
+        async with self.db.acquire() as conn:
+            await conn.execute(query, pool_id, lifecycle_state)

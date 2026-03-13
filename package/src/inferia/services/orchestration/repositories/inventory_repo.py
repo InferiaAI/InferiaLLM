@@ -124,6 +124,7 @@ class InventoryRepository:
         WHERE state IN ('ready', 'busy')
           AND last_heartbeat IS NOT NULL
           AND now() - last_heartbeat > make_interval(secs => $1)
+          AND COALESCE(node_class, '') != 'cluster'
         RETURNING id
         """
         async with self.db.acquire() as conn:
@@ -212,13 +213,15 @@ class InventoryRepository:
                     state,
                     node_class,
                     metadata,
-                    expose_url
+                    expose_url,
+                    last_heartbeat
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
                 ON CONFLICT (provider, provider_instance_id)
                 DO UPDATE SET
                     expose_url = COALESCE(compute_inventory.expose_url, EXCLUDED.expose_url),
                     state = EXCLUDED.state,
+                    last_heartbeat = now(),
                     updated_at = now()
                 RETURNING id
                 """,

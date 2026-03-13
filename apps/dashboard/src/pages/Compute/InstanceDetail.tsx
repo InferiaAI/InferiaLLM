@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   RefreshCw,
+  Square,
   Trash2,
-  Search,
   ChevronRight,
   ExternalLink,
 } from "lucide-react";
@@ -12,79 +12,151 @@ import { toast } from "sonner";
 import { computeApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
+type PoolLifecycleState = "running" | "terminating" | "terminated";
+
+type PoolDetails = {
+  pool_id: string;
+  pool_name: string;
+  provider: string;
+  allowed_gpu_types?: string[];
+  max_cost_per_hour?: number;
+  lifecycle_state?: PoolLifecycleState;
+};
+
 export default function InstanceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
+  const canStopPool =
+    hasPermission("deployment:update") || hasPermission("deployment:delete");
   const canDeletePool = hasPermission("deployment:delete");
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "logs" | "events" | "terminal" | "nodes"
-  >("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "nodes">("overview");
 
   const [nodes, setNodes] = useState<any[]>([]);
-  const [poolDetails, setPoolDetails] = useState<any>(null);
+  const [poolDetails, setPoolDetails] = useState<PoolDetails | null>(null);
   const [loading, setLoading] = useState(true);
-  const [poolId, setPoolId] = useState(id);
+  const [poolId, setPoolId] = useState(id || "");
+  const [isStopping, setIsStopping] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const fetchInventory = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!id) {
+        return;
+      }
+
+      if (!options?.silent) {
+        setLoading(true);
+      }
+
+      try {
+        const [inventoryRes, poolRes] = await Promise.all([
+          computeApi.get(`/deployment/list/pool/${id}/inventory`),
+          computeApi.get(`/deployment/pool/${id}`).catch(() => null),
+        ]);
+        const data = inventoryRes.data;
+        setNodes(data.nodes || []);
+        setPoolId(data.pool_id);
+        if (poolRes?.data) {
+          setPoolDetails(poolRes.data);
+        }
+      } catch (error) {
+        if (!options?.silent) {
+          toast.error("Failed to fetch pool details");
+        }
+        console.error(error);
+      } finally {
+        if (!options?.silent) {
+          setLoading(false);
+        }
+      }
+    },
+    [id],
+  );
 
   // Fetch pool inventory and details
   useEffect(() => {
     if (id) {
-      fetchInventory();
+      void fetchInventory();
     }
-  }, [id]);
+  }, [id, fetchInventory]);
 
-  const fetchInventory = async () => {
-    setLoading(true);
-    try {
-      const [inventoryRes, poolRes] = await Promise.all([
-        computeApi.get(`/deployment/list/pool/${id}/inventory`),
-        computeApi.get(`/deployment/pool/${id}`).catch(() => null)
-      ]);
-      const data = inventoryRes.data;
-      setNodes(data.nodes || []);
-      setPoolId(data.pool_id);
-      if (poolRes && poolRes.data) {
-        setPoolDetails(poolRes.data);
-      }
-    } catch (error) {
-      toast.error("Failed to fetch pool details");
-      console.error(error);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (!id || poolDetails?.lifecycle_state !== "terminating") {
+      return;
     }
-  };
+
+    const interval = setInterval(() => {
+      void fetchInventory({ silent: true });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [id, poolDetails?.lifecycle_state, fetchInventory]);
 
   if (loading) {
     return <div className="p-10 text-center text-slate-500">Loading pool details...</div>;
   }
 
-  // Fallback if no pool details fetched
-  const provider = poolDetails?.provider || (nodes.length > 0 ? nodes[0].provider : "Unknown");
+  const lifecycleState = (poolDetails?.lifecycle_state || "running") as PoolLifecycleState;
+  const isTerminating = lifecycleState === "terminating";
+  const isTerminated = lifecycleState === "terminated";
   const poolName = poolDetails?.pool_name || "Compute Pool";
+  const stopButtonDisabled = !id || isStopping || isTerminating || isTerminated;
+  const deleteButtonDisabled = !id || isDeleting || !isTerminated;
+
+  const handleStop = async () => {
+    if (!id) return;
+    if (!canStopPool) {
+      toast.error("You don't have permission to stop pools");
+      return;
+    }
+    if (isTerminated) {
+      toast.info("Pool is already terminated");
+      return;
+    }
+    if (isTerminating) {
+      toast.info("Pool termination is already in progress");
+      return;
+    }
+    if (!confirm("Stop this pool now? It will enter terminating state before it can be deleted.")) {
+      return;
+    }
+
+    setIsStopping(true);
+    try {
+      await computeApi.post(`/deployment/stoppool/${id}`);
+      toast.success("Pool is terminating");
+      await fetchInventory();
+    } catch (error) {
+      toast.error("Failed to stop pool");
+      console.error(error);
+    } finally {
+      setIsStopping(false);
+    }
+  };
 
   const handleDelete = async () => {
+    if (!id) return;
     if (!canDeletePool) {
       toast.error("You don't have permission to delete pools");
+      return;
+    }
+    if (!isTerminated) {
+      toast.error("Stop the pool and wait for terminated state before deleting");
       return;
     }
 
     if (!confirm("Are you sure you want to delete this pool? This action cannot be undone.")) return;
 
-    // Optimistically assuming it works or using simple fetch if api not available, 
-    // but better to use the configured api client if possible.
-    // Since 'api' isn't imported, I'll use fetch to match the existing style of this file 
-    // BUT the existing fetch uses relative path which might be proxied. 
-    // The previous file viewing showed `api` import in Deployments.tsx. 
-    // I should check if I can import api.
-
+    setIsDeleting(true);
     try {
       await computeApi.post(`/deployment/deletepool/${id}`);
-
       toast.success("Pool deleted successfully");
       navigate("/dashboard/compute/pools");
     } catch (error) {
       toast.error("Failed to delete pool");
       console.error(error);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -121,17 +193,54 @@ export default function InstanceDetail() {
             <span className="px-2 py-0.5 rounded border bg-muted/50 text-foreground">
               {poolId}
             </span>
+            <span
+              className={cn(
+                "px-2 py-0.5 rounded border text-xs font-medium capitalize",
+                isTerminating
+                  ? "border-amber-500/20 text-amber-600 dark:text-amber-400 bg-amber-500/10"
+                  : isTerminated
+                    ? "border-slate-500/20 text-slate-600 dark:text-slate-400 bg-slate-500/10"
+                    : "border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+              )}
+            >
+              {isTerminating ? "Terminating" : isTerminated ? "Terminated" : "Running"}
+            </span>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <button onClick={fetchInventory} className="h-9 px-4 flex items-center gap-2 border rounded-md bg-background hover:bg-muted/50 transition-colors text-sm font-medium">
+          <button
+            onClick={() => void fetchInventory()}
+            className="h-9 px-4 flex items-center gap-2 border rounded-md bg-background hover:bg-muted/50 transition-colors text-sm font-medium"
+          >
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
+          {canStopPool && (
+            <button
+              onClick={handleStop}
+              disabled={stopButtonDisabled}
+              className={cn(
+                "h-9 px-4 flex items-center gap-2 border rounded-md transition-colors text-sm font-medium shadow-sm",
+                stopButtonDisabled
+                  ? "bg-muted text-muted-foreground cursor-not-allowed"
+                  : "bg-amber-500 text-white border-amber-500 hover:bg-amber-600",
+              )}
+            >
+              <Square className={cn("w-4 h-4", (isStopping || isTerminating) && "animate-pulse")} />
+              {isTerminating ? "Terminating..." : "Stop Pool"}
+            </button>
+          )}
           {canDeletePool && (
             <button
               onClick={handleDelete}
-              className="h-9 px-4 flex items-center gap-2 border rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors text-sm font-medium shadow-sm"
+              disabled={deleteButtonDisabled}
+              title={isTerminated ? "Delete Pool" : "Pool must be terminated before deletion"}
+              className={cn(
+                "h-9 px-4 flex items-center gap-2 border rounded-md transition-colors text-sm font-medium shadow-sm",
+                deleteButtonDisabled
+                  ? "bg-muted text-muted-foreground cursor-not-allowed"
+                  : "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+              )}
             >
               <Trash2 className="w-4 h-4" /> Delete Pool
             </button>
@@ -141,19 +250,22 @@ export default function InstanceDetail() {
 
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-6">
-        {["Overview", "Nodes"].map(
+        {[
+          { label: "Overview", value: "overview" as const },
+          { label: "Nodes", value: "nodes" as const },
+        ].map(
           (tab) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab.toLowerCase() as any)}
+              key={tab.value}
+              onClick={() => setActiveTab(tab.value)}
               className={cn(
                 "px-4 py-1.5 rounded-md text-sm font-medium transition-colors",
-                activeTab === tab.toLowerCase()
+                activeTab === tab.value
                   ? "bg-muted text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
               )}
             >
-              {tab}
+              {tab.label}
             </button>
           ),
         )}

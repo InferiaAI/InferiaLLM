@@ -14,9 +14,12 @@ from inferia.services.orchestration.services.adapter_engine.adapters.akash.akash
 
 ADAPTER_REGISTRY = {
     "aws": SkyPilotAdapter,
+    "gcp": SkyPilotAdapter,
+    "azure": SkyPilotAdapter,
+    "lambda": SkyPilotAdapter,
+    "runpod": SkyPilotAdapter,
     "nosana": NosanaAdapter,
     "k8s": KubernetesAdapter,
-    "skypilot": SkyPilotAdapter,
     "akash": AkashAdapter,
 }
 
@@ -40,6 +43,8 @@ def get_adapter(provider: str):
             f"No adapter registered for provider '{provider}'. "
             f"Available providers: {list(ADAPTER_REGISTRY.keys())}"
         )
+    if adapter_cls is SkyPilotAdapter:
+        return adapter_cls(cloud=provider)
     return adapter_cls()
 
 

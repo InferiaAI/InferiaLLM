@@ -71,8 +71,10 @@ from inferia.services.orchestration.repositories.inventory_repo import (
 )
 
 from inferia.services.orchestration.infra.redis_event_bus import RedisEventBus
-from inferia.services.orchestration.middleware import internal_auth_middleware
-from inferia.services.orchestration.grpc_auth_interceptor import InternalAPIKeyInterceptor
+from inferia.services.orchestration.middleware import InternalAuthMiddleware
+from inferia.services.orchestration.grpc_auth_interceptor import (
+    InternalAPIKeyInterceptor,
+)
 
 
 async def create_db_pool():
@@ -133,7 +135,11 @@ async def serve():
     setup_cors(app, os.getenv("ALLOWED_ORIGINS", ""), settings.is_development)
 
     # Add internal authentication middleware
-    app.middleware("http")(internal_auth_middleware)
+    app.add_middleware(
+        InternalAuthMiddleware,
+        internal_api_key=settings.internal_api_key,
+        skip_paths=["/health", "/deployment/ws"],
+    )
 
     # Register standard exception handlers
     register_exception_handlers(app)
@@ -150,7 +156,7 @@ async def serve():
         app=app,
         app_name=settings.app_name,
         app_version=settings.app_version,
-        environment=settings.environment
+        environment=settings.environment,
     )
 
     # Note: Dashboard now runs on its own port (3001) via the CLI
@@ -197,7 +203,7 @@ async def serve():
         logger.info("Shutting down servers...")
         shutdown_event.set()
         await event_bus.close()
-        db_pool.close()
+        await db_pool.close()
         await http_server.shutdown()
 
     asyncio.create_task(http_server.serve())

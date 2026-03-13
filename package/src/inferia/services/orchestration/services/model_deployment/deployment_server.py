@@ -1,9 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Request
+import logging
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 import asyncpg
 import collections
 import grpc
 import json
+import asyncio
+from uuid import UUID
 
 from inferia.services.orchestration.v1 import (
     model_deployment_pb2,
@@ -55,7 +60,12 @@ def _auth_channel():
     """Create a gRPC channel that automatically attaches the internal API key."""
     return grpc.aio.insecure_channel(GRPC_ADDR, interceptors=[_AuthInterceptor()])
 
+
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
+
+POOL_STATE_RUNNING = "running"
+POOL_STATE_TERMINATING = "terminating"
+POOL_STATE_TERMINATED = "terminated"
 
 
 # status start stop
@@ -105,6 +115,7 @@ class CreatePoolRequest(BaseModel):
     provider_credential_name: str | None = (
         None  # Generic: which credential to use for this provider
     )
+    gpu_count: int = 1  # Number of GPUs per node (for cluster provisioning)
 
 
 class ModelRegistryRequest(BaseModel):
@@ -139,6 +150,16 @@ async def log_audit_event(
     conn = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
+
+        # Proactive check for user_id existence to avoid FK violation
+        # if the ID passed is actually an Org ID or other identifier
+        if user_id:
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", user_id
+            )
+            if not exists:
+                user_id = None  # Don't try to link to non-existent user
+
         # Manually insert since we don't have the AuditLog model here
         await conn.execute(
             """
@@ -156,6 +177,87 @@ async def log_audit_event(
         )
     except Exception as e:
         print(f"Failed to write audit log: {e}")
+    finally:
+        if conn:
+            await conn.close()
+
+
+async def _get_pool_lifecycle_state(pool_id: UUID) -> str | None:
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        lifecycle_state = await conn.fetchval(
+            """
+            SELECT lifecycle_state::text
+            FROM compute_pools
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_id,
+        )
+        if not lifecycle_state:
+            return None
+        return lifecycle_state
+    finally:
+        if conn:
+            await conn.close()
+
+
+async def _terminate_pool_background(pool_id: UUID):
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        pool = await conn.fetchrow(
+            """
+            SELECT id, pool_name, provider, pool_type, cluster_id, provider_credential_name, lifecycle_state, is_active
+            FROM compute_pools
+            WHERE id = $1
+            """,
+            pool_id,
+        )
+        if not pool or not pool["is_active"]:
+            return
+
+        lifecycle_state = (pool["lifecycle_state"] or POOL_STATE_RUNNING).lower()
+        if lifecycle_state != POOL_STATE_TERMINATING:
+            return
+
+        # Cluster pools require provider teardown; job pools can transition immediately.
+        if pool["pool_type"] == "cluster" and pool["cluster_id"]:
+            adapter = get_adapter(pool["provider"])
+            capabilities = adapter.get_capabilities()
+            if capabilities and capabilities.supports_cluster_mode:
+                logger.info(
+                    f"Stopping pool '{pool['pool_name']}' by terminating cluster '{pool['cluster_id']}'"
+                )
+                await adapter.terminate_cluster(
+                    cluster_id=pool["cluster_id"],
+                    provider_credential_name=pool["provider_credential_name"],
+                )
+
+        await conn.execute(
+            """
+            UPDATE compute_pools
+            SET lifecycle_state = $2,
+                updated_at = now()
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_id,
+            POOL_STATE_TERMINATED,
+        )
+        logger.info(f"Pool {pool_id} transitioned to terminated")
+    except Exception as e:
+        logger.exception(f"Failed to stop pool {pool_id}: {e}")
+        if conn:
+            await conn.execute(
+                """
+                UPDATE compute_pools
+                SET lifecycle_state = $2,
+                    updated_at = now()
+                WHERE id = $1 AND is_active = TRUE
+                """,
+                pool_id,
+                POOL_STATE_RUNNING,
+            )
     finally:
         if conn:
             await conn.close()
@@ -432,6 +534,7 @@ async def create_pool(req: CreatePoolRequest):
                     provider_credential_name=req.provider_credential_name
                     if req.provider_credential_name
                     else "",
+                    gpu_count=req.gpu_count,
                 )
             )
 
@@ -515,8 +618,23 @@ async def list_pools(owner_id: str | None = None):
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         # Fetch available GPU specs
-        resources = await conn.fetch("SELECT DISTINCT gpu_type, gpu_memory_gb FROM provider_resources WHERE gpu_type IS NOT NULL")
-        gpu_resource_map = {r['gpu_type'].upper(): r['gpu_memory_gb'] for r in resources}
+        resources = await conn.fetch(
+            "SELECT DISTINCT gpu_type, gpu_memory_gb FROM provider_resources WHERE gpu_type IS NOT NULL"
+        )
+        gpu_resource_map = {
+            r["gpu_type"].upper(): r["gpu_memory_gb"] for r in resources
+        }
+        pool_states = await conn.fetch(
+            """
+            SELECT id::text AS pool_id, lifecycle_state::text AS lifecycle_state
+            FROM compute_pools
+            WHERE is_active = TRUE
+            """
+        )
+        pool_state_map = {
+            row["pool_id"]: row["lifecycle_state"] or POOL_STATE_RUNNING
+            for row in pool_states
+        }
 
         for p in resp.pools:
             pool_dict = {
@@ -532,16 +650,20 @@ async def list_pools(owner_id: str | None = None):
                 "scheduling_policy_json": p.scheduling_policy_json,
                 "provider_pool_id": p.provider_pool_id,
                 "provider_credential_name": p.provider_credential_name,
+                "cluster_id": p.cluster_id,
+                "pool_type": p.pool_type,
+                "gpu_count": p.gpu_count or 1,
+                "lifecycle_state": pool_state_map.get(p.pool_id, POOL_STATE_RUNNING),
                 "created_at": p.created_at,
                 "updated_at": p.updated_at,
-                "gpu_specs": []
+                "gpu_specs": [],
             }
             # Add VRAM info if we have it in our map
             for gt in p.allowed_gpu_types:
                 vram = gpu_resource_map.get(gt.upper())
                 if vram:
-                     pool_dict["gpu_specs"].append({"gpu_type": gt, "vram": vram})
-            
+                    pool_dict["gpu_specs"].append({"gpu_type": gt, "vram": vram})
+
             enriched_pools.append(pool_dict)
     except Exception:
         # Fallback to non-enriched if DB fails
@@ -560,6 +682,10 @@ async def list_pools(owner_id: str | None = None):
                     "scheduling_policy_json": p.scheduling_policy_json,
                     "provider_pool_id": p.provider_pool_id,
                     "provider_credential_name": p.provider_credential_name,
+                    "cluster_id": p.cluster_id,
+                    "pool_type": p.pool_type,
+                    "gpu_count": p.gpu_count or 1,
+                    "lifecycle_state": POOL_STATE_RUNNING,
                     "created_at": p.created_at,
                     "updated_at": p.updated_at,
                 }
@@ -585,6 +711,13 @@ async def get_pool(pool_id: str):
                 raise HTTPException(status_code=404, detail="Pool not found")
             raise HTTPException(status_code=500, detail=e.details())
 
+    try:
+        lifecycle_state = (
+            await _get_pool_lifecycle_state(UUID(pool_id))
+        ) or POOL_STATE_RUNNING
+    except Exception:
+        lifecycle_state = POOL_STATE_RUNNING
+
     return {
         "pool_id": p.pool_id,
         "pool_name": p.pool_name,
@@ -598,19 +731,89 @@ async def get_pool(pool_id: str):
         "scheduling_policy_json": p.scheduling_policy_json,
         "provider_pool_id": p.provider_pool_id,
         "provider_credential_name": p.provider_credential_name,
+        "cluster_id": p.cluster_id,
+        "pool_type": p.pool_type,
+        "gpu_count": p.gpu_count or 1,
+        "lifecycle_state": lifecycle_state,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
     }
 
 
+@router.post("/stoppool/{pool_id}")
+async def stop_pool(pool_id: str):
+    try:
+        pool_uuid = UUID(pool_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pool_id")
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        pool = await conn.fetchrow(
+            """
+            SELECT id, lifecycle_state, is_active
+            FROM compute_pools
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_uuid,
+        )
+        if not pool:
+            raise HTTPException(status_code=404, detail="Pool not found")
+
+        lifecycle_state = (pool["lifecycle_state"] or POOL_STATE_RUNNING).lower()
+        if lifecycle_state == POOL_STATE_TERMINATED:
+            return {"pool_id": pool_id, "status": "TERMINATED"}
+        if lifecycle_state == POOL_STATE_TERMINATING:
+            return {"pool_id": pool_id, "status": "TERMINATING"}
+
+        await conn.execute(
+            """
+            UPDATE compute_pools
+            SET lifecycle_state = $2,
+                updated_at = now()
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_uuid,
+            POOL_STATE_TERMINATING,
+        )
+    finally:
+        if conn:
+            await conn.close()
+
+    asyncio.create_task(_terminate_pool_background(pool_uuid))
+    return {"pool_id": pool_id, "status": "TERMINATING"}
+
+
 @router.post("/deletepool/{pool_id}")
 async def delete_pool(pool_id: str):
+    try:
+        pool_uuid = UUID(pool_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pool_id")
+
+    lifecycle_state = await _get_pool_lifecycle_state(pool_uuid)
+    if lifecycle_state is None:
+        raise HTTPException(status_code=404, detail="Pool not found")
+    if lifecycle_state != POOL_STATE_TERMINATED:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pool is '{lifecycle_state}'. Stop it first and wait for "
+                f"'{POOL_STATE_TERMINATED}' state before deleting."
+            ),
+        )
+
     async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
             await stub.DeletePool(compute_pool_pb2.DeletePoolRequest(pool_id=pool_id))
         except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                raise HTTPException(status_code=404, detail="Pool not found")
+            if e.code() == grpc.StatusCode.FAILED_PRECONDITION:
+                raise HTTPException(status_code=409, detail=e.details())
             raise HTTPException(status_code=500, detail=e.details())
 
     return {"pool_id": pool_id, "status": "DELETED"}
@@ -737,7 +940,7 @@ async def get_deployment_logs(deployment_id: str):
 
 
 @router.get("/logs/{deployment_id}/stream")
-async def get_deployment_log_stream_info(deployment_id: str):
+async def get_deployment_log_stream_info(deployment_id: str, request: Request):
     """
     Get WebSocket connection details for log streaming.
     """
@@ -783,8 +986,21 @@ async def get_deployment_log_stream_info(deployment_id: str):
         # 2. Call Adapter for streaming info
         try:
             adapter = get_adapter(provider)
+
+            # Pass base_url to adapter if it supports it to construct absolute WS URL
+            extra_args = {}
+            if hasattr(adapter, "get_log_streaming_info"):
+                import inspect
+
+                sig = inspect.signature(adapter.get_log_streaming_info)
+                via_gateway = (
+                    request.headers.get("x-gateway-request", "").lower() == "true"
+                )
+                if "base_url" in sig.parameters and via_gateway:
+                    extra_args["base_url"] = str(request.base_url)
+
             stream_info = await adapter.get_log_streaming_info(
-                provider_instance_id=provider_instance_id
+                provider_instance_id=provider_instance_id, **extra_args
             )
             return stream_info
         except Exception as e:
@@ -997,3 +1213,112 @@ async def list_models(model_name: str | None = None):
             for m in resp.models
         ]
     }
+
+
+@router.websocket("/ws")
+async def websocket_logs_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for log streaming.
+    Supported providers: skypilot
+    """
+    await websocket.accept()
+    logger.info("WebSocket connection accepted")
+
+    stream_task = None
+    process = None
+
+    try:
+        # 1. Wait for subscription message
+        message = await websocket.receive_text()
+        data = json.loads(message)
+
+        if data.get("type") != "subscribe_logs":
+            await websocket.send_json(
+                {"type": "error", "message": "First message must be a subscription"}
+            )
+            await websocket.close()
+            return
+
+        provider = data.get("provider")
+
+        if provider == "skypilot":
+            cluster_id = data.get("cluster_id")
+            service_name = data.get("service_name")
+
+            if not cluster_id or not service_name:
+                await websocket.send_json(
+                    {"type": "error", "message": "Missing cluster_id or service_name"}
+                )
+                await websocket.close()
+                return
+
+            logger.info(
+                f"Streaming logs for SkyPilot cluster {cluster_id}, service {service_name}"
+            )
+
+            # Start streaming process
+            # Use 'sky exec' to tail docker logs
+            cmd = [
+                "sky",
+                "exec",
+                cluster_id,
+                "--",
+                f"docker logs --tail 100 -f {service_name}",
+            ]
+
+            import asyncio
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+
+            async def read_logs():
+                try:
+                    while True:
+                        line = await process.stdout.readline()
+                        if not line:
+                            break
+                        await websocket.send_json(
+                            {"type": "log", "data": line.decode().strip()}
+                        )
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error reading logs: {e}")
+
+            stream_task = asyncio.create_task(read_logs())
+
+            # Wait for client to close or process to end
+            while True:
+                # Keep connection alive and wait for client messages (like close)
+                try:
+                    await websocket.receive_text()
+                except WebSocketDisconnect:
+                    break
+
+        else:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": f"Provider {provider} not supported for direct streaming",
+                }
+            )
+            await websocket.close()
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except:
+            pass
+    finally:
+        if stream_task:
+            stream_task.cancel()
+        if process and process.returncode is None:
+            try:
+                process.terminate()
+            except:
+                pass
+        logger.info("WebSocket connection closed")

@@ -90,6 +90,160 @@ class ModelDeploymentWorker:
         pool = await self.pools.get(d["pool_id"])
         resources_required = await self.inventory.get_resource_requirement(d["pool_id"])
 
+        # Get adapter and capabilities early
+        adapter = None
+        capabilities = None
+        if pool:
+            try:
+                adapter = get_adapter(pool["provider"])
+                capabilities = adapter.get_capabilities()
+            except Exception as e:
+                log.warning(f"Could not get adapter for {pool['provider']}: {e}")
+
+        # Check if this is a cluster-based pool (e.g., SkyPilot)
+        is_cluster_pool = pool and pool.get("pool_type") == "cluster"
+        cluster_id = pool.get("cluster_id") if pool else None
+
+        node_spec = None
+
+        # ------------------------------------
+        # CLUSTER-BASED DEPLOYMENT (SkyPilot)
+        # ------------------------------------
+        if (
+            is_cluster_pool
+            and cluster_id
+            and adapter
+            and capabilities
+            and capabilities.supports_cluster_mode
+        ):
+            try:
+                log.info(f"Deploying to cluster-based pool: cluster_id={cluster_id}")
+
+                await self.deployments.update_state(deployment_id, "PROVISIONING")
+
+                # Build service configuration from deployment config
+                metadata = {}
+                if d.get("configuration"):
+                    import json
+
+                    config = d["configuration"]
+                    if isinstance(config, str):
+                        try:
+                            config = json.loads(config)
+                        except json.JSONDecodeError:
+                            config = {}
+                    metadata = config
+
+                if d.get("inference_model"):
+                    metadata["model_id"] = d["inference_model"]
+                if d.get("model_name"):
+                    metadata["model_name"] = d["model_name"]
+                if d.get("engine"):
+                    metadata["engine"] = d["engine"]
+
+                # Get image from metadata or use default
+                image = metadata.get("image", "vllm/vllm:latest")
+
+                # Prepare ports (handle both 'ports' and 'expose' keys)
+                ports = metadata.get("ports") or metadata.get("expose") or [{"port": 8000, "type": "http"}]
+
+                # Prepare environment variables
+                env = metadata.get("env", {})
+                if d.get("model_name"):
+                    env["MODEL_NAME"] = d["model_name"]
+
+                # Deploy service on cluster
+                service_name = f"deploy-{deployment_id.hex[:8]}"
+                expose_url = await adapter.deploy_service(
+                    cluster_id=cluster_id,
+                    service_name=service_name,
+                    image=image,
+                    ports=ports,
+                    env=env,
+                    cmd=metadata.get("cmd"),
+                    provider_credential_name=pool.get("provider_credential_name"),
+                )
+
+                log.info(
+                    f"Deployed service {service_name} on cluster {cluster_id}, URL: {expose_url}"
+                )
+
+                if expose_url:
+                    await self.deployments.update_endpoint(
+                        deployment_id=deployment_id,
+                        endpoint=expose_url,
+                        model_name=d.get("model_name"),
+                    )
+
+                # Resolve real cluster specs from adapter
+                cluster_status = await adapter.get_cluster_status(
+                    cluster_id=cluster_id,
+                    provider_credential_name=pool.get("provider_credential_name"),
+                )
+
+                # GPU type specs for fallback (per GPU)
+                GPU_TYPE_SPECS = {
+                    "A100": {"vcpu": 12, "ram_gb": 85},
+                    "A100-80GB": {"vcpu": 12, "ram_gb": 85},
+                    "A10G": {"vcpu": 4, "ram_gb": 16},
+                    "T4": {"vcpu": 4, "ram_gb": 16},
+                    "L4": {"vcpu": 8, "ram_gb": 32},
+                    "V100": {"vcpu": 8, "ram_gb": 61},
+                    "H100": {"vcpu": 26, "ram_gb": 200},
+                }
+                gpu_type = (pool.get("allowed_gpu_types") or [""])[0]
+                gpu_count = pool.get("gpu_count") or 1
+                type_specs = GPU_TYPE_SPECS.get(gpu_type, {"vcpu": 8, "ram_gb": 32})
+                cluster_vcpu = type_specs["vcpu"] * gpu_count
+                cluster_ram = type_specs["ram_gb"] * gpu_count
+
+                # Register service in inventory (not a real node, but tracks the deployment)
+                node_id = await self.inventory.register_node(
+                    pool_id=d["pool_id"],
+                    provider=pool["provider"],
+                    provider_instance_id=f"{cluster_id}/{service_name}",  # Composite ID
+                    provider_resource_id=None,
+                    hostname=cluster_status.get("head_ip") or cluster_id,
+                    gpu_total=gpu_count,
+                    vcpu_total=cluster_vcpu,
+                    ram_gb_total=cluster_ram,
+                    state="ready",
+                    node_class="cluster",
+                    metadata={
+                        "service_name": service_name,
+                        "cluster_id": cluster_id,
+                        "image": image,
+                    },
+                    expose_url=expose_url,
+                )
+
+                await self.deployments.attach_runtime(
+                    deployment_id=deployment_id,
+                    allocation_ids=[],
+                    node_ids=[node_id] if node_id else [],
+                    runtime=pool["provider"],
+                )
+
+                await self.deployments.update_state(deployment_id, "RUNNING")
+                log.info(
+                    f"Cluster-based deployment {deployment_id} is RUNNING on cluster {cluster_id}"
+                )
+                return
+
+            except Exception as e:
+                log.error(f"Cluster-based deployment failed for {deployment_id}: {e}")
+                await self.deployments.update_state(
+                    deployment_id,
+                    "FAILED",
+                    error_message=f"Cluster deployment failed: {str(e)}",
+                )
+                return
+
+        # ------------------------------------
+        # JOB-BASED DEPLOYMENT (Nosana, Akash) or PLACEMENT
+        # ------------------------------------
+
+        node_spec = None
         try:
             # Determine resource needs (default to full node if not specified, or hardcoded fallback)
             vcpu_req = resources_required["vcpu_total"] if resources_required else 8
@@ -243,27 +397,27 @@ class ModelDeploymentWorker:
                     expose_url=expose_url,
                 )
 
+                # Attach node to deployment so terminate handler can find it
+                if node_id:
+                    await self.deployments.attach_runtime(
+                        deployment_id=deployment_id,
+                        allocation_ids=[],
+                        node_ids=[node_id],
+                        runtime=pool["provider"],
+                    )
+                    log.info(
+                        f"Deployment {deployment_id} on {pool['provider']} attached node_id {node_id}."
+                    )
+                else:
+                    log.warning(
+                        f"Deployment {deployment_id} on {pool['provider']} "
+                        f"has no node_id returned from register_node."
+                    )
+
                 await self.deployments.update_state(deployment_id, "RUNNING")
 
                 # For ephemeral providers (DePIN, spot instances), deployment is complete once provisioned
-                # Attach the node_id so terminate handler can find the job to stop
                 if capabilities.is_ephemeral:
-                    if node_id:
-                        await self.deployments.attach_runtime(
-                            deployment_id=deployment_id,
-                            allocation_ids=[],
-                            node_ids=[node_id],
-                            runtime=pool["provider"],
-                        )
-                        log.info(
-                            f"Ephemeral deployment {deployment_id} on {pool['provider']} is RUNNING. "
-                            f"Attached node_id {node_id}."
-                        )
-                    else:
-                        log.warning(
-                            f"Ephemeral deployment {deployment_id} on {pool['provider']} is RUNNING "
-                            f"but no node_id returned from register_node."
-                        )
                     return
 
             # -------- PLACEMENT --------
@@ -338,11 +492,43 @@ class ModelDeploymentWorker:
 
         except Exception as e:
             log.error(f"Unhandled error during provisioning for {deployment_id}: {e}")
-            await self.deployments.update_state(
-                deployment_id,
-                "FAILED",
-                error_message=str(e),
-            )
+
+            # Cleanup: if we provisioned a node but failed afterwards (e.g. DB error),
+            # deprovision the cloud resources to avoid orphaned VMs.
+            if node_spec and node_spec.get("provider_instance_id"):
+                try:
+                    cleanup_adapter = get_adapter(pool["provider"])
+                    log.info(
+                        f"Cleaning up orphaned node {node_spec['provider_instance_id']} "
+                        f"after provisioning failure for {deployment_id}"
+                    )
+                    await cleanup_adapter.deprovision_node(
+                        provider_instance_id=node_spec["provider_instance_id"],
+                        provider_credential_name=pool.get("provider_credential_name"),
+                    )
+                except Exception as cleanup_err:
+                    log.warning(
+                        f"Failed to cleanup orphaned node for {deployment_id}: {cleanup_err}"
+                    )
+
+            # Only mark as FAILED if the deployment hasn't moved to a terminal state
+            # (e.g. terminate handler may have already set STOPPED/TERMINATED)
+            d_current = await self.deployments.get(deployment_id)
+            if d_current and d_current["state"] not in (
+                "STOPPED",
+                "TERMINATED",
+                "TERMINATING",
+            ):
+                await self.deployments.update_state(
+                    deployment_id,
+                    "FAILED",
+                    error_message=str(e),
+                )
+            else:
+                log.info(
+                    f"Skipping FAILED state update for {deployment_id} — "
+                    f"already in terminal state: {d_current['state'] if d_current else 'deleted'}"
+                )
             raise e
 
     async def handle_terminate_requested(self, deployment_id: UUID):
@@ -352,6 +538,18 @@ class ModelDeploymentWorker:
 
         if d["state"] != "TERMINATING":
             return
+
+        # Get pool info to check if it's a cluster-based pool
+        pool = None
+        is_cluster_pool = False
+        cluster_id = None
+        try:
+            pool = await self.pools.get(d["pool_id"])
+            if pool:
+                is_cluster_pool = pool.get("pool_type") == "cluster"
+                cluster_id = pool.get("cluster_id")
+        except Exception:
+            pass
 
         # ------------------------------------
         # 1. STOP RUNTIME (External providers / vLLM / etc)
@@ -371,13 +569,36 @@ class ModelDeploymentWorker:
                         except Exception:
                             metadata = {}
 
-                    log.info(f"Deprovisioning {node['provider']} node {node_id}")
-                    await adapter.deprovision_node(
-                        provider_instance_id=node["provider_instance_id"],
-                        provider_credential_name=metadata.get(
-                            "provider_credential_name"
-                        ),
-                    )
+                    # Check if this is a cluster-based deployment
+                    service_name = metadata.get("service_name") if metadata else None
+
+                    if is_cluster_pool and service_name and cluster_id:
+                        # For cluster-based pools: stop the service but keep the cluster
+                        log.info(
+                            f"Stopping service {service_name} on cluster {cluster_id}"
+                        )
+                        try:
+                            await adapter.stop_service(
+                                cluster_id=cluster_id,
+                                service_name=service_name,
+                                provider_credential_name=metadata.get(
+                                    "provider_credential_name"
+                                ),
+                            )
+                            log.info(
+                                f"Stopped service {service_name} on cluster {cluster_id}"
+                            )
+                        except Exception as e:
+                            log.warning(f"Failed to stop service {service_name}: {e}")
+                    else:
+                        # For job-based pools: deprovision the node
+                        log.info(f"Deprovisioning {node['provider']} node {node_id}")
+                        await adapter.deprovision_node(
+                            provider_instance_id=node["provider_instance_id"],
+                            provider_credential_name=metadata.get(
+                                "provider_credential_name"
+                            ),
+                        )
 
         log.info(f"Stopped runtime for deployment {deployment_id}")
 
@@ -400,11 +621,13 @@ class ModelDeploymentWorker:
 
                 # Use adapter capabilities to determine if ephemeral
                 is_ephemeral = False
+                is_cluster = False
                 if node:
                     try:
                         adapter = get_adapter(node["provider"])
                         capabilities = adapter.get_capabilities()
                         is_ephemeral = capabilities.is_ephemeral
+                        is_cluster = capabilities.supports_cluster_mode
                     except Exception as e:
                         log.warning(
                             f"Could not get capabilities for {node['provider']}: {e}"
@@ -412,7 +635,15 @@ class ModelDeploymentWorker:
                         # Fallback: check if provider is known to be ephemeral
                         is_ephemeral = node.get("provider") in ["nosana", "akash"]
 
-                if is_ephemeral:
+                # For cluster-based deployments: always recycle (cluster stays alive)
+                # For ephemeral job-based: mark as terminated
+                # For persistent: recycle
+                if is_cluster:
+                    await self.inventory.recycle_node(node_id)
+                    log.info(
+                        f"Recycled cluster service node {node_id} (cluster remains alive)"
+                    )
+                elif is_ephemeral:
                     await self.inventory.mark_terminated(node_id)
                     log.info(f"Terminated ephemeral node {node_id}")
                 else:

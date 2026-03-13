@@ -43,6 +43,9 @@ class ProviderCapabilities:
     # Integration
     requires_sidecar: bool = False
     supports_direct_provisioning: bool = True
+    supports_cluster_mode: bool = (
+        False  # Persistent cluster (SkyPilot) vs job-based (Nosana)
+    )
 
     # Pricing
     pricing_model: PricingModel = PricingModel.FIXED
@@ -63,6 +66,7 @@ class ProviderCapabilities:
             "polling_interval_seconds": self.polling_interval_seconds,
             "requires_sidecar": self.requires_sidecar,
             "supports_direct_provisioning": self.supports_direct_provisioning,
+            "supports_cluster_mode": self.supports_cluster_mode,
             "pricing_model": self.pricing_model.value,
             "features": self.features,
         }
@@ -183,6 +187,109 @@ class ProviderAdapter(ABC):
     ) -> None:
         """Deprovision and clean up the compute node."""
         raise NotImplementedError
+
+    # -------------------------------------------------
+    # CLUSTER MODE (Optional - for SkyPilot-style persistent clusters)
+    # -------------------------------------------------
+    async def provision_cluster(
+        self,
+        *,
+        cluster_name: str,
+        gpu_type: str,
+        gpu_count: int = 1,
+        region: Optional[str] = None,
+        use_spot: bool = False,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
+        """
+        Provision a persistent cluster (for cluster-based providers like SkyPilot).
+
+        This is called when creating a pool, not when starting a deployment.
+        The cluster persists until the pool is deleted.
+
+        Args:
+            cluster_name: Unique name for the cluster
+            gpu_type: GPU type (A100, A10G, etc.)
+            gpu_count: Number of GPUs to provision (default 1)
+            region: Cloud region
+            use_spot: Use spot instances
+            provider_credential_name: Named credential to use
+
+        Returns:
+            Dict with cluster info including cluster_id, hostname, etc.
+        """
+        raise NotImplementedError("Cluster mode not supported")
+
+    async def terminate_cluster(
+        self,
+        *,
+        cluster_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
+        """
+        Terminate a persistent cluster (for cluster-based providers like SkyPilot).
+
+        This is called when deleting a pool.
+        """
+        raise NotImplementedError("Cluster mode not supported")
+
+    async def deploy_service(
+        self,
+        *,
+        cluster_id: str,
+        service_name: str,
+        image: str,
+        ports: List[Dict],
+        env: Optional[Dict] = None,
+        cmd: Optional[List[str]] = None,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """
+        Deploy a service on an existing cluster (for cluster-based providers).
+
+        Called when starting a deployment on a cluster-based pool.
+
+        Args:
+            cluster_id: The cluster to deploy to
+            service_name: Unique name for this service
+            image: Docker image to run
+            ports: List of ports to expose [{"port": 9000, "type": "http"}]
+            env: Environment variables
+            cmd: Command to run
+            provider_credential_name: Named credential
+
+        Returns:
+            Service URL/endpoint
+        """
+        raise NotImplementedError("Cluster mode not supported")
+
+    async def stop_service(
+        self,
+        *,
+        cluster_id: str,
+        service_name: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> None:
+        """
+        Stop a service on a cluster (for cluster-based providers).
+
+        Called when stopping a deployment. The cluster remains alive.
+        """
+        raise NotImplementedError("Cluster mode not supported")
+
+    async def get_cluster_status(
+        self,
+        *,
+        cluster_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
+        """
+        Get the status of a cluster.
+
+        Returns:
+            Dict with cluster state, resources, etc.
+        """
+        raise NotImplementedError("Cluster mode not supported")
 
     # -------------------------------------------------
     # LOGS

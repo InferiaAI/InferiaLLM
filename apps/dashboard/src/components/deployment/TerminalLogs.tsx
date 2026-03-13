@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { computeApi, WEB_SOCKET_URL } from "@/lib/api"
+import { computeApi, WEB_SOCKET_URL, API_GATEWAY_URL } from "@/lib/api"
 import { Terminal, RefreshCcw, Wifi, WifiOff, Trash2, ChevronDown, Download, Monitor } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -115,6 +115,28 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                 } catch (e) {
                     socketUrl = WEB_SOCKET_URL;
                 }
+            } else if (socketUrl.startsWith('/')) {
+                // Handle relative WS URL by prepending the API_GATEWAY_URL mapped to ws/wss
+                try {
+                    const gwUrl = new URL(API_GATEWAY_URL);
+                    gwUrl.protocol = gwUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+                    socketUrl = gwUrl.origin + socketUrl;
+                } catch (e) {
+                    console.error("Failed to parse API_GATEWAY_URL", e);
+                }
+            }
+
+            // Append JWT token for gateway authentication
+            const token = localStorage.getItem("token");
+            if (token) {
+                try {
+                    const parsedUrl = new URL(socketUrl.startsWith('ws') ? socketUrl : `ws://${socketUrl}`);
+                    parsedUrl.searchParams.append("token", token);
+                    socketUrl = parsedUrl.toString();
+                } catch (e) {
+                    // Fallback
+                    socketUrl += (socketUrl.includes('?') ? '&' : '?') + 'token=' + token;
+                }
             }
 
             const ws = new WebSocket(socketUrl)
@@ -169,10 +191,27 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
     }
 
     useEffect(() => {
-        connect()
+        let cancelled = false
+        const prevWs = wsRef.current
+        if (prevWs) {
+            prevWs.close()
+            wsRef.current = null
+        }
+
+        const doConnect = async () => {
+            await connect()
+            if (cancelled && wsRef.current) {
+                wsRef.current.close()
+                wsRef.current = null
+            }
+        }
+        doConnect()
+
         return () => {
+            cancelled = true
             if (wsRef.current) {
                 wsRef.current.close()
+                wsRef.current = null
             }
         }
     }, [deploymentId])

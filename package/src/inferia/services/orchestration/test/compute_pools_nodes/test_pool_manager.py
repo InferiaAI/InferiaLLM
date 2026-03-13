@@ -54,6 +54,9 @@ class TestPoolManager:
         request.provider_pool_id = "pool-ext"
         request.scheduling_policy_json = ""
         request.provider_credential_name = ""
+        request.region_constraint = []
+        request.use_spot = False
+        request.gpu_count = 1
 
         ctx = make_mock_context()
         response = await pool_service.RegisterPool(request, ctx)
@@ -75,6 +78,9 @@ class TestPoolManager:
         request.provider_pool_id = "pool-ext"
         request.scheduling_policy_json = ""
         request.provider_credential_name = "bad-cred"
+        request.region_constraint = []
+        request.use_spot = False
+        request.gpu_count = 1
 
         ctx = make_mock_context()
         with pytest.raises(Exception, match="gRPC abort"):
@@ -95,6 +101,9 @@ class TestPoolManager:
     async def test_delete_pool_with_deployments_cascades(self, pool_service):
         """Deleting pool triggers cascade cleanup of deployments."""
         pool_id = uuid4()
+        pool_service.repo.get = AsyncMock(
+            return_value={"id": pool_id, "lifecycle_state": "terminated"}
+        )
         pool_service.deployment_repo.list = AsyncMock(
             return_value=[
                 {"deployment_id": uuid4(), "state": "STOPPED"},

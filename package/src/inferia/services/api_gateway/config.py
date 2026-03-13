@@ -19,6 +19,12 @@ class AWSConfig(BaseModel):
     region: str = "ap-south-1"
 
 
+class GCPConfig(BaseModel):
+    project_id: Optional[str] = None
+    region: str = "us-central1"
+    service_account_json: Optional[str] = None
+
+
 class ChromaConfig(BaseModel):
     api_key: Optional[str] = None
     tenant: Optional[str] = None
@@ -71,6 +77,7 @@ class AkashConfig(BaseModel):
 
 class CloudConfig(BaseModel):
     aws: AWSConfig = Field(default_factory=AWSConfig)
+    gcp: GCPConfig = Field(default_factory=GCPConfig)
 
 
 class VectorDBConfig(BaseModel):

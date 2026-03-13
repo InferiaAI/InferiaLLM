@@ -47,6 +47,13 @@ class ProviderSettings(BaseSettings):
         default="", validation_alias="AWS_SECRET_ACCESS_KEY"
     )
 
+    # GCP Configuration
+    gcp_project_id: str = Field(default="", validation_alias="GCP_PROJECT_ID")
+    gcp_region: str = Field(default="us-central1", validation_alias="GCP_REGION")
+    gcp_service_account_json: str = Field(
+        default="", validation_alias="GCP_SERVICE_ACCOUNT_JSON"
+    )
+
 
 class Settings(BaseSettings):
     """Application settings."""
@@ -144,6 +151,11 @@ class Settings(BaseSettings):
             },
             "aws": {
                 "region": getattr(self, "aws_region", "us-east-1"),
+            },
+            "gcp": {
+                "project_id": getattr(self, "gcp_project_id", ""),
+                "region": getattr(self, "gcp_region", "us-central1"),
+                "service_account_json": getattr(self, "gcp_service_account_json", ""),
             },
         }
         return provider_configs.get(provider, {})

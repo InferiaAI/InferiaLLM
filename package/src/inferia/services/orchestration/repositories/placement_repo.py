@@ -43,9 +43,9 @@ class PlacementRepository:
             AND (ci.vcpu_total - ci.vcpu_allocated) >= $3
             AND (ci.ram_gb_total - ci.ram_gb_allocated) >= $4
             AND (
-                (ci.last_heartbeat IS NOT NULL AND ci.last_heartbeat > now() - INTERVAL '2 minutes')
-                OR 
-                (ci.last_heartbeat IS NULL AND ci.created_at > now() - INTERVAL '2 minutes')
+                COALESCE(ci.node_class, '') = 'cluster'
+                OR (ci.last_heartbeat IS NOT NULL AND ci.last_heartbeat > now() - INTERVAL '2 minutes')
+                OR (ci.last_heartbeat IS NULL AND ci.created_at > now() - INTERVAL '2 minutes')
             )
         """
 

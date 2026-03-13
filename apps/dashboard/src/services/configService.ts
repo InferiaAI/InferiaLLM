@@ -6,6 +6,12 @@ export interface AWSConfig {
     region?: string;
 }
 
+export interface GCPConfig {
+    project_id?: string;
+    service_account_json?: string;
+    region?: string;
+}
+
 export interface ChromaConfig {
     api_key?: string;
     tenant?: string;
@@ -40,6 +46,7 @@ export interface AkashConfig {
 
 export interface CloudConfig {
     aws: AWSConfig;
+    gcp: GCPConfig;
 }
 
 export interface VectorDBConfig {
@@ -69,7 +76,7 @@ export interface ProviderConfigResponse {
 
 // Initial state helper
 export const initialProviderConfig: ProvidersConfig = {
-    cloud: { aws: {} },
+    cloud: { aws: {}, gcp: {} },
     vectordb: { chroma: { is_local: true } },
     guardrails: { groq: {}, lakera: {} },
     depin: { nosana: {}, akash: {} }

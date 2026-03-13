@@ -42,6 +42,7 @@ interface PoolRecord {
   pool_name: string;
   provider: string;
   is_active: boolean;
+  lifecycle_state?: string;
 }
 
 interface PoolsResponse {
@@ -248,7 +249,8 @@ export default function Overview() {
   const runningDeployments = deploymentList.filter((d) =>
     ["RUNNING", "READY", "PENDING", "DEPLOYING"].includes((d.state || "").toUpperCase())
   );
-  const healthyPools = poolList.filter((pool) => pool.is_active).length;
+  const isPoolHealthy = (pool: PoolRecord) => pool.is_active && !["terminated", "terminating"].includes((pool.lifecycle_state || "").toLowerCase());
+  const healthyPools = poolList.filter(isPoolHealthy).length;
   const requestCount = recentLogs?.length ?? 0;
   const recentTokenCount = (recentLogs ?? []).reduce(
     (sum, log) => sum + log.prompt_tokens + log.completion_tokens,
@@ -534,12 +536,14 @@ export default function Overview() {
                   <span
                     className={cn(
                       "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold",
-                      pool.is_active
+                      isPoolHealthy(pool)
                         ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                        : "bg-muted text-muted-foreground"
+                        : ["terminated", "terminating"].includes((pool.lifecycle_state || "").toLowerCase())
+                          ? "bg-red-500/10 text-red-700 dark:text-red-400"
+                          : "bg-muted text-muted-foreground"
                     )}
                   >
-                    {pool.is_active ? "Healthy" : "Inactive"}
+                    {isPoolHealthy(pool) ? "Healthy" : ["terminated", "terminating"].includes((pool.lifecycle_state || "").toLowerCase()) ? "Terminated" : "Inactive"}
                   </span>
                 </div>
               ))
