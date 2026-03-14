@@ -65,6 +65,27 @@ class ConfigManager(BaseConfigManager):
         self._update_local_settings(final_config)
         logger.info("Configuration saved to database and local settings updated.")
 
+    async def _force_replace_config(self, db: AsyncSession, config: Dict[str, Any]):
+        """Replace config entirely (no merging) - used for deletions."""
+        stmt = select(SystemSetting).where(SystemSetting.key == CONFIG_KEY)
+        result = await db.execute(stmt)
+        setting = result.scalars().first()
+
+        if setting:
+            setting.value = config
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(setting, "value")
+        else:
+            setting = SystemSetting(key=CONFIG_KEY, value=config)
+            db.add(setting)
+
+        await db.commit()
+        await db.refresh(setting)
+
+        self._update_local_settings(config)
+        logger.info("Configuration replaced in database and local settings updated.")
+
     def _mask_secret(self, value: Optional[str]) -> Optional[str]:
         if not value or len(value) < 8:
             return value
@@ -113,6 +134,7 @@ class ConfigManager(BaseConfigManager):
         1. Preserves unmasked secrets if incoming value is masked.
         2. Preserves existing items if missing in new list (additive mode for safety).
         """
+
         # Dictionary for fast lookup by name (or name+provider for universal)
         def get_id(item: Dict[str, Any]) -> str:
             return f"{item.get('provider', '')}:{item.get('name', '')}"
@@ -126,7 +148,11 @@ class ConfigManager(BaseConfigManager):
                 # Merge dict contents to handle masked keys/values
                 for k, v in new_item.items():
                     # Handle specific secret keys: 'key' for nosana, 'value' for universal, 'mnemonic' for akash
-                    if k in ["key", "value", "mnemonic"] and isinstance(v, str) and "..." in v:
+                    if (
+                        k in ["key", "value", "mnemonic"]
+                        and isinstance(v, str)
+                        and "..." in v
+                    ):
                         existing_val = existing_item.get(k)
                         if existing_val and v == self._mask_secret(existing_val):
                             continue  # Skip updating this masked field

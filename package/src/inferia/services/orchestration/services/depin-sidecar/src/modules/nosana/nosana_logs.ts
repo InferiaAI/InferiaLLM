@@ -121,6 +121,7 @@ export class LogStreamer extends EventEmitter {
                         header: auth
                     };
 
+                    console.log(`[LogStreamer] Sending subscribe message:`, JSON.stringify(subscribeMessage, null, 2).substring(0, 500));
                     console.log(`[LogStreamer] Subscribing to logs for job ${jobAddress} (wallet: ${walletAddress})`);
                     this.ws?.send(JSON.stringify(subscribeMessage));
                     resolve();
@@ -131,18 +132,30 @@ export class LogStreamer extends EventEmitter {
             });
 
             this.ws.on('message', (data) => {
+                console.log(`[LogStreamer] Raw message received: ${data.toString().substring(0, 200)}`);
                 try {
                     const message = JSON.parse(data.toString());
 
+                    console.log(`[LogStreamer] Parsed message path: ${message.path}, keys: ${Object.keys(message).join(', ')}`);
+                    
                     if (message.path === 'log') {
                         // Parse the log data
                         const logData = JSON.parse(message.data);
                         this.emit('log', logData);
                     } else if (message.error) {
                         this.emit('error', new Error(message.error));
+                    } else if (message.data) {
+                        // Try parsing as log data directly
+                        try {
+                            const logData = JSON.parse(message.data);
+                            this.emit('log', logData);
+                        } catch {
+                            this.emit('log', { raw: message.data });
+                        }
                     }
                 } catch (err) {
                     // Raw log line
+                    console.log(`[LogStreamer] Raw non-JSON message: ${data.toString().substring(0, 100)}`);
                     this.emit('log', { raw: data.toString() });
                 }
             });

@@ -11,6 +11,7 @@ const MIN_RUNTIME_FOR_REDEPLOY_MS = 20 * 60 * 1000;
 
 // Nosana Dashboard API constants
 const NOSANA_API_BASE_URL = process.env.NOSANA_API_URL || 'https://dashboard.k8s.prd.nos.ci/api';
+const NOSANA_CLIENT_MANAGER_URL = process.env.NOSANA_CLIENT_MANAGER_URL || 'https://client-manager.k8s.prd.nosana.com';
 const SIGN_MESSAGE = 'Hello Nosana Node!';
 
 // Deployment strategy types (from Swagger schema)
@@ -213,26 +214,125 @@ export class NosanaService {
     /**
      * Generate authentication header for node communication in API mode.
      * Uses the SDK's deployment.generateAuthHeader() for proper signed headers.
-     * The API returns a raw signature — we format it as MESSAGE:SIGNATURE
-     * which is what Nosana nodes expect for authentication.
      * @param deploymentId - The Nosana deployment ID to get auth header for
      */
     async generateApiNodeAuthHeader(deploymentId: string): Promise<{ header: string; userAddress: string }> {
-        const result = await this.getDeploymentAuthHeader(deploymentId);
-
-        // The /deployments/{deployment}/header endpoint returns just the raw signature.
-        // Nosana nodes expect auth in MESSAGE:SIGNATURE format.
-        // If the header already contains ':', it's already formatted; otherwise prepend the message.
-        let formattedHeader = result.header;
-        if (!formattedHeader.includes(':')) {
-            formattedHeader = `${SIGN_MESSAGE}:${formattedHeader}`;
-            console.log(`[API Auth] Formatted header as MESSAGE:SIGNATURE (message: "${SIGN_MESSAGE}")`);
+        // Check cache
+        const now = Date.now();
+        const cacheKey = `deployment:${deploymentId}`;
+        if (
+            this.cachedApiAuth &&
+            this.cachedApiAuth.message === cacheKey &&
+            (now - this.cachedApiAuth.timestamp) < this.API_AUTH_CACHE_TTL_MS
+        ) {
+            console.log(`[API Auth] Using cached header for deployment ${deploymentId}`);
+            return { 
+                header: this.cachedApiAuth.signature, 
+                userAddress: this.cachedApiAuth.userAddress 
+            };
         }
 
-        return {
-            header: formattedHeader,
-            userAddress: result.owner
-        };
+        console.log(`[API Auth] Requesting auth header for deployment ${deploymentId} via SDK...`);
+        
+        try {
+            // Try using the SDK's deployment.generateAuthHeader() method
+            const deployment = await this.client.api.deployments.get(deploymentId);
+            const header = await (deployment as any).generateAuthHeader();
+            const owner = (deployment as any).owner || (deployment as any).vault || '';
+            
+            console.log(`[API Auth] SDK generateAuthHeader returned (first 40 chars): ${String(header).substring(0, 40)}...`);
+            
+            // Format as MESSAGE:SIGNATURE if needed
+            let formattedHeader = header;
+            if (!formattedHeader.includes(':')) {
+                formattedHeader = `${SIGN_MESSAGE}:${formattedHeader}`;
+            }
+
+            // Cache
+            this.cachedApiAuth = {
+                signature: formattedHeader,
+                message: cacheKey,
+                userAddress: owner,
+                timestamp: now
+            };
+
+            return {
+                header: formattedHeader,
+                userAddress: owner
+            };
+        } catch (error: any) {
+            console.error(`[API Auth] SDK method failed:`, error.message);
+            
+            // Fallback to external signature endpoint
+            console.log(`[API Auth] Falling back to external signature endpoint...`);
+            return this.generateExternalSignatureAuth(deploymentId);
+        }
+    }
+
+    /**
+     * Fallback: Use external signature endpoint
+     */
+    async generateExternalSignatureAuth(deploymentId: string): Promise<{ header: string; userAddress: string }> {
+        if (!this.apiKey) {
+            throw new Error('API key not configured');
+        }
+
+        const now = Date.now();
+        const cacheKey = `deployment:${deploymentId}`;
+
+        console.log(`[API Auth] Requesting external signature for deployment ${deploymentId}...`);
+
+        try {
+            const response = await fetch(`${NOSANA_CLIENT_MANAGER_URL}/auth/sign-message/external`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json',
+                    'accept': '*/*',
+                },
+                body: JSON.stringify({
+                    message: SIGN_MESSAGE,
+                    includeTime: false
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`External signature error (${response.status}): ${errorText}`);
+            }
+
+            const result = await response.json() as { signature: string; message?: string; userAddress?: string };
+            
+            console.log(`[API Auth] Received external signature (first 20 chars): ${result.signature.substring(0, 20)}...`);
+
+            let userAddress = result.userAddress || '';
+            if (!userAddress && deploymentId) {
+                try {
+                    const deployment = await this.getDeployment(deploymentId);
+                    userAddress = deployment.owner || deployment.vault || '';
+                } catch (e) {
+                    console.warn(`[API Auth] Could not fetch deployment owner:`, e);
+                }
+            }
+
+            const formattedHeader = `${SIGN_MESSAGE}:${result.signature}`;
+
+            this.cachedApiAuth = {
+                signature: result.signature,
+                message: cacheKey,
+                userAddress: userAddress,
+                timestamp: now
+            };
+
+            console.log(`[API Auth] Generated auth header for deployment ${deploymentId} (user: ${userAddress})`);
+            return {
+                header: formattedHeader,
+                userAddress: userAddress
+            };
+        } catch (error: any) {
+            console.error(`[API Auth] Failed to get external signature:`, error.message);
+            throw error;
+        }
     }
 
     /**
@@ -888,16 +988,24 @@ export class NosanaService {
                             const jobsResult = await this.getDeploymentJobs(idToQuery);
                             if (jobsResult.jobs.length > 0) {
                                 const latestJob = jobsResult.jobs[0];
+                                // The job field should be the Solana job address (~43 chars)
                                 activeJobAddress = latestJob.job;
+                                console.log(`[getJob] Found active job: ${activeJobAddress} (length: ${activeJobAddress?.length})`);
                                 try {
                                     const jobDetail = await this.apiRequest<any>(`/deployments/${idToQuery}/jobs/${activeJobAddress}`);
                                     if (jobDetail && jobDetail.node) {
                                         nodeAddress = jobDetail.node;
+                                        console.log(`[getJob] Found node: ${nodeAddress}`);
                                     }
-                                } catch (err) { }
+                                } catch (err) { 
+                                    console.log(`[getJob] Could not get job detail:`, err);
+                                }
+                            } else {
+                                console.log(`[getJob] No running jobs found for deployment ${idToQuery}`);
                             }
                         } catch (e) {
                             // Jobs might not be available yet
+                            console.log(`[getJob] Could not get deployment jobs:`, e);
                         }
 
                         // Map deployment status to a job-like state for backward compat
