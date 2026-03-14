@@ -327,27 +327,23 @@ async def get_config(
         # Provide explicit disabled defaults for core features to avoid UI confusion
         default_config = {"enabled": False}
         if policy_type == "guardrail":
-            default_config.update({
-                "guardrail_engine": "llm-guard",
-                "input_scanners": [],
-                "output_scanners": [],
-                "toxicity_threshold": 0.5
-            })
+            default_config.update(
+                {
+                    "guardrail_engine": "llm-guard",
+                    "input_scanners": [],
+                    "output_scanners": [],
+                    "toxicity_threshold": 0.5,
+                }
+            )
         elif policy_type == "rag":
-            default_config.update({
-                "default_collection": "default",
-                "top_k": 3
-            })
+            default_config.update({"default_collection": "default", "top_k": 3})
         elif policy_type == "prompt_template":
-            default_config.update({
-                "template_id": None,
-                "template_vars": {}
-            })
-            
+            default_config.update({"template_id": None, "template_vars": {}})
+
         return ConfigResponse(
-            policy_type=policy_type, 
-            config_json=default_config, 
-            updated_at=utcnow_naive()
+            policy_type=policy_type,
+            config_json=default_config,
+            updated_at=utcnow_naive(),
         )
 
     return policy
@@ -689,7 +685,7 @@ async def delete_provider_credential(
     db_config = {"providers": current_config}
 
     try:
-        await config_manager.save_config(db, db_config)
+        await config_manager._force_replace_config(db, db_config)
         logger.info(f"Deleted credential for {provider}: {credential_name}")
     except Exception as e:
         logger.error(f"Failed to delete credential: {e}")
@@ -831,7 +827,9 @@ async def _cleanup_provider_resources(
                         )
                         await client.delete(f"{orch_url}/deployment/delete/{dep_id}")
                     else:
-                        logger.info(f"Terminating deployment {dep_id} in pool {pool_id}")
+                        logger.info(
+                            f"Terminating deployment {dep_id} in pool {pool_id}"
+                        )
                         await client.post(
                             f"{orch_url}/deployment/terminate",
                             json={"deployment_id": dep_id},
@@ -883,7 +881,9 @@ async def _cleanup_provider_resources(
         # 5. Delete terminated pool
         try:
             logger.info(f"Deleting compute pool {pool_id}")
-            delete_resp = await client.post(f"{orch_url}/deployment/deletepool/{pool_id}")
+            delete_resp = await client.post(
+                f"{orch_url}/deployment/deletepool/{pool_id}"
+            )
             if delete_resp.status_code not in (200, 202):
                 logger.error(
                     f"Failed to delete pool {pool_id}: {delete_resp.status_code} {delete_resp.text}"
@@ -891,4 +891,6 @@ async def _cleanup_provider_resources(
         except Exception as e:
             logger.error(f"Error deleting pool {pool_id}: {e}")
 
-    logger.info(f"Cascade cleanup completed for {provider} credential: {credential_name}")
+    logger.info(
+        f"Cascade cleanup completed for {provider} credential: {credential_name}"
+    )

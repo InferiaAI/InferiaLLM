@@ -1,8 +1,33 @@
 import json
 import logging
 from uuid import UUID
+from cryptography.fernet import Fernet
+
+from inferia.services.orchestration.config import settings
 
 logger = logging.getLogger(__name__)
+
+_encryption_key = settings.secret_encryption_key
+_fernet = Fernet(_encryption_key.encode()) if _encryption_key else None
+
+
+def _decrypt_value(value):
+    """Decrypt the EncryptedJSON value from system_settings."""
+    if not value:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    if isinstance(value, dict) and "data" in value:
+        if _fernet:
+            try:
+                decrypted = _fernet.decrypt(value["data"].encode()).decode()
+                return json.loads(decrypted)
+            except Exception:
+                pass
+    return value
 
 
 class ComputePoolRepository:
@@ -12,7 +37,7 @@ class ComputePoolRepository:
     async def get_provider_config(self, provider: str) -> dict:
         """
         Read provider config from system_settings (shared DB with API Gateway).
-        Returns the config dict for the given provider, or empty dict.
+        Returns the config dict for the provider, or empty dict.
         """
         query = """
         SELECT value FROM system_settings WHERE key = 'providers_config' LIMIT 1
@@ -22,7 +47,9 @@ class ComputePoolRepository:
                 raw = await conn.fetchval(query)
                 if not raw:
                     return {}
-                data = json.loads(raw) if isinstance(raw, str) else raw
+                data = _decrypt_value(raw)
+                if not data or not isinstance(data, dict):
+                    return {}
                 providers = data.get("providers", data)
 
                 # Map provider to config path
@@ -46,16 +73,41 @@ class ComputePoolRepository:
     async def credential_exists(self, provider: str, credential_name: str) -> bool:
         """
         Check if a credential exists for the given provider.
-        This validates against the provider_credentials table.
+
+        Credentials are stored in system_settings (providers_config JSON)
+        by the API Gateway, so we look them up from config first and fall
+        back to the provider_credentials table for forward-compatibility.
         """
+        # 1. Check config-based storage (where the API Gateway actually saves)
+        config = await self.get_provider_config(provider)
+        if config:
+            # Nosana stores keys in api_keys[]; Akash in wallets[]
+            key_lists = [
+                config.get("api_keys", []),
+                config.get("wallets", []),
+            ]
+            for entries in key_lists:
+                for entry in entries:
+                    if entry.get("name") == credential_name and entry.get(
+                        "is_active", True
+                    ):
+                        return True
+            # Also check legacy single-key field (nosana.api_key → name "default")
+            if credential_name == "default" and config.get("api_key"):
+                return True
+
+        # 2. Fall back to provider_credentials table
         query = """
         SELECT EXISTS(
-            SELECT 1 FROM provider_credentials 
+            SELECT 1 FROM provider_credentials
             WHERE provider = $1 AND name = $2 AND is_active = TRUE
         )
         """
-        async with self.db.acquire() as conn:
-            return await conn.fetchval(query, provider, credential_name)
+        try:
+            async with self.db.acquire() as conn:
+                return await conn.fetchval(query, provider, credential_name)
+        except Exception:
+            return False
 
     async def create_pool(self, data: dict):
         query = """
@@ -235,6 +287,7 @@ class ComputePoolRepository:
         """
         async with self.db.acquire() as conn:
             return await conn.fetchval(query, pool_id)
+
     async def set_pool_active(self, pool_id: UUID, is_active: bool):
         """Set the active status of a pool."""
         query = """

@@ -58,7 +58,7 @@ export default function AcceptInvite() {
     try {
       const response = await authService.acceptInvite(token);
       if (response.access_token) {
-        await login(response.access_token);
+        await login(response.access_token, response.refresh_token, response.organizations);
       }
       toast.success("Invitation accepted!");
       navigate("/dashboard");
@@ -80,7 +80,7 @@ export default function AcceptInvite() {
     setProcessing(true);
     try {
       const response = await authService.registerInvite({ token, password });
-      await login(response.access_token);
+      await login(response.access_token, response.refresh_token, response.organizations);
       toast.success("Account created and invitation accepted!");
       navigate("/dashboard");
     } catch (err: unknown) {

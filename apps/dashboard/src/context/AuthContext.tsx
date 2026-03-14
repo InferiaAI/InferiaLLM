@@ -3,7 +3,13 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { authService, type OrganizationBasicInfo } from "@/services/authService";
-import { getToken, setToken, clearToken } from "@/lib/tokenStore";
+import {
+    getToken,
+    setToken,
+    clearToken,
+    getRefreshToken,
+    setRefreshToken,
+} from "@/lib/tokenStore";
 
 interface User {
     user_id: string;
@@ -18,7 +24,11 @@ interface User {
 interface AuthContextType {
     user: User | null;
     isLoading: boolean;
-    login: (token: string) => Promise<void>;
+    login: (
+        accessToken: string,
+        refreshToken: string,
+        organizations?: OrganizationBasicInfo[],
+    ) => Promise<void>;
     logout: () => void;
     refreshUser: () => Promise<void>;
     isAuthenticated: boolean;
@@ -50,22 +60,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     useEffect(() => {
-        // Token lives in memory only — a page refresh means re-login
-        if (getToken()) {
-            fetchUser();
-        } else {
+        const init = async () => {
+            // 1. Access token still in memory (e.g. soft navigation)
+            if (getToken()) {
+                await fetchUser();
+                return;
+            }
+
+            // 2. Page was refreshed — try the refresh token stored in sessionStorage
+            const rt = getRefreshToken();
+            if (rt) {
+                try {
+                    const { data } = await api.post("/auth/refresh", null, {
+                        headers: { Authorization: `Bearer ${rt}` },
+                    });
+                    setToken(data.access_token);
+                    setRefreshToken(data.refresh_token);
+                    await fetchUser();
+                    return;
+                } catch {
+                    // Refresh token expired or invalid — fall through to login
+                    clearToken();
+                }
+            }
+
+            // 3. No usable tokens
             setIsLoading(false);
-        }
+        };
+
+        void init();
     }, []);
 
-    const login = async (token: string) => {
-        setToken(token);
+    const login = async (
+        accessToken: string,
+        refreshToken: string,
+        orgs?: OrganizationBasicInfo[],
+    ) => {
+        setToken(accessToken);
+        setRefreshToken(refreshToken);
+        // Pre-populate organizations from login response to avoid race condition
+        if (orgs?.length) {
+            setOrganizations(orgs);
+        }
         await fetchUser();
         toast.success("Welcome back!");
     };
 
     const logout = () => {
-        clearToken();
+        clearToken(); // also clears refresh token
         setUser(null);
         setOrganizations([]);
         toast.info("Logged out");

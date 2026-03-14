@@ -97,6 +97,10 @@ class Settings(BaseSettings):
 
     internal_api_key: str = Field(default="", validation_alias="INTERNAL_API_KEY")
 
+    secret_encryption_key: str = Field(
+        default="", validation_alias="SECRET_ENCRYPTION_KEY"
+    )
+
     # Ephemeral Provider Failure Detection
     ephemeral_failure_threshold_minutes: int = Field(
         default=10, validation_alias="EPHEMERAL_FAILURE_THRESHOLD_MINUTES"

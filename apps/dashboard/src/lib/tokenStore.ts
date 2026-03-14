@@ -1,14 +1,14 @@
 /**
- * In-memory token store.
+ * Token store.
  *
- * Tokens are held in a closure — never written to localStorage or
- * sessionStorage — so they cannot be stolen by XSS scripts that read
- * the Web Storage API.
- *
- * Trade-off: a page refresh clears the token and the user must
- * re-authenticate.  This is the standard security posture for
- * high-sensitivity admin dashboards.
+ * Access tokens are kept in-memory (safe from XSS localStorage scraping).
+ * Refresh tokens are stored in sessionStorage so they survive page
+ * refreshes but are cleared when the browser tab closes.
  */
+
+const RT_KEY = "_rt";
+
+// ── Access token (in-memory) ────────────────────────────────────────
 
 let _token: string | null = null;
 
@@ -22,4 +22,35 @@ export function setToken(token: string | null): void {
 
 export function clearToken(): void {
   _token = null;
+  clearRefreshToken();
+}
+
+// ── Refresh token (sessionStorage) ──────────────────────────────────
+
+export function getRefreshToken(): string | null {
+  try {
+    return sessionStorage.getItem(RT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setRefreshToken(token: string | null): void {
+  try {
+    if (token) {
+      sessionStorage.setItem(RT_KEY, token);
+    } else {
+      sessionStorage.removeItem(RT_KEY);
+    }
+  } catch {
+    // sessionStorage unavailable (e.g. private browsing quota exceeded)
+  }
+}
+
+export function clearRefreshToken(): void {
+  try {
+    sessionStorage.removeItem(RT_KEY);
+  } catch {
+    // ignore
+  }
 }

@@ -519,6 +519,10 @@ wss.on('connection', (ws: WebSocket) => {
                         // 2. If running, use streamer
                         // Pass Nosana deployment ID for SDK auth header generation
                         const nosanaDeploymentId = (job as any).deploymentId || jobId;
+                        // Get the actual job address (not deployment ID) for log streaming
+                        const nosanaJobAddress = (job as any).jobAddress && (job as any).jobAddress.length >= 43 
+                            ? (job as any).jobAddress 
+                            : jobId;
                         streamer = await service.getLogStreamer(nosanaDeploymentId);
 
                         if (!streamer) {
@@ -599,11 +603,79 @@ wss.on('connection', (ws: WebSocket) => {
                             }
                         });
 
-                        const activeJobAddress = job.jobAddress || jobId;
+                        // Get the actual job address for log streaming (not deployment ID)
+                        // Job addresses are ~43 chars (Solana pubkey), deployment IDs are ~38 chars
+                        // We need to fetch the actual job address from the deployment
+                        const returnedJobAddress = job.jobAddress;
+                        let activeJobAddress = returnedJobAddress;
+                        
+                        // If jobAddress is a deployment ID (short), we need to get the actual job address
+                        if (!activeJobAddress || activeJobAddress.length < 43) {
+                            // Try to get the actual job address from the deployment
+                            console.log(`[WS] Job address is deployment ID, fetching actual job address...`);
+                            try {
+                                const nosanaSvc = getNosanaService(credentialName);
+                                if (nosanaSvc) {
+                                    const jobStatus = await nosanaSvc.getJob(nosanaDeploymentId);
+                                    if (jobStatus.jobAddress && jobStatus.jobAddress.length >= 43) {
+                                        activeJobAddress = jobStatus.jobAddress;
+                                        console.log(`[WS] Resolved actual job address: ${activeJobAddress}`);
+                                    }
+                                }
+                            } catch (e) {
+                                console.log(`[WS] Could not resolve job address:`, e);
+                            }
+                        }
+                        
+                        // Fallback to deployment ID if we can't resolve job address
+                        if (!activeJobAddress || activeJobAddress.length < 43) {
+                            activeJobAddress = jobId;
+                        }
+                        
                         const activeNodeAddress = nodeAddress || job.nodeAddress;
 
                         if (!activeNodeAddress) {
-                            ws.send(JSON.stringify({ type: 'error', message: 'Node address is not available yet. The deployment might still be setting up.' }));
+                            // Deployment not found or finished - fetch historical logs instead
+                            console.log(`[WS] No active node address - deployment may be finished. Fetching historical logs...`);
+                            ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] Deployment appears to be finished. Fetching historical logs..." }));
+                            
+                            try {
+                                const logsData = await service.getJobLogs(jobId);
+                                if (logsData.status === 'completed') {
+                                    const result = logsData.result;
+                                    const sendLogs = (logs: any) => {
+                                        if (Array.isArray(logs)) {
+                                            logs.forEach((l: any) => {
+                                                const line = typeof l === 'string' ? l : (l.log || l.message || (l.logs ? null : JSON.stringify(l)));
+                                                if (line) {
+                                                    ws.send(JSON.stringify({ type: 'log', data: line }));
+                                                } else if (l.logs) {
+                                                    sendLogs(l.logs);
+                                                }
+                                            });
+                                        }
+                                    };
+                                    if (result && typeof result === 'object') {
+                                        const resAny = result as any;
+                                        if (resAny.opStates && Array.isArray(resAny.opStates)) {
+                                            resAny.opStates.forEach((op: any) => {
+                                                if (op.logs) {
+                                                    sendLogs(op.logs);
+                                                }
+                                            });
+                                        } else if (resAny.logs) {
+                                            sendLogs(resAny.logs);
+                                        } else {
+                                            sendLogs(result);
+                                        }
+                                    }
+                                    ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] --- END OF HISTORICAL LOGS ---" }));
+                                } else {
+                                    ws.send(JSON.stringify({ type: 'log', data: "[SYSTEM] Historical logs are not available." }));
+                                }
+                            } catch (e: any) {
+                                ws.send(JSON.stringify({ type: 'error', message: `Could not fetch logs: ${e.message}` }));
+                            }
                             return;
                         }
 
