@@ -34,7 +34,7 @@ export default function Login() {
       }
 
       const { data } = await api.post("/auth/login", payload);
-      await login(data.access_token);
+      await login(data.access_token, data.refresh_token, data.organizations);
       // Validate returnUrl is a safe relative path (prevents open redirect via //evil.com)
       const rawReturn = searchParams.get("returnUrl");
       const returnUrl =

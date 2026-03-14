@@ -1,6 +1,12 @@
-import axios, { type AxiosInstance } from "axios";
+import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 import { toast } from "sonner";
-import { getToken, clearToken } from "@/lib/tokenStore";
+import {
+    getToken,
+    setToken,
+    clearToken,
+    getRefreshToken,
+    setRefreshToken,
+} from "@/lib/tokenStore";
 
 // Runtime config injected via /config.js at container startup.
 // Falls back to VITE_ build-time env vars, then to localhost defaults.
@@ -23,6 +29,26 @@ export const GUARDRAIL_URL = API_GATEWAY_URL;
 export const WEB_SOCKET_URL = rc.WEB_SOCKET_URL || import.meta.env.VITE_WEB_SOCKET_URL || "ws://localhost:3000";
 export const SIDECAR_URL = rc.SIDECAR_URL || import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000";
 
+// ── Silent-refresh state (shared across all axios instances) ────────
+let isRefreshing = false;
+let refreshSubscribers: Array<(token: string) => void> = [];
+
+function onTokenRefreshed(token: string) {
+    refreshSubscribers.forEach((cb) => cb(token));
+    refreshSubscribers = [];
+}
+
+function addRefreshSubscriber(cb: (token: string) => void) {
+    refreshSubscribers.push(cb);
+}
+
+function forceLogout() {
+    clearToken();
+    if (window.location.pathname !== "/auth/login") {
+        window.location.href = "/auth/login";
+    }
+}
+
 // Client Factory
 const createApiClient = (baseURL: string): AxiosInstance => {
     const instance = axios.create({
@@ -44,18 +70,60 @@ const createApiClient = (baseURL: string): AxiosInstance => {
         (error) => Promise.reject(error)
     );
 
-    // Response Interceptor: Handle 401
+    // Response Interceptor: Handle 401 with silent refresh
     instance.interceptors.response.use(
         (response) => response,
-        (error) => {
+        async (error) => {
             const status = error.response?.status;
             const detail = error.response?.data?.detail;
-            if (error.response?.status === 401) {
-                // Check current path to avoid redirect loop
-                if (window.location.pathname !== "/auth/login") {
-                    clearToken();
-                    window.location.href = "/auth/login";
+            const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+
+            if (status === 401 && !originalRequest._retry) {
+                // Don't try to refresh if we're already on the login page or
+                // if the failing request was itself a refresh call.
+                const url = originalRequest.url || "";
+                if (window.location.pathname === "/auth/login" || url.includes("/auth/refresh")) {
+                    return Promise.reject(error);
                 }
+
+                const rt = getRefreshToken();
+                if (!rt) {
+                    forceLogout();
+                    return Promise.reject(error);
+                }
+
+                originalRequest._retry = true;
+
+                if (!isRefreshing) {
+                    isRefreshing = true;
+                    try {
+                        const { data } = await axios.post(
+                            `${API_GATEWAY_URL}/auth/refresh`,
+                            null,
+                            { headers: { Authorization: `Bearer ${rt}` } },
+                        );
+                        setToken(data.access_token);
+                        setRefreshToken(data.refresh_token);
+                        isRefreshing = false;
+                        onTokenRefreshed(data.access_token);
+                        // Retry the original request with the new token
+                        originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
+                        return instance(originalRequest);
+                    } catch {
+                        isRefreshing = false;
+                        refreshSubscribers = [];
+                        forceLogout();
+                        return Promise.reject(error);
+                    }
+                }
+
+                // Another request already triggered a refresh — queue this one
+                return new Promise((resolve) => {
+                    addRefreshSubscriber((newToken: string) => {
+                        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+                        resolve(instance(originalRequest));
+                    });
+                });
             } else if (status === 403) {
                 toast.error(detail || "You don't have permission for this action.");
             }
