@@ -20,6 +20,7 @@ class ComputeNodeService(
         node = await self.inventory.get(node_id)
         if not node:
             context.abort(5, "Node not found")
+            return
 
         now = utcnow_naive()
 

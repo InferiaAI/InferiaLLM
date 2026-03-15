@@ -56,6 +56,7 @@ class InventoryManagerService(
         node = await self.repo.get(node_id)
         if not node:
             context.abort(5, "Node not found")
+            return
 
         # ---------- STATE TRANSITION ----------
         if node["state"] == "provisioning":
