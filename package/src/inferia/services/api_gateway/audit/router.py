@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Security
 from fastapi.security import APIKeyHeader
-import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import datetime
 
 from inferia.services.api_gateway.db.database import get_db
 from inferia.services.api_gateway.audit.service import audit_service
+from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.models import (
     AuditLogResponse,
     AuditLogFilter,
@@ -56,7 +56,12 @@ async def create_internal_log(
     """
     Manually create an audit log (Internal Only).
     """
-    expected_key = os.getenv("INTERNAL_API_KEY", "dev-internal-key")
+    expected_key = settings.internal_api_key
+    if not expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal API key not configured"
+        )
     if api_key != expected_key:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
