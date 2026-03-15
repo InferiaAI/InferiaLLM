@@ -216,7 +216,7 @@ async def upload_document(
         logger.error("Error uploading file: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error uploading file: {str(e)}",
+            detail="Internal server error",
         )
 
 
@@ -236,7 +236,7 @@ async def retrieve(request: RetrieveRequest):
         return {"documents": results}
     except Exception as e:
         logger.error(f"Retrieve failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/ingest")
@@ -258,7 +258,7 @@ async def ingest(request: IngestRequest):
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Ingest failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # --- Prompt Endpoints ---
@@ -281,7 +281,7 @@ async def process(request: PromptProcessRequest):
         return {"content": result}
     except Exception as e:
         logger.error(f"Process failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/tokens/check")
@@ -308,7 +308,7 @@ async def rewrite(request: RewriteRequest):
         return {"rewritten_prompt": result}
     except Exception as e:
         logger.error(f"Rewrite failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 
@@ -322,7 +322,7 @@ async def list_collections(org_id: str = "default"):
         return {"collections": collections}
     except Exception as e:
         logger.error(f"List collections failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/collections/{collection_name}/files")
@@ -335,7 +335,7 @@ async def list_collection_files(collection_name: str, org_id: str = "default"):
         return {"files": files}
     except Exception as e:
         logger.error(f"List collection files failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/context/assemble")
@@ -353,7 +353,7 @@ async def assemble_context(request: AssembleContextRequest):
         return {"context": result}
     except Exception as e:
         logger.error(f"Context assembly failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 if __name__ == "__main__":
