@@ -178,7 +178,11 @@ export default function Security() {
             {setupData && (
               <div className="flex flex-col items-center gap-4 py-2">
                 <div className="bg-white p-2 rounded-lg border">
-                  <img src={setupData.qr_code} alt="2FA QR Code" className="w-48 h-48" />
+                  {setupData.qr_code.startsWith("data:image/") ? (
+                    <img src={setupData.qr_code} alt="2FA QR Code" className="w-48 h-48" />
+                  ) : (
+                    <p className="text-sm text-destructive">Invalid QR code data</p>
+                  )}
                 </div>
                 <div className="text-xs text-muted-foreground text-center">
                   <p className="mb-1">Cannot scan the QR code?</p>
