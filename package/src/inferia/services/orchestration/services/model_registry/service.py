@@ -19,6 +19,7 @@ class ModelRegistryService(
                 code=3,  # INVALID_ARGUMENT
                 details=f"Unsupported backend: {request.backend}",
             )
+            return
 
         config = (
             json.loads(request.config_json)
@@ -47,6 +48,7 @@ class ModelRegistryService(
                 code=5,  # NOT_FOUND
                 details="Model not found",
             )
+            return
 
         return model_registry_pb2.GetModelResponse(
             model_id=str(model["model_id"]),
