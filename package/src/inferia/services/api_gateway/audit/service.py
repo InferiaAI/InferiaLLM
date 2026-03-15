@@ -26,6 +26,7 @@ class AuditService:
             id=str(uuid.uuid4()),
             timestamp=utcnow_naive(),
             user_id=event.user_id,
+            org_id=event.org_id,
             action=event.action,
             resource_type=event.resource_type,
             resource_id=event.resource_id,
@@ -53,7 +54,10 @@ class AuditService:
         
         if filters.action:
             query = query.where(AuditLog.action == filters.action)
-        
+
+        if filters.org_id:
+            query = query.where(AuditLog.org_id == filters.org_id)
+
         if filters.start_date:
             query = query.where(AuditLog.timestamp >= filters.start_date)
             

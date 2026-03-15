@@ -38,6 +38,7 @@ jobs:
           pytest \
             package/src/inferia/services/api_gateway/tests/test_rbac.py \
             package/src/inferia/services/api_gateway/tests/test_audit.py \
+            package/src/inferia/services/api_gateway/tests/test_audit_org_filter.py \
             package/src/inferia/services/api_gateway/tests/test_audit_key_security.py \
             package/src/inferia/services/api_gateway/tests/test_gateway.py \
             package/src/inferia/services/api_gateway/tests/test_integration.py \
