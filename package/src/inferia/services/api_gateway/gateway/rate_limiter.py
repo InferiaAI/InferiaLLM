@@ -173,8 +173,9 @@ class RateLimiter:
         if not settings.rate_limit_enabled:
             return
 
-        # Use user_id as key if available, otherwise use IP address
-        user_id = getattr(request.state, "user_id", None)
+        # Use user_id from authenticated JWT context, not from headers
+        user = getattr(request.state, "user", None)
+        user_id = user.user_id if user else None
         if user_id:
             key = f"user:{user_id}"
         else:

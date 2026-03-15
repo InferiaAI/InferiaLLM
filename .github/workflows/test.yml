@@ -50,6 +50,7 @@ jobs:
             package/src/inferia/services/data/tests/test_prompt_templates.py \
             package/src/inferia/services/api_gateway/tests/test_config_security.py \
             package/src/inferia/services/api_gateway/tests/test_rate_limit_bypass.py \
+            package/src/inferia/services/api_gateway/tests/test_rate_limiter_user_source.py \
             package/src/inferia/tests/test_cli_init_sql_injection.py \
             package/src/inferia/services/api_gateway/tests/test_internal_auth_bypass.py \
             package/src/inferia/services/orchestration/test/test_grpc_auth_interceptor.py \
