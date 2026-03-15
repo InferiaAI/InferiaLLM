@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import asyncio
 
 from inferia.common.exception_handlers import register_exception_handlers
@@ -186,7 +186,8 @@ async def upload_document(
 
         # 2. Ingest into Data Engine
         doc_id = str(uuid.uuid4())
-        metadata = {"source": file.filename, "type": "file_upload"}
+        safe_filename = PurePosixPath(file.filename.replace("\\", "/")).name if file.filename else "unknown"
+        metadata = {"source": safe_filename, "type": "file_upload"}
 
         success = await asyncio.to_thread(
             data_engine.add_documents,
