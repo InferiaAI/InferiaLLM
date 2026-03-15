@@ -90,6 +90,7 @@ jobs:
             package/src/inferia/services/orchestration/test/adapter_test/test_adapter_error_handling.py \
             package/src/inferia/services/orchestration/test/test_grpc_abort_return.py \
             package/src/inferia/services/orchestration/test/spot/test_spot_reclaimer_filter.py \
+            package/src/inferia/services/api_gateway/tests/test_invitation_auth_bypass.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
             --cov=package/src/inferia \
