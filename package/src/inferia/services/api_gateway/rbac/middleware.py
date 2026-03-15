@@ -37,10 +37,18 @@ async def auth_middleware(request: Request, call_next):
         "/auth/register-invite",
         "/audit/internal/log",
     ]
+    # Allow /auth/invitations/{token} (exactly one segment after prefix)
+    invitation_prefix = "/auth/invitations/"
+    is_invitation_lookup = (
+        request.url.path.startswith(invitation_prefix)
+        and "/" not in request.url.path[len(invitation_prefix):]
+        and len(request.url.path) > len(invitation_prefix)
+    )
+
     if (
         request.url.path in public_paths
         or request.url.path.startswith("/internal/")
-        or request.url.path.startswith("/auth/invitations/")
+        or is_invitation_lookup
         or request.method == "OPTIONS"
     ):
         return await call_next(request)
