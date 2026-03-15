@@ -18,6 +18,7 @@ class SpotReclaimer:
                     FROM allocations a
                     JOIN compute_inventory n ON a.node_id = n.id
                     WHERE n.node_class = 'spot'
+                      AND n.state = 'terminated'
                     FOR UPDATE
                     """
                 )
