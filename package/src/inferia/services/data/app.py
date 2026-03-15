@@ -78,7 +78,7 @@ app.middleware("http")(internal_auth_middleware)
 class RetrieveRequest(BaseModel):
     collection_name: str
     query: str
-    org_id: Optional[str] = None
+    org_id: str = "default"
     n_results: int = 3
 
 
@@ -87,7 +87,7 @@ class IngestRequest(BaseModel):
     documents: List[str]
     metadatas: List[Dict[str, Any]]
     ids: List[str]
-    org_id: Optional[str] = None
+    org_id: str = "default"
 
 
 from inferia.common.schemas.prompt import PromptProcessRequest

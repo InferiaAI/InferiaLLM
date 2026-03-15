@@ -71,9 +71,9 @@ class DataEngine:
             self.client = None
 
     def _get_scoped_name(self, collection_name: str, org_id: Optional[str]) -> str:
-        """Scope collection name by Org ID. If no org_id, assumes global/admin or legacy."""
+        """Scope collection name by Org ID."""
         if not org_id:
-            return collection_name  # Default or Legacy
+            raise ValueError("org_id is required for collection scoping")
         return f"org_{org_id}_{collection_name}"
 
     def _get_unscoped_name(self, scoped_name: str) -> str:
