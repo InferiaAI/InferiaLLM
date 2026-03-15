@@ -40,7 +40,8 @@ async def get_audit_logs(
         start_date=start_date,
         end_date=end_date,
         limit=limit,
-        skip=skip
+        skip=skip,
+        org_id=user_ctx.org_id,
     )
     
     logs = await audit_service.get_logs(db, filters)

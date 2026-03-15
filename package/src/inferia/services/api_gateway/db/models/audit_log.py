@@ -20,6 +20,7 @@ class AuditLog(Base):
     details = Column(JSON, nullable=True)
     ip_address = Column(String, nullable=True)
     status = Column(String, nullable=False, default="success")
+    org_id = Column(String, nullable=True, index=True)
 
     # Relationships
     user = relationship("User", backref="audit_logs")
