@@ -4,7 +4,9 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from datetime import datetime
 import uuid
-import os
+
+
+VALID_INTERNAL_KEY = "a" * 32  # 32-char key that satisfies min_length
 
 
 @pytest.mark.asyncio
@@ -23,11 +25,15 @@ async def test_audit_flow_admin(client, admin_token):
         "status": "success",
     }
 
-    internal_key = os.getenv("INTERNAL_API_KEY", "dev-internal-key")
-
-    with patch(
-        "inferia.services.api_gateway.audit.router.audit_service"
-    ) as mock_service:
+    with (
+        patch(
+            "inferia.services.api_gateway.audit.router.settings"
+        ) as mock_settings,
+        patch(
+            "inferia.services.api_gateway.audit.router.audit_service"
+        ) as mock_service,
+    ):
+        mock_settings.internal_api_key = VALID_INTERNAL_KEY
         mock_service.log_event = AsyncMock(return_value=mock_log)
         mock_service.get_logs = AsyncMock(return_value=[mock_log])
 
@@ -44,7 +50,7 @@ async def test_audit_flow_admin(client, admin_token):
 
         create_response = await client.post(
             "/audit/internal/log",
-            headers={"X-Internal-API-Key": internal_key},
+            headers={"X-Internal-API-Key": VALID_INTERNAL_KEY},
             json=log_data,
         )
         assert create_response.status_code == 200
