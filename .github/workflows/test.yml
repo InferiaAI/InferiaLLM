@@ -44,6 +44,7 @@ jobs:
             package/src/inferia/services/orchestration/test/test_traffic_router.py \
             package/src/inferia/services/orchestration/test/adapter_test/test_command_injection.py \
             package/src/inferia/services/orchestration/test/model_deployment/test_start_deployment_controller.py \
+            package/src/inferia/services/data/tests/test_collection_scoping.py \
             package/src/inferia/services/data/tests/test_prompt_templates.py \
             package/src/inferia/services/api_gateway/tests/test_config_security.py \
             package/src/inferia/services/api_gateway/tests/test_rate_limit_bypass.py \

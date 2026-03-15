@@ -38,5 +38,6 @@ class TestDataEngineErrors:
             documents=["doc"],
             metadatas=[{}],
             ids=["id1"],
+            org_id="default",
         )
         assert result is False
