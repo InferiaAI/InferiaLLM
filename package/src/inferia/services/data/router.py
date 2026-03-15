@@ -61,7 +61,7 @@ async def upload_document(
         logger.error("Error uploading file: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error uploading file: {str(e)}",
+            detail="Internal server error",
         )
 
 
@@ -108,7 +108,7 @@ async def ingest_documents(request: IngestRequest):
         logger.exception("Error ingesting documents: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error ingesting documents: {str(e)}",
+            detail="Internal server error",
         )
 
 
@@ -129,5 +129,5 @@ async def retrieve_context(request: RetrieveRequest):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving context: {str(e)}",
+            detail="Internal server error",
         )

@@ -114,7 +114,7 @@ async def scan(request: ScanRequest):
         return result
     except Exception as e:
         logger.error(f"Scan failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 if __name__ == "__main__":
