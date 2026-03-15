@@ -170,7 +170,11 @@ export default function Setup2FA() {
                 <div className="space-y-5">
                   <div className="flex flex-col items-center gap-4 rounded-2xl border border-border/70 bg-muted/20 p-5">
                     <div className="rounded-xl border border-border/60 bg-white p-4 shadow-sm">
-                      <img src={setupData.qr_code} alt="2FA QR Code" className="h-48 w-48" />
+                      {setupData.qr_code.startsWith("data:image/") ? (
+                        <img src={setupData.qr_code} alt="2FA QR Code" className="h-48 w-48" />
+                      ) : (
+                        <p className="text-sm text-destructive">Invalid QR code data</p>
+                      )}
                     </div>
                     <div className="w-full space-y-1 text-center">
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Secret Key</p>
