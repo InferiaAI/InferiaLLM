@@ -98,6 +98,7 @@ jobs:
             package/src/inferia/services/guardrail/tests/test_scan_error_sanitization.py \
             package/src/inferia/services/data/tests/test_error_sanitization.py \
             package/src/inferia/services/data/tests/test_router_error_sanitization.py \
+            package/src/inferia/services/data/tests/test_filename_sanitization.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
             --cov=package/src/inferia \

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
+from pathlib import PurePosixPath
 from .api_models import IngestRequest, RetrieveRequest, RetrieveResponse
 from .engine import data_engine
 from .parser import parser
@@ -32,7 +33,8 @@ async def upload_document(
         # We treat the whole file as one "document" for now
         # Ideally, we would chunk it.
         doc_id = str(uuid.uuid4())
-        metadata = {"source": file.filename, "type": "file_upload"}
+        safe_filename = PurePosixPath(file.filename.replace("\\", "/")).name if file.filename else "unknown"
+        metadata = {"source": safe_filename, "type": "file_upload"}
 
         success = await asyncio.to_thread(
             data_engine.add_documents,
