@@ -142,3 +142,49 @@ async def create_embeddings(
         background_tasks=background_tasks,
         ip_address=client_ip,
     )
+
+
+@app.post("/v1/images/generations")
+async def create_image(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Image generation endpoint - OpenAI compatible (text-to-image).
+    Supports image generation models deployed via LocalAI (Stable Diffusion, etc.).
+    See: https://localai.io/features/image-generation/
+    """
+    api_key = extract_api_key(authorization)
+    body = await request.json()
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_image_generation(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )
+
+
+@app.post("/v1/images/edits")
+async def create_image_edit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Image edit endpoint - OpenAI compatible (image-to-image).
+    Supports image editing/variation models deployed via LocalAI.
+    See: https://localai.io/features/image-generation/
+    """
+    api_key = extract_api_key(authorization)
+    body = await request.json()
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_image_edit(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )

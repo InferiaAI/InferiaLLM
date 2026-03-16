@@ -19,6 +19,7 @@ from inferia.services.orchestration.repositories.quota_repo import QuotaReposito
 from inferia.services.orchestration.services.scheduler.service import SchedulerService
 from inferia.services.orchestration.services.model_deployment.runtime_resolver import RuntimeResolver
 from inferia.services.orchestration.services.model_deployment.strategies.vllm import VLLMDeploymentStrategy
+from inferia.services.orchestration.services.model_deployment.strategies.localai import LocalAIDeploymentStrategy
 # from services.vllm_runtime.runtime import VLLMRuntime
 # from services.nosana_runtime.client import NosanaRuntimeClient
 
@@ -130,6 +131,10 @@ async def main():
         scheduler_repo=scheduler_repo,
     )
 
+    localai_strategy = LocalAIDeploymentStrategy(
+        scheduler_repo=scheduler_repo,
+    )
+
 
     worker = ModelDeploymentWorker(
         deployment_repo=deployment_repo,
@@ -141,6 +146,7 @@ async def main():
         runtime_resolver=runtime_resolver,
         runtime_strategies={
             "vllm": vllm_strategy,
+            "localai": localai_strategy,
         },
     )
 

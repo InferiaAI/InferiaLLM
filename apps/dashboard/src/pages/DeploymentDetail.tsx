@@ -143,12 +143,14 @@ export default function DeploymentDetail() {
   const isRunning = !["STOPPED", "TERMINATED", "FAILED", "UNKNOWN"].includes(deploymentState)
   const isTraining = deployment?.workload_type === "training"
   const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
+  const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "localai" || deployment?.engine === "localai-image" || deployment?.engine === "stablediffusion"
 
   const tabs = useMemo(() => {
-    const list: { id: TabType; label: string }[] = [{ id: "overview", label: "Overview" }, { id: "logs", label: isTraining ? "Training Logs" : (isEmbedding ? "Embedding Logs" : "Inference Logs") }, { id: "terminal", label: "Terminal Logs" }, { id: "rate_limit", label: "Rate Limits" }, { id: "config", label: "Configuration" }];
-    if (!isEmbedding && !isTraining) list.splice(1, 0, { id: "guardrail", label: "Guardrails" }, { id: "rag", label: "RAG & Data" }, { id: "prompt_template", label: "Template" });
+    const logLabel = isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : "Inference Logs"
+    const list: { id: TabType; label: string }[] = [{ id: "overview", label: "Overview" }, { id: "logs", label: logLabel }, { id: "terminal", label: "Terminal Logs" }, { id: "rate_limit", label: "Rate Limits" }, { id: "config", label: "Configuration" }];
+    if (!isEmbedding && !isTraining && !isImageGen) list.splice(1, 0, { id: "guardrail", label: "Guardrails" }, { id: "rag", label: "RAG & Data" }, { id: "prompt_template", label: "Template" });
     return list.filter((t) => !(t.id === "terminal" && !isCompute))
-  }, [isEmbedding, isTraining, isCompute])
+  }, [isEmbedding, isTraining, isImageGen, isCompute])
 
   const activeTab: TabType = (tabs.find(t => t.id === searchParams.get("tab"))?.id || "overview") as TabType;
 
@@ -280,6 +282,7 @@ function TabContent({ activeTab, deployment, fetchDeployment }: { activeTab: Tab
   if (!id) return null;
   const isTraining = deployment.workload_type === "training"
   const isEmbedding = deployment.model_type === "embedding" || deployment.engine === "infinity" || deployment.engine === "tei"
+  const isImageGen = deployment.model_type === "image_generation" || deployment.engine === "localai" || deployment.engine === "localai-image" || deployment.engine === "stablediffusion"
 
   switch (activeTab) {
     case "overview": return <DeploymentOverview deployment={deployment} />;
