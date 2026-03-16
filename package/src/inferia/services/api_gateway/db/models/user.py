@@ -12,6 +12,7 @@ class User(Base):
     
     # TOTP - 2FA
     totp_secret = Column(String, nullable=True)
+    totp_pending_secret = Column(String, nullable=True)
     totp_enabled = Column(Boolean, default=False)
     
     # Deprecated: usage moved to UserOrganization table
