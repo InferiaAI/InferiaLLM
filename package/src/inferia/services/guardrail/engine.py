@@ -139,15 +139,8 @@ class GuardrailEngine:
                     f"Guardrail violation detected but 'proceed_on_violation' is active. User: {user_id}"
                 )
 
-                violations_desc = ", ".join(
-                    [f"{v.violation_type} ({v.score:.2f})" for v in result.violations]
-                )
-                warning_suffix = f"\n\n[SYSTEM: Guardrail Violation Detected: {violations_desc}. User Configured to Proceed.]"
-
                 result.is_valid = True
-                current_text = result.sanitized_text or text
-                result.sanitized_text = current_text + warning_suffix
-                result.actions_taken.append("proceed_on_violation_warning")
+                result.actions_taken.append("proceed_on_violation")
 
             return result
 

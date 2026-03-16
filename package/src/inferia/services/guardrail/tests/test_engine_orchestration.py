@@ -102,4 +102,4 @@ class TestGuardrailEngineOrchestration:
             )
             # Despite violation, is_valid is overridden to True
             assert result.is_valid is True
-            assert "proceed_on_violation_warning" in result.actions_taken
+            assert "proceed_on_violation" in result.actions_taken
