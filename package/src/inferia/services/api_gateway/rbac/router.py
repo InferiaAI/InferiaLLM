@@ -506,7 +506,7 @@ async def totp_setup(request: Request, db: AsyncSession = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user.totp_secret = secret
+    user.totp_pending_secret = secret
     # user.totp_enabled = False # Keep false until verified
     await db.commit()
 
@@ -526,13 +526,15 @@ async def totp_verify(
     result = await db.execute(stmt)
     user = result.scalars().first()
 
-    if not user or not user.totp_secret:
-        raise HTTPException(status_code=400, detail="TOTP not setup requested")
+    if not user or not user.totp_pending_secret:
+        raise HTTPException(status_code=400, detail="TOTP setup not requested")
 
-    totp = pyotp.TOTP(user.totp_secret)
+    totp = pyotp.TOTP(user.totp_pending_secret)
     if not totp.verify(payload.totp_code):
         raise HTTPException(status_code=400, detail="Invalid Code")
 
+    user.totp_secret = user.totp_pending_secret
+    user.totp_pending_secret = None
     user.totp_enabled = True
     await db.commit()
 
