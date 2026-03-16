@@ -76,7 +76,7 @@ class AuthService:
         encoded_jwt = jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
     
-    def decode_token(self, token: str) -> TokenPayload:
+    def decode_token(self, token: str, expected_type: Optional[str] = None) -> TokenPayload:
         """Decode and validate JWT token."""
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
@@ -88,11 +88,17 @@ class AuthService:
                 roles=payload.get("roles", []),
                 org_id=payload.get("org_id"),
             )
+            if expected_type and token_payload.type != expected_type:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Invalid token type: expected {expected_type}",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             return token_payload
         except JWTError as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token: {str(e)}",
+                detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
     
@@ -226,13 +232,7 @@ class AuthService:
         Security: role and org access are resolved from live DB membership,
         not trusted directly from JWT role claims.
         """
-        token_payload = self.decode_token(token)
-        
-        if token_payload.type != "access":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type",
-            )
+        token_payload = self.decode_token(token, expected_type="access")
         
         result = await db.execute(select(DBUser).where(DBUser.id == token_payload.sub))
         user = result.scalars().first()
@@ -277,9 +277,7 @@ class AuthService:
     async def refresh_access_token(self, refresh_token: str, db: AsyncSession) -> AuthToken:
         """Refresh access token using refresh token."""
         try:
-            payload = self.decode_token(refresh_token)
-            if payload.type != "refresh":
-                 raise HTTPException(status_code=401, detail="Invalid token type")
+            payload = self.decode_token(refresh_token, expected_type="refresh")
             
             user_id = payload.sub
             org_id = getattr(payload, "org_id", None)

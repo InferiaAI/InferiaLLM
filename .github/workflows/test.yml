@@ -66,6 +66,7 @@ jobs:
             package/src/inferia/common/tests/test_exception_handlers.py \
             package/src/inferia/common/tests/test_http_client.py \
             package/src/inferia/services/api_gateway/tests/test_auth_security.py \
+            package/src/inferia/services/api_gateway/tests/test_jwt_token_type.py \
             package/src/inferia/services/api_gateway/tests/test_encryption.py \
             package/src/inferia/services/api_gateway/tests/test_db_security.py \
             package/src/inferia/services/guardrail/tests/test_engine_error_handling.py \
