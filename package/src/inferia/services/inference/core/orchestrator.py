@@ -7,7 +7,7 @@ from inferia.services.inference.client import api_gateway_client
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 
-from .providers import get_adapter, is_external_engine
+from .providers import get_adapter, is_external_engine, LocalAIImageAdapter
 from .rate_limiter import rate_limiter
 from .service import GatewayService
 from .stream_processor import StreamProcessor
@@ -158,6 +158,275 @@ class OrchestrationService:
                 applied_policies,
                 log_payloads,
                 ip_address,
+                status_code=status_code,
+                error_message=error_message,
+            )
+
+    @staticmethod
+    async def handle_image_generation(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+    ):
+        """
+        Handle text-to-image generation requests (POST /v1/images/generations).
+        Uses LocalAI backend: https://localai.io/features/image-generation/
+        Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = body.get("model")
+        prompt = body.get("prompt")
+        if not model or not prompt:
+            raise HTTPException(status_code=400, detail="Model and prompt are required")
+
+        # 1. Resolve Context for image model
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="image_generation"
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute Image Generation Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "localai")
+
+        adapter = get_adapter(engine)
+
+        # Resolve API key
+        if is_external_engine(engine):
+            credentials = (
+                deployment.get("credentials_json") or deployment.get("configuration") or {}
+            )
+            provider_key = str(
+                credentials.get("api_key")
+                or credentials.get("key")
+                or credentials.get("token")
+                or ""
+            )
+            if credentials.get("model"):
+                body["model"] = credentials["model"]
+            elif deployment.get("inference_model"):
+                body["model"] = deployment["inference_model"]
+        else:
+            provider_key = settings.api_gateway_internal_key or ""
+
+        # Override model name if deployment specifies inference_model
+        if deployment.get("inference_model"):
+            body["model"] = deployment["inference_model"]
+
+        provider_headers = adapter.get_headers(provider_key)
+        provider_payload = adapter.transform_request(body.copy())
+
+        status_code = 200
+        error_message = None
+        n_images = body.get("n", 1)
+
+        try:
+            # Determine path based on adapter type
+            if isinstance(adapter, LocalAIImageAdapter):
+                image_path = adapter.get_image_generation_path()
+            else:
+                image_path = "/v1/images/generations"
+
+            response_data = await GatewayService.call_upstream(
+                endpoint_url,
+                provider_payload,
+                provider_headers,
+                engine,
+                path=image_path,
+                concurrency_key=concurrency_key,
+            )
+
+            return response_data
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_image_request,
+                deployment_id,
+                user_context_id,
+                model,
+                body,
+                start_time,
+                n_images,
+                applied_policies,
+                log_payloads,
+                ip_address,
+                request_type="image_generation",
+                status_code=status_code,
+                error_message=error_message,
+            )
+
+    @staticmethod
+    async def handle_image_edit(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+    ):
+        """
+        Handle image-to-image edit requests (POST /v1/images/edits).
+        Uses LocalAI backend: https://localai.io/features/image-generation/
+        Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = body.get("model")
+        if not model:
+            raise HTTPException(status_code=400, detail="Model is required")
+        # image-to-image requires either image+prompt or image field
+        if not body.get("image") and not body.get("prompt"):
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'image' (base64) or 'prompt' is required for image edits",
+            )
+
+        # 1. Resolve Context for image model
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="image_generation"
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute Image Edit Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "localai")
+
+        adapter = get_adapter(engine)
+
+        # Resolve API key
+        if is_external_engine(engine):
+            credentials = (
+                deployment.get("credentials_json") or deployment.get("configuration") or {}
+            )
+            provider_key = str(
+                credentials.get("api_key")
+                or credentials.get("key")
+                or credentials.get("token")
+                or ""
+            )
+            if credentials.get("model"):
+                body["model"] = credentials["model"]
+            elif deployment.get("inference_model"):
+                body["model"] = deployment["inference_model"]
+        else:
+            provider_key = settings.api_gateway_internal_key or ""
+
+        if deployment.get("inference_model"):
+            body["model"] = deployment["inference_model"]
+
+        provider_headers = adapter.get_headers(provider_key)
+        # For image edits, pass the body through (image + prompt + params)
+        provider_payload = adapter.transform_request(body.copy())
+
+        # Add image-specific fields that transform_request may not handle
+        for field in ("image", "mask"):
+            if field in body:
+                provider_payload[field] = body[field]
+
+        status_code = 200
+        error_message = None
+        n_images = body.get("n", 1)
+
+        try:
+            if isinstance(adapter, LocalAIImageAdapter):
+                image_path = adapter.get_image_edit_path()
+            else:
+                image_path = "/v1/images/edits"
+
+            response_data = await GatewayService.call_upstream(
+                endpoint_url,
+                provider_payload,
+                provider_headers,
+                engine,
+                path=image_path,
+                concurrency_key=concurrency_key,
+            )
+
+            return response_data
+        except HTTPException as e:
+            status_code = e.status_code
+            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_image_request,
+                deployment_id,
+                user_context_id,
+                model,
+                body,
+                start_time,
+                n_images,
+                applied_policies,
+                log_payloads,
+                ip_address,
+                request_type="image_edit",
                 status_code=status_code,
                 error_message=error_message,
             )
@@ -633,6 +902,77 @@ class OrchestrationService:
                     "completion_tokens": 0,
                     "total_tokens": total_tokens,
                     "input_count": input_count,  # Track embedding count separately
+                },
+            ),
+        )
+
+    @staticmethod
+    async def _log_image_request(
+        deployment_id,
+        user_id,
+        model,
+        request_payload,
+        start_time,
+        n_images,
+        applied_policies,
+        log_payloads,
+        ip_address=None,
+        request_type="image_generation",
+        status_code=200,
+        error_message=None,
+    ):
+        """
+        Log image generation/edit request details.
+        Image requests don't have token counts — we track image count instead.
+        """
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
+
+        # Respect log_payloads setting; strip base64 image data to avoid huge logs
+        final_payload = None
+        if log_payloads and request_payload:
+            final_payload = {
+                k: v
+                for k, v in request_payload.items()
+                if k not in ("image", "mask")
+            }
+            # Indicate presence of image data without logging the blob
+            if "image" in request_payload:
+                final_payload["image"] = "<base64_image_omitted>"
+            if "mask" in request_payload:
+                final_payload["mask"] = "<base64_mask_omitted>"
+
+        if not log_payloads:
+            logger.debug(f"Payload logging disabled for image request to {model}")
+
+        await asyncio.gather(
+            api_gateway_client.log_inference(
+                deployment_id=deployment_id,
+                user_id=user_id,
+                model=model,
+                request_payload=final_payload,
+                latency_ms=latency_ms,
+                ttft_ms=None,
+                tokens_per_second=None,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                status_code=status_code,
+                error_message=error_message,
+                is_streaming=False,
+                applied_policies=applied_policies,
+                ip_address=ip_address,
+                request_type=request_type,
+                input_count=n_images,
+            ),
+            api_gateway_client.track_usage(
+                user_id,
+                model,
+                {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "image_count": n_images,
                 },
             ),
         )

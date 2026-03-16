@@ -50,10 +50,13 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
     const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "")
     const publicInferenceEndpoint = `${inferenceBaseUrl}/v1/chat/completions`
     const publicEmbeddingEndpoint = `${inferenceBaseUrl}/v1/embeddings`
+    const publicImageGenEndpoint = `${inferenceBaseUrl}/v1/images/generations`
+    const publicImageEditEndpoint = `${inferenceBaseUrl}/v1/images/edits`
 
     const deploymentId = deployment?.id || deployment?.deployment_id
 
     const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
+    const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "localai" || deployment?.engine === "localai-image" || deployment?.engine === "stablediffusion"
     const state = deployment?.state || deployment?.status || "Unknown"
 
     const { data: embeddingMetrics, isLoading: loadingLogMetrics } = useQuery({
@@ -105,6 +108,12 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                         <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-purple-100 text-purple-700 text-xs font-medium border border-purple-200">
                             <Database className="w-3 h-3" />
                             Embedding Model
+                        </span>
+                    )}
+                    {isImageGen && (
+                        <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-pink-100 text-pink-700 text-xs font-medium border border-pink-200 dark:bg-pink-900/20 dark:text-pink-400 dark:border-pink-800">
+                            🎨
+                            Image Generation
                         </span>
                     )}
                 </div>

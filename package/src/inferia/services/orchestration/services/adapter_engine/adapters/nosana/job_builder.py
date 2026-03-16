@@ -626,6 +626,139 @@ def create_tei_job(
     return {"op": container_op, "meta": meta_data}
 
 
+def create_localai_job(
+    model_id: str,
+    image: str = "docker.io/localai/localai:latest-gpu-nvidia-cuda-12",
+    hf_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    # Hardware
+    min_vram: int = 8,
+    gpu: bool = True,
+    # LocalAI config
+    port: int = 8080,
+    threads: int = 4,
+    context_size: int = 512,
+    # Image generation specific
+    image_path: str = "/tmp/generated/images",
+    diffusers_pipeline: Optional[str] = None,
+    scheduler: Optional[str] = None,
+    # System Requirements
+    required_cuda: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for LocalAI image generation server.
+    Supports Stable Diffusion and other image generation models via LocalAI.
+    See: https://localai.io/features/image-generation/
+
+    LocalAI can run Stable Diffusion models using the diffusers backend.
+    Models are auto-downloaded from HuggingFace when first requested, or
+    can be pre-configured via a model gallery YAML.
+
+    Args:
+        model_id: HuggingFace model ID (e.g., "stabilityai/stable-diffusion-2-1")
+                  or a LocalAI model gallery name
+        image: Docker image for LocalAI
+        hf_token: HuggingFace token for gated models
+        api_key: API key for authentication (uses global key if not provided)
+        min_vram: Minimum VRAM requirement in GB
+        gpu: Whether to use GPU
+        port: Port to expose
+        threads: Number of CPU threads
+        context_size: Context size
+        image_path: Path to store generated images
+        diffusers_pipeline: Override diffusers pipeline type
+            (e.g. "StableDiffusionPipeline", "StableDiffusionImg2ImgPipeline")
+        scheduler: Override scheduler (e.g. "EulerAncestralDiscreteScheduler")
+
+    Returns:
+        Dict with 'op' (container operation) and 'meta' (job metadata)
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    # LocalAI container docs: https://localai.io/installation/containers/
+    # The official image has its own ENTRYPOINT baked into the Dockerfile.
+    # We must NOT override the entrypoint — just pass env vars and let the
+    # container start normally.
+    #
+    # Image generation docs: https://localai.io/features/image-generation/
+    # Model config is passed via the MODELS env var as a JSON string, which
+    # LocalAI reads on startup to configure backends.
+
+    model_config_name = model_id.replace("/", "--")
+
+    # Build the model config YAML for the diffusers backend.
+    # LocalAI loads YAML files from MODELS_PATH on startup.
+    yaml_lines = [
+        f"name: {model_config_name}",
+        "backend: diffusers",
+        "parameters:",
+        f"  model: {model_id}",
+    ]
+    if diffusers_pipeline or scheduler:
+        yaml_lines.append("diffusers:")
+        if diffusers_pipeline:
+            yaml_lines.append(f"  pipeline_type: {diffusers_pipeline}")
+        if scheduler:
+            yaml_lines.append(f"  scheduler_type: {scheduler}")
+
+    yaml_content = "\\n".join(yaml_lines)
+    models_path = "/models"
+
+    envs: Dict[str, str] = {
+        "MODELS_PATH": models_path,
+        "IMAGE_PATH": image_path,
+        "THREADS": str(threads),
+        "CONTEXT_SIZE": str(context_size),
+        "ADDRESS": f"0.0.0.0:{port}",
+    }
+
+    token_to_use = hf_token or os.getenv("HF_TOKEN")
+    if token_to_use:
+        envs["HF_TOKEN"] = token_to_use
+        envs["HUGGINGFACEHUB_API_TOKEN"] = token_to_use
+
+    if effective_api_key:
+        envs["API_KEY"] = effective_api_key
+
+    # Write the model config YAML to the models directory, then find and
+    # exec the local-ai binary (its path varies across image versions).
+    cmd_str = (
+        f"mkdir -p {models_path} && "
+        f"mkdir -p {shlex.quote(image_path)} && "
+        f'printf "{yaml_content}" > {models_path}/{model_config_name}.yaml && '
+        f'BINARY=$(find / -name "local-ai" -type f -executable 2>/dev/null | head -1) && '
+        f'exec "$BINARY"'
+    )
+
+    container_op = {
+        "type": "container/run",
+        "id": "localai-image-service",
+        "args": {
+            "image": image,
+            "entrypoint": ["/bin/bash"],
+            "cmd": ["-c", cmd_str],
+            "env": envs,
+            "gpu": gpu,
+            "expose": port,
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {
+            "required_cuda": required_cuda
+            or [
+                "12.1",
+                "12.4",
+                "12.6",
+            ],
+            "required_vram": min_vram,
+        },
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
 def build_job_definition(
     engine: str,
     model_id: str,
@@ -750,6 +883,30 @@ def build_job_definition(
                     "gpu",
                     "required_cpu",
                     "required_ram",
+                ]
+                and v is not None
+            },
+        )
+    elif engine in ("localai", "localai-image", "stablediffusion"):
+        job = create_localai_job(
+            model_id=model_id,
+            image=image or "docker.io/localai/localai:latest-gpu-nvidia-cuda-12",
+            hf_token=hf_token,
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k
+                in [
+                    "min_vram",
+                    "gpu",
+                    "port",
+                    "threads",
+                    "context_size",
+                    "image_path",
+                    "diffusers_pipeline",
+                    "scheduler",
+                    "required_cuda",
                 ]
                 and v is not None
             },

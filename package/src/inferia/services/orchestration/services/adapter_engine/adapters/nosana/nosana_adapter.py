@@ -238,6 +238,12 @@ class NosanaAdapter(ProviderAdapter):
                 "kv_cache_dtype": metadata.get("kv_cache_dtype", "auto"),
                 # CUDA versions from dashboard
                 "required_cuda": metadata.get("required_cuda"),
+                # LocalAI / Image generation config
+                "threads": metadata.get("threads"),
+                "context_size": metadata.get("context_size"),
+                "image_path": metadata.get("image_path"),
+                "diffusers_pipeline": metadata.get("diffusers_pipeline"),
+                "scheduler": metadata.get("scheduler"),
             }
 
             job_definition = build_job_definition(

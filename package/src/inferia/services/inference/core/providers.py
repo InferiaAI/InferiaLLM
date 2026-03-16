@@ -18,6 +18,7 @@ _ADAPTER_CACHE: Dict[str, "ProviderAdapter"] = {}
 # Engine categories for routing
 EXTERNAL_ENGINES = {"openai", "anthropic", "cohere", "groq", "gemini", "openrouter", "cerebras"}
 COMPUTE_ENGINES = {"vllm", "ollama", "generic"}
+IMAGE_ENGINES = {"localai", "localai-image", "stablediffusion"}
 
 
 class ProviderAdapter(ABC):
@@ -284,6 +285,66 @@ class EmbeddingAdapter(OpenAIAdapter):
         return False
 
 
+class LocalAIImageAdapter(ProviderAdapter):
+    """
+    Adapter for LocalAI image generation.
+    Supports text-to-image (POST /v1/images/generations) and
+    image-to-image (POST /v1/images/edits) via the LocalAI backend.
+    See: https://localai.io/features/image-generation/
+    """
+
+    def get_chat_path(self) -> str:
+        return "/v1/images/generations"
+
+    def get_image_generation_path(self) -> str:
+        return "/v1/images/generations"
+
+    def get_image_edit_path(self) -> str:
+        return "/v1/images/edits"
+
+    def get_headers(self, api_key: str) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+
+    def transform_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transform to LocalAI/OpenAI image generation format.
+        LocalAI accepts OpenAI-compatible image generation requests:
+          - prompt (required)
+          - model (optional, backend model name)
+          - n (number of images, default 1)
+          - size (e.g. "512x512", "256x256")
+          - response_format (url or b64_json)
+          - step (diffusion steps, LocalAI extension)
+        """
+        transformed = {}
+
+        # Required
+        if "prompt" in payload:
+            transformed["prompt"] = payload["prompt"]
+
+        # Standard OpenAI image fields
+        for field in ("model", "n", "size", "response_format", "quality", "style"):
+            if field in payload:
+                transformed[field] = payload[field]
+
+        # LocalAI-specific extensions
+        for field in ("step", "seed", "mode", "scheduler"):
+            if field in payload:
+                transformed[field] = payload[field]
+
+        return transformed
+
+    def transform_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """LocalAI returns OpenAI-compatible image response format."""
+        return response
+
+    def is_external(self) -> bool:
+        return False
+
+
 def get_adapter(engine: str) -> ProviderAdapter:
     """
     Factory function to get the appropriate adapter for an engine.
@@ -318,6 +379,10 @@ def get_adapter(engine: str) -> ProviderAdapter:
         # Embedding engines (OpenAI-compatible for embeddings)
         "infinity": EmbeddingAdapter(),
         "tei": EmbeddingAdapter(),
+        # Image generation engines
+        "localai": LocalAIImageAdapter(),
+        "localai-image": LocalAIImageAdapter(),
+        "stablediffusion": LocalAIImageAdapter(),
     }
 
     adapter = adapters.get(engine_lower)

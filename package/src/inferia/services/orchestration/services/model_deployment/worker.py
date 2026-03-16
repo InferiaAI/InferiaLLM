@@ -443,6 +443,8 @@ class ModelDeploymentWorker:
                 runtime = self.runtime_resolver.resolve(
                     replicas=d["replicas"],
                     gpu_per_replica=d["gpu_per_replica"],
+                    engine=d.get("engine"),
+                    model_type=d.get("model_type"),
                 )
 
                 strategy = self.strategies.get(runtime)

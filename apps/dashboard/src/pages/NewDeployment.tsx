@@ -56,8 +56,7 @@ const deploymentTypes = [
     desc: "Deploy Stable Diffusion and image generation models.",
     icon: Image,
     modelType: "image_generation" as ModelTypeKey,
-    active: false,
-    badge: "Soon"
+    active: true
   },
   {
     id: "multimodal",
@@ -115,6 +114,15 @@ const computeEngines = [
     icon: Database,
     types: ["inference"],
     modelTypes: ["embedding"]
+  },
+  {
+    id: "localai",
+    name: "LocalAI (Diffusers)",
+    desc: "Run Stable Diffusion and image generation models via LocalAI.",
+    image: "docker.io/localai/localai:latest-gpu-nvidia-cuda-12",
+    icon: Image,
+    types: ["inference"],
+    modelTypes: ["image_generation"]
   },
   {
     id: "pytorch",
@@ -207,6 +215,13 @@ type State = {
   requiredCpu: string;
   requiredRam: string;
   gpuEnabled: boolean;
+  // LocalAI / Image Generation config
+  localaiImage: string;
+  localaiThreads: string;
+  localaiContextSize: string;
+  diffusersPipeline: string;
+  diffusersScheduler: string;
+  imageSize: string;
 };
 
 type Action =
@@ -289,6 +304,13 @@ const initialState: State = {
   requiredCpu: "2",
   requiredRam: "4096",
   gpuEnabled: false,
+  // LocalAI / Image Generation defaults
+  localaiImage: "docker.io/localai/localai:latest-gpu-nvidia-cuda-12",
+  localaiThreads: "4",
+  localaiContextSize: "512",
+  diffusersPipeline: "StableDiffusionPipeline",
+  diffusersScheduler: "EulerAncestralDiscreteScheduler",
+  imageSize: "512x512",
 };
 
 // --- Components ---
@@ -647,11 +669,37 @@ export default function NewDeployment() {
         }]
       }
       return JSON.stringify(spec, null, 4)
+    } else if (selectedEngine === "localai") {
+      const finalModelId = modelId || "stabilityai/stable-diffusion-2-1";
+      const modelConfigName = finalModelId.replace("/", "--");
+      const spec = {
+        model_id: finalModelId,
+        engine: "localai",
+        image: state.localaiImage,
+        port: 8080,
+        threads: parseInt(state.localaiThreads) || 4,
+        context_size: parseInt(state.localaiContextSize) || 512,
+        diffusers_pipeline: state.diffusersPipeline || undefined,
+        scheduler: state.diffusersScheduler || undefined,
+        min_vram: 8,
+        gpu: true,
+        env: {
+          "MODELS_PATH": "/models",
+          "IMAGE_PATH": "/tmp/generated/images",
+          ...(hfToken ? { "HF_TOKEN": hfToken } : {}),
+        },
+        expose: [{
+          port: 8080,
+          type: "http",
+          health_checks: [{ path: "/readyz", type: "http", method: "GET", expected_status: 200 }]
+        }]
+      }
+      return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "pytorch") {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled])
+  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.localaiImage, state.localaiThreads, state.localaiContextSize, state.diffusersPipeline, state.diffusersScheduler])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -684,7 +732,7 @@ export default function NewDeployment() {
     try { config = JSON.parse(jobDescription) } catch (e) { return toast.error("Invalid Job JSON specification") }
 
     const payload = {
-      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: modelType === "embedding" ? 0 : 1, workload_type: deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType,
+      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: modelType === "embedding" ? 0 : 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config
     }
@@ -1256,6 +1304,59 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         </div>
       )}
 
+      {selectedEngine === "localai" && (
+        <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
+          <div className="flex items-center gap-2 mb-2"><Image className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">LocalAI Image Generation Configuration</h4></div>
+          <div>
+            <label htmlFor="localaiImage" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">LocalAI Docker Image</label>
+            <input id="localaiImage" value={state.localaiImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'localaiImage', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="diffusersPipeline" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Diffusers Pipeline</label>
+              <select id="diffusersPipeline" value={state.diffusersPipeline} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersPipeline', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                <option value="StableDiffusionPipeline">Stable Diffusion (text-to-image)</option>
+                <option value="StableDiffusionImg2ImgPipeline">Stable Diffusion (image-to-image)</option>
+                <option value="StableDiffusionXLPipeline">Stable Diffusion XL</option>
+                <option value="StableDiffusionDepth2ImgPipeline">Depth-to-Image</option>
+                <option value="">Auto-detect</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="diffusersScheduler" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Scheduler</label>
+              <select id="diffusersScheduler" value={state.diffusersScheduler} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersScheduler', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                <option value="EulerAncestralDiscreteScheduler">Euler Ancestral</option>
+                <option value="EulerDiscreteScheduler">Euler</option>
+                <option value="DPMSolverMultistepScheduler">DPM++ 2M</option>
+                <option value="DDIMScheduler">DDIM</option>
+                <option value="PNDMScheduler">PNDM</option>
+                <option value="LMSDiscreteScheduler">LMS</option>
+                <option value="">Default</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="localaiThreads" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">CPU Threads</label>
+              <input id="localaiThreads" type="number" min="1" value={state.localaiThreads} onChange={e => dispatch({ type: 'SET_FIELD', field: 'localaiThreads', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+            </div>
+            <div>
+              <label htmlFor="imageSize" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Default Image Size</label>
+              <select id="imageSize" value={state.imageSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'imageSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                <option value="256x256">256×256</option>
+                <option value="512x512">512×512</option>
+                <option value="768x768">768×768</option>
+                <option value="1024x1024">1024×1024</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label htmlFor="hfTokenLocalai" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (for gated models)</label>
+            <input id="hfTokenLocalai" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="hf_..." />
+          </div>
+        </div>
+      )}
+
       {deploymentType === "training" && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Layers className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">Training Configuration</h4></div>
@@ -1371,22 +1472,29 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
             </div>
           )}
 
-          {/* Coming soon notice */}
-          <div className="rounded-xl border border-purple-200 dark:border-purple-800/40 bg-purple-50/50 dark:bg-purple-900/10 p-6 text-center space-y-3">
-            <div className="mx-auto w-12 h-12 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-              <Image className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+          {/* Non-Gemini providers: manual model ID input */}
+          {selectedProvider !== 'gemini' && (
+            <div className="space-y-4">
+              <label htmlFor="externalImageModel" className="block text-sm font-medium">Model Name</label>
+              <input id="externalImageModel" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. dall-e-3, stabilityai/stable-diffusion-2-1" />
             </div>
-            <h3 className="font-semibold text-lg">Image Generation — Coming Soon</h3>
-            <p className="text-sm text-slate-500 dark:text-zinc-400 max-w-md mx-auto">
-              Image generation deployments are under active development. You'll be able to deploy Imagen and Gemini image models with full API support, prompt configuration, and usage tracking.
-            </p>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">
-              <Zap className="w-3 h-3" /> In Development
-            </span>
+          )}
+
+          <div className="space-y-4">
+            <label htmlFor="apiKeyImg" className="block text-sm font-medium">API Key</label>
+            <input id="apiKeyImg" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white font-mono" placeholder="sk-..." />
           </div>
+
+          {selectedProvider === 'custom' && (
+            <div className="space-y-4">
+              <label htmlFor="endpointUrlImg" className="block text-sm font-medium">Endpoint URL</label>
+              <input id="endpointUrlImg" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="https://..." />
+            </div>
+          )}
 
           <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6">
             <button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button>
+            <button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && !endpointUrl)} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button>
           </div>
         </div>
       )}

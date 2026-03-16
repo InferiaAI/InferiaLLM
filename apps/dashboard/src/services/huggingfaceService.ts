@@ -55,8 +55,7 @@ export const MODEL_TYPES = {
     description: "Stable Diffusion and image generation models",
     icon: "Image",
     pipeline_tags: ["text-to-image", "image-to-image", "inpainting"],
-    default_backend: "diffusers",
-    coming_soon: true,
+    default_backend: "localai",
   },
   multimodal: {
     id: "multimodal",
