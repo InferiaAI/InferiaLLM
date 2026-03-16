@@ -128,7 +128,7 @@ class ApiGatewayClient:
                 headers=self._get_headers(),
             )
         except Exception as e:
-            print(f"Failed to track usage: {e}")
+            logger.error(f"Failed to track usage: {e}")
 
     async def log_inference(
         self,
