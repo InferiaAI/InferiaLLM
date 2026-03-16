@@ -675,9 +675,41 @@ def create_localai_job(
     """
     effective_api_key = api_key or INTERNAL_API_KEY
 
+    # LocalAI container docs: https://localai.io/installation/containers/
+    # The official image has its own ENTRYPOINT baked into the Dockerfile.
+    # We must NOT override the entrypoint — just pass env vars and let the
+    # container start normally.
+    #
+    # Image generation docs: https://localai.io/features/image-generation/
+    # Model config is passed via the MODELS env var as a JSON string, which
+    # LocalAI reads on startup to configure backends.
+
+    model_config_name = model_id.replace("/", "--")
+
+    # Build the model config YAML for the diffusers backend.
+    # LocalAI loads YAML files from MODELS_PATH on startup.
+    yaml_lines = [
+        f"name: {model_config_name}",
+        "backend: diffusers",
+        "parameters:",
+        f"  model: {model_id}",
+    ]
+    if diffusers_pipeline or scheduler:
+        yaml_lines.append("diffusers:")
+        if diffusers_pipeline:
+            yaml_lines.append(f"  pipeline_type: {diffusers_pipeline}")
+        if scheduler:
+            yaml_lines.append(f"  scheduler_type: {scheduler}")
+
+    yaml_content = "\\n".join(yaml_lines)
+    models_path = "/models"
+
     envs: Dict[str, str] = {
-        "MODELS_PATH": "/models",
+        "MODELS_PATH": models_path,
         "IMAGE_PATH": image_path,
+        "THREADS": str(threads),
+        "CONTEXT_SIZE": str(context_size),
+        "ADDRESS": f"0.0.0.0:{port}",
     }
 
     token_to_use = hf_token or os.getenv("HF_TOKEN")
@@ -688,47 +720,22 @@ def create_localai_job(
     if effective_api_key:
         envs["API_KEY"] = effective_api_key
 
-    # Build the model config YAML for LocalAI to auto-load the diffusion model.
-    # LocalAI uses YAML configs in /models/ to define backends.
-    # See: https://localai.io/features/image-generation/
-    safe_model_id = shlex.quote(model_id)
-    model_config_name = model_id.replace("/", "--")
-
-    yaml_lines = [
-        f"name: {model_config_name}",
-        "backend: diffusers",
-        f"parameters:",
-        f"  model: {model_id}",
-    ]
-    if diffusers_pipeline:
-        yaml_lines.append(f"diffusers:")
-        yaml_lines.append(f"  pipeline_type: {diffusers_pipeline}")
-        if scheduler:
-            yaml_lines.append(f"  scheduler_type: {scheduler}")
-    elif scheduler:
-        yaml_lines.append(f"diffusers:")
-        yaml_lines.append(f"  scheduler_type: {scheduler}")
-
-    yaml_content = "\\n".join(yaml_lines)
-
-    # Build startup command:
-    # 1. Write model config YAML
-    # 2. Start LocalAI server
-    cmd_parts = [
-        f"mkdir -p /models",
-        f"mkdir -p {shlex.quote(image_path)}",
-        f'printf "{yaml_content}" > /models/{model_config_name}.yaml',
-        f"local-ai run --address 0.0.0.0:{port} --threads {threads} --context-size {context_size} --models-path /models --image-path {shlex.quote(image_path)}",
-    ]
-
-    cmd_str = " && ".join(cmd_parts)
+    # Write the model config YAML to the models directory, then find and
+    # exec the local-ai binary (its path varies across image versions).
+    cmd_str = (
+        f"mkdir -p {models_path} && "
+        f"mkdir -p {shlex.quote(image_path)} && "
+        f'printf "{yaml_content}" > {models_path}/{model_config_name}.yaml && '
+        f'BINARY=$(find / -name "local-ai" -type f -executable 2>/dev/null | head -1) && '
+        f'exec "$BINARY"'
+    )
 
     container_op = {
         "type": "container/run",
         "id": "localai-image-service",
         "args": {
             "image": image,
-            "entrypoint": ["/bin/sh"],
+            "entrypoint": ["/bin/bash"],
             "cmd": ["-c", cmd_str],
             "env": envs,
             "gpu": gpu,
