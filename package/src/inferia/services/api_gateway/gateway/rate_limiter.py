@@ -67,13 +67,13 @@ class InMemoryRateLimiter:
 
     def _get_bucket(self, key: str) -> TokenBucket:
         """Get or create token bucket for key."""
-        if key not in self.buckets:
-            # Convert requests per minute to tokens per second
-            refill_rate = self.requests_per_minute / 60.0
-            self.buckets[key] = TokenBucket(
-                capacity=self.burst_size, refill_rate=refill_rate
-            )
-        return self.buckets[key]
+        # Use dict.setdefault() for atomic check-and-set (GIL-safe).
+        # Prevents a race where concurrent coroutines both see the key
+        # as missing and create separate TokenBucket instances.
+        refill_rate = self.requests_per_minute / 60.0
+        return self.buckets.setdefault(
+            key, TokenBucket(capacity=self.burst_size, refill_rate=refill_rate)
+        )
 
     async def is_allowed(self, key: str) -> Tuple[bool, Dict[str, Any]]:
         """
