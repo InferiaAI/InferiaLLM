@@ -553,108 +553,116 @@ class ModelDeploymentWorker:
         except Exception:
             pass
 
-        # ------------------------------------
-        # 1. STOP RUNTIME (External providers / vLLM / etc)
-        # ------------------------------------
-        # Use node_ids to find the exact running instances to stop
-        if d.get("node_ids"):
-            for node_id in d["node_ids"]:
-                node = await self.inventory.get_node_by_id(node_id)
-                if node:
-                    adapter = get_adapter(node["provider"])
-                    metadata = node.get("metadata", {})
-                    if isinstance(metadata, str):
-                        try:
-                            import json
+        cleanup_error = None
+        try:
+            # ------------------------------------
+            # 1. STOP RUNTIME (External providers / vLLM / etc)
+            # ------------------------------------
+            # Use node_ids to find the exact running instances to stop
+            if d.get("node_ids"):
+                for node_id in d["node_ids"]:
+                    node = await self.inventory.get_node_by_id(node_id)
+                    if node:
+                        adapter = get_adapter(node["provider"])
+                        metadata = node.get("metadata", {})
+                        if isinstance(metadata, str):
+                            try:
+                                import json
 
-                            metadata = json.loads(metadata)
-                        except Exception:
-                            metadata = {}
+                                metadata = json.loads(metadata)
+                            except Exception:
+                                metadata = {}
 
-                    # Check if this is a cluster-based deployment
-                    service_name = metadata.get("service_name") if metadata else None
+                        # Check if this is a cluster-based deployment
+                        service_name = metadata.get("service_name") if metadata else None
 
-                    if is_cluster_pool and service_name and cluster_id:
-                        # For cluster-based pools: stop the service but keep the cluster
-                        log.info(
-                            f"Stopping service {service_name} on cluster {cluster_id}"
-                        )
-                        try:
-                            await adapter.stop_service(
-                                cluster_id=cluster_id,
-                                service_name=service_name,
+                        if is_cluster_pool and service_name and cluster_id:
+                            # For cluster-based pools: stop the service but keep the cluster
+                            log.info(
+                                f"Stopping service {service_name} on cluster {cluster_id}"
+                            )
+                            try:
+                                await adapter.stop_service(
+                                    cluster_id=cluster_id,
+                                    service_name=service_name,
+                                    provider_credential_name=metadata.get(
+                                        "provider_credential_name"
+                                    ),
+                                )
+                                log.info(
+                                    f"Stopped service {service_name} on cluster {cluster_id}"
+                                )
+                            except Exception as e:
+                                log.warning(f"Failed to stop service {service_name}: {e}")
+                        else:
+                            # For job-based pools: deprovision the node
+                            log.info(f"Deprovisioning {node['provider']} node {node_id}")
+                            await adapter.deprovision_node(
+                                provider_instance_id=node["provider_instance_id"],
                                 provider_credential_name=metadata.get(
                                     "provider_credential_name"
                                 ),
                             )
-                            log.info(
-                                f"Stopped service {service_name} on cluster {cluster_id}"
-                            )
+
+            log.info(f"Stopped runtime for deployment {deployment_id}")
+
+            # ------------------------------------
+            # 2. RELEASE SCHEDULER ALLOCATIONS
+            # ------------------------------------
+            if d.get("allocation_ids"):
+                for alloc_id in d["allocation_ids"]:
+                    await self.scheduler.release(allocation_id=alloc_id)
+
+            log.info(f"Released scheduler allocations for deployment {deployment_id}")
+
+            # ------------------------------------
+            # 3. HANDLE INVENTORY
+            # ------------------------------------
+            node = None
+            if d.get("node_ids"):
+                for node_id in d["node_ids"]:
+                    node = await self.inventory.get_node_by_id(node_id)
+
+                    # Use adapter capabilities to determine if ephemeral
+                    is_ephemeral = False
+                    is_cluster = False
+                    if node:
+                        try:
+                            adapter = get_adapter(node["provider"])
+                            capabilities = adapter.get_capabilities()
+                            is_ephemeral = capabilities.is_ephemeral
+                            is_cluster = capabilities.supports_cluster_mode
                         except Exception as e:
-                            log.warning(f"Failed to stop service {service_name}: {e}")
+                            log.warning(
+                                f"Could not get capabilities for {node['provider']}: {e}"
+                            )
+                            # Fallback: check if provider is known to be ephemeral
+                            is_ephemeral = node.get("provider") in ["nosana", "akash"]
+
+                    # For cluster-based deployments: always recycle (cluster stays alive)
+                    # For ephemeral job-based: mark as terminated
+                    # For persistent: recycle
+                    if is_cluster:
+                        await self.inventory.recycle_node(node_id)
+                        log.info(
+                            f"Recycled cluster service node {node_id} (cluster remains alive)"
+                        )
+                    elif is_ephemeral:
+                        await self.inventory.mark_terminated(node_id)
+                        log.info(f"Terminated ephemeral node {node_id}")
                     else:
-                        # For job-based pools: deprovision the node
-                        log.info(f"Deprovisioning {node['provider']} node {node_id}")
-                        await adapter.deprovision_node(
-                            provider_instance_id=node["provider_instance_id"],
-                            provider_credential_name=metadata.get(
-                                "provider_credential_name"
-                            ),
-                        )
-
-        log.info(f"Stopped runtime for deployment {deployment_id}")
-
-        # ------------------------------------
-        # 2. RELEASE SCHEDULER ALLOCATIONS
-        # ------------------------------------
-        if d.get("allocation_ids"):
-            for alloc_id in d["allocation_ids"]:
-                await self.scheduler.release(allocation_id=alloc_id)
-
-        log.info(f"Released scheduler allocations for deployment {deployment_id}")
-
-        # ------------------------------------
-        # 3. HANDLE INVENTORY
-        # ------------------------------------
-        node = None
-        if d.get("node_ids"):
-            for node_id in d["node_ids"]:
-                node = await self.inventory.get_node_by_id(node_id)
-
-                # Use adapter capabilities to determine if ephemeral
-                is_ephemeral = False
-                is_cluster = False
-                if node:
-                    try:
-                        adapter = get_adapter(node["provider"])
-                        capabilities = adapter.get_capabilities()
-                        is_ephemeral = capabilities.is_ephemeral
-                        is_cluster = capabilities.supports_cluster_mode
-                    except Exception as e:
-                        log.warning(
-                            f"Could not get capabilities for {node['provider']}: {e}"
-                        )
-                        # Fallback: check if provider is known to be ephemeral
-                        is_ephemeral = node.get("provider") in ["nosana", "akash"]
-
-                # For cluster-based deployments: always recycle (cluster stays alive)
-                # For ephemeral job-based: mark as terminated
-                # For persistent: recycle
-                if is_cluster:
-                    await self.inventory.recycle_node(node_id)
-                    log.info(
-                        f"Recycled cluster service node {node_id} (cluster remains alive)"
-                    )
-                elif is_ephemeral:
-                    await self.inventory.mark_terminated(node_id)
-                    log.info(f"Terminated ephemeral node {node_id}")
-                else:
-                    await self.inventory.recycle_node(node_id)
-                    log.info(f"Recycled inventory node {node_id}")
-
-        # ------------------------------------
-        # 4. FINAL STATE
-        # ------------------------------------
-        await self.deployments.update_state(deployment_id, "STOPPED")
-
-        log.info(f"Deployment {deployment_id} stopped")
+                        await self.inventory.recycle_node(node_id)
+                        log.info(f"Recycled inventory node {node_id}")
+        except Exception as e:
+            cleanup_error = e
+            log.error(f"Cleanup failed for deployment {deployment_id}: {e}")
+        finally:
+            # ------------------------------------
+            # 4. FINAL STATE — always reached
+            # ------------------------------------
+            final_state = "STOPPED" if cleanup_error is None else "FAILED"
+            await self.deployments.update_state(deployment_id, final_state)
+            if cleanup_error:
+                log.error(f"Deployment {deployment_id} marked FAILED due to cleanup error: {cleanup_error}")
+            else:
+                log.info(f"Deployment {deployment_id} stopped")

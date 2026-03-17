@@ -6,9 +6,16 @@ from inferia.services.orchestration.services.adapter_engine.base import (
     ProviderCapabilities,
 )
 from typing import List, Dict, Optional
+import asyncio
+import functools
 import uuid
 import logging
 import time
+
+
+async def _run_sync(func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +67,7 @@ class KubernetesAdapter(ProviderAdapter):
         Discover available node capacity.
         """
         try:
-            nodes = self.core.list_node().items
+            nodes = (await _run_sync(self.core.list_node)).items
 
             resources = []
 
@@ -170,7 +177,7 @@ class KubernetesAdapter(ProviderAdapter):
             ),
         )
 
-        self.core.create_namespaced_pod(namespace=namespace, body=pod)
+        await _run_sync(self.core.create_namespaced_pod, namespace=namespace, body=pod)
 
         return {
             "provider": "k8s",
@@ -212,8 +219,9 @@ class KubernetesAdapter(ProviderAdapter):
 
         while True:
             try:
-                pod = self.core.read_namespaced_pod(
-                    name=provider_instance_id, namespace=namespace
+                pod = await _run_sync(
+                    self.core.read_namespaced_pod,
+                    name=provider_instance_id, namespace=namespace,
                 )
 
                 phase = pod.status.phase
@@ -260,16 +268,18 @@ class KubernetesAdapter(ProviderAdapter):
             # Default to "default" namespace if not found
             namespace = "default"
             try:
-                pods = self.core.list_pod_for_all_namespaces(
-                    field_selector=f"metadata.name={provider_instance_id}"
+                pods = await _run_sync(
+                    self.core.list_pod_for_all_namespaces,
+                    field_selector=f"metadata.name={provider_instance_id}",
                 )
                 if pods.items:
                     namespace = pods.items[0].metadata.namespace
             except Exception:
                 pass
 
-            self.core.delete_namespaced_pod(
-                name=provider_instance_id, namespace=namespace
+            await _run_sync(
+                self.core.delete_namespaced_pod,
+                name=provider_instance_id, namespace=namespace,
             )
         except Exception:
             logger.exception("Kubernetes deprovision error")
@@ -291,16 +301,18 @@ class KubernetesAdapter(ProviderAdapter):
             # Similar to deprovision, we need to find the namespace
             namespace = "default"
             try:
-                pods = self.core.list_pod_for_all_namespaces(
-                    field_selector=f"metadata.name={provider_instance_id}"
+                pods = await _run_sync(
+                    self.core.list_pod_for_all_namespaces,
+                    field_selector=f"metadata.name={provider_instance_id}",
                 )
                 if pods.items:
                     namespace = pods.items[0].metadata.namespace
             except Exception:
                 pass
 
-            logs = self.core.read_namespaced_pod_log(
-                name=provider_instance_id, namespace=namespace, tail_lines=100
+            logs = await _run_sync(
+                self.core.read_namespaced_pod_log,
+                name=provider_instance_id, namespace=namespace, tail_lines=100,
             )
             return {"logs": logs.split("\n")}
         except Exception as e:
