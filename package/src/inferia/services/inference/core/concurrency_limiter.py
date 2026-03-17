@@ -18,15 +18,18 @@ class UpstreamConcurrencyLimiter:
 
     def __init__(self):
         self._global_semaphore: Optional[asyncio.Semaphore] = None
-        if settings.upstream_global_max_in_flight > 0:
-            self._global_semaphore = asyncio.Semaphore(
-                settings.upstream_global_max_in_flight
-            )
-
+        self._global_limit = settings.upstream_global_max_in_flight
         self._per_deployment_limit = settings.upstream_per_deployment_max_in_flight
         self._acquire_timeout_seconds = settings.upstream_slot_acquire_timeout_seconds
         self._deployment_semaphores: Dict[str, asyncio.Semaphore] = {}
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
+
+    def _ensure_initialized(self):
+        """Create asyncio primitives on first use (after fork)."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        if self._global_semaphore is None and self._global_limit > 0:
+            self._global_semaphore = asyncio.Semaphore(self._global_limit)
 
     async def _get_or_create_deployment_semaphore(
         self, deployment_key: str
@@ -55,6 +58,7 @@ class UpstreamConcurrencyLimiter:
 
     @asynccontextmanager
     async def limit(self, deployment_key: str) -> AsyncGenerator[None, None]:
+        self._ensure_initialized()
         acquired_global = False
         acquired_deployment = False
         deployment_semaphore: Optional[asyncio.Semaphore] = None
