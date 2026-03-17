@@ -97,16 +97,20 @@ jobs:
             package/src/inferia/services/orchestration/test/adapter_test/test_adapter_error_handling.py \
             package/src/inferia/services/orchestration/test/test_grpc_abort_return.py \
             package/src/inferia/services/orchestration/test/spot/test_spot_reclaimer_filter.py \
+            package/src/inferia/services/orchestration/test/test_aws_instance_resources.py \
             package/src/inferia/services/orchestration/test/test_config_properties.py \
             package/src/inferia/services/api_gateway/tests/test_invitation_auth_bypass.py \
             package/src/inferia/tests/test_entrypoint_config_escaping.py \
             package/src/inferia/services/guardrail/tests/test_scan_error_sanitization.py \
+            package/src/inferia/services/guardrail/tests/test_asyncio_loop_usage.py \
             package/src/inferia/services/data/tests/test_error_sanitization.py \
             package/src/inferia/services/data/tests/test_router_error_sanitization.py \
             package/src/inferia/services/data/tests/test_filename_sanitization.py \
             package/src/inferia/services/api_gateway/tests/test_totp_setup_security.py \
             package/src/inferia/services/api_gateway/tests/test_rate_limiter_bucket_race.py \
             package/src/inferia/services/inference/tests/test_quota_cache_race.py \
+            package/src/inferia/services/orchestration/test/test_skypilot_terminate.py \
+            package/src/inferia/services/orchestration/test/test_k8s_nonblocking.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
             --cov=package/src/inferia \

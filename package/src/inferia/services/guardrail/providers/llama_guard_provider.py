@@ -96,7 +96,7 @@ class LlamaGuardProvider(GuardrailProvider):
         messages = [{"role": "user", "content": text}]
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             chat_completion = await loop.run_in_executor(
                 None,
                 lambda: self.groq_client.chat.completions.create(
@@ -164,7 +164,7 @@ class LlamaGuardProvider(GuardrailProvider):
         ]
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             chat_completion = await loop.run_in_executor(
                 None,
                 lambda: self.groq_client.chat.completions.create(
