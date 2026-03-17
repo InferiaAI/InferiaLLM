@@ -80,7 +80,7 @@ class PIIService:
             ]
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             # scan_prompt signature: (scanners: list, prompt: str) -> (sanitized_prompt, results_valid, results_score)
             sanitized_text, results_valid, results_score = await loop.run_in_executor(
                 None, scan_prompt, [scanner], text

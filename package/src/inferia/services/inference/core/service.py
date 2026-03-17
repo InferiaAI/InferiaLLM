@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from inferia.services.inference.client import api_gateway_client
 from inferia.services.inference.config import settings
+from inferia.common.circuit_breaker import circuit_breaker_registry
 from typing import Dict, Any, List, AsyncGenerator
 import logging
 import httpx
@@ -257,6 +258,17 @@ class GatewayService:
             yield b'data: {"error": "Invalid upstream configuration"}\n\n'
             return
 
+        breaker = circuit_breaker_registry.get_or_create(
+            f"upstream:{concurrency_key}",
+            failure_threshold=5,
+            recovery_timeout=30.0,
+            expected_exception=(httpx.HTTPStatusError, httpx.RequestError),
+        )
+
+        if not await breaker._can_execute():
+            yield b'data: {"error": "Upstream temporarily unavailable (circuit breaker open)"}\n\n'
+            return
+
         max_bytes = settings.upstream_max_response_bytes
         client = http_client.get_client()
         try:
@@ -273,9 +285,11 @@ class GatewayService:
                             return
                         yield chunk
         except httpx.HTTPStatusError as e:
+            await breaker._record_failure()
             logger.error(f"Upstream Error {e.response.status_code}: {e.response.text}")
             yield b'data: {"error": "Upstream provider returned an error"}\n\n'
         except Exception as e:
+            await breaker._record_failure()
             logger.error(f"Streaming Exception: {e}")
             yield b'data: {"error": "Streaming connection failed"}\n\n'
 
@@ -308,6 +322,19 @@ class GatewayService:
         transformed_payload = adapter.transform_request(payload)
         max_bytes = settings.upstream_max_response_bytes
 
+        breaker = circuit_breaker_registry.get_or_create(
+            f"upstream:{concurrency_key}",
+            failure_threshold=5,
+            recovery_timeout=30.0,
+            expected_exception=(httpx.HTTPStatusError, httpx.RequestError),
+        )
+
+        if not await breaker._can_execute():
+            raise HTTPException(
+                status_code=503,
+                detail="Upstream temporarily unavailable (circuit breaker open)",
+            )
+
         client = http_client.get_client()
         try:
             async with upstream_concurrency_limiter.limit(concurrency_key):
@@ -329,16 +356,19 @@ class GatewayService:
                 raw_response = resp.json()
 
                 # Transform response back to OpenAI format
+                await breaker._record_success()
                 return adapter.transform_response(raw_response)
         except HTTPException:
             raise
         except httpx.HTTPStatusError as e:
+            await breaker._record_failure()
             logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail="Upstream provider returned an error",
             )
         except Exception as e:
+            await breaker._record_failure()
             logger.error(f"Provider request failed: {e}")
             raise HTTPException(
                 status_code=502, detail="Upstream provider is unavailable"
