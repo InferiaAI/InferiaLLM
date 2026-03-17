@@ -25,6 +25,7 @@ CREATE TABLE users (
     email VARCHAR NOT NULL, 
     password_hash VARCHAR NOT NULL, 
     totp_secret VARCHAR,
+    totp_pending_secret VARCHAR,
     totp_enabled BOOLEAN DEFAULT FALSE,
     default_org_id VARCHAR, 
     created_at TIMESTAMP WITHOUT TIME ZONE, 

@@ -59,6 +59,56 @@ SCHEMA_DIR = BASE_DIR / "infra" / "schema"
 API_GATEWAY_BOOTSTRAP_SCRIPT = BASE_DIR / "services" / "api_gateway" / "bootstrap_db.py"
 
 
+MIGRATIONS_DIR = SCHEMA_DIR / "migrations"
+
+
+async def _apply_migrations(dsn: str):
+    """Apply any unapplied SQL migrations from the migrations directory."""
+    if not MIGRATIONS_DIR.exists():
+        return
+
+    migration_files = sorted(
+        f for f in MIGRATIONS_DIR.iterdir()
+        if f.suffix == ".sql" and f.name[0].isdigit()
+    )
+    if not migration_files:
+        return
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        # Create tracking table if it doesn't exist
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                filename VARCHAR PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT now()
+            )
+        """)
+
+        applied = {
+            row["filename"]
+            for row in await conn.fetch("SELECT filename FROM schema_migrations")
+        }
+
+        for mf in migration_files:
+            if mf.name in applied:
+                continue
+            print(f"[inferia:init] Applying migration: {mf.name}")
+            await conn.execute("BEGIN")
+            try:
+                await conn.execute(mf.read_text())
+                await conn.execute(
+                    "INSERT INTO schema_migrations (filename) VALUES ($1)",
+                    mf.name,
+                )
+                await conn.execute("COMMIT")
+            except Exception as e:
+                await conn.execute("ROLLBACK")
+                print(f"[inferia:init] Migration failed ({mf.name}): {e}")
+                raise
+    finally:
+        await conn.close()
+
+
 async def _execute_schema(dsn: str, sql_file: Path, label: str):
     if not sql_file.exists():
         print(f"[inferia:init] Skipping schema (not found): {label}")
@@ -233,6 +283,11 @@ async def _init():
     )
 
     # --------------------------------------------------
+    # Apply incremental migrations
+    # --------------------------------------------------
+    await _apply_migrations(inferia_dsn)
+
+    # --------------------------------------------------
     # Application-level bootstrap (API Gateway only)
     # --------------------------------------------------
 
@@ -249,3 +304,19 @@ async def _init():
 
 def init_databases():
     asyncio.run(_init())
+
+
+async def run_migrations():
+    """Standalone migration runner for existing installations."""
+    inferia_user = _safe_ident(_require_env("INFERIA_DB_USER"))
+    inferia_password = _require_env("INFERIA_DB_PASSWORD")
+    pg_host = _require_env("PG_HOST")
+    pg_port = _require_env("PG_PORT")
+    inferia_db = _safe_ident(_require_env("INFERIA_DB", allow_empty=True) or "inferia")
+
+    dsn = (
+        f"postgresql://{inferia_user}:{inferia_password}"
+        f"@{pg_host}:{pg_port}/{inferia_db}"
+    )
+    await _apply_migrations(dsn)
+    print("[inferia:migrate] Done")
