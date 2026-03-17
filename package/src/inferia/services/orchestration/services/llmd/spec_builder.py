@@ -90,11 +90,14 @@ def build_llmd_spec(
                 "backend": model["backend"],
                 **safe_config,
             },
-            "placement": {
-                "nodeSelector": {
-                    "kubernetes.io/hostname": node_names[0]
+            "placement": [
+                {
+                    "nodeSelector": {
+                        "kubernetes.io/hostname": node_name
+                    }
                 }
-            },
+                for node_name in node_names
+            ],
             "resources": {
                 "limits": {
                     "nvidia.com/gpu": gpu_per_replica

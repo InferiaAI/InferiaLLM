@@ -10,6 +10,27 @@ from inferia.services.orchestration.v1 import (
 
 GRPC_ADDR = "localhost:50051"
 
+AWS_INSTANCE_RESOURCES = {
+    "g4dn.xlarge": {"cpu": "4", "memory": "16Gi"},
+    "g4dn.2xlarge": {"cpu": "8", "memory": "32Gi"},
+    "g4dn.4xlarge": {"cpu": "16", "memory": "64Gi"},
+    "g4dn.8xlarge": {"cpu": "32", "memory": "128Gi"},
+    "g4dn.12xlarge": {"cpu": "48", "memory": "192Gi"},
+    "g4dn.16xlarge": {"cpu": "64", "memory": "256Gi"},
+    "g5.xlarge": {"cpu": "4", "memory": "16Gi"},
+    "g5.2xlarge": {"cpu": "8", "memory": "32Gi"},
+    "g5.4xlarge": {"cpu": "16", "memory": "64Gi"},
+    "g5.8xlarge": {"cpu": "32", "memory": "64Gi"},
+    "g5.12xlarge": {"cpu": "48", "memory": "192Gi"},
+    "g5.16xlarge": {"cpu": "64", "memory": "256Gi"},
+    "g5.48xlarge": {"cpu": "192", "memory": "768Gi"},
+    "p3.2xlarge": {"cpu": "8", "memory": "61Gi"},
+    "p3.8xlarge": {"cpu": "32", "memory": "244Gi"},
+    "p3.16xlarge": {"cpu": "64", "memory": "488Gi"},
+    "p4d.24xlarge": {"cpu": "96", "memory": "1152Gi"},
+    "p5.48xlarge": {"cpu": "192", "memory": "2048Gi"},
+}
+
 
 class AWSAdapter(ProviderAdapter):
     def __init__(self, region: str):
@@ -72,10 +93,10 @@ class AWSAdapter(ProviderAdapter):
                             pool_id="aws-default-pool",
                             node_name=node["node_id"],
                             node_type=node["instance_type"],
-                            allocatable={
-                                "cpu": "4",  # Placeholder
-                                "memory": "16Gi",  # Placeholder
-                            },
+                            allocatable=AWS_INSTANCE_RESOURCES.get(
+                                node["instance_type"],
+                                {"cpu": "4", "memory": "16Gi"},
+                            ),
                         )
                     )
                 except grpc.aio.AioRpcError as e:

@@ -64,6 +64,6 @@ class SkyPilotProvisioner(Provisioner):
             import sky
             logger.info("Terminating SkyPilot cluster", extra={"cluster": cluster_id})
             sky.down(cluster_name=cluster_id)
-        except Exception:
+        except Exception as e:
             # best-effort termination
-            pass
+            logger.error(f"Failed to terminate SkyPilot cluster {cluster_id}: {e}", extra={"cluster": cluster_id})
