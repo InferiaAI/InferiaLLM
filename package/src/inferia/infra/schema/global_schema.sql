@@ -583,12 +583,14 @@ CREATE TABLE audit_logs (
     resource_id VARCHAR, 
     details JSON, 
     ip_address VARCHAR, 
-    status VARCHAR NOT NULL, 
-    PRIMARY KEY (id), 
+    status VARCHAR NOT NULL,
+    org_id VARCHAR,
+    PRIMARY KEY (id),
     FOREIGN KEY(user_id) REFERENCES users (id)
 );
 CREATE INDEX ix_audit_logs_user_id ON audit_logs (user_id);
 CREATE INDEX ix_audit_logs_action ON audit_logs (action);
+CREATE INDEX ix_audit_logs_org_id ON audit_logs (org_id);
 
 CREATE TABLE system_settings (
     key VARCHAR NOT NULL, 
