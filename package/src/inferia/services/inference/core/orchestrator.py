@@ -486,24 +486,26 @@ class OrchestrationService:
         )
 
         # 4. Input Guardrails
+        scan_task = None
         if guardrail_cfg.get("enabled") or guardrail_cfg.get("pii_enabled"):
             applied_policies.append("guardrail")
             if guardrail_cfg.get("pii_enabled"):
                 applied_policies.append("pii")
-
-        scan_task = asyncio.create_task(
-            GatewayService.scan_input(messages, guardrail_cfg, user_context_id)
-        )
+            scan_task = asyncio.create_task(
+                GatewayService.scan_input(messages, guardrail_cfg, user_context_id)
+            )
 
         try:
             # Wait for Quota (Gatekeeper)
             await quota_task
         except Exception:
-            scan_task.cancel()
+            if scan_task is not None:
+                scan_task.cancel()
             raise
 
         # Wait for Input Scan (Data Modifier)
-        await scan_task
+        if scan_task is not None:
+            await scan_task
 
         # 5. Prompt Processing (RAG / Templates)
         if rag_cfg.get("enabled"):
@@ -671,24 +673,29 @@ class OrchestrationService:
                 raise
             finally:
                 # Log completion
-                asyncio.create_task(
-                    OrchestrationService._log_request(
-                        deployment_id,
-                        user_context_id,
-                        model,
-                        original_body,
-                        start_time,
-                        tracker["prompt_tokens"],
-                        tracker["completion_tokens"],
-                        tracker["ttft_ms"],
-                        is_streaming=True,
-                        applied_policies=applied_policies,
-                        log_payloads=log_payloads,
-                        ip_address=ip_address,
-                        status_code=status_code,
-                        error_message=error_message,
+                try:
+                    asyncio.create_task(
+                        OrchestrationService._log_request(
+                            deployment_id,
+                            user_context_id,
+                            model,
+                            original_body,
+                            start_time,
+                            tracker["prompt_tokens"],
+                            tracker["completion_tokens"],
+                            tracker["ttft_ms"],
+                            is_streaming=True,
+                            applied_policies=applied_policies,
+                            log_payloads=log_payloads,
+                            ip_address=ip_address,
+                            status_code=status_code,
+                            error_message=error_message,
+                        )
                     )
-                )
+                except RuntimeError:
+                    logger.error(
+                        "Failed to schedule streaming log task: no running event loop"
+                    )
 
         return StreamingResponse(
             logging_generator_wrapper(),
@@ -734,13 +741,16 @@ class OrchestrationService:
 
             # Output Guardrails
             if response_data and response_data.get("choices"):
-                content = response_data["choices"][0]["message"]["content"]
-                await GatewayService.scan_output(
-                    content,
-                    provider_payload["messages"][-1]["content"],
-                    guardrail_cfg,
-                    user_context_id,
-                )
+                content = (response_data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+                last_msg = provider_payload.get("messages", [{}])[-1]
+                input_content = last_msg.get("content", "") if isinstance(last_msg, dict) else ""
+                if content and input_content:
+                    await GatewayService.scan_output(
+                        content,
+                        input_content,
+                        guardrail_cfg,
+                        user_context_id,
+                    )
 
             # Usage
             usage = response_data.get("usage", {})

@@ -69,24 +69,28 @@ class OutboxRepository(BaseRepository):
         """
         Fetch pending events for publishing.
 
-        Uses FOR UPDATE SKIP LOCKED to allow parallel workers.
+        Uses FOR UPDATE SKIP LOCKED inside an explicit transaction so that
+        row-level locks are held until the transaction commits, preventing
+        concurrent workers from picking the same events.
         """
 
-        rows = await self.db.fetch(
-            """
-            SELECT id,
-                   aggregate_type,
-                   aggregate_id,
-                   event_type,
-                   payload
-            FROM outbox_events
-            WHERE status = 'PENDING'
-            ORDER BY created_at ASC
-            LIMIT $1
-            FOR UPDATE SKIP LOCKED
-            """,
-            limit,
-        )
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                rows = await conn.fetch(
+                    """
+                    SELECT id,
+                           aggregate_type,
+                           aggregate_id,
+                           event_type,
+                           payload
+                    FROM outbox_events
+                    WHERE status = 'PENDING'
+                    ORDER BY created_at ASC
+                    LIMIT $1
+                    FOR UPDATE SKIP LOCKED
+                    """,
+                    limit,
+                )
 
         return [dict(r) for r in rows]
 

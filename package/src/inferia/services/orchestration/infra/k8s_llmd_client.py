@@ -1,5 +1,12 @@
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
+import asyncio
+import functools
+
+
+async def _run_sync(func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
 
 
 class LLMdK8sClient:
@@ -12,7 +19,8 @@ class LLMdK8sClient:
         name = spec["metadata"]["name"]
 
         try:
-            return self.api.create_namespaced_custom_object(
+            return await _run_sync(
+                self.api.create_namespaced_custom_object,
                 group="llmd.ai",
                 version="v1",
                 namespace=self.namespace,
@@ -21,7 +29,8 @@ class LLMdK8sClient:
             )
         except ApiException as e:
             if e.status == 409:
-                return self.api.patch_namespaced_custom_object(
+                return await _run_sync(
+                    self.api.patch_namespaced_custom_object,
                     group="llmd.ai",
                     version="v1",
                     namespace=self.namespace,
@@ -32,7 +41,8 @@ class LLMdK8sClient:
             raise
 
     async def delete(self, name: str):
-        self.api.delete_namespaced_custom_object(
+        await _run_sync(
+            self.api.delete_namespaced_custom_object,
             group="llmd.ai",
             version="v1",
             namespace=self.namespace,
@@ -41,7 +51,8 @@ class LLMdK8sClient:
         )
 
     async def get_status(self, name: str):
-        obj = self.api.get_namespaced_custom_object(
+        obj = await _run_sync(
+            self.api.get_namespaced_custom_object,
             group="llmd.ai",
             version="v1",
             namespace=self.namespace,
