@@ -101,6 +101,7 @@ jobs:
             package/src/inferia/services/api_gateway/tests/test_invitation_auth_bypass.py \
             package/src/inferia/tests/test_entrypoint_config_escaping.py \
             package/src/inferia/services/guardrail/tests/test_scan_error_sanitization.py \
+            package/src/inferia/services/guardrail/tests/test_asyncio_loop_usage.py \
             package/src/inferia/services/data/tests/test_error_sanitization.py \
             package/src/inferia/services/data/tests/test_router_error_sanitization.py \
             package/src/inferia/services/data/tests/test_filename_sanitization.py \
