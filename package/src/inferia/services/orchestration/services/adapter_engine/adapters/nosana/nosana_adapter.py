@@ -72,10 +72,11 @@ class NosanaAdapter(ProviderAdapter):
         },
     )
 
-    # Simple in-memory cache
-    _resources_cache: List[Dict] = []
-    _last_discovery_time: float = 0
     CACHE_DURATION: int = 300  # 5 minutes
+
+    def __init__(self) -> None:
+        self._resources_cache: List[Dict] = []
+        self._last_discovery_time: float = 0.0
 
     # -------------------------------------------------
     # DISCOVER
