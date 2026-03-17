@@ -1,5 +1,12 @@
 from kubernetes import client, config
+import asyncio
+import functools
 import logging
+
+
+async def _run_sync(func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
 
 logger = logging.getLogger("llmd-client")
 
@@ -14,7 +21,8 @@ class LLMdK8sClient:
         name = spec["metadata"]["name"]
 
         try:
-            self.api.create_namespaced_custom_object(
+            await _run_sync(
+                self.api.create_namespaced_custom_object,
                 group="llmd.ai",
                 version="v1",
                 namespace=self.namespace,
@@ -24,7 +32,8 @@ class LLMdK8sClient:
             logger.info("llm-d CRD created: %s", name)
         except client.exceptions.ApiException as e:
             if e.status == 409:
-                self.api.replace_namespaced_custom_object(
+                await _run_sync(
+                    self.api.replace_namespaced_custom_object,
                     group="llmd.ai",
                     version="v1",
                     namespace=self.namespace,
@@ -36,8 +45,9 @@ class LLMdK8sClient:
             else:
                 raise
 
-    def get(self, name: str):
-        return self.api.get_namespaced_custom_object(
+    async def get(self, name: str):
+        return await _run_sync(
+            self.api.get_namespaced_custom_object,
             group="llmd.ai",
             version="v1",
             namespace=self.namespace,
