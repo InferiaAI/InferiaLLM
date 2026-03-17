@@ -37,6 +37,10 @@ class ApiGatewayClient:
         self._context_inflight: Dict[tuple[str, str, str], asyncio.Task] = {}
         self._quota_inflight: Dict[tuple[str, str], asyncio.Task] = {}
         self._inflight_lock = asyncio.Lock()
+        # Negative cache: short-circuits repeated connection failures to prevent
+        # thundering herd when the gateway is down.
+        self._negative_cache: Dict[str, float] = {}
+        self._negative_cache_ttl = 5.0
 
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the shared httpx client."""
@@ -56,7 +60,20 @@ class ApiGatewayClient:
             await self._client.aclose()
             self._client = None
 
-    # ... (skipping methods)
+    def _check_negative_cache(self, key: str) -> None:
+        """Raise 503 immediately if a recent connection failure is cached."""
+        ts = self._negative_cache.get(key)
+        if ts is not None:
+            if (time.monotonic() - ts) < self._negative_cache_ttl:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Gateway temporarily unavailable (cached failure)",
+                )
+            del self._negative_cache[key]
+
+    def _set_negative_cache(self, key: str) -> None:
+        """Cache the current time for a failed connection."""
+        self._negative_cache[key] = time.monotonic()
 
     def _get_headers(self, auth_token: Optional[str] = None) -> Dict[str, str]:
         """Build headers for API Gateway requests."""
@@ -95,6 +112,10 @@ class ApiGatewayClient:
                     self._quota_inflight.pop(cache_key, None)
 
     async def _check_quota_uncached(self, user_id: str, model: str) -> None:
+        cache_key = (user_id, model)
+        neg_key = f"quota:{cache_key}"
+        self._check_negative_cache(neg_key)
+
         client = self._get_client()
         try:
             response = await client.post(
@@ -109,6 +130,11 @@ class ApiGatewayClient:
                 raise HTTPException(status_code=429, detail=detail)
             raise HTTPException(
                 status_code=500, detail=f"Policy check failed: {str(e)}"
+            )
+        except httpx.RequestError:
+            self._set_negative_cache(neg_key)
+            raise HTTPException(
+                status_code=503, detail="Gateway temporarily unavailable"
             )
 
     async def track_usage(
@@ -345,6 +371,9 @@ class ApiGatewayClient:
         self, api_key: str, model: str, model_type: str
     ) -> Dict[str, Any]:
         cache_key = (api_key, model, model_type)
+        neg_key = f"ctx:{cache_key}"
+        self._check_negative_cache(neg_key)
+
         client = self._get_client()
         headers = self._get_headers()  # Use internal key
         payload = {"api_key": api_key, "model": model, "model_type": model_type}
@@ -367,6 +396,11 @@ class ApiGatewayClient:
                 detail=e.response.json().get(
                     "detail", "Failed to resolve deployment context"
                 ),
+            )
+        except httpx.RequestError:
+            self._set_negative_cache(neg_key)
+            raise HTTPException(
+                status_code=500, detail="Failed to resolve deployment context"
             )
         except Exception:
             raise HTTPException(
