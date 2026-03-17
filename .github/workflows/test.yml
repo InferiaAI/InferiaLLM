@@ -59,6 +59,7 @@ jobs:
             package/src/inferia/services/inference/tests/test_provider_error_sanitization.py \
             package/src/inferia/services/guardrail/tests/test_guardrail_fail_closed.py \
             package/src/inferia/services/orchestration/test/test_llmd_spec_builder.py \
+            package/src/inferia/services/orchestration/test/test_spec_builder_placement.py \
             package/src/inferia/common/tests/test_middleware.py \
             package/src/inferia/common/tests/test_rate_limit.py \
             package/src/inferia/common/tests/test_errors.py \
