@@ -80,7 +80,8 @@ class ApiGatewayClient:
 
         async with self._inflight_lock:
             task = self._quota_inflight.get(cache_key)
-            if task is None:
+            is_owner = task is None
+            if is_owner:
                 task = asyncio.create_task(self._check_quota_uncached(user_id, model))
                 self._quota_inflight[cache_key] = task
 
@@ -90,9 +91,10 @@ class ApiGatewayClient:
                 # Value is irrelevant; presence in TTL cache means "checked recently and allowed".
                 self.quota_check_cache[cache_key] = time.monotonic()
         finally:
-            async with self._inflight_lock:
-                if self._quota_inflight.get(cache_key) is task:
-                    self._quota_inflight.pop(cache_key, None)
+            if is_owner:
+                async with self._inflight_lock:
+                    if self._quota_inflight.get(cache_key) is task:
+                        self._quota_inflight.pop(cache_key, None)
 
     async def _check_quota_uncached(self, user_id: str, model: str) -> None:
         client = self._get_client()
@@ -327,7 +329,8 @@ class ApiGatewayClient:
 
         async with self._inflight_lock:
             task = self._context_inflight.get(cache_key)
-            if task is None:
+            is_owner = task is None
+            if is_owner:
                 task = asyncio.create_task(
                     self._resolve_context_uncached(api_key, model, model_type)
                 )
@@ -337,9 +340,10 @@ class ApiGatewayClient:
             data = await task
             return data
         finally:
-            async with self._inflight_lock:
-                if self._context_inflight.get(cache_key) is task:
-                    self._context_inflight.pop(cache_key, None)
+            if is_owner:
+                async with self._inflight_lock:
+                    if self._context_inflight.get(cache_key) is task:
+                        self._context_inflight.pop(cache_key, None)
 
     async def _resolve_context_uncached(
         self, api_key: str, model: str, model_type: str
