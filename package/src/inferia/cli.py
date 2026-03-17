@@ -17,6 +17,7 @@ from inferia.inferiadocs import (
 KNOWN_COMMANDS = {
     "init",
     "start",
+    "migrate",
 }
 
 
@@ -449,6 +450,14 @@ def build_sidecar():
         print(f"[inferia:init] Error building sidecar: {e}")
 
 
+def run_migrate():
+    """Apply pending database migrations without full init."""
+    import asyncio
+    from inferia.cli_init import run_migrations
+
+    asyncio.run(run_migrations())
+
+
 def run_init(env: str = "production"):
     from inferia.cli_init import init_databases
 
@@ -601,6 +610,8 @@ def main(argv=None):
         help="Environment to initialize for (default: production)",
     )
 
+    sub.add_parser("migrate", help="Apply pending database migrations")
+
     # --- New START Command ---
     start_parser = sub.add_parser("start", help="Start Inferia services")
     start_parser.add_argument(
@@ -677,6 +688,9 @@ def main(argv=None):
         elif cmd == "init":
             env = getattr(args, "env", "production")
             run_init(env=env)
+
+        elif cmd == "migrate":
+            run_migrate()
 
         else:
             print(f"Unknown command: {cmd}")

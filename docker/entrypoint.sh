@@ -25,6 +25,9 @@ if [ ! -f /data/.initialized ]; then
     echo "Running first-time init..."
     inferiallm init
     touch /data/.initialized
+else
+    echo "Running migrations..."
+    inferiallm migrate
 fi
 
 echo "Starting Inferia service: $TYPE"
