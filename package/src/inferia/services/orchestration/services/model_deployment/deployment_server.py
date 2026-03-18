@@ -38,22 +38,72 @@ NOSANA_CLIENT_MANAGER_URL = os.getenv(
 NOSANA_INGRESS_DOMAIN = os.getenv("NOSANA_INGRESS_DOMAIN", "node.k8s.prd.nos.ci")
 
 
-async def _get_nosana_signature() -> str:
+async def _get_nosana_signature(api_key: str) -> str:
     """
     Get the Nosana auth signature from the client-manager API.
     This signature is used for WebSocket authentication to Nosana nodes.
+
+    Args:
+        api_key: The Nosana API key from credentials
+
+    Returns:
+        The signature string
     """
     url = f"{NOSANA_CLIENT_MANAGER_URL}/auth/sign-message/external"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={}) as resp:
+            async with session.post(
+                url,
+                json={"message": "nosana-auth", "includeTime": False},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            ) as resp:
                 if resp.status != 200:
-                    raise Exception(f"Failed to get signature: {resp.status}")
+                    text = await resp.text()
+                    raise Exception(f"Failed to get signature: {resp.status} - {text}")
                 data = await resp.json()
                 return data["signature"]
     except Exception as e:
         logger.error(f"Failed to get Nosana signature: {e}")
         raise
+
+
+async def _get_nosana_api_key(credential_name: str | None) -> str:
+    """
+    Get the Nosana API key from credentials.
+
+    Args:
+        credential_name: The credential name (e.g., "default") or None
+
+    Returns:
+        The API key string
+
+    Raises:
+        Exception: If no API key is found
+    """
+    from inferia.services.orchestration.config import settings
+
+    # Get provider config
+    config = settings.get_provider_config("nosana")
+
+    # Try to find the API key from config
+    # First check api_keys list
+    api_keys = config.get("api_keys", [])
+    for entry in api_keys:
+        if entry.get("name") == (credential_name or "default"):
+            key = entry.get("key")
+            if key:
+                return key
+
+    # Fall back to legacy single key (name "default")
+    if not credential_name or credential_name == "default":
+        key = config.get("api_key")
+        if key:
+            return key
+
+    raise Exception(f"No API key found for credential: {credential_name or 'default'}")
 
 
 # ── gRPC client auth ────────────────────────────────────────────────
@@ -979,10 +1029,10 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
 
     conn = await asyncpg.connect(POSTGRES_DSN)
     try:
-        # 1. Get deployment and provider
+        # 1. Get deployment, provider, and credential name
         dep = await conn.fetchrow(
             """
-            SELECT p.provider, d.node_ids 
+            SELECT p.provider, p.provider_credential_name, d.node_ids 
             FROM model_deployments d
             JOIN compute_pools p ON d.pool_id = p.id
             WHERE d.deployment_id = $1
@@ -994,6 +1044,7 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
         provider = dep["provider"]
+        provider_credential_name = dep.get("provider_credential_name")
         if not dep["node_ids"]:
             return {"error": "No nodes assigned to this deployment yet."}
 
@@ -1023,6 +1074,11 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
                 )
                 if "base_url" in sig.parameters and via_gateway:
                     extra_args["base_url"] = str(request.base_url)
+                if (
+                    "provider_credential_name" in sig.parameters
+                    and provider_credential_name
+                ):
+                    extra_args["provider_credential_name"] = provider_credential_name
 
             stream_info = await adapter.get_log_streaming_info(
                 provider_instance_id=provider_instance_id, **extra_args
@@ -1335,14 +1391,15 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                 return
 
             logger.info(
-                f"Streaming logs for Nosana job {job_id} on node {node_address}"
+                f"Streaming logs for Nosana job {job_id} on node {node_address} with credential {credential_name}"
             )
 
-            # Get the Nosana auth signature
+            # Get the Nosana API key and signature
             try:
-                signature = await _get_nosana_signature()
+                api_key = await _get_nosana_api_key(credential_name)
+                signature = await _get_nosana_signature(api_key)
             except Exception as e:
-                logger.error(f"Failed to get Nosana signature: {e}")
+                logger.error(f"Failed to get Nosana credentials: {e}")
                 await websocket.send_json(
                     {
                         "type": "error",
