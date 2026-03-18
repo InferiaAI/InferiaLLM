@@ -10,7 +10,10 @@ from inferia.services.api_gateway.rbac.permissions import normalize_permissions
 
 security = HTTPBearer()
 
-def _auth_error_response(status_code: int, detail: str, headers: Optional[dict] = None) -> JSONResponse:
+
+def _auth_error_response(
+    status_code: int, detail: str, headers: Optional[dict] = None
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={"detail": detail},
@@ -23,6 +26,10 @@ async def auth_middleware(request: Request, call_next):
     Authentication middleware that validates JWT token and extracts user context.
     Adds user context to request.state if authenticated.
     """
+    # Skip auth for WebSocket connections - they handle auth differently (via query params)
+    if request.headers.get("upgrade") == "websocket":
+        return await call_next(request)
+
     # Skip auth for public endpoints
     public_paths = [
         "/",
