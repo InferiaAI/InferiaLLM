@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { computeApi, WEB_SOCKET_URL, API_GATEWAY_URL } from "@/lib/api"
+import { getToken } from "@/lib/tokenStore"
 import { Terminal, RefreshCcw, Wifi, WifiOff, Trash2, ChevronDown, Download, Monitor } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -127,7 +128,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
             }
 
             // Append JWT token for gateway authentication
-            const token = localStorage.getItem("token");
+            const token = getToken();
             if (token) {
                 try {
                     const parsedUrl = new URL(socketUrl.startsWith('ws') ? socketUrl : `ws://${socketUrl}`);
