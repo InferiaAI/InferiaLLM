@@ -8,6 +8,7 @@ import collections
 import grpc
 import json
 import asyncio
+import aiohttp
 from uuid import UUID
 
 from inferia.services.orchestration.v1 import (
@@ -31,6 +32,29 @@ POSTGRES_DSN = os.getenv(
 )
 GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
 NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000")
+NOSANA_CLIENT_MANAGER_URL = os.getenv(
+    "NOSANA_CLIENT_MANAGER_URL", "https://client-manager.k8s.prd.nosana.com"
+)
+NOSANA_INGRESS_DOMAIN = os.getenv("NOSANA_INGRESS_DOMAIN", "node.k8s.prd.nos.ci")
+
+
+async def _get_nosana_signature() -> str:
+    """
+    Get the Nosana auth signature from the client-manager API.
+    This signature is used for WebSocket authentication to Nosana nodes.
+    """
+    url = f"{NOSANA_CLIENT_MANAGER_URL}/auth/sign-message/external"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={}) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Failed to get signature: {resp.status}")
+                data = await resp.json()
+                return data["signature"]
+    except Exception as e:
+        logger.error(f"Failed to get Nosana signature: {e}")
+        raise
+
 
 # ── gRPC client auth ────────────────────────────────────────────────
 _INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
@@ -1303,41 +1327,58 @@ async def websocket_logs_endpoint(websocket: WebSocket):
             node_address = data.get("nodeAddress")
             credential_name = data.get("credentialName")
 
-            if not job_id:
-                await websocket.send_json({"type": "error", "message": "Missing jobId"})
+            if not job_id or not node_address or node_address == "none":
+                await websocket.send_json(
+                    {"type": "error", "message": "Missing jobId or nodeAddress"}
+                )
                 await websocket.close()
                 return
 
-            logger.info(f"Streaming logs for Nosana job {job_id}")
+            logger.info(
+                f"Streaming logs for Nosana job {job_id} on node {node_address}"
+            )
 
-            # Connect to Nosana sidecar WebSocket
+            # Get the Nosana auth signature
+            try:
+                signature = await _get_nosana_signature()
+            except Exception as e:
+                logger.error(f"Failed to get Nosana signature: {e}")
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": f"Failed to authenticate with Nosana: {e}",
+                    }
+                )
+                await websocket.close()
+                return
+
+            # Connect to Nosana node WebSocket directly (not sidecar)
+            # Format: wss://<node_address>.<ingress_domain>/flog
             import websockets
 
-            sidecar_ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
-                "https://", "wss://"
-            )
-            sidecar_url = f"{sidecar_ws_url}/ws"
+            ws_url = f"wss://{node_address}.{NOSANA_INGRESS_DOMAIN}/flog"
+            auth_header = f"nosana-auth:{signature}"
 
-            headers = {}
-            if credential_name:
-                headers["X-Credential-Name"] = credential_name
+            headers = {"Authorization": auth_header}
+
+            subscribe_msg = {
+                "path": "/flog",
+                "headers": {"Authorization": auth_header},
+                "header": auth_header,
+                "body": {"jobAddress": job_id, "address": node_address},
+            }
+
+            logger.info(f"Connecting to Nosana WS: {ws_url}")
 
             try:
                 async with websockets.connect(
-                    sidecar_url,
+                    ws_url,
                     additional_headers=headers,
                 ) as sidecar_ws:
-                    # Send subscription message to sidecar
-                    await sidecar_ws.send(
-                        json.dumps(
-                            {
-                                "type": "subscribe_logs",
-                                "provider": "nosana",
-                                "jobId": job_id,
-                                "nodeAddress": node_address or "none",
-                            }
-                        )
-                    )
+                    # Send subscription message to Nosana node
+                    await sidecar_ws.send(json.dumps(subscribe_msg))
+
+                    logger.info("Connected to Nosana node, relaying logs...")
 
                     async def client_to_sidecar():
                         while True:
