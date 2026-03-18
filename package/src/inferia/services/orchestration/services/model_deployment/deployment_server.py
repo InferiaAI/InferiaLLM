@@ -1496,9 +1496,34 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                     async def sidecar_to_client():
                         async for msg in sidecar_ws:
                             if isinstance(msg, bytes):
-                                await websocket.send_bytes(msg)
+                                # Wrap bytes message in frontend-expected format
+                                await websocket.send_json(
+                                    {
+                                        "type": "log",
+                                        "data": msg.decode("utf-8", errors="replace"),
+                                    }
+                                )
                             else:
-                                await websocket.send_text(msg)
+                                # Wrap text message in frontend-expected format
+                                # Frontend expects message.data to be the log content
+                                try:
+                                    # Try to parse as JSON and extract the inner data
+                                    parsed = json.loads(msg)
+                                    if isinstance(parsed, dict) and "data" in parsed:
+                                        # Already has data field, wrap it
+                                        await websocket.send_json(
+                                            {"type": "log", "data": parsed["data"]}
+                                        )
+                                    else:
+                                        # No data field, send the whole thing
+                                        await websocket.send_json(
+                                            {"type": "log", "data": msg}
+                                        )
+                                except json.JSONDecodeError:
+                                    # Not JSON, send as-is wrapped
+                                    await websocket.send_json(
+                                        {"type": "log", "data": msg}
+                                    )
 
                     tasks = {
                         asyncio.create_task(client_to_sidecar()),
