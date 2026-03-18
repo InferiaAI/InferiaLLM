@@ -1324,7 +1324,7 @@ async def websocket_logs_endpoint(websocket: WebSocket):
             try:
                 async with websockets.connect(
                     sidecar_url,
-                    extra_headers=headers,
+                    additional_headers=headers,
                 ) as sidecar_ws:
                     # Send subscription message to sidecar
                     await sidecar_ws.send(
