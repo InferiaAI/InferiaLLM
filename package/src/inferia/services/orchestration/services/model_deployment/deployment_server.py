@@ -30,6 +30,7 @@ POSTGRES_DSN = os.getenv(
     "POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia"
 )
 GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
+NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000")
 
 # ── gRPC client auth ────────────────────────────────────────────────
 _INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
@@ -1295,6 +1296,87 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                     await websocket.receive_text()
                 except WebSocketDisconnect:
                     break
+
+        elif provider == "nosana":
+            job_id = data.get("jobId")
+            node_address = data.get("nodeAddress")
+            credential_name = data.get("credentialName")
+
+            if not job_id:
+                await websocket.send_json({"type": "error", "message": "Missing jobId"})
+                await websocket.close()
+                return
+
+            logger.info(f"Streaming logs for Nosana job {job_id}")
+
+            # Connect to Nosana sidecar WebSocket
+            import websockets
+
+            sidecar_ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
+                "https://", "wss://"
+            )
+            sidecar_url = f"{sidecar_ws_url}/ws"
+
+            headers = {}
+            if credential_name:
+                headers["X-Credential-Name"] = credential_name
+
+            try:
+                async with websockets.connect(
+                    sidecar_url,
+                    extra_headers=headers,
+                ) as sidecar_ws:
+                    # Send subscription message to sidecar
+                    await sidecar_ws.send(
+                        json.dumps(
+                            {
+                                "type": "subscribe_logs",
+                                "provider": "nosana",
+                                "jobId": job_id,
+                                "nodeAddress": node_address or "none",
+                            }
+                        )
+                    )
+
+                    async def client_to_sidecar():
+                        while True:
+                            payload = await websocket.receive()
+                            event_type = payload.get("type")
+                            if event_type == "websocket.disconnect":
+                                break
+                            if payload.get("text"):
+                                await sidecar_ws.send(payload["text"])
+
+                    async def sidecar_to_client():
+                        async for msg in sidecar_ws:
+                            if isinstance(msg, bytes):
+                                await websocket.send_bytes(msg)
+                            else:
+                                await websocket.send_text(msg)
+
+                    tasks = {
+                        asyncio.create_task(client_to_sidecar()),
+                        asyncio.create_task(sidecar_to_client()),
+                    }
+                    done, pending = await asyncio.wait(
+                        tasks, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in pending:
+                        task.cancel()
+                    for task in done:
+                        exc = task.exception()
+                        if exc:
+                            logger.error(f"Nosana WS task error: {exc}")
+
+            except Exception as e:
+                logger.error(f"Nosana WebSocket error: {e}")
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": f"Failed to connect to Nosana sidecar: {e}",
+                    }
+                )
+                await websocket.close()
 
         else:
             await websocket.send_json(

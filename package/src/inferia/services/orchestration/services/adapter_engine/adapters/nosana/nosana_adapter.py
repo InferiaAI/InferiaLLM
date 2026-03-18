@@ -1,6 +1,7 @@
 import os
 import secrets
 import logging
+import asyncio
 from typing import List, Dict, Optional
 import aiohttp
 import time
@@ -473,6 +474,7 @@ class NosanaAdapter(ProviderAdapter):
         *,
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> Dict:
         try:
             params = {}
@@ -496,9 +498,15 @@ class NosanaAdapter(ProviderAdapter):
                     if not node_address and not is_finished:
                         raise RuntimeError("Job does not have a node assigned yet")
 
-            ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
-                "https://", "wss://"
-            )
+            # When requested via gateway, return relative URL for proxy
+            # Otherwise return direct sidecar URL
+            if base_url:
+                ws_url = "/api/v1/deployment/ws"
+            else:
+                ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
+                    "https://", "wss://"
+                )
+
             info = {
                 "ws_url": ws_url,
                 "provider": "nosana",
