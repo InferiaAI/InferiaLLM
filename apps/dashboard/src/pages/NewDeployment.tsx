@@ -704,6 +704,24 @@ export default function NewDeployment() {
         }]
       }
       return JSON.stringify(spec, null, 4)
+    } else if (selectedEngine === "inferiadiffusion") {
+      const finalModelId = modelId || "segmind/tiny-sd";
+      const spec = {
+        model_id: finalModelId,
+        engine: "inferiadiffusion",
+        image: "docker.io/inferiaai/inferiadiffusion:latest",
+        port: 8080,
+        host: "0.0.0.0",
+        min_vram: 8,
+        gpu: true,
+        env: hfToken ? { "HF_TOKEN": hfToken } : {},
+        expose: [{
+          port: 8080,
+          type: "http",
+          health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
+        }]
+      }
+      return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "pytorch") {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
