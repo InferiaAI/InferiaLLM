@@ -1242,6 +1242,9 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
         provider = data.get("provider")
 
+        # Import asyncio for both branches
+        import asyncio
+
         if provider == "skypilot":
             cluster_id = data.get("cluster_id")
             service_name = data.get("service_name")
@@ -1266,8 +1269,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                 "--",
                 f"docker logs --tail 100 -f {service_name}",
             ]
-
-            import asyncio
 
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
