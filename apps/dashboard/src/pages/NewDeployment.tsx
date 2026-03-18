@@ -125,6 +125,15 @@ const computeEngines = [
     modelTypes: ["image_generation"]
   },
   {
+    id: "inferiadiffusion",
+    name: "Inferia Diffusion",
+    desc: "High-performance image generation engine powered by Inferia.",
+    image: "docker.io/inferiaai/inferiadiffusion:latest",
+    icon: Image,
+    types: ["inference"],
+    modelTypes: ["image_generation"]
+  },
+  {
     id: "pytorch",
     name: "PyTorch",
     desc: "Standard deep learning container for training.",
