@@ -516,9 +516,7 @@ def create_infinity_job(
     # Construct command for Infinity v2 using shell to ensure proper execution
     # The infinity_emb CLI needs to be called with 'v2' subcommand
     safe_model_id = shlex.quote(model_id)
-    cmd_str = (
-        f"infinity_emb v2 --model-id {safe_model_id} --port {port} --batch-size {batch_size}"
-    )
+    cmd_str = f"infinity_emb v2 --model-id {safe_model_id} --port {port} --batch-size {batch_size}"
 
     if effective_api_key:
         cmd_str += f" --api-key {shlex.quote(effective_api_key)}"
@@ -759,6 +757,83 @@ def create_localai_job(
     return {"op": container_op, "meta": meta_data}
 
 
+def create_inferia_diffusion_job(
+    model_id: str = "sdxl-turbo",
+    image: str = "docker.io/inferiaai/inferiadiffusion:latest",
+    api_key: Optional[str] = None,
+    port: int = 8000,
+    host: str = "0.0.0.0",
+    min_vram: int = 6,
+    required_cuda: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Build a Nosana job definition for Inferia Diffusion engine.
+
+    Args:
+        model_id: Model to serve (e.g., "sdxl-turbo", "sd-3.5")
+        image: Docker image for Inferia Diffusion
+        api_key: API key for authentication (uses global key if not provided)
+        port: Port to expose
+        host: Host to bind to
+        min_vram: Minimum VRAM requirement in GB
+
+    Returns:
+        Dict with 'op' (container operation) and 'meta' (job metadata)
+    """
+    effective_api_key = api_key or INTERNAL_API_KEY
+
+    health_headers: Dict[str, str] = {}
+    if effective_api_key:
+        health_headers["Authorization"] = f"Bearer {effective_api_key}"
+
+    cmd_args = [
+        "inferiadiffusion",
+        "serve",
+        "--model",
+        model_id,
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+
+    container_op = {
+        "id": "InferiaDiffusion",
+        "type": "container/run",
+        "args": {
+            "cmd": cmd_args,
+            "gpu": True,
+            "image": image,
+            "expose": [
+                {
+                    "port": port,
+                    "health_checks": [
+                        {
+                            "body": None,
+                            "path": "/health",
+                            "type": "http",
+                            "method": "GET",
+                            "headers": health_headers,
+                            "continuous": False,
+                            "expected_status": 200,
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    meta_data = {
+        "trigger": "dashboard",
+        "system_requirements": {
+            "required_cuda": required_cuda or ["12.4"],
+            "required_vram": min_vram,
+        },
+    }
+
+    return {"op": container_op, "meta": meta_data}
+
+
 def build_job_definition(
     engine: str,
     model_id: str,
@@ -771,7 +846,7 @@ def build_job_definition(
     High-level factory function to build job definitions based on engine type.
 
     Args:
-        engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton")
+        engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton", "inferiadiffusion")
         model_id: Model identifier
         image: Optional custom docker image
         hf_token: HuggingFace token
@@ -911,6 +986,17 @@ def build_job_definition(
                 and v is not None
             },
         )
+    elif engine in ("inferiadiffusion", "inferia-diffusion"):
+        job = create_inferia_diffusion_job(
+            model_id=model_id,
+            image=image or "docker.io/inferiaai/inferiadiffusion:latest",
+            api_key=api_key,
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["port", "host", "min_vram", "required_cuda"] and v is not None
+            },
+        )
     else:
         raise ValueError(f"Unsupported engine: {engine}")
 
@@ -988,7 +1074,9 @@ def create_training_job(
 
     # 2. Clone Repo
     if git_repo:
-        cmd_parts.append(f"git clone {safe_git_repo} /workspace/repo && cd /workspace/repo")
+        cmd_parts.append(
+            f"git clone {safe_git_repo} /workspace/repo && cd /workspace/repo"
+        )
         # 3. Install Python Dependencies
         cmd_parts.append(
             "if [ -f requirements.txt ]; then pip install -r requirements.txt; fi"

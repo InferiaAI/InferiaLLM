@@ -16,9 +16,23 @@ _ADAPTER_CACHE: Dict[str, "ProviderAdapter"] = {}
 
 
 # Engine categories for routing
-EXTERNAL_ENGINES = {"openai", "anthropic", "cohere", "groq", "gemini", "openrouter", "cerebras"}
+EXTERNAL_ENGINES = {
+    "openai",
+    "anthropic",
+    "cohere",
+    "groq",
+    "gemini",
+    "openrouter",
+    "cerebras",
+}
 COMPUTE_ENGINES = {"vllm", "ollama", "generic"}
-IMAGE_ENGINES = {"localai", "localai-image", "stablediffusion"}
+IMAGE_ENGINES = {
+    "localai",
+    "localai-image",
+    "stablediffusion",
+    "inferiadiffusion",
+    "inferia-diffusion",
+}
 
 
 class ProviderAdapter(ABC):
@@ -383,6 +397,8 @@ def get_adapter(engine: str) -> ProviderAdapter:
         "localai": LocalAIImageAdapter(),
         "localai-image": LocalAIImageAdapter(),
         "stablediffusion": LocalAIImageAdapter(),
+        "inferiadiffusion": LocalAIImageAdapter(),
+        "inferia-diffusion": LocalAIImageAdapter(),
     }
 
     adapter = adapters.get(engine_lower)
