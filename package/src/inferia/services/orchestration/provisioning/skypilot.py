@@ -6,13 +6,11 @@ from inferia.services.orchestration.provisioning.base import Provisioner
 logger = logging.getLogger(__name__)
 
 
-if os.getenv("INFERIA_ENV") != "container":
-    raise RuntimeError("SkyPilot provisioner must run in container")
-
-
 class SkyPilotProvisioner(Provisioner):
 
     async def provision(self, request) -> str:
+        if os.getenv("INFERIA_ENV") != "container":
+            raise RuntimeError("SkyPilot provisioner must run in container")
         try:
             import sky
         except ImportError as e:

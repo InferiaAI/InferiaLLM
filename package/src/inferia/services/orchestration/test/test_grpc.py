@@ -6,7 +6,7 @@ from inferia.services.orchestration.v1 import compute_node_pb2, compute_node_pb2
 
 async def test():
     async with aio.insecure_channel("localhost:50051") as channel:
-        stub = compute_pool_pb2_grpc.ComputePoolServiceStub(channel)
+        stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         pool = await stub.RegisterPool(
             compute_pool_pb2.RegisterPoolRequest(
@@ -22,4 +22,5 @@ async def test():
         print("All pools:", pools)
 
 
-asyncio.run(test())
+if __name__ == "__main__":
+    asyncio.run(test())

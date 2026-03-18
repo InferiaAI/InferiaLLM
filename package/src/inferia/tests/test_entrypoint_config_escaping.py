@@ -71,8 +71,8 @@ class TestEntrypointConfigEscaping:
     def test_normal_urls_work(self):
         """Normal URL values produce valid config."""
         js = generate_config_js({
-            "API_GATEWAY_URL": "https://api.example.com",
-            "INFERENCE_URL": "https://inference.example.com",
+            "DASHBOARD_API_GATEWAY_URL": "https://api.example.com",
+            "DASHBOARD_INFERENCE_URL": "https://inference.example.com",
         })
         assert "https://api.example.com" in js
         assert "https://inference.example.com" in js
@@ -80,7 +80,7 @@ class TestEntrypointConfigEscaping:
     def test_double_quotes_in_env_var_escaped(self):
         """Double quotes in env var must not break the JS string."""
         js = generate_config_js({
-            "API_GATEWAY_URL": 'https://evil.com", injected: "pwned',
+            "DASHBOARD_API_GATEWAY_URL": 'https://evil.com", injected: "pwned',
         })
         # The output must NOT contain an unescaped injection that creates
         # a separate JS property
@@ -89,7 +89,7 @@ class TestEntrypointConfigEscaping:
     def test_backslash_in_env_var_escaped(self):
         """Backslashes must not produce broken JS."""
         js = generate_config_js({
-            "API_GATEWAY_URL": "C:\\Users\\test\\path",
+            "DASHBOARD_API_GATEWAY_URL": "C:\\Users\\test\\path",
         })
         assert "window.__RUNTIME_CONFIG__" in js
 

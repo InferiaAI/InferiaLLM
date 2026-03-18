@@ -1,7 +1,7 @@
 import asyncio
 import grpc
 
-from inferia.services.orchestration.services.adapters.base.adapter import ProviderAdapter
+from inferia.services.orchestration.services.adapter_engine.adapters.base.adapter import ProviderAdapter
 from inferia.services.orchestration.v1 import compute_node_pb2, compute_node_pb2_grpc
 
 

@@ -1,8 +1,8 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from guardrail.engine import GuardrailEngine
-from guardrail.models import GuardrailResult, Violation
+from inferia.services.guardrail.engine import GuardrailEngine
+from inferia.services.guardrail.models import GuardrailResult, Violation
 
 @pytest.mark.asyncio
 async def test_proceed_on_violation():
