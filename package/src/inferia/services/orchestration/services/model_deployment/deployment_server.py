@@ -84,9 +84,14 @@ async def _get_nosana_api_key(credential_name: str | None) -> str:
         Exception: If no API key is found
     """
     from inferia.services.orchestration.config import settings
+    from inferia.services.orchestration.repositories.pool_repo import PoolRepository
+    from inferia.services.orchestration.db.database import Database
 
-    # Get provider config
-    config = settings.get_provider_config("nosana")
+    db = Database()
+    repo = PoolRepository(db)
+
+    # Get provider config from DB (not hardcoded settings)
+    config = await repo.get_provider_config("nosana")
 
     # Try to find the API key from config
     # First check api_keys list
