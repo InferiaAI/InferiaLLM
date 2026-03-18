@@ -6,16 +6,15 @@ set -e
 # specified at container run time instead of build time.
 # Dashboard runtime config uses DASHBOARD_* prefixed env vars to avoid
 # colliding with backend service URL env vars (e.g. INFERENCE_URL).
-# Falls back to the unprefixed names for backward compatibility.
 DASHBOARD_DIR=$(python -c "import inferia, os; print(os.path.join(inferia.__path__[0], 'dashboard'))" 2>/dev/null || true)
 if [ -d "$DASHBOARD_DIR" ]; then
   python3 -c "
 import json, os
 config = {
-    'API_GATEWAY_URL': os.environ.get('DASHBOARD_API_GATEWAY_URL', '') or os.environ.get('API_GATEWAY_URL', ''),
-    'INFERENCE_URL': os.environ.get('DASHBOARD_INFERENCE_URL', '') or os.environ.get('INFERENCE_URL', ''),
-    'WEB_SOCKET_URL': os.environ.get('DASHBOARD_WEB_SOCKET_URL', '') or os.environ.get('WEB_SOCKET_URL', ''),
-    'SIDECAR_URL': os.environ.get('DASHBOARD_SIDECAR_URL', '') or os.environ.get('SIDECAR_URL', ''),
+    'API_GATEWAY_URL': os.environ.get('DASHBOARD_API_GATEWAY_URL', ''),
+    'INFERENCE_URL': os.environ.get('DASHBOARD_INFERENCE_URL', ''),
+    'WEB_SOCKET_URL': os.environ.get('DASHBOARD_WEB_SOCKET_URL', ''),
+    'SIDECAR_URL': os.environ.get('DASHBOARD_SIDECAR_URL', ''),
 }
 print('window.__RUNTIME_CONFIG__ = ' + json.dumps(config) + ';')
 " > "$DASHBOARD_DIR/config.js"
