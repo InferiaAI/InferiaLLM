@@ -83,32 +83,74 @@ async def _get_nosana_api_key(credential_name: str | None) -> str:
     Raises:
         Exception: If no API key is found
     """
+    import asyncpg
+    from cryptography.fernet import Fernet
     from inferia.services.orchestration.config import settings
-    from inferia.services.orchestration.repositories.pool_repo import PoolRepository
-    from inferia.services.orchestration.db.database import Database
 
-    db = Database()
-    repo = PoolRepository(db)
+    # Decrypt helper (copied from pool_repo.py)
+    def _decrypt_value(value):
+        if not value:
+            return None
+        encryption_key = settings.secret_encryption_key
+        fernet = Fernet(encryption_key.encode()) if encryption_key else None
 
-    # Get provider config from DB (not hardcoded settings)
-    config = await repo.get_provider_config("nosana")
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        if isinstance(value, dict) and "data" in value:
+            if fernet:
+                try:
+                    decrypted = fernet.decrypt(value["data"].encode()).decode()
+                    return json.loads(decrypted)
+                except Exception:
+                    pass
+        return value
 
-    # Try to find the API key from config
-    # First check api_keys list
-    api_keys = config.get("api_keys", [])
-    for entry in api_keys:
-        if entry.get("name") == (credential_name or "default"):
-            key = entry.get("key")
-            if key:
-                return key
+    # Get provider config directly from DB
+    query = """
+    SELECT value FROM system_settings WHERE key = 'providers_config' LIMIT 1
+    """
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        try:
+            raw = await conn.fetchval(query)
+            if not raw:
+                raise Exception("No providers_config found in system_settings")
 
-    # Fall back to legacy single key (name "default")
-    if not credential_name or credential_name == "default":
-        key = config.get("api_key")
-        if key:
-            return key
+            # Decrypt if needed
+            data = _decrypt_value(raw)
 
-    raise Exception(f"No API key found for credential: {credential_name or 'default'}")
+            if not data or not isinstance(data, dict):
+                raise Exception("Invalid providers_config format")
+
+            providers = data.get("providers", data)
+            nosana_config = providers.get("depin", {}).get("nosana", {})
+
+            # Try to find the API key from config
+            # First check api_keys list
+            api_keys = nosana_config.get("api_keys", [])
+            for entry in api_keys:
+                if entry.get("name") == (credential_name or "default"):
+                    key = entry.get("key")
+                    if key:
+                        return key
+
+            # Fall back to legacy single key (name "default")
+            if not credential_name or credential_name == "default":
+                key = nosana_config.get("api_key")
+                if key:
+                    return key
+
+            raise Exception(
+                f"No API key found for credential: {credential_name or 'default'}"
+            )
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.error(f"Failed to get Nosana API key: {e}")
+        raise Exception(f"Failed to get Nosana API key: {e}")
 
 
 # ── gRPC client auth ────────────────────────────────────────────────
