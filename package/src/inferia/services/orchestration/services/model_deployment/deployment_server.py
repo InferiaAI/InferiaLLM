@@ -8,6 +8,7 @@ import collections
 import grpc
 import json
 import asyncio
+import aiohttp
 from uuid import UUID
 
 from inferia.services.orchestration.v1 import (
@@ -31,6 +32,126 @@ POSTGRES_DSN = os.getenv(
 )
 GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
 NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000")
+NOSANA_CLIENT_MANAGER_URL = os.getenv(
+    "NOSANA_CLIENT_MANAGER_URL", "https://client-manager.k8s.prd.nosana.com"
+)
+NOSANA_INGRESS_DOMAIN = os.getenv("NOSANA_INGRESS_DOMAIN", "node.k8s.prd.nos.ci")
+
+
+async def _get_nosana_signature(api_key: str) -> str:
+    """
+    Get the Nosana auth signature from the client-manager API.
+    This signature is used for WebSocket authentication to Nosana nodes.
+
+    Args:
+        api_key: The Nosana API key from credentials
+
+    Returns:
+        The signature string
+    """
+    url = f"{NOSANA_CLIENT_MANAGER_URL}/auth/sign-message/external"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json={"message": "nosana-auth", "includeTime": False},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise Exception(f"Failed to get signature: {resp.status} - {text}")
+                data = await resp.json()
+                return data["signature"]
+    except Exception as e:
+        logger.error(f"Failed to get Nosana signature: {e}")
+        raise
+
+
+async def _get_nosana_api_key(credential_name: str | None) -> str:
+    """
+    Get the Nosana API key from credentials.
+
+    Args:
+        credential_name: The credential name (e.g., "default") or None
+
+    Returns:
+        The API key string
+
+    Raises:
+        Exception: If no API key is found
+    """
+    import asyncpg
+    from cryptography.fernet import Fernet
+    from inferia.services.orchestration.config import settings
+
+    # Decrypt helper (copied from pool_repo.py)
+    def _decrypt_value(value):
+        if not value:
+            return None
+        encryption_key = settings.secret_encryption_key
+        fernet = Fernet(encryption_key.encode()) if encryption_key else None
+
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        if isinstance(value, dict) and "data" in value:
+            if fernet:
+                try:
+                    decrypted = fernet.decrypt(value["data"].encode()).decode()
+                    return json.loads(decrypted)
+                except Exception:
+                    pass
+        return value
+
+    # Get provider config directly from DB
+    query = """
+    SELECT value FROM system_settings WHERE key = 'providers_config' LIMIT 1
+    """
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        try:
+            raw = await conn.fetchval(query)
+            if not raw:
+                raise Exception("No providers_config found in system_settings")
+
+            # Decrypt if needed
+            data = _decrypt_value(raw)
+
+            if not data or not isinstance(data, dict):
+                raise Exception("Invalid providers_config format")
+
+            providers = data.get("providers", data)
+            nosana_config = providers.get("depin", {}).get("nosana", {})
+
+            # Try to find the API key from config
+            # First check api_keys list
+            api_keys = nosana_config.get("api_keys", [])
+            for entry in api_keys:
+                if entry.get("name") == (credential_name or "default"):
+                    key = entry.get("key")
+                    if key:
+                        return key
+
+            # Fall back to legacy single key (name "default")
+            if not credential_name or credential_name == "default":
+                key = nosana_config.get("api_key")
+                if key:
+                    return key
+
+            raise Exception(
+                f"No API key found for credential: {credential_name or 'default'}"
+            )
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.error(f"Failed to get Nosana API key: {e}")
+        raise Exception(f"Failed to get Nosana API key: {e}")
+
 
 # ── gRPC client auth ────────────────────────────────────────────────
 _INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
@@ -955,10 +1076,10 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
 
     conn = await asyncpg.connect(POSTGRES_DSN)
     try:
-        # 1. Get deployment and provider
+        # 1. Get deployment, provider, and credential name
         dep = await conn.fetchrow(
             """
-            SELECT p.provider, d.node_ids 
+            SELECT p.provider, p.provider_credential_name, d.node_ids 
             FROM model_deployments d
             JOIN compute_pools p ON d.pool_id = p.id
             WHERE d.deployment_id = $1
@@ -970,6 +1091,7 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
         provider = dep["provider"]
+        provider_credential_name = dep.get("provider_credential_name")
         if not dep["node_ids"]:
             return {"error": "No nodes assigned to this deployment yet."}
 
@@ -999,6 +1121,11 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
                 )
                 if "base_url" in sig.parameters and via_gateway:
                     extra_args["base_url"] = str(request.base_url)
+                if (
+                    "provider_credential_name" in sig.parameters
+                    and provider_credential_name
+                ):
+                    extra_args["provider_credential_name"] = provider_credential_name
 
             stream_info = await adapter.get_log_streaming_info(
                 provider_instance_id=provider_instance_id, **extra_args
@@ -1303,41 +1430,59 @@ async def websocket_logs_endpoint(websocket: WebSocket):
             node_address = data.get("nodeAddress")
             credential_name = data.get("credentialName")
 
-            if not job_id:
-                await websocket.send_json({"type": "error", "message": "Missing jobId"})
+            if not job_id or not node_address or node_address == "none":
+                await websocket.send_json(
+                    {"type": "error", "message": "Missing jobId or nodeAddress"}
+                )
                 await websocket.close()
                 return
 
-            logger.info(f"Streaming logs for Nosana job {job_id}")
+            logger.info(
+                f"Streaming logs for Nosana job {job_id} on node {node_address} with credential {credential_name}"
+            )
 
-            # Connect to Nosana sidecar WebSocket
+            # Get the Nosana API key and signature
+            try:
+                api_key = await _get_nosana_api_key(credential_name)
+                signature = await _get_nosana_signature(api_key)
+            except Exception as e:
+                logger.error(f"Failed to get Nosana credentials: {e}")
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": f"Failed to authenticate with Nosana: {e}",
+                    }
+                )
+                await websocket.close()
+                return
+
+            # Connect to Nosana node WebSocket directly (not sidecar)
+            # Format: wss://<node_address>.<ingress_domain>/flog
             import websockets
 
-            sidecar_ws_url = NOSANA_SIDECAR_URL.replace("http://", "ws://").replace(
-                "https://", "wss://"
-            )
-            sidecar_url = f"{sidecar_ws_url}/ws"
+            ws_url = f"wss://{node_address}.{NOSANA_INGRESS_DOMAIN}/flog"
+            auth_header = f"nosana-auth:{signature}"
 
-            headers = {}
-            if credential_name:
-                headers["X-Credential-Name"] = credential_name
+            headers = {"Authorization": auth_header}
+
+            subscribe_msg = {
+                "path": "/flog",
+                "headers": {"Authorization": auth_header},
+                "header": auth_header,
+                "body": {"jobAddress": job_id, "address": node_address},
+            }
+
+            logger.info(f"Connecting to Nosana WS: {ws_url}")
 
             try:
                 async with websockets.connect(
-                    sidecar_url,
+                    ws_url,
                     additional_headers=headers,
                 ) as sidecar_ws:
-                    # Send subscription message to sidecar
-                    await sidecar_ws.send(
-                        json.dumps(
-                            {
-                                "type": "subscribe_logs",
-                                "provider": "nosana",
-                                "jobId": job_id,
-                                "nodeAddress": node_address or "none",
-                            }
-                        )
-                    )
+                    # Send subscription message to Nosana node
+                    await sidecar_ws.send(json.dumps(subscribe_msg))
+
+                    logger.info("Connected to Nosana node, relaying logs...")
 
                     async def client_to_sidecar():
                         while True:
@@ -1351,9 +1496,34 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                     async def sidecar_to_client():
                         async for msg in sidecar_ws:
                             if isinstance(msg, bytes):
-                                await websocket.send_bytes(msg)
+                                # Wrap bytes message in frontend-expected format
+                                await websocket.send_json(
+                                    {
+                                        "type": "log",
+                                        "data": msg.decode("utf-8", errors="replace"),
+                                    }
+                                )
                             else:
-                                await websocket.send_text(msg)
+                                # Wrap text message in frontend-expected format
+                                # Frontend expects message.data to be the log content
+                                try:
+                                    # Try to parse as JSON and extract the inner data
+                                    parsed = json.loads(msg)
+                                    if isinstance(parsed, dict) and "data" in parsed:
+                                        # Already has data field, wrap it
+                                        await websocket.send_json(
+                                            {"type": "log", "data": parsed["data"]}
+                                        )
+                                    else:
+                                        # No data field, send the whole thing
+                                        await websocket.send_json(
+                                            {"type": "log", "data": msg}
+                                        )
+                                except json.JSONDecodeError:
+                                    # Not JSON, send as-is wrapped
+                                    await websocket.send_json(
+                                        {"type": "log", "data": msg}
+                                    )
 
                     tasks = {
                         asyncio.create_task(client_to_sidecar()),
