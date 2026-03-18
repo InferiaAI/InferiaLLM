@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import multiprocessing
+import traceback
 from inferia.startup_ui import StartupUI
 from dotenv import load_dotenv, find_dotenv
 from inferia.inferiadocs import (
@@ -44,10 +45,10 @@ def run_api_gateway_service(queue=None):
             )
         start_api()
     except Exception as e:
+        print(f"[FATAL] API Gateway Service failed to start: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if queue:
             queue.put(ServiceFailed("API Gateway Service", error=str(e)))
-        else:
-            print(f"Error starting API Gateway Service: {e}")
 
 
 def run_guardrail_service(queue=None):
@@ -66,10 +67,10 @@ def run_guardrail_service(queue=None):
 
         start_api()
     except Exception as e:
+        print(f"[FATAL] Guardrail Service failed to start: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if queue:
             queue.put(ServiceFailed("Guardrail Service", error=str(e)))
-        else:
-            print(f"Error starting Guardrail Service: {e}")
 
 
 def run_data_service(queue=None):
@@ -86,10 +87,10 @@ def run_data_service(queue=None):
 
         start_api()
     except Exception as e:
+        print(f"[FATAL] Data Service failed to start: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if queue:
             queue.put(ServiceFailed("Data Service", error=str(e)))
-        else:
-            print(f"Error starting Data Service: {e}")
 
 
 def run_inference_service(queue=None):
@@ -106,10 +107,10 @@ def run_inference_service(queue=None):
             )
         start_api()
     except Exception as e:
+        print(f"[FATAL] Inference Service failed to start: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if queue:
             queue.put(ServiceFailed("Inference Service", error=str(e)))
-        else:
-            print(f"Error starting Inference Service: {e}")
 
 
 def run_orchestration_service(queue=None):
@@ -126,10 +127,10 @@ def run_orchestration_service(queue=None):
             )
         start_api()
     except Exception as e:
+        print(f"[FATAL] Orchestration Service failed to start: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if queue:
             queue.put(ServiceFailed("Orchestration Service", error=str(e)))
-        else:
-            print(f"Error starting Orchestration Service: {e}")
 
 
 def run_worker(queue=None):
@@ -151,10 +152,10 @@ def run_worker(queue=None):
             )
         asyncio.run(main())
     except Exception as e:
+        print(f"[FATAL] Orchestration Worker failed to start: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if queue:
             queue.put(ServiceFailed("Orchestration Worker", error=str(e)))
-        else:
-            print(f"Error starting Orchestration Worker: {e}")
 
 
 def run_nosana_sidecar(queue=None, env: str = "production"):
