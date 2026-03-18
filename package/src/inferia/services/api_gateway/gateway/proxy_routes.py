@@ -38,7 +38,9 @@ router = APIRouter(prefix="/api/v1", tags=["Proxy API"])
 ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
 
 
-def _require_proxy_permission(user_context: UserContext, method: str, path: str) -> None:
+def _require_proxy_permission(
+    user_context: UserContext, method: str, path: str
+) -> None:
     normalized_method = method.upper()
     normalized_path = (path or "").strip("/").lower()
 
@@ -46,16 +48,26 @@ def _require_proxy_permission(user_context: UserContext, method: str, path: str)
         # Deployment RPC-style endpoints use POST for non-create actions.
         # Map those explicitly to update/delete permissions.
         if normalized_path.startswith("deployment/deletepool"):
-            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
+            authz_service.require_permission(
+                user_context, PermissionEnum.DEPLOYMENT_DELETE
+            )
             return
         if normalized_path.startswith("deployment/stoppool"):
-            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
+            authz_service.require_permission(
+                user_context, PermissionEnum.DEPLOYMENT_DELETE
+            )
             return
-        if normalized_path.startswith("deployment/deploy") or normalized_path.startswith("deployment/createpool"):
-            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+        if normalized_path.startswith(
+            "deployment/deploy"
+        ) or normalized_path.startswith("deployment/createpool"):
+            authz_service.require_permission(
+                user_context, PermissionEnum.DEPLOYMENT_CREATE
+            )
             return
         if normalized_path.startswith("deployment/"):
-            authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_UPDATE)
+            authz_service.require_permission(
+                user_context, PermissionEnum.DEPLOYMENT_UPDATE
+            )
             return
 
     if normalized_method in {"GET", "HEAD"}:
@@ -120,7 +132,7 @@ async def proxy_request(
 
     # Pass internal API key for service-to-service authentication
     headers["X-Internal-API-Key"] = settings.internal_api_key
-    
+
     # Pass user context for authorization at downstream service
     headers["X-User-ID"] = str(user_context.user_id)
     headers["X-Organization-ID"] = str(user_context.org_id)
@@ -155,6 +167,7 @@ async def proxy_deployment_ws(websocket: WebSocket):
         "token"
     )
     if not token:
+        logger.warning("WebSocket connection rejected: no token provided")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -162,7 +175,7 @@ async def proxy_deployment_ws(websocket: WebSocket):
         user_context = await _get_ws_user_context(token)
         authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
     except Exception as e:
-        logger.warning(f"Rejected deployment WS connection: {e}")
+        logger.warning(f"Rejected deployment WS connection: {e}", exc_info=True)
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 

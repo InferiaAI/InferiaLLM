@@ -27,7 +27,14 @@ async def auth_middleware(request: Request, call_next):
     Adds user context to request.state if authenticated.
     """
     # Skip auth for WebSocket connections - they handle auth differently (via query params)
-    if request.headers.get("upgrade") == "websocket":
+    # Check both 'upgrade' header and the connection type
+    upgrade_header = request.headers.get("upgrade", "").lower()
+    connection_header = request.headers.get("connection", "").lower()
+    if upgrade_header == "websocket" or "upgrade" in connection_header:
+        return await call_next(request)
+
+    # Also skip auth for WebSocket endpoint path
+    if request.url.path.startswith("/deployment/ws"):
         return await call_next(request)
 
     # Skip auth for public endpoints
