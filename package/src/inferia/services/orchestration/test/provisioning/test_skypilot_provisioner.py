@@ -1,3 +1,4 @@
+import os
 import pytest
 import sys
 from unittest.mock import MagicMock
@@ -18,6 +19,7 @@ async def test_provision_success(mocker, caplog):
     # Inject fake sky module BEFORE provision() imports it
     mock_sky = MagicMock()
     mocker.patch.dict(sys.modules, {"sky": mock_sky})
+    mocker.patch.dict(os.environ, {"INFERIA_ENV": "container"})
 
     caplog.set_level("INFO")
 
@@ -33,6 +35,7 @@ async def test_provision_failure(mocker):
     mock_sky = MagicMock()
     mock_sky.launch.side_effect = Exception("SkyPilot internal error")
     mocker.patch.dict(sys.modules, {"sky": mock_sky})
+    mocker.patch.dict(os.environ, {"INFERIA_ENV": "container"})
 
     provisioner = SkyPilotProvisioner()
 

@@ -1,6 +1,8 @@
-import boto3
-from collections import defaultdict
+import pytest
+boto3 = pytest.importorskip("boto3")
+tabulate_mod = pytest.importorskip("tabulate")
 from tabulate import tabulate
+from collections import defaultdict
 
 from aws_instance_specs import INSTANCE_SPECS
 from dotenv import load_dotenv
