@@ -124,15 +124,10 @@ export default function ProviderConfigPage() {
             const keys = await ConfigService.listNosanaApiKeys();
             dispatch({ type: 'SET_FIELD', field: 'nosanaApiKeys', value: keys });
 
-            // Sync with main config to prevent stale data when saving main config
-            // Note: nosanaApiKeys doesn't have the full secret 'key', but the backend
-            // merge logic now handles masked values by preserving existing unmasked ones.
-            const apiKeyEntries = keys.map(k => ({
-                name: k.name,
-                key: "********", // Placeholder to let backend know we have this key
-                is_active: k.is_active
-            }));
-            dispatch({ type: 'UPDATE_CONFIG', path: ['depin', 'nosana', 'api_keys'], value: apiKeyEntries });
+            // Don't sync api_keys into the main config state — they are managed
+            // separately via addNosanaApiKey/deleteNosanaApiKey and should not be
+            // included when saving the provider config form, as the backend merge
+            // would overwrite real keys with placeholder values.
         } catch (e) {
             toast.error("Failed to load Nosana API keys");
         } finally {
@@ -190,7 +185,11 @@ export default function ProviderConfigPage() {
         e.preventDefault();
         dispatch({ type: 'SET_FIELD', field: 'saving', value: true });
         try {
-            await ConfigService.updateProviderConfig(config);
+            // Strip api_keys from nosana config — they are managed separately
+            // and would overwrite real keys with masked/stale values
+            const safeConfig = structuredClone(config);
+            delete (safeConfig.depin.nosana as any).api_keys;
+            await ConfigService.updateProviderConfig(safeConfig);
             toast.success("Configuration saved successfully");
             dispatch({ type: 'SET_FIELD', field: 'isConfigured', value: true });
             dispatch({ type: 'SET_FIELD', field: 'isEditing', value: false });
