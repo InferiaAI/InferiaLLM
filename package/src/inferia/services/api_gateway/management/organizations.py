@@ -24,6 +24,8 @@ from inferia.services.api_gateway.management.dependencies import get_current_use
 from inferia.services.api_gateway.schemas.auth import PermissionEnum
 from inferia.services.api_gateway.rbac.authorization import authz_service
 from datetime import datetime, timedelta, timezone
+from inferia.services.api_gateway.audit.service import audit_service
+from inferia.services.api_gateway.models import AuditLogCreate
 
 
 def utcnow_naive():
@@ -69,6 +71,20 @@ async def create_organization(
 
     await db.commit()
     await db.refresh(new_org)
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=new_org.id,
+            action="organization.create",
+            resource_type="organization",
+            resource_id=new_org.id,
+            details={"name": new_org.name},
+            status="success",
+        ),
+    )
+
     return new_org
 
 
@@ -118,6 +134,20 @@ async def update_my_organization(
 
     await db.commit()
     await db.refresh(org)
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="organization.update",
+            resource_type="organization",
+            resource_id=user_ctx.org_id,
+            details={"name": org.name},
+            status="success",
+        ),
+    )
+
     return org
 
 
@@ -186,6 +216,19 @@ async def create_invitation(
     await db.commit()
     await db.refresh(new_invite)
 
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="invitation.create",
+            resource_type="invitation",
+            resource_id=new_invite.id,
+            details={"email": normalized_email, "role": invite_data.role},
+            status="success",
+        ),
+    )
+
     invite_link = build_invite_link_path(token)
 
     return InviteResponse(
@@ -252,3 +295,16 @@ async def revoke_invitation(
 
     await db.delete(invite)
     await db.commit()
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="invitation.revoke",
+            resource_type="invitation",
+            resource_id=invite_id,
+            details={"email": invite.email},
+            status="success",
+        ),
+    )

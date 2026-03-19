@@ -23,7 +23,8 @@ from inferia.services.api_gateway.db.models import (
     Invitation as DBInvitation,
     UserOrganization,
 )
-from inferia.services.api_gateway.models import OrganizationBasicInfo, SwitchOrgRequest
+from inferia.services.api_gateway.models import OrganizationBasicInfo, SwitchOrgRequest, AuditLogCreate
+from inferia.services.api_gateway.audit.service import audit_service
 from sqlalchemy.future import select
 from sqlalchemy import func
 import uuid
@@ -187,6 +188,19 @@ async def register_invite(
 
     await db.commit()
     await db.refresh(new_user)
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=new_user.id,
+            org_id=invite.org_id,
+            action="user.register_invite",
+            resource_type="user",
+            resource_id=new_user.id,
+            details={"email": invite.email, "role": invite.role},
+            status="success",
+        ),
+    )
 
     # 6. Organization Info
     stmt_org = select(DBOrganization).where(DBOrganization.id == invite.org_id)
@@ -538,6 +552,18 @@ async def totp_verify(
     user.totp_enabled = True
     await db.commit()
 
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_context.user_id,
+            org_id=user_context.org_id,
+            action="user.2fa_enabled",
+            resource_type="user",
+            resource_id=user_context.user_id,
+            status="success",
+        ),
+    )
+
     return {"status": "enabled"}
 
 
@@ -556,5 +582,17 @@ async def totp_disable(request: Request, db: AsyncSession = Depends(get_db)):
     user.totp_enabled = False
     user.totp_secret = None
     await db.commit()
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_context.user_id,
+            org_id=user_context.org_id,
+            action="user.2fa_disabled",
+            resource_type="user",
+            resource_id=user_context.user_id,
+            status="success",
+        ),
+    )
 
     return {"status": "disabled"}
