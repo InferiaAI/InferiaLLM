@@ -53,6 +53,7 @@ async def create_template(
         db,
         AuditLogCreate(
             user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
             action="prompt_template.create",
             resource_type="prompt_template",
             resource_id=template_data.template_id,
@@ -155,6 +156,7 @@ async def delete_template(
         db,
         AuditLogCreate(
             user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
             action="prompt_template.delete",
             resource_type="prompt_template",
             resource_id=template_id,

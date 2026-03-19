@@ -245,6 +245,7 @@ async def update_config(
         db,
         AuditLogCreate(
             user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
             action="config.update",
             resource_type="policy",
             resource_id=str(policy.id),
