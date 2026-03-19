@@ -10,6 +10,8 @@ from inferia.services.api_gateway.schemas.auth import PermissionEnum
 from inferia.services.api_gateway.management.dependencies import get_current_user_context
 from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.rbac.authorization import authz_service
+from inferia.services.api_gateway.audit.service import audit_service
+from inferia.services.api_gateway.models import AuditLogCreate
 
 router = APIRouter(tags=["Users"])
 
@@ -44,6 +46,19 @@ async def create_user(
 
     await db.commit()
     await db.refresh(new_user)
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="user.create",
+            resource_type="user",
+            resource_id=new_user.id,
+            details={"email": new_user.email, "role": user_data.role},
+            status="success",
+        ),
+    )
 
     return UserResponse(
         id=new_user.id,
