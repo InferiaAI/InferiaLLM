@@ -669,9 +669,9 @@ export class NosanaService {
             let walletAddress: string | undefined;
 
             if (this.authMode === 'api' && deploymentUuid) {
-                // Use the deployment-scoped header endpoint for node authentication
-                console.log(`[Confidential] Requesting Auth Header from API for deployment ${deploymentUuid}...`);
-                const apiAuth = await this.generateApiNodeAuthHeader(deploymentUuid);
+                // Use external signature endpoint directly for API key auth
+                console.log(`[Confidential] Requesting external signature for deployment ${deploymentUuid}...`);
+                const apiAuth = await this.generateExternalSignatureAuth(deploymentUuid);
                 fetchHeaders['Authorization'] = apiAuth.header;
                 fetchHeaders['x-user-id'] = apiAuth.userAddress; // Node needs this to verify signature
                 walletAddress = apiAuth.userAddress;
@@ -948,7 +948,7 @@ export class NosanaService {
                 console.warn("[LogStreamer] API mode requires deploymentId for auth. Log streaming may fail.");
             }
             console.log(`[LogStreamer] Using API mode - creating log streamer with deployment header (deployment: ${deploymentId})`);
-            const apiAuthProvider = () => this.generateApiNodeAuthHeader(deploymentId!);
+            const apiAuthProvider = () => this.generateExternalSignatureAuth(deploymentId!);
             return new LogStreamer(null, apiAuthProvider);
         } else {
             if (!this.client.wallet) throw new Error("Wallet not initialized");
