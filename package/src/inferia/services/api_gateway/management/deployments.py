@@ -102,6 +102,7 @@ async def create_deployment(
         db,
         AuditLogCreate(
             user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
             action="deployment.create",
             resource_type="deployment",
             resource_id=new_deployment.id,
@@ -266,6 +267,7 @@ async def delete_deployment(
         db,
         AuditLogCreate(
             user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
             action="deployment.delete",
             resource_type="deployment",
             resource_id=deployment_id,

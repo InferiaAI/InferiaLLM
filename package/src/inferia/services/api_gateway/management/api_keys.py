@@ -57,6 +57,7 @@ async def create_api_key(
         db,
         AuditLogCreate(
             user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
             action="api_key.create",
             resource_type="api_key",
             resource_id=new_key.id,
@@ -142,6 +143,7 @@ async def revoke_api_key(
         db,
         AuditLogCreate(
             user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
             action="api_key.revoke",
             resource_type="api_key",
             resource_id=key_id,

@@ -208,9 +208,9 @@ class AuthService:
             db,
             AuditLogCreate(
                 user_id=user.id,
+                org_id=target_org_id,
                 action="user.login",
                 details={
-                    "org_id": target_org_id,
                     "role": active_role
                 },
                 status="success"

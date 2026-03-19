@@ -79,6 +79,7 @@ async def upload_knowledge_document(
             db,
             AuditLogCreate(
                 user_id=user_ctx.user_id,
+                org_id=user_ctx.org_id,
                 action="knowledge_base.add_document",
                 resource_type="knowledge_base_document",
                 resource_id=doc_id,
