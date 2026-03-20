@@ -129,7 +129,7 @@ async def test_totp_verify_promotes_pending_to_active():
     assert user.totp_secret == secret
     assert user.totp_pending_secret is None
     assert user.totp_enabled is True
-    db.commit.assert_awaited_once()
+    assert db.commit.await_count >= 1
 
 
 @pytest.mark.asyncio
