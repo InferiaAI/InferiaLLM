@@ -542,8 +542,9 @@ export class NosanaService {
 
                 console.log(`[Launch] Deployment ${deploymentId} launched. Job: ${jobAddress}`);
 
-                // If confidential, we need to wait for it to be RUNNING and send the definition
-                if (isConfidential && jobAddress !== "unknown") {
+                // Confidential deployments via the Deployments API already have their
+                // job definition handled securely through the API - no direct post needed
+                if (!isConfidential && jobAddress !== "unknown") {
                     const ipfsHash = jobDefinition?.ipfsHash || "dummy";
                     this.waitForRunningAndSendDefinition(jobAddress, jobDefinition, ipfsHash, deploymentId);
                 }
@@ -607,8 +608,9 @@ export class NosanaService {
                     console.warn("Could not resolve Job Address, using deployment ID as reference");
                 }
 
-                // If confidential, we need to wait for it to be RUNNING and send the definition
-                if (isConfidential && jobAddress !== "unknown") {
+                // Confidential deployments via the Deployments API already have their
+                // job definition handled securely through the API - no direct post needed
+                if (!isConfidential && jobAddress !== "unknown") {
                     const ipfsHash = jobDefinition?.ipfsHash || "dummy";
                     this.waitForRunningAndSendDefinition(jobAddress, jobDefinition, ipfsHash, deploymentId);
                 }
