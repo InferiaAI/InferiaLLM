@@ -213,6 +213,24 @@ class DeployModelRequest(BaseModel):
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
 
 
+class PreflightRequest(BaseModel):
+    model_id: str
+    hf_token: str | None = None
+    engine: str | None = None
+
+
+class PreflightCheckResult(BaseModel):
+    check: str
+    passed: bool
+    message: str | None = None
+    needs_hf_token: bool = False
+
+
+class PreflightResponse(BaseModel):
+    ready: bool
+    checks: list[PreflightCheckResult]
+
+
 class TerminateDeploymentRequest(BaseModel):
     deployment_id: str
 
@@ -383,6 +401,51 @@ async def _terminate_pool_background(pool_id: UUID):
     finally:
         if conn:
             await conn.close()
+
+
+@router.post("/preflight")
+async def deployment_preflight(req: PreflightRequest):
+    """Run pre-deployment checks before creating a deployment."""
+    from inferia.services.orchestration.services.model_deployment.preflight import (
+        check_model_accessibility,
+    )
+
+    checks = []
+
+    # Skip HF check for external engines
+    external_engines = {"openai", "anthropic", "gemini", "groq", "cerebras", "mistral", "deepseek", "custom"}
+    is_external = req.engine and req.engine.lower() in external_engines
+
+    if not is_external and req.model_id:
+        result = await check_model_accessibility(req.model_id, req.hf_token)
+        if result.skipped:
+            checks.append(PreflightCheckResult(
+                check="model_accessible",
+                passed=True,
+                message="HuggingFace API unreachable — check skipped.",
+            ))
+        elif result.accessible:
+            checks.append(PreflightCheckResult(
+                check="model_accessible",
+                passed=True,
+                message="Model is accessible.",
+            ))
+        else:
+            checks.append(PreflightCheckResult(
+                check="model_accessible",
+                passed=False,
+                message=result.error,
+                needs_hf_token=result.needs_token,
+            ))
+    else:
+        checks.append(PreflightCheckResult(
+            check="model_accessible",
+            passed=True,
+            message="External provider — HuggingFace check not applicable.",
+        ))
+
+    ready = all(c.passed for c in checks)
+    return PreflightResponse(ready=ready, checks=checks)
 
 
 @router.post("/deploy")
