@@ -408,15 +408,17 @@ async def deployment_preflight(req: PreflightRequest):
     """Run pre-deployment checks before creating a deployment."""
     from inferia.services.orchestration.services.model_deployment.preflight import (
         check_model_accessibility,
+        check_model_format,
     )
 
     checks = []
 
-    # Skip HF check for external engines
+    # Skip HF checks for external engines
     external_engines = {"openai", "anthropic", "gemini", "groq", "cerebras", "mistral", "deepseek", "custom"}
     is_external = req.engine and req.engine.lower() in external_engines
 
     if not is_external and req.model_id:
+        # Check 1: Model accessibility
         result = await check_model_accessibility(req.model_id, req.hf_token)
         if result.skipped:
             checks.append(PreflightCheckResult(
@@ -437,6 +439,28 @@ async def deployment_preflight(req: PreflightRequest):
                 message=result.error,
                 needs_hf_token=result.needs_token,
             ))
+
+        # Check 2: Model format compatibility (only if accessible)
+        if result.accessible and not result.skipped and req.engine:
+            fmt = await check_model_format(req.model_id, req.engine, req.hf_token)
+            if fmt.skipped:
+                checks.append(PreflightCheckResult(
+                    check="model_format",
+                    passed=True,
+                    message=f"Format check not required for {req.engine}.",
+                ))
+            elif fmt.compatible:
+                checks.append(PreflightCheckResult(
+                    check="model_format",
+                    passed=True,
+                    message="Model format is compatible.",
+                ))
+            else:
+                checks.append(PreflightCheckResult(
+                    check="model_format",
+                    passed=False,
+                    message=fmt.error,
+                ))
     else:
         checks.append(PreflightCheckResult(
             check="model_accessible",
