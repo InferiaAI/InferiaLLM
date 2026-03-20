@@ -56,7 +56,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
     const deploymentId = deployment?.id || deployment?.deployment_id
 
     const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
-    const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "localai" || deployment?.engine === "localai-image" || deployment?.engine === "stablediffusion" || deployment?.engine === "inferiadiffusion" || deployment?.engine === "inferia-diffusion"
+    const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "inferia-diffusion"
     const state = deployment?.state || deployment?.status || "Unknown"
 
     const { data: embeddingMetrics, isLoading: loadingLogMetrics } = useQuery({

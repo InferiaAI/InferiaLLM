@@ -143,7 +143,7 @@ export default function DeploymentDetail() {
   const isRunning = !["STOPPED", "TERMINATED", "FAILED", "UNKNOWN"].includes(deploymentState)
   const isTraining = deployment?.workload_type === "training"
   const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
-  const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "localai" || deployment?.engine === "localai-image" || deployment?.engine === "stablediffusion" || deployment?.engine === "inferiadiffusion" || deployment?.engine === "inferia-diffusion"
+  const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "inferia-diffusion"
 
   const tabs = useMemo(() => {
     const logLabel = isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : "Inference Logs"
@@ -282,7 +282,7 @@ function TabContent({ activeTab, deployment, fetchDeployment }: { activeTab: Tab
   if (!id) return null;
   const isTraining = deployment.workload_type === "training"
   const isEmbedding = deployment.model_type === "embedding" || deployment.engine === "infinity" || deployment.engine === "tei"
-  const isImageGen = deployment.model_type === "image_generation" || deployment.engine === "localai" || deployment.engine === "localai-image" || deployment.engine === "stablediffusion" || deployment.engine === "inferiadiffusion" || deployment.engine === "inferia-diffusion"
+  const isImageGen = deployment.model_type === "image_generation" || deployment.engine === "inferia-diffusion"
 
   switch (activeTab) {
     case "overview": return <DeploymentOverview deployment={deployment} />;

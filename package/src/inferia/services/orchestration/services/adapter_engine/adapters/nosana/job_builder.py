@@ -644,8 +644,8 @@ def create_localai_job(
     required_cuda: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Build a Nosana job definition for LocalAI image generation server.
-    Supports Stable Diffusion and other image generation models via LocalAI.
+    Build a Nosana job definition for InferaDiffusion image generation server.
+    Supports Stable Diffusion and other image generation models via LocalAI backend.
     See: https://localai.io/features/image-generation/
 
     LocalAI can run Stable Diffusion models using the diffusers backend.
@@ -655,7 +655,7 @@ def create_localai_job(
     Args:
         model_id: HuggingFace model ID (e.g., "stabilityai/stable-diffusion-2-1")
                   or a LocalAI model gallery name
-        image: Docker image for LocalAI
+        image: Docker image for InferaDiffusion/LocalAI
         hf_token: HuggingFace token for gated models
         api_key: API key for authentication (uses global key if not provided)
         min_vram: Minimum VRAM requirement in GB
@@ -797,6 +797,9 @@ def create_inferia_diffusion_job(
         str(port),
     ]
 
+    if effective_api_key:
+        cmd_args.extend(["--api-key", effective_api_key])
+
     container_op = {
         "id": "InferiaDiffusion",
         "type": "container/run",
@@ -846,7 +849,7 @@ def build_job_definition(
     High-level factory function to build job definitions based on engine type.
 
     Args:
-        engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton", "inferiadiffusion")
+        engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton", "inferia-diffusion")
         model_id: Model identifier
         image: Optional custom docker image
         hf_token: HuggingFace token
@@ -962,31 +965,7 @@ def build_job_definition(
                 and v is not None
             },
         )
-    elif engine in ("localai", "localai-image", "stablediffusion"):
-        job = create_localai_job(
-            model_id=model_id,
-            image=image or "docker.io/localai/localai:latest-gpu-nvidia-cuda-12",
-            hf_token=hf_token,
-            api_key=api_key,
-            **{
-                k: v
-                for k, v in kwargs.items()
-                if k
-                in [
-                    "min_vram",
-                    "gpu",
-                    "port",
-                    "threads",
-                    "context_size",
-                    "image_path",
-                    "diffusers_pipeline",
-                    "scheduler",
-                    "required_cuda",
-                ]
-                and v is not None
-            },
-        )
-    elif engine in ("inferiadiffusion", "inferia-diffusion"):
+    elif engine in ("inferia-diffusion",):
         job = create_inferia_diffusion_job(
             model_id=model_id,
             image=image or "docker.io/inferiaai/inferiadiffusion:latest",

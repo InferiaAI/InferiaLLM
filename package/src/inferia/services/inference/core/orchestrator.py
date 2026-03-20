@@ -7,7 +7,7 @@ from inferia.services.inference.client import api_gateway_client
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 
-from .providers import get_adapter, is_external_engine, LocalAIImageAdapter
+from .providers import get_adapter, is_external_engine, InferaDiffusionAdapter
 from .rate_limiter import rate_limiter
 from .service import GatewayService
 from .stream_processor import StreamProcessor
@@ -94,7 +94,9 @@ class OrchestrationService:
         # For compute engines (Infinity, TEI), use the internal API key
         if is_external_engine(engine):
             credentials = (
-                deployment.get("credentials_json") or deployment.get("configuration") or {}
+                deployment.get("credentials_json")
+                or deployment.get("configuration")
+                or {}
             )
             provider_key = str(
                 credentials.get("api_key")
@@ -109,6 +111,7 @@ class OrchestrationService:
                 body["model"] = deployment["inference_model"]
         else:
             from inferia.services.inference.config import settings
+
             provider_key = settings.api_gateway_internal_key or ""
 
         provider_headers = adapter.get_headers(provider_key)
@@ -122,7 +125,9 @@ class OrchestrationService:
         try:
             # Call upstream embedding endpoint
             # External providers use /v1/embeddings, compute engines (Infinity, TEI) use /embeddings
-            embedding_path = "/v1/embeddings" if is_external_engine(engine) else "/embeddings"
+            embedding_path = (
+                "/v1/embeddings" if is_external_engine(engine) else "/embeddings"
+            )
             response_data = await GatewayService.call_upstream(
                 endpoint_url,
                 provider_payload,
@@ -171,7 +176,7 @@ class OrchestrationService:
     ):
         """
         Handle text-to-image generation requests (POST /v1/images/generations).
-        Uses LocalAI backend: https://localai.io/features/image-generation/
+        Uses InferaDiffusion backend.
         Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
         """
         start_time = time.time()
@@ -224,7 +229,9 @@ class OrchestrationService:
         # Resolve API key
         if is_external_engine(engine):
             credentials = (
-                deployment.get("credentials_json") or deployment.get("configuration") or {}
+                deployment.get("credentials_json")
+                or deployment.get("configuration")
+                or {}
             )
             provider_key = str(
                 credentials.get("api_key")
@@ -252,7 +259,7 @@ class OrchestrationService:
 
         try:
             # Determine path based on adapter type
-            if isinstance(adapter, LocalAIImageAdapter):
+            if isinstance(adapter, InferaDiffusionAdapter):
                 image_path = adapter.get_image_generation_path()
             else:
                 image_path = "/v1/images/generations"
@@ -301,7 +308,7 @@ class OrchestrationService:
     ):
         """
         Handle image-to-image edit requests (POST /v1/images/edits).
-        Uses LocalAI backend: https://localai.io/features/image-generation/
+        Uses InferaDiffusion backend.
         Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
         """
         start_time = time.time()
@@ -359,7 +366,9 @@ class OrchestrationService:
         # Resolve API key
         if is_external_engine(engine):
             credentials = (
-                deployment.get("credentials_json") or deployment.get("configuration") or {}
+                deployment.get("credentials_json")
+                or deployment.get("configuration")
+                or {}
             )
             provider_key = str(
                 credentials.get("api_key")
@@ -391,7 +400,7 @@ class OrchestrationService:
         n_images = body.get("n", 1)
 
         try:
-            if isinstance(adapter, LocalAIImageAdapter):
+            if isinstance(adapter, InferaDiffusionAdapter):
                 image_path = adapter.get_image_edit_path()
             else:
                 image_path = "/v1/images/edits"
@@ -659,7 +668,7 @@ class OrchestrationService:
             error_message = None
             try:
                 async for chunk in processed_stream:
-                    if b'"error":' in chunk and b'Upstream Error' in chunk:
+                    if b'"error":' in chunk and b"Upstream Error" in chunk:
                         status_code = 502
                         error_message = chunk.decode("utf-8", errors="ignore")
                     yield chunk
@@ -729,7 +738,7 @@ class OrchestrationService:
         error_message = None
         prompt_tokens = 0
         completion_tokens = 0
-        
+
         try:
             response_data = await GatewayService.call_upstream(
                 endpoint_url,
@@ -741,9 +750,13 @@ class OrchestrationService:
 
             # Output Guardrails
             if response_data and response_data.get("choices"):
-                content = (response_data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+                content = (response_data.get("choices") or [{}])[0].get(
+                    "message", {}
+                ).get("content") or ""
                 last_msg = provider_payload.get("messages", [{}])[-1]
-                input_content = last_msg.get("content", "") if isinstance(last_msg, dict) else ""
+                input_content = (
+                    last_msg.get("content", "") if isinstance(last_msg, dict) else ""
+                )
                 if content and input_content:
                     await GatewayService.scan_output(
                         content,
@@ -942,9 +955,7 @@ class OrchestrationService:
         final_payload = None
         if log_payloads and request_payload:
             final_payload = {
-                k: v
-                for k, v in request_payload.items()
-                if k not in ("image", "mask")
+                k: v for k, v in request_payload.items() if k not in ("image", "mask")
             }
             # Indicate presence of image data without logging the blob
             if "image" in request_payload:

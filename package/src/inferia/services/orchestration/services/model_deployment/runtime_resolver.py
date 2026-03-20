@@ -3,17 +3,11 @@ class RuntimeResolver:
         """
         Resolve deployment runtime strategy based on engine and model type.
 
-        For image generation workloads (LocalAI/Stable Diffusion), routes to
+        For image generation workloads (InferaDiffusion), routes to
         the localai strategy. For all other workloads, routes through vllm.
         """
         # Explicit engine-based routing
-        if engine and engine.lower() in (
-            "localai",
-            "localai-image",
-            "stablediffusion",
-            "inferiadiffusion",
-            "inferia-diffusion",
-        ):
+        if engine and engine.lower() in ("inferia-diffusion",):
             return "localai"
 
         # Model-type based routing

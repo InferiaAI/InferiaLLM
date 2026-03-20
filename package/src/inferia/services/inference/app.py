@@ -39,6 +39,7 @@ register_exception_handlers(app)
 
 # CORS configuration (Standardized)
 import os
+
 setup_cors(app, os.getenv("ALLOWED_ORIGINS", ""), settings.is_development)
 
 
@@ -47,7 +48,7 @@ add_standard_health_routes(
     app=app,
     app_name=settings.app_name,
     app_version=settings.app_version,
-    environment=settings.environment
+    environment=settings.environment,
 )
 
 
@@ -152,8 +153,7 @@ async def create_image(
 ):
     """
     Image generation endpoint - OpenAI compatible (text-to-image).
-    Supports image generation models deployed via LocalAI (Stable Diffusion, etc.).
-    See: https://localai.io/features/image-generation/
+    Supports image generation models deployed via InferaDiffusion.
     """
     api_key = extract_api_key(authorization)
     body = await request.json()
@@ -175,8 +175,7 @@ async def create_image_edit(
 ):
     """
     Image edit endpoint - OpenAI compatible (image-to-image).
-    Supports image editing/variation models deployed via LocalAI.
-    See: https://localai.io/features/image-generation/
+    Supports image editing/variation models deployed via InferaDiffusion.
     """
     api_key = extract_api_key(authorization)
     body = await request.json()
