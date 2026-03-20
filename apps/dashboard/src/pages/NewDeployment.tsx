@@ -231,6 +231,8 @@ type State = {
   diffusersPipeline: string;
   diffusersScheduler: string;
   imageSize: string;
+  preflightStatus: 'idle' | 'checking' | 'passed' | 'failed';
+  preflightErrors: Array<{ check: string; message: string; needs_hf_token: boolean }>;
 };
 
 type Action =
@@ -320,6 +322,8 @@ const initialState: State = {
   diffusersPipeline: "StableDiffusionPipeline",
   diffusersScheduler: "EulerAncestralDiscreteScheduler",
   imageSize: "512x512",
+  preflightStatus: 'idle',
+  preflightErrors: [],
 };
 
 // --- Components ---
@@ -747,6 +751,26 @@ export default function NewDeployment() {
     onError: (err: any) => { toast.error(err.response?.data?.detail || "Failed to create deployment") }
   })
 
+  const runPreflight = async (modelId: string, engine: string, token?: string): Promise<boolean> => {
+    dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'checking' });
+    dispatch({ type: 'SET_FIELD', field: 'preflightErrors', value: [] });
+    try {
+      const { data } = await computeApi.post("/deployment/preflight", {
+        model_id: modelId, engine, hf_token: token || undefined,
+      });
+      if (data.ready) {
+        dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'passed' });
+        return true;
+      }
+      dispatch({ type: 'SET_FIELD', field: 'preflightErrors', value: data.checks.filter((c: any) => !c.passed) });
+      dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'failed' });
+      return false;
+    } catch {
+      dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'passed' });
+      return true;
+    }
+  };
+
   // --- Handlers ---
 
   const handleManagedLaunch = async () => {
@@ -757,6 +781,14 @@ export default function NewDeployment() {
 
     let config = {}
     try { config = JSON.parse(jobDescription) } catch (e) { return toast.error("Invalid Job JSON specification") }
+
+    // Run preflight checks
+    const preflightOk = await runPreflight(
+      modelId || (config as any).model_id || "",
+      selectedEngine,
+      hfToken || undefined,
+    );
+    if (!preflightOk) return;
 
     const payload = {
       model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: modelType === "embedding" ? 0 : 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
@@ -956,7 +988,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     kvCacheDtype, trustRemoteCode, cudaModuleLoading,
     nvidiaDisableCudaCompat, quantization, isAdvancedOpen, cudaVersions,
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
-    selectedPool
+    selectedPool, preflightStatus, preflightErrors
   } = state;
 
   const { data: hfConfig } = useQuery({
@@ -1393,6 +1425,26 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         </div>
       )}
 
+      {preflightStatus === 'checking' && (
+        <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg text-sm text-blue-700 dark:text-blue-300">
+          <Loader2 className="w-4 h-4 animate-spin" /> Running pre-deployment checks...
+        </div>
+      )}
+      {preflightStatus === 'failed' && preflightErrors.length > 0 && (
+        <div className="p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg space-y-2">
+          <p className="text-sm font-semibold text-red-800 dark:text-red-300">Pre-deployment check failed</p>
+          {preflightErrors.map((err: any, i: number) => (
+            <div key={i} className="text-sm text-red-700 dark:text-red-400">
+              <p>{err.message}</p>
+              {err.needs_hf_token && (
+                <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                  Provide a HuggingFace token in the configuration above to access this model.
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex gap-4 pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} className="flex-1 py-2.5 border rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium transition-colors text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-70 font-medium shadow-sm transition-colors flex justify-center items-center gap-2">{isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}</button></div>
     </div>
   );
