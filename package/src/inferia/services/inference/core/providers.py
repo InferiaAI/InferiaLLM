@@ -27,10 +27,6 @@ EXTERNAL_ENGINES = {
 }
 COMPUTE_ENGINES = {"vllm", "ollama", "generic"}
 IMAGE_ENGINES = {
-    "localai",
-    "localai-image",
-    "stablediffusion",
-    "inferiadiffusion",
     "inferia-diffusion",
 }
 
@@ -299,12 +295,11 @@ class EmbeddingAdapter(OpenAIAdapter):
         return False
 
 
-class LocalAIImageAdapter(ProviderAdapter):
+class InferaDiffusionAdapter(ProviderAdapter):
     """
-    Adapter for LocalAI image generation.
+    Adapter for InferaDiffusion image generation.
     Supports text-to-image (POST /v1/images/generations) and
-    image-to-image (POST /v1/images/edits) via the LocalAI backend.
-    See: https://localai.io/features/image-generation/
+    image-to-image (POST /v1/images/edits).
     """
 
     def get_chat_path(self) -> str:
@@ -324,35 +319,33 @@ class LocalAIImageAdapter(ProviderAdapter):
 
     def transform_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Transform to LocalAI/OpenAI image generation format.
-        LocalAI accepts OpenAI-compatible image generation requests:
+        Transform to InferaDiffusion/OpenAI image generation format.
+        Supports:
           - prompt (required)
           - model (optional, backend model name)
           - n (number of images, default 1)
           - size (e.g. "512x512", "256x256")
           - response_format (url or b64_json)
-          - step (diffusion steps, LocalAI extension)
+          - step (diffusion steps)
+          - seed, mode, scheduler, strength
         """
         transformed = {}
 
-        # Required
         if "prompt" in payload:
             transformed["prompt"] = payload["prompt"]
 
-        # Standard OpenAI image fields
         for field in ("model", "n", "size", "response_format", "quality", "style"):
             if field in payload:
                 transformed[field] = payload[field]
 
-        # LocalAI-specific extensions
-        for field in ("step", "seed", "mode", "scheduler"):
+        for field in ("step", "seed", "mode", "scheduler", "strength"):
             if field in payload:
                 transformed[field] = payload[field]
 
         return transformed
 
     def transform_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        """LocalAI returns OpenAI-compatible image response format."""
+        """Returns OpenAI-compatible image response format."""
         return response
 
     def is_external(self) -> bool:
@@ -394,11 +387,7 @@ def get_adapter(engine: str) -> ProviderAdapter:
         "infinity": EmbeddingAdapter(),
         "tei": EmbeddingAdapter(),
         # Image generation engines
-        "localai": LocalAIImageAdapter(),
-        "localai-image": LocalAIImageAdapter(),
-        "stablediffusion": LocalAIImageAdapter(),
-        "inferiadiffusion": LocalAIImageAdapter(),
-        "inferia-diffusion": LocalAIImageAdapter(),
+        "inferia-diffusion": InferaDiffusionAdapter(),
     }
 
     adapter = adapters.get(engine_lower)

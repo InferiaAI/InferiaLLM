@@ -115,17 +115,9 @@ const computeEngines = [
     types: ["inference"],
     modelTypes: ["embedding"]
   },
+
   {
-    id: "localai",
-    name: "LocalAI (Diffusers)",
-    desc: "Run Stable Diffusion and image generation models via LocalAI.",
-    image: "docker.io/localai/localai:latest-gpu-nvidia-cuda-12",
-    icon: Image,
-    types: ["inference"],
-    modelTypes: ["image_generation"]
-  },
-  {
-    id: "inferiadiffusion",
+    id: "inferia-diffusion",
     name: "Inferia Diffusion",
     desc: "High-performance image generation engine powered by Inferia.",
     image: "docker.io/inferiaai/inferiadiffusion:latest",
@@ -225,9 +217,7 @@ type State = {
   requiredRam: string;
   gpuEnabled: boolean;
   // LocalAI / Image Generation config
-  localaiImage: string;
-  localaiThreads: string;
-  localaiContextSize: string;
+
   diffusersPipeline: string;
   diffusersScheduler: string;
   imageSize: string;
@@ -313,10 +303,7 @@ const initialState: State = {
   requiredCpu: "2",
   requiredRam: "4096",
   gpuEnabled: false,
-  // LocalAI / Image Generation defaults
-  localaiImage: "docker.io/localai/localai:latest-gpu-nvidia-cuda-12",
-  localaiThreads: "4",
-  localaiContextSize: "512",
+  // InferaDiffusion defaults
   diffusersPipeline: "StableDiffusionPipeline",
   diffusersScheduler: "EulerAncestralDiscreteScheduler",
   imageSize: "512x512",
@@ -678,37 +665,11 @@ export default function NewDeployment() {
         }]
       }
       return JSON.stringify(spec, null, 4)
-    } else if (selectedEngine === "localai") {
-      const finalModelId = modelId || "stabilityai/stable-diffusion-2-1";
-      const modelConfigName = finalModelId.replace("/", "--");
-      const spec = {
-        model_id: finalModelId,
-        engine: "localai",
-        image: state.localaiImage,
-        port: 8080,
-        threads: parseInt(state.localaiThreads) || 4,
-        context_size: parseInt(state.localaiContextSize) || 512,
-        diffusers_pipeline: state.diffusersPipeline || undefined,
-        scheduler: state.diffusersScheduler || undefined,
-        min_vram: 8,
-        gpu: true,
-        env: {
-          "MODELS_PATH": "/models",
-          "IMAGE_PATH": "/tmp/generated/images",
-          ...(hfToken ? { "HF_TOKEN": hfToken } : {}),
-        },
-        expose: [{
-          port: 8080,
-          type: "http",
-          health_checks: [{ path: "/readyz", type: "http", method: "GET", expected_status: 200 }]
-        }]
-      }
-      return JSON.stringify(spec, null, 4)
-    } else if (selectedEngine === "inferiadiffusion") {
+    } else if (selectedEngine === "inferia-diffusion") {
       const finalModelId = modelId || "segmind/tiny-sd";
       const spec = {
         model_id: finalModelId,
-        engine: "inferiadiffusion",
+        engine: "inferia-diffusion",
         image: "docker.io/inferiaai/inferiadiffusion:latest",
         port: 8080,
         host: "0.0.0.0",
@@ -726,7 +687,7 @@ export default function NewDeployment() {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.localaiImage, state.localaiThreads, state.localaiContextSize, state.diffusersPipeline, state.diffusersScheduler])
+  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.diffusersPipeline, state.diffusersScheduler])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -1331,42 +1292,32 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         </div>
       )}
 
-      {selectedEngine === "localai" && (
+      {selectedEngine === "inferia-diffusion" && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
-          <div className="flex items-center gap-2 mb-2"><Image className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">LocalAI Image Generation Configuration</h4></div>
+          <div className="flex items-center gap-2 mb-2"><Image className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">InferaDiffusion Image Generation Configuration</h4></div>
           <div>
-            <label htmlFor="localaiImage" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">LocalAI Docker Image</label>
-            <input id="localaiImage" value={state.localaiImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'localaiImage', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+            <label htmlFor="diffusersPipeline" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Diffusers Pipeline</label>
+            <select id="diffusersPipeline" value={state.diffusersPipeline} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersPipeline', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+              <option value="StableDiffusionPipeline">Stable Diffusion (text-to-image)</option>
+              <option value="StableDiffusionImg2ImgPipeline">Stable Diffusion (image-to-image)</option>
+              <option value="StableDiffusionXLPipeline">Stable Diffusion XL</option>
+              <option value="StableDiffusionDepth2ImgPipeline">Depth-to-Image</option>
+              <option value="">Auto-detect</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="diffusersScheduler" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Scheduler</label>
+            <select id="diffusersScheduler" value={state.diffusersScheduler} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersScheduler', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+              <option value="EulerAncestralDiscreteScheduler">Euler Ancestral</option>
+              <option value="EulerDiscreteScheduler">Euler</option>
+              <option value="DPMSolverMultistepScheduler">DPM++ 2M</option>
+              <option value="DDIMScheduler">DDIM</option>
+              <option value="PNDMScheduler">PNDM</option>
+              <option value="LMSDiscreteScheduler">LMS</option>
+              <option value="">Default</option>
+            </select>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="diffusersPipeline" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Diffusers Pipeline</label>
-              <select id="diffusersPipeline" value={state.diffusersPipeline} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersPipeline', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
-                <option value="StableDiffusionPipeline">Stable Diffusion (text-to-image)</option>
-                <option value="StableDiffusionImg2ImgPipeline">Stable Diffusion (image-to-image)</option>
-                <option value="StableDiffusionXLPipeline">Stable Diffusion XL</option>
-                <option value="StableDiffusionDepth2ImgPipeline">Depth-to-Image</option>
-                <option value="">Auto-detect</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="diffusersScheduler" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Scheduler</label>
-              <select id="diffusersScheduler" value={state.diffusersScheduler} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersScheduler', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
-                <option value="EulerAncestralDiscreteScheduler">Euler Ancestral</option>
-                <option value="EulerDiscreteScheduler">Euler</option>
-                <option value="DPMSolverMultistepScheduler">DPM++ 2M</option>
-                <option value="DDIMScheduler">DDIM</option>
-                <option value="PNDMScheduler">PNDM</option>
-                <option value="LMSDiscreteScheduler">LMS</option>
-                <option value="">Default</option>
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="localaiThreads" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">CPU Threads</label>
-              <input id="localaiThreads" type="number" min="1" value={state.localaiThreads} onChange={e => dispatch({ type: 'SET_FIELD', field: 'localaiThreads', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
-            </div>
             <div>
               <label htmlFor="imageSize" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Default Image Size</label>
               <select id="imageSize" value={state.imageSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'imageSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
