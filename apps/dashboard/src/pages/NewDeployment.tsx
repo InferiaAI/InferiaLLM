@@ -716,8 +716,14 @@ export default function NewDeployment() {
     dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'checking' });
     dispatch({ type: 'SET_FIELD', field: 'preflightErrors', value: [] });
     try {
+      const parsedConfig = (() => { try { return JSON.parse(jobDescription) } catch { return {} } })();
       const { data } = await computeApi.post("/deployment/preflight", {
         model_id: modelId, engine, hf_token: token || undefined,
+        gpu_per_replica: modelType === "embedding" ? 0 : 1,
+        pool_id: selectedPool?.pool_id || undefined,
+        model_type: modelType,
+        max_model_len: parseInt(maxModelLen) || undefined,
+        image: (parsedConfig as any)?.image || undefined,
       });
       if (data.ready) {
         dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'passed' });

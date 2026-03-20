@@ -217,6 +217,12 @@ class PreflightRequest(BaseModel):
     model_id: str
     hf_token: str | None = None
     engine: str | None = None
+    gpu_per_replica: int = 1
+    gpu_vram_gb: float = 24.0
+    pool_id: str | None = None
+    model_type: str = "inference"
+    max_model_len: int | None = None
+    image: str | None = None  # Docker image tag
 
 
 class PreflightCheckResult(BaseModel):
@@ -409,6 +415,12 @@ async def deployment_preflight(req: PreflightRequest):
     from inferia.services.orchestration.services.model_deployment.preflight import (
         check_model_accessibility,
         check_model_format,
+        fetch_hf_model_info,
+        check_vram_fit,
+        check_pipeline_compatibility,
+        check_docker_image_exists,
+        check_duplicate_deployment,
+        check_context_length,
     )
 
     checks = []
@@ -416,6 +428,8 @@ async def deployment_preflight(req: PreflightRequest):
     # Skip HF checks for external engines
     external_engines = {"openai", "anthropic", "gemini", "groq", "cerebras", "mistral", "deepseek", "custom"}
     is_external = req.engine and req.engine.lower() in external_engines
+
+    hf_info = None  # Shared metadata for multiple checks
 
     if not is_external and req.model_id:
         # Check 1: Model accessibility
@@ -440,8 +454,12 @@ async def deployment_preflight(req: PreflightRequest):
                 needs_hf_token=result.needs_token,
             ))
 
-        # Check 2: Model format compatibility (only if accessible)
-        if result.accessible and not result.skipped and req.engine:
+        # Fetch full HF metadata once (used by checks 2-5)
+        if result.accessible and not result.skipped:
+            hf_info = await fetch_hf_model_info(req.model_id, req.hf_token)
+
+        # Check 2: Model format compatibility
+        if hf_info and req.engine:
             fmt = await check_model_format(req.model_id, req.engine, req.hf_token)
             if fmt.skipped:
                 checks.append(PreflightCheckResult(
@@ -461,12 +479,103 @@ async def deployment_preflight(req: PreflightRequest):
                     passed=False,
                     message=fmt.error,
                 ))
+
+        # Check 3: VRAM estimation
+        if hf_info:
+            vram = check_vram_fit(hf_info, req.gpu_per_replica, req.gpu_vram_gb)
+            if vram.skipped:
+                checks.append(PreflightCheckResult(
+                    check="vram_estimate",
+                    passed=True,
+                    message="VRAM check skipped — parameter count unavailable.",
+                ))
+            elif vram.ok:
+                checks.append(PreflightCheckResult(
+                    check="vram_estimate",
+                    passed=True,
+                    message=f"Model fits: ~{vram.estimated_vram_gb} GB needed, {vram.available_vram_gb} GB available.",
+                ))
+            else:
+                checks.append(PreflightCheckResult(
+                    check="vram_estimate",
+                    passed=False,
+                    message=vram.error,
+                ))
+
+        # Check 4: Pipeline tag vs engine compatibility
+        if hf_info and req.engine:
+            pipe = check_pipeline_compatibility(hf_info, req.engine, req.model_type)
+            if pipe.skipped:
+                checks.append(PreflightCheckResult(
+                    check="pipeline_compatible",
+                    passed=True,
+                    message="Pipeline compatibility check skipped.",
+                ))
+            elif pipe.compatible:
+                checks.append(PreflightCheckResult(
+                    check="pipeline_compatible",
+                    passed=True,
+                    message=f"Model pipeline '{pipe.pipeline_tag}' is compatible with {req.engine}.",
+                ))
+            else:
+                checks.append(PreflightCheckResult(
+                    check="pipeline_compatible",
+                    passed=False,
+                    message=pipe.error,
+                ))
+
+        # Check 5: Context length
+        if hf_info and req.max_model_len:
+            ctx = check_context_length(hf_info, req.max_model_len)
+            if not ctx.skipped:
+                checks.append(PreflightCheckResult(
+                    check="context_length",
+                    passed=ctx.ok,
+                    message=ctx.error if not ctx.ok else "Requested context length is within model limits.",
+                ))
     else:
         checks.append(PreflightCheckResult(
             check="model_accessible",
             passed=True,
-            message="External provider — HuggingFace check not applicable.",
+            message="External provider — HuggingFace checks not applicable.",
         ))
+
+    # Check 6: Docker image existence (applies to all managed deployments)
+    if req.image and not is_external:
+        img = await check_docker_image_exists(req.image)
+        if img.skipped:
+            checks.append(PreflightCheckResult(
+                check="docker_image",
+                passed=True,
+                message="Docker image check skipped.",
+            ))
+        elif img.exists:
+            checks.append(PreflightCheckResult(
+                check="docker_image",
+                passed=True,
+                message="Docker image exists.",
+            ))
+        else:
+            checks.append(PreflightCheckResult(
+                check="docker_image",
+                passed=False,
+                message=img.error,
+            ))
+
+    # Check 7: Duplicate deployment on same pool
+    if req.model_id and req.pool_id and not is_external:
+        try:
+            db_pool = await asyncpg.create_pool(POSTGRES_DSN, min_size=1, max_size=1)
+            dup = await check_duplicate_deployment(req.model_id, req.pool_id, db_pool)
+            await db_pool.close()
+            if not dup.skipped:
+                checks.append(PreflightCheckResult(
+                    check="duplicate_deployment",
+                    passed=dup.ok,
+                    message=dup.error if not dup.ok else "No duplicate deployment found.",
+                ))
+        except Exception as e:
+            logger.warning("Duplicate check DB connection failed: %s", e)
 
     ready = all(c.passed for c in checks)
     return PreflightResponse(ready=ready, checks=checks)
