@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
-import { auditService, type AuditLog } from "@/services/auditService"
-import { Clock, User, Shield, Search, ChevronDown, ChevronUp, AlertCircle } from "lucide-react"
+import { auditService, AUDIT_CATEGORIES, CATEGORY_COLORS, type AuditLog } from "@/services/auditService"
+import { Clock, User, Shield, Search, ChevronDown, ChevronUp, AlertCircle, Tag } from "lucide-react"
 
 export default function AuditLogs() {
     const [logs, setLogs] = useState<AuditLog[]>([])
@@ -9,6 +9,7 @@ export default function AuditLogs() {
     const [filters, setFilters] = useState({
         action: "",
         user_id: "",
+        category: "",
     })
 
     useEffect(() => {
@@ -40,6 +41,10 @@ export default function AuditLogs() {
         setExpandedId(expandedId === id ? null : id)
     }
 
+    const getCategoryStyle = (category: string | null) => {
+        return CATEGORY_COLORS[category || ""] || "bg-secondary text-secondary-foreground"
+    }
+
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -53,23 +58,35 @@ export default function AuditLogs() {
 
             {/* Filters */}
             <form onSubmit={handleSearch} className="flex gap-4 items-end bg-card p-4 rounded-lg border">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-1">
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">Category</label>
+                        <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            value={filters.category}
+                            onChange={(e) => setFilters({ ...filters, category: e.target.value })}
+                        >
+                            {AUDIT_CATEGORIES.map((cat) => (
+                                <option key={cat.value} value={cat.value}>{cat.label}</option>
+                            ))}
+                        </select>
+                    </div>
                     <div className="space-y-2">
                         <label className="text-sm font-medium">Action</label>
                         <input
                             type="text"
-                            placeholder="e.g. login, model_inference"
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            placeholder="e.g. user.login, deployment.create"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                             value={filters.action}
                             onChange={(e) => setFilters({ ...filters, action: e.target.value })}
                         />
                     </div>
                     <div className="space-y-2">
-                        <label className="text-sm font-medium">User ID</label>
+                        <label className="text-sm font-medium">User</label>
                         <input
                             type="text"
-                            placeholder="Search by User ID"
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            placeholder="Search by User ID or email"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                             value={filters.user_id}
                             onChange={(e) => setFilters({ ...filters, user_id: e.target.value })}
                         />
@@ -77,10 +94,10 @@ export default function AuditLogs() {
                     <div className="flex items-end">
                         <button
                             type="submit"
-                            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full md:w-auto"
+                            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full md:w-auto"
                         >
                             <Search className="w-4 h-4 mr-2" />
-                            Filter Logs
+                            Filter
                         </button>
                     </div>
                 </div>
@@ -112,17 +129,26 @@ export default function AuditLogs() {
                                 onClick={() => toggleExpand(log.id)}
                             >
                                 <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-center gap-6 min-w-0 flex-1">
+                                    <div className="flex items-center gap-4 min-w-0 flex-1">
                                         <div className="text-xs text-muted-foreground whitespace-nowrap flex items-center gap-1.5 shrink-0">
                                             <Clock className="w-3.5 h-3.5" />
                                             {formatDate(log.timestamp)}
                                         </div>
 
+                                        {log.category && (
+                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-tight shrink-0 flex items-center gap-1 ${getCategoryStyle(log.category)}`}>
+                                                <Tag className="w-2.5 h-2.5" />
+                                                {log.category.replace("_", " ")}
+                                            </span>
+                                        )}
+
                                         <div className="flex items-center gap-3 min-w-0">
                                             <span className="font-semibold text-sm truncate">{log.action}</span>
-                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium uppercase tracking-tight shrink-0">
-                                                {log.resource_type}
-                                            </span>
+                                            {log.resource_type && (
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium uppercase tracking-tight shrink-0">
+                                                    {log.resource_type}
+                                                </span>
+                                            )}
                                             {log.status === "failure" || log.status === "error" ? (
                                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-destructive/10 text-destructive flex items-center gap-1 font-medium uppercase tracking-tight shrink-0">
                                                     <AlertCircle className="w-3 h-3" /> {log.status}
@@ -136,9 +162,11 @@ export default function AuditLogs() {
                                     </div>
 
                                     <div className="flex items-center gap-4 text-sm shrink-0 ml-auto">
-                                        <div className="flex items-center gap-1.5 text-muted-foreground" title="User">
+                                        <div className="flex items-center gap-1.5 text-muted-foreground" title={log.user_id || "System"}>
                                             <User className="w-3.5 h-3.5" />
-                                            <span className="font-mono text-xs">{log.user_id || "System"}</span>
+                                            <span className="text-xs max-w-[160px] truncate">
+                                                {log.user_email || log.user_id || "System"}
+                                            </span>
                                         </div>
                                         {expandedId === log.id ? (
                                             <ChevronUp className="w-4 h-4 text-muted-foreground" />
@@ -152,7 +180,14 @@ export default function AuditLogs() {
                             {/* Expanded Details */}
                             {expandedId === log.id && (
                                 <div className="border-t bg-muted/20 p-4 space-y-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                        <div>
+                                            <div className="text-xs text-muted-foreground mb-1">Actor</div>
+                                            <div className="font-mono text-[11px] bg-background p-2 rounded border">
+                                                {log.user_email && <div>{log.user_email}</div>}
+                                                <div className="text-muted-foreground truncate" title={log.user_id || ""}>{log.user_id || "System"}</div>
+                                            </div>
+                                        </div>
                                         <div>
                                             <div className="text-xs text-muted-foreground mb-1">Resource ID</div>
                                             <div className="font-mono text-[10px] bg-background p-2 rounded border truncate" title={log.resource_id || ""}>

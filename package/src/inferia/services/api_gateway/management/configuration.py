@@ -565,6 +565,19 @@ async def add_provider_credential(
         logger.error(f"Failed to add credential: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save credential: {e}")
 
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="credential.create",
+            resource_type="credential",
+            resource_id=credential_data.name,
+            details={"provider": provider, "credential_type": credential_data.credential_type},
+            status="success",
+        ),
+    )
+
     return {
         "status": "ok",
         "message": f"Credential '{credential_data.name}' added successfully for {provider}",
@@ -691,6 +704,19 @@ async def delete_provider_credential(
     except Exception as e:
         logger.error(f"Failed to delete credential: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete credential: {e}")
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="credential.delete",
+            resource_type="credential",
+            resource_id=credential_name,
+            details={"provider": provider},
+            status="success",
+        ),
+    )
 
     return {
         "status": "ok",

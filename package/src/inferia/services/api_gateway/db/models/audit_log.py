@@ -21,6 +21,7 @@ class AuditLog(Base):
     ip_address = Column(String, nullable=True)
     status = Column(String, nullable=False, default="success")
     org_id = Column(String, nullable=True, index=True)
+    category = Column(String, nullable=True, index=True)
 
     # Relationships
     user = relationship("User", backref="audit_logs")

@@ -22,6 +22,7 @@ router = APIRouter(prefix="/audit", tags=["Audit"])
 async def get_audit_logs(
     user_id: Optional[str] = None,
     action: Optional[str] = None,
+    category: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     limit: int = Query(100, le=1000),
@@ -30,13 +31,14 @@ async def get_audit_logs(
     user_ctx=Depends(get_current_user_from_request),
 ):
     """
-    Retrieve audit logs.
+    Retrieve audit logs. Supports filtering by category (auth, deployment, etc.)
     """
     authz_service.require_permission(user_ctx, PermissionEnum.AUDIT_LOG_LIST)
 
     filters = AuditLogFilter(
         user_id=user_id,
         action=action,
+        category=category,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
