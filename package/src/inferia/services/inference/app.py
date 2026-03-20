@@ -5,6 +5,7 @@ then routes to the actual model provider.
 """
 
 import logging
+import json
 from typing import Optional
 
 from inferia.common.schemas.common import HealthCheckResponse
@@ -89,6 +90,17 @@ def extract_client_ip(request: Request) -> Optional[str]:
     return None
 
 
+async def parse_json_body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON in request body: {str(e)}",
+        )
+    return body
+
+
 # stream_with_tracking removed - logic moved to core.orchestrator.OrchestrationService
 
 
@@ -112,7 +124,7 @@ async def create_completion(
     Delegates orchestration to OrchestrationService.
     """
     api_key = extract_api_key(authorization)
-    body = await request.json()
+    body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
     return await OrchestrationService.handle_completion(
@@ -134,7 +146,7 @@ async def create_embeddings(
     Supports text embedding models deployed via Infinity or TEI.
     """
     api_key = extract_api_key(authorization)
-    body = await request.json()
+    body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
     return await OrchestrationService.handle_embeddings(
@@ -156,7 +168,7 @@ async def create_image(
     Supports image generation models deployed via InferaDiffusion.
     """
     api_key = extract_api_key(authorization)
-    body = await request.json()
+    body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
     return await OrchestrationService.handle_image_generation(
@@ -178,7 +190,7 @@ async def create_image_edit(
     Supports image editing/variation models deployed via InferaDiffusion.
     """
     api_key = extract_api_key(authorization)
-    body = await request.json()
+    body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
     return await OrchestrationService.handle_image_edit(
