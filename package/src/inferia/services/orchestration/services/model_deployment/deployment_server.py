@@ -283,6 +283,17 @@ def utcnow_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+_AUDIT_CATEGORY_MAP = {
+    "deployment.create": "deployment",
+    "deployment.update": "deployment",
+    "deployment.delete": "deployment",
+    "deployment.terminate": "deployment",
+    "pool.create": "deployment",
+    "pool.stop": "deployment",
+    "pool.delete": "deployment",
+}
+
+
 async def log_audit_event(
     user_id: str | None,
     action: str,
@@ -290,27 +301,28 @@ async def log_audit_event(
     resource_id: str | None,
     details: dict | None = None,
     status: str = "success",
+    org_id: str | None = None,
 ):
     import uuid
+
+    category = _AUDIT_CATEGORY_MAP.get(action, action.split(".")[0] if "." in action else action)
 
     conn = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
 
         # Proactive check for user_id existence to avoid FK violation
-        # if the ID passed is actually an Org ID or other identifier
         if user_id:
             exists = await conn.fetchval(
                 "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", user_id
             )
             if not exists:
-                user_id = None  # Don't try to link to non-existent user
+                user_id = None
 
-        # Manually insert since we don't have the AuditLog model here
         await conn.execute(
             """
-            INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO audit_logs (id, timestamp, user_id, action, resource_type, resource_id, details, status, org_id, category)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          """,
             str(uuid.uuid4()),
             utcnow_naive(),
@@ -320,9 +332,11 @@ async def log_audit_event(
             resource_id,
             json.dumps(details) if details else None,
             status,
+            org_id,
+            category,
         )
     except Exception as e:
-        print(f"Failed to write audit log: {e}")
+        logger.error(f"Failed to write audit log: {e}")
     finally:
         if conn:
             await conn.close()
@@ -621,6 +635,7 @@ async def deploy_model(req: DeployModelRequest):
                     "model": req.inference_model or req.model_version,
                     "pool_id": req.pool_id,
                 },
+                org_id=req.org_id,
             )
 
         except grpc.RpcError as e:
@@ -690,11 +705,12 @@ async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
 
             # Log Audit Event
             await log_audit_event(
-                user_id=None,  # Need to get from context if possible
+                user_id=None,
                 action="deployment.update",
                 resource_type="deployment",
                 resource_id=deployment_id,
                 details=req.model_dump(exclude_none=True),
+                org_id=None,  # No org context in update request
             )
 
             return {"success": resp.success, "message": resp.message}
@@ -717,8 +733,13 @@ async def terminate_deployment(req: TerminateDeploymentRequest):
                     deployment_id=req.deployment_id
                 )
             )
-            # Cannot easily log user_id here as request doesn't contain it, assuming system or fetching logic needed.
-            # Skipping audit for terminate here to focus on Create reqs.
+            await log_audit_event(
+                user_id=None,
+                action="deployment.terminate",
+                resource_type="deployment",
+                resource_id=req.deployment_id,
+                status="success",
+            )
         except grpc.RpcError as e:
             raise HTTPException(
                 status_code=500,
@@ -860,9 +881,7 @@ async def create_pool(req: CreatePoolRequest):
             # Using owner_id as user_id for now if owner_type is user, if org then context mapping needed.
             # Assuming owner_id in request context is sufficient.
             await log_audit_event(
-                user_id=req.owner_id,  # This might be org_id if owner_type=org, need to be careful.
-                # Ideally orchestration requests should carry user context.
-                # But for now logging the request owner is best effort.
+                user_id=req.owner_id if req.owner_type == "user" else None,
                 action="pool.create",
                 resource_type="compute_pool",
                 resource_id=resp.pool_id,
@@ -871,6 +890,7 @@ async def create_pool(req: CreatePoolRequest):
                     "provider": req.provider,
                     "gpu_types": req.allowed_gpu_types,
                 },
+                org_id=req.owner_id if req.owner_type == "org" else None,
             )
 
         except grpc.RpcError as e:
