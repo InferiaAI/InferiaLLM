@@ -6,6 +6,11 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from inferia.services.orchestration.services.model_deployment.preflight import (
     check_model_accessibility,
     check_model_format,
+    check_vram_fit,
+    check_pipeline_compatibility,
+    check_docker_image_exists,
+    check_duplicate_deployment,
+    check_context_length,
     PreflightResult,
     FormatCheckResult,
 )
@@ -130,3 +135,128 @@ class TestCheckModelFormat:
             result = await check_model_format("org/model", "vllm")
             assert result.compatible is True
             assert result.skipped is True
+
+
+class TestCheckVRAMFit:
+
+    def test_small_model_fits(self):
+        """8B model (~20GB) fits in 1x 24GB GPU."""
+        hf_info = {"safetensors": {"parameters": {"BF16": 8_000_000_000}}}
+        result = check_vram_fit(hf_info, gpu_per_replica=1, gpu_vram_gb=24)
+        assert result.ok is True
+        assert result.estimated_vram_gb > 0
+
+    def test_large_model_does_not_fit(self):
+        """70B model (~175GB) does NOT fit in 1x 24GB GPU."""
+        hf_info = {"safetensors": {"parameters": {"BF16": 70_000_000_000}}}
+        result = check_vram_fit(hf_info, gpu_per_replica=1, gpu_vram_gb=24)
+        assert result.ok is False
+        assert "requires" in result.error
+
+    def test_large_model_fits_with_multiple_gpus(self):
+        """70B model fits in 8x 24GB = 192GB."""
+        hf_info = {"safetensors": {"parameters": {"BF16": 70_000_000_000}}}
+        result = check_vram_fit(hf_info, gpu_per_replica=8, gpu_vram_gb=24)
+        assert result.ok is True
+
+    def test_no_param_info_skips(self):
+        """Missing safetensors info should skip, not fail."""
+        hf_info = {"safetensors": {"parameters": {}}}
+        result = check_vram_fit(hf_info, gpu_per_replica=1)
+        assert result.ok is True
+        assert result.skipped is True
+
+    def test_none_hf_info_skips(self):
+        result = check_vram_fit(None)
+        assert result.ok is True
+        assert result.skipped is True
+
+
+class TestCheckPipelineCompatibility:
+
+    def test_text_gen_model_with_vllm_compatible(self):
+        hf_info = {"pipeline_tag": "text-generation"}
+        result = check_pipeline_compatibility(hf_info, "vllm")
+        assert result.compatible is True
+
+    def test_embedding_model_with_vllm_incompatible(self):
+        hf_info = {"pipeline_tag": "feature-extraction"}
+        result = check_pipeline_compatibility(hf_info, "vllm")
+        assert result.compatible is False
+        assert "embeddings" in result.error.lower()
+
+    def test_embedding_model_with_tei_compatible(self):
+        hf_info = {"pipeline_tag": "feature-extraction"}
+        result = check_pipeline_compatibility(hf_info, "tei")
+        assert result.compatible is True
+
+    def test_text_gen_model_with_tei_incompatible(self):
+        hf_info = {"pipeline_tag": "text-generation"}
+        result = check_pipeline_compatibility(hf_info, "tei")
+        assert result.compatible is False
+
+    def test_no_pipeline_tag_skips(self):
+        hf_info = {"pipeline_tag": None}
+        result = check_pipeline_compatibility(hf_info, "vllm")
+        assert result.compatible is True
+        assert result.skipped is True
+
+    def test_unknown_engine_skips(self):
+        hf_info = {"pipeline_tag": "text-generation"}
+        result = check_pipeline_compatibility(hf_info, "some-custom-engine")
+        assert result.compatible is True
+        assert result.skipped is True
+
+
+class TestCheckContextLength:
+
+    def test_within_limits_passes(self):
+        hf_info = {"config": {"max_position_embeddings": 8192}}
+        result = check_context_length(hf_info, max_model_len=4096)
+        assert result.ok is True
+
+    def test_exceeds_limit_fails(self):
+        hf_info = {"config": {"max_position_embeddings": 4096}}
+        result = check_context_length(hf_info, max_model_len=8192)
+        assert result.ok is False
+        assert "exceeds" in result.error
+
+    def test_no_config_skips(self):
+        hf_info = {"config": {}}
+        result = check_context_length(hf_info, max_model_len=4096)
+        assert result.ok is True
+        assert result.skipped is True
+
+    def test_no_max_model_len_skips(self):
+        hf_info = {"config": {"max_position_embeddings": 8192}}
+        result = check_context_length(hf_info, max_model_len=None)
+        assert result.ok is True
+        assert result.skipped is True
+
+
+class TestCheckDuplicateDeployment:
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_passes(self):
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(return_value=None)
+        mock_pool = AsyncMock()
+        mock_pool.acquire = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_conn), __aexit__=AsyncMock(return_value=False)))
+        result = await check_duplicate_deployment("org/model", "pool-1", mock_pool)
+        assert result.ok is True
+
+    @pytest.mark.asyncio
+    async def test_existing_deployment_fails(self):
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(return_value={"id": "dep-123"})
+        mock_pool = AsyncMock()
+        mock_pool.acquire = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_conn), __aexit__=AsyncMock(return_value=False)))
+        result = await check_duplicate_deployment("org/model", "pool-1", mock_pool)
+        assert result.ok is False
+        assert "already has" in result.error
+
+    @pytest.mark.asyncio
+    async def test_external_pool_id_skips(self):
+        result = await check_duplicate_deployment("org/model", "00000000-0000-0000-0000-000000000000", None)
+        assert result.ok is True
+        assert result.skipped is True
