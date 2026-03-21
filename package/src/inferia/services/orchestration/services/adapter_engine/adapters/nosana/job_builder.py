@@ -761,6 +761,7 @@ def create_inferia_diffusion_job(
     model_id: str = "sdxl-turbo",
     image: str = "docker.io/inferiaai/inferiadiffusion:latest",
     api_key: Optional[str] = None,
+    hf_token: Optional[str] = None,
     port: int = 8000,
     host: str = "0.0.0.0",
     min_vram: int = 6,
@@ -770,9 +771,10 @@ def create_inferia_diffusion_job(
     Build a Nosana job definition for Inferia Diffusion engine.
 
     Args:
-        model_id: Model to serve (e.g., "sdxl-turbo", "sd-3.5")
+        model_id: Model to serve (e.g., "sdxl-turbo", "sd-3.5", "video-model")
         image: Docker image for Inferia Diffusion
         api_key: API key for authentication (uses global key if not provided)
+        hf_token: HuggingFace token for private models (e.g., "hf_xxxxx")
         port: Port to expose
         host: Host to bind to
         min_vram: Minimum VRAM requirement in GB
@@ -799,6 +801,9 @@ def create_inferia_diffusion_job(
 
     if effective_api_key:
         cmd_args.extend(["--api-key", effective_api_key])
+
+    if hf_token:
+        cmd_args.extend(["--hf-token", hf_token])
 
     container_op = {
         "id": "InferiaDiffusion",
@@ -850,7 +855,7 @@ def build_job_definition(
 
     Args:
         engine: Engine type ("vllm", "ollama", "vllm-omni", "infinity", "triton", "inferia-diffusion")
-        model_id: Model identifier
+        model_id: Model identifier (e.g., "sdxl-turbo" for images, "video-model" for videos)
         image: Optional custom docker image
         hf_token: HuggingFace token
         api_key: API key for authentication
@@ -858,6 +863,11 @@ def build_job_definition(
 
     Returns:
         Complete Nosana job definition ready for posting
+
+    Note:
+        InferaDiffusion engine supports both image and video generation via the same image.
+        Image models: "sdxl-turbo", "sd-3.5", etc.
+        Video models: "video-model", etc.
     """
     if engine == "vllm":
         job = create_vllm_job(
@@ -970,6 +980,7 @@ def build_job_definition(
             model_id=model_id,
             image=image or "docker.io/inferiaai/inferiadiffusion:latest",
             api_key=api_key,
+            hf_token=hf_token,
             **{
                 k: v
                 for k, v in kwargs.items()

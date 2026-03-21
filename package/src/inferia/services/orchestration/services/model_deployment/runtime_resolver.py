@@ -3,7 +3,7 @@ class RuntimeResolver:
         """
         Resolve deployment runtime strategy based on engine and model type.
 
-        For image generation workloads (InferaDiffusion), routes to
+        For image/video generation workloads (InferaDiffusion), routes to
         the localai strategy. For all other workloads, routes through vllm.
         """
         # Explicit engine-based routing
@@ -15,6 +15,13 @@ class RuntimeResolver:
             "image",
             "image_generation",
             "image generation",
+        ):
+            return "localai"
+
+        if model_type and model_type.lower() in (
+            "video",
+            "video_generation",
+            "video generation",
         ):
             return "localai"
 

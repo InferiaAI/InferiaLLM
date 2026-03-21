@@ -144,13 +144,14 @@ export default function DeploymentDetail() {
   const isTraining = deployment?.workload_type === "training"
   const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
   const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "inferia-diffusion"
+  const isVideoGen = deployment?.model_type === "video_generation"
 
   const tabs = useMemo(() => {
-    const logLabel = isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : "Inference Logs"
+    const logLabel = isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : isVideoGen ? "Video Gen Logs" : "Inference Logs"
     const list: { id: TabType; label: string }[] = [{ id: "overview", label: "Overview" }, { id: "logs", label: logLabel }, { id: "terminal", label: "Terminal Logs" }, { id: "rate_limit", label: "Rate Limits" }, { id: "config", label: "Configuration" }];
-    if (!isEmbedding && !isTraining && !isImageGen) list.splice(1, 0, { id: "guardrail", label: "Guardrails" }, { id: "rag", label: "RAG & Data" }, { id: "prompt_template", label: "Template" });
+    if (!isEmbedding && !isTraining && !isImageGen && !isVideoGen) list.splice(1, 0, { id: "guardrail", label: "Guardrails" }, { id: "rag", label: "RAG & Data" }, { id: "prompt_template", label: "Template" });
     return list.filter((t) => !(t.id === "terminal" && !isCompute))
-  }, [isEmbedding, isTraining, isImageGen, isCompute])
+  }, [isEmbedding, isTraining, isImageGen, isVideoGen, isCompute])
 
   const activeTab: TabType = (tabs.find(t => t.id === searchParams.get("tab"))?.id || "overview") as TabType;
 
@@ -283,12 +284,13 @@ function TabContent({ activeTab, deployment, fetchDeployment }: { activeTab: Tab
   const isTraining = deployment.workload_type === "training"
   const isEmbedding = deployment.model_type === "embedding" || deployment.engine === "infinity" || deployment.engine === "tei"
   const isImageGen = deployment.model_type === "image_generation" || deployment.engine === "inferia-diffusion"
+  const isVideoGen = deployment.model_type === "video_generation"
 
   switch (activeTab) {
     case "overview": return <DeploymentOverview deployment={deployment} />;
     case "logs": return (
       <div className="bg-card rounded-xl border shadow-sm p-6">
-        <h3 className="text-lg font-medium mb-6">{isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : "Inference Logs"}</h3>
+        <h3 className="text-lg font-medium mb-6">{isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : isVideoGen ? "Video Gen Logs" : "Inference Logs"}</h3>
         {isTraining ? <TrainingLogs deploymentId={id} /> : <InferenceLogs deploymentId={id} />}
       </div>
     );

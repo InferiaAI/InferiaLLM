@@ -64,12 +64,20 @@ class ModelCapabilities:
             "description": "Image generation models (Stable Diffusion, etc.)",
         },
         ModelType.VIDEO_GENERATION: {
-            "api_endpoints": ["/v1/videos/generations"],
+            "api_endpoints": [
+                "/v1/videos/generations",
+                "/v1/videos/edits",
+                "/v1/videos/extensions",
+            ],
             "streaming_support": False,
             "gpu_required": True,
-            "supported_backends": ["diffusers-video", "modelscope"],
-            "default_backend": "diffusers-video",
-            "description": "Video generation models",
+            "supported_backends": [
+                "diffusers-video",
+                "modelscope",
+                "inferia-diffusion",
+            ],
+            "default_backend": "inferia-diffusion",
+            "description": "Video generation models (text-to-video, image-to-video, video editing)",
         },
         ModelType.AUDIO_GENERATION: {
             "api_endpoints": ["/v1/audio/speech", "/v1/audio/transcriptions"],

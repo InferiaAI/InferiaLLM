@@ -57,6 +57,14 @@ export const MODEL_TYPES = {
     pipeline_tags: ["text-to-image", "image-to-image", "inpainting"],
     default_backend: "inferia-diffusion",
   },
+  video_generation: {
+    id: "video_generation",
+    label: "Video Generation",
+    description: "Text-to-video and image-to-video models",
+    icon: "Video",
+    pipeline_tags: ["text-to-video", "image-to-video"],
+    default_backend: "inferia-diffusion",
+  },
   multimodal: {
     id: "multimodal",
     label: "Multimodal (Vision)",

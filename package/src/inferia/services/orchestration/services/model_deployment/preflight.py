@@ -21,7 +21,12 @@ ENGINE_PIPELINE_MAP = {
     "vllm": {"text-generation"},
     "tei": {"feature-extraction", "sentence-similarity"},
     "infinity": {"feature-extraction", "sentence-similarity"},
-    "localai": {"text-generation", "text-to-image", "feature-extraction"},
+    "localai": {
+        "text-generation",
+        "text-to-image",
+        "text-to-video",
+        "feature-extraction",
+    },
     "ollama": {"text-generation"},
 }
 
@@ -90,7 +95,9 @@ async def check_model_accessibility(
                     error=f"Model '{model_id}' not found on HuggingFace.",
                 )
 
-            logger.warning("Unexpected HF API status %s for model %s", resp.status_code, model_id)
+            logger.warning(
+                "Unexpected HF API status %s for model %s", resp.status_code, model_id
+            )
             return PreflightResult(accessible=True, skipped=True)
 
     except Exception as e:
@@ -205,7 +212,7 @@ def estimate_vram_gb(param_count: int) -> float:
     """Estimate minimum VRAM in GB for FP16 inference with overhead."""
     if param_count <= 0:
         return 0.0
-    raw_gb = (param_count * BYTES_PER_PARAM_FP16) / (1024 ** 3)
+    raw_gb = (param_count * BYTES_PER_PARAM_FP16) / (1024**3)
     return round(raw_gb * VRAM_OVERHEAD_MULTIPLIER, 1)
 
 
@@ -291,6 +298,8 @@ def check_pipeline_compatibility(
         "text-generation": "text generation (chat/completion)",
         "feature-extraction": "embeddings",
         "text-to-image": "image generation",
+        "text-to-video": "video generation",
+        "image-to-video": "video generation",
         "sentence-similarity": "embeddings",
     }
     model_purpose = friendly.get(pipeline_tag, pipeline_tag)

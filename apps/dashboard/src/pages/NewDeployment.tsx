@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useReducer } from "react"
 import {
   Cpu, Server, Check, Zap, Globe, Layers, Terminal, Rocket, Brain,
-  Database, Image, Eye, Volume2, Search, X, ChevronDown, ChevronRight, Star, Download, Loader2,
+  Database, Image, Eye, Volume2, Video, Search, X, ChevronDown, ChevronRight, Star, Download, Loader2,
   MessageSquare, AlertCircle
 } from "lucide-react"
 import { computeApi } from "@/lib/api"
@@ -56,6 +56,14 @@ const deploymentTypes = [
     desc: "Deploy Stable Diffusion and image generation models.",
     icon: Image,
     modelType: "image_generation" as ModelTypeKey,
+    active: true
+  },
+  {
+    id: "video",
+    name: "Video Generation",
+    desc: "Deploy text-to-video and image-to-video models.",
+    icon: Video,
+    modelType: "video_generation" as ModelTypeKey,
     active: true
   },
   {
@@ -119,11 +127,11 @@ const computeEngines = [
   {
     id: "inferia-diffusion",
     name: "Inferia Diffusion",
-    desc: "High-performance image generation engine powered by Inferia.",
+    desc: "High-performance image & video generation engine powered by Inferia.",
     image: "docker.io/inferiaai/inferiadiffusion:latest",
     icon: Image,
     types: ["inference"],
-    modelTypes: ["image_generation"]
+    modelTypes: ["image_generation", "video_generation"]
   },
   {
     id: "pytorch",
@@ -216,11 +224,11 @@ type State = {
   requiredCpu: string;
   requiredRam: string;
   gpuEnabled: boolean;
-  // LocalAI / Image Generation config
+  // InferaDiffusion config
+  trustRemoteCode: boolean;
+  modelOffload: boolean;
+  groupOffload: boolean;
 
-  diffusersPipeline: string;
-  diffusersScheduler: string;
-  imageSize: string;
   preflightStatus: 'idle' | 'checking' | 'passed' | 'failed';
   preflightErrors: Array<{ check: string; message: string; needs_hf_token: boolean }>;
 };
@@ -306,9 +314,10 @@ const initialState: State = {
   requiredRam: "4096",
   gpuEnabled: false,
   // InferaDiffusion defaults
-  diffusersPipeline: "StableDiffusionPipeline",
-  diffusersScheduler: "EulerAncestralDiscreteScheduler",
-  imageSize: "512x512",
+  trustRemoteCode: false,
+  modelOffload: false,
+  groupOffload: false,
+
   preflightStatus: 'idle',
   preflightErrors: [],
 };
@@ -671,7 +680,7 @@ export default function NewDeployment() {
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "inferia-diffusion") {
       const finalModelId = modelId || "segmind/tiny-sd";
-      const spec = {
+      const spec: any = {
         model_id: finalModelId,
         engine: "inferia-diffusion",
         image: "docker.io/inferiaai/inferiadiffusion:latest",
@@ -686,12 +695,15 @@ export default function NewDeployment() {
           health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
         }]
       }
+      if (state.trustRemoteCode) spec.trust_remote_code = true
+      if (state.modelOffload) spec.model_offload = true
+      if (state.groupOffload) spec.group_offload = true
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "pytorch") {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.diffusersPipeline, state.diffusersScheduler])
+  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -1332,43 +1344,51 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
 
       {selectedEngine === "inferia-diffusion" && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
-          <div className="flex items-center gap-2 mb-2"><Image className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">InferaDiffusion Image Generation Configuration</h4></div>
-          <div>
-            <label htmlFor="diffusersPipeline" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Diffusers Pipeline</label>
-            <select id="diffusersPipeline" value={state.diffusersPipeline} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersPipeline', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
-              <option value="StableDiffusionPipeline">Stable Diffusion (text-to-image)</option>
-              <option value="StableDiffusionImg2ImgPipeline">Stable Diffusion (image-to-image)</option>
-              <option value="StableDiffusionXLPipeline">Stable Diffusion XL</option>
-              <option value="StableDiffusionDepth2ImgPipeline">Depth-to-Image</option>
-              <option value="">Auto-detect</option>
-            </select>
+          <div className="flex items-center gap-2 mb-2">
+            {modelType === "video_generation" ? <Video className="w-4 h-4 text-primary" /> : <Image className="w-4 h-4 text-primary" />}
+            <h4 className="font-medium text-sm">
+              {modelType === "video_generation" ? "InferaDiffusion Video Generation" : "InferaDiffusion Image Generation"}
+            </h4>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            Model type is automatically set based on your deployment type. API key is configured automatically by the system.
           </div>
           <div>
-            <label htmlFor="diffusersScheduler" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Scheduler</label>
-            <select id="diffusersScheduler" value={state.diffusersScheduler} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusersScheduler', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
-              <option value="EulerAncestralDiscreteScheduler">Euler Ancestral</option>
-              <option value="EulerDiscreteScheduler">Euler</option>
-              <option value="DPMSolverMultistepScheduler">DPM++ 2M</option>
-              <option value="DDIMScheduler">DDIM</option>
-              <option value="PNDMScheduler">PNDM</option>
-              <option value="LMSDiscreteScheduler">LMS</option>
-              <option value="">Default</option>
-            </select>
+            <label htmlFor="hfTokenLocalai" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HuggingFace Token (for private/gated models)</label>
+            <input id="hfTokenLocalai" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="hf_xxxxx (optional)" />
+            <p className="text-xs text-muted-foreground mt-1">Required only for gated models like SDXL, FLUX, etc.</p>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="imageSize" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Default Image Size</label>
-              <select id="imageSize" value={state.imageSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'imageSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
-                <option value="256x256">256×256</option>
-                <option value="512x512">512×512</option>
-                <option value="768x768">768×768</option>
-                <option value="1024x1024">1024×1024</option>
-              </select>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="flex items-center gap-2">
+              <input
+                id="trustRemoteCode"
+                type="checkbox"
+                checked={state.trustRemoteCode || false}
+                onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <label htmlFor="trustRemoteCode" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Trust Remote Code</label>
             </div>
-          </div>
-          <div>
-            <label htmlFor="hfTokenLocalai" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token (for gated models)</label>
-            <input id="hfTokenLocalai" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="hf_..." />
+            <div className="flex items-center gap-2">
+              <input
+                id="modelOffload"
+                type="checkbox"
+                checked={state.modelOffload || false}
+                onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelOffload', value: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <label htmlFor="modelOffload" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Model Offload</label>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="groupOffload"
+                type="checkbox"
+                checked={state.groupOffload || false}
+                onChange={e => dispatch({ type: 'SET_FIELD', field: 'groupOffload', value: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <label htmlFor="groupOffload" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Group Offload</label>
+            </div>
           </div>
         </div>
       )}

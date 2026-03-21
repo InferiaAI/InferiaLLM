@@ -57,6 +57,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
 
     const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
     const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "inferia-diffusion"
+    const isVideoGen = deployment?.model_type === "video_generation"
     const state = deployment?.state || deployment?.status || "Unknown"
 
     const { data: embeddingMetrics, isLoading: loadingLogMetrics } = useQuery({
@@ -114,6 +115,12 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                         <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-pink-100 text-pink-700 text-xs font-medium border border-pink-200 dark:bg-pink-900/20 dark:text-pink-400 dark:border-pink-800">
                             🎨
                             Image Generation
+                        </span>
+                    )}
+                    {isVideoGen && (
+                        <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-purple-100 text-purple-700 text-xs font-medium border border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800">
+                            🎬
+                            Video Generation
                         </span>
                     )}
                 </div>
