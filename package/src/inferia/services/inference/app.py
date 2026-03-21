@@ -199,3 +199,69 @@ async def create_image_edit(
         background_tasks=background_tasks,
         ip_address=client_ip,
     )
+
+
+@app.post("/v1/videos/generations")
+async def create_video(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Video generation endpoint - OpenAI compatible (text-to-video and image-to-video).
+    Supports video generation models deployed via InferaDiffusion.
+    """
+    api_key = extract_api_key(authorization)
+    body = await parse_json_body(request)
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_video_generation(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )
+
+
+@app.post("/v1/videos/edits")
+async def create_video_edit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Video edit endpoint - OpenAI compatible.
+    Supports video editing models deployed via InferaDiffusion.
+    """
+    api_key = extract_api_key(authorization)
+    body = await parse_json_body(request)
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_video_edit(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )
+
+
+@app.post("/v1/videos/extensions")
+async def create_video_extension(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Video extension endpoint - OpenAI compatible.
+    Supports video extension models deployed via InferaDiffusion.
+    """
+    api_key = extract_api_key(authorization)
+    body = await parse_json_body(request)
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_video_extension(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+    )

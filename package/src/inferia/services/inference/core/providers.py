@@ -297,9 +297,15 @@ class EmbeddingAdapter(OpenAIAdapter):
 
 class InferaDiffusionAdapter(ProviderAdapter):
     """
-    Adapter for InferaDiffusion image generation.
-    Supports text-to-image (POST /v1/images/generations) and
-    image-to-image (POST /v1/images/edits).
+    Adapter for InferaDiffusion image and video generation.
+    Supports:
+    - Text-to-image (POST /v1/images/generations)
+    - Image-to-image (POST /v1/images/edits)
+    - Image variations (POST /v1/images/variations)
+    - Text-to-video (POST /v1/videos/generations)
+    - Image-to-video (POST /v1/videos/generations with input_reference)
+    - Video edits (POST /v1/videos/edits)
+    - Video extensions (POST /v1/videos/extensions)
     """
 
     def get_chat_path(self) -> str:
@@ -311,6 +317,18 @@ class InferaDiffusionAdapter(ProviderAdapter):
     def get_image_edit_path(self) -> str:
         return "/v1/images/edits"
 
+    def get_image_variations_path(self) -> str:
+        return "/v1/images/variations"
+
+    def get_video_generation_path(self) -> str:
+        return "/v1/videos/generations"
+
+    def get_video_edit_path(self) -> str:
+        return "/v1/videos/edits"
+
+    def get_video_extension_path(self) -> str:
+        return "/v1/videos/extensions"
+
     def get_headers(self, api_key: str) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -319,15 +337,17 @@ class InferaDiffusionAdapter(ProviderAdapter):
 
     def transform_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Transform to InferaDiffusion/OpenAI image generation format.
+        Transform to InferaDiffusion/OpenAI image/video generation format.
         Supports:
-          - prompt (required)
+          - prompt (required for text-to-image/video)
           - model (optional, backend model name)
-          - n (number of images, default 1)
-          - size (e.g. "512x512", "256x256")
+          - n (number of outputs, default 1)
+          - size (e.g. "512x512", "1280x720")
           - response_format (url or b64_json)
           - step (diffusion steps)
           - seed, mode, scheduler, strength
+          - seconds (video duration, 4-20)
+          - input_reference (image for image-to-video)
         """
         transformed = {}
 
@@ -342,10 +362,14 @@ class InferaDiffusionAdapter(ProviderAdapter):
             if field in payload:
                 transformed[field] = payload[field]
 
+        for field in ("seconds", "input_reference"):
+            if field in payload:
+                transformed[field] = payload[field]
+
         return transformed
 
     def transform_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        """Returns OpenAI-compatible image response format."""
+        """Returns OpenAI-compatible image/video response format."""
         return response
 
     def is_external(self) -> bool:
