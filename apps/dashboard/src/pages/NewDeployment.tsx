@@ -296,7 +296,7 @@ const initialState: State = {
   kvCacheDtype: "auto",
   trustRemoteCode: true,
   cudaModuleLoading: "LAZY",
-  nvidiaDisableCudaCompat: "1",
+  nvidiaDisableCudaCompat: "",
   quantization: "",
   isAdvancedOpen: false,
   // Advanced Embedding defaults
