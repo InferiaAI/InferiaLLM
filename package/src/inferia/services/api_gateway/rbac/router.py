@@ -280,6 +280,19 @@ async def accept_invitation(
 
     await db.commit()
 
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_context.user_id,
+            org_id=invite.org_id,
+            action="user.accept_invite",
+            resource_type="invitation",
+            resource_id=invite.id,
+            details={"org_id": invite.org_id, "role": invite.role},
+            status="success",
+        ),
+    )
+
     # Return updated token with new org context?
     # Or just return success. But frontend might want to switch immediately.
     # Let's return new AuthToken context switched to new org.
@@ -418,6 +431,18 @@ async def switch_organization(
     # Update default Org? Optionally. Let's do it for persistence.
     user.default_org_id = data.org_id
     await db.commit()
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_context.user_id,
+            org_id=data.org_id,
+            action="user.switch_org",
+            resource_type="organization",
+            resource_id=data.org_id,
+            status="success",
+        ),
+    )
 
     # Return new tokens
     access_token = auth_service.create_access_token(

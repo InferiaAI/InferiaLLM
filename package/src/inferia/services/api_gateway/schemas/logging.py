@@ -44,6 +44,41 @@ class InferenceLogResponse(BaseModel):
     created_at: datetime
 
 
+# Action → category mapping
+ACTION_CATEGORY_MAP = {
+    "user.login": "auth",
+    "user.register_invite": "auth",
+    "user.accept_invite": "auth",
+    "user.switch_org": "auth",
+    "user.create": "user_management",
+    "user.2fa_enabled": "security",
+    "user.2fa_disabled": "security",
+    "deployment.create": "deployment",
+    "deployment.delete": "deployment",
+    "api_key.create": "api_key",
+    "api_key.revoke": "api_key",
+    "organization.create": "organization",
+    "organization.update": "organization",
+    "invitation.create": "organization",
+    "invitation.revoke": "organization",
+    "credential.create": "credential",
+    "credential.delete": "credential",
+    "config.update": "configuration",
+    "prompt_template.create": "configuration",
+    "prompt_template.delete": "configuration",
+    "knowledge_base.add_document": "knowledge_base",
+}
+
+
+def derive_category(action: str) -> str:
+    """Derive audit log category from action string."""
+    if action in ACTION_CATEGORY_MAP:
+        return ACTION_CATEGORY_MAP[action]
+    # Fallback: use prefix before the first dot
+    prefix = action.split(".")[0] if "." in action else action
+    return prefix
+
+
 class AuditLogCreate(BaseModel):
     user_id: Optional[str] = None
     org_id: Optional[str] = None
@@ -53,14 +88,17 @@ class AuditLogCreate(BaseModel):
     details: Optional[Dict[str, Any]] = None
     ip_address: Optional[str] = None
     status: str = "success"
+    category: Optional[str] = None  # Auto-derived if not set
 
 
 class AuditLogResponse(BaseModel):
     id: str
     timestamp: datetime
     user_id: Optional[str]
+    user_email: Optional[str] = None
     org_id: Optional[str] = None
     action: str
+    category: Optional[str] = None
     resource_type: Optional[str]
     resource_id: Optional[str]
     details: Optional[Dict[str, Any]]
@@ -73,6 +111,7 @@ class AuditLogResponse(BaseModel):
 class AuditLogFilter(BaseModel):
     user_id: Optional[str] = None
     action: Optional[str] = None
+    category: Optional[str] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     limit: int = 100
