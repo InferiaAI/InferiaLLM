@@ -32,7 +32,7 @@ def create_vllm_job(
     # Additional config
     trust_remote_code: bool = True,
     cuda_module_loading: str = "LAZY",
-    nvidia_disable_cuda_compat: str = "1",
+    nvidia_disable_cuda_compat: str = "",
     kv_cache_dtype: str = "auto",
     # System Requirements
     required_cuda: Optional[List[str]] = None,
