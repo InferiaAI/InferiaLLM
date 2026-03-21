@@ -285,6 +285,7 @@ def utcnow_naive():
 
 _AUDIT_CATEGORY_MAP = {
     "deployment.create": "deployment",
+    "deployment.start": "deployment",
     "deployment.update": "deployment",
     "deployment.delete": "deployment",
     "deployment.terminate": "deployment",
@@ -765,6 +766,13 @@ async def start_deployment(
                     deployment_id=req.deployment_id
                 )
             )
+            await log_audit_event(
+                user_id=None,
+                action="deployment.start",
+                resource_type="deployment",
+                resource_id=req.deployment_id,
+                status="success",
+            )
         except grpc.RpcError as e:
             raise HTTPException(
                 status_code=500,
@@ -837,6 +845,14 @@ async def delete_deployment(deployment_id: str):
         raise HTTPException(
             status_code=500, detail=f"Failed to delete deployment: {str(e)}"
         )
+
+    await log_audit_event(
+        user_id=None,
+        action="deployment.delete",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        status="success",
+    )
 
     return {
         "deployment_id": deployment_id,
@@ -1119,6 +1135,14 @@ async def stop_pool(pool_id: str):
         if conn:
             await conn.close()
 
+    await log_audit_event(
+        user_id=None,
+        action="pool.stop",
+        resource_type="compute_pool",
+        resource_id=pool_id,
+        status="success",
+    )
+
     asyncio.create_task(_terminate_pool_background(pool_uuid))
     return {"pool_id": pool_id, "status": "TERMINATING"}
 
@@ -1153,6 +1177,14 @@ async def delete_pool(pool_id: str):
             if e.code() == grpc.StatusCode.FAILED_PRECONDITION:
                 raise HTTPException(status_code=409, detail=e.details())
             raise HTTPException(status_code=500, detail=e.details())
+
+    await log_audit_event(
+        user_id=None,
+        action="pool.delete",
+        resource_type="compute_pool",
+        resource_id=pool_id,
+        status="success",
+    )
 
     return {"pool_id": pool_id, "status": "DELETED"}
 
