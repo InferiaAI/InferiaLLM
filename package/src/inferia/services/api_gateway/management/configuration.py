@@ -642,6 +642,19 @@ async def update_provider_credential(
         logger.error(f"Failed to update credential: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update credential: {e}")
 
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="credential.update",
+            resource_type="credential",
+            resource_id=credential_name,
+            details={"provider": provider},
+            status="success",
+        ),
+    )
+
     return {
         "status": "ok",
         "message": f"Credential '{credential_name}' updated successfully for {provider}",

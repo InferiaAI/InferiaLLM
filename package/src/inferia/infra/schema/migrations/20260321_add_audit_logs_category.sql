@@ -11,6 +11,7 @@ UPDATE audit_logs SET category = CASE
     WHEN action LIKE 'user.2fa%' THEN 'security'
     WHEN action LIKE 'user.create%' THEN 'user_management'
     WHEN action LIKE 'deployment.%' THEN 'deployment'
+    WHEN action LIKE 'pool.%' THEN 'deployment'
     WHEN action LIKE 'api_key.%' THEN 'api_key'
     WHEN action LIKE 'organization.%' THEN 'organization'
     WHEN action LIKE 'invitation.%' THEN 'organization'
