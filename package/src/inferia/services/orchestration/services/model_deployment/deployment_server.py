@@ -430,12 +430,14 @@ async def deployment_preflight(req: PreflightRequest):
     from inferia.services.orchestration.services.model_deployment.preflight import (
         check_model_accessibility,
         check_model_format,
+        check_ollama_model_exists,
         fetch_hf_model_info,
         check_vram_fit,
         check_pipeline_compatibility,
         check_docker_image_exists,
         check_duplicate_deployment,
         check_context_length,
+        ENGINES_WITH_OWN_REGISTRY,
     )
 
     checks = []
@@ -444,9 +446,13 @@ async def deployment_preflight(req: PreflightRequest):
     external_engines = {"openai", "anthropic", "gemini", "groq", "cerebras", "mistral", "deepseek", "custom"}
     is_external = req.engine and req.engine.lower() in external_engines
 
+    # Engines with their own model registry (ollama, localai) use model:tag format,
+    # not HuggingFace org/model — skip all HF-based checks for these
+    uses_own_registry = req.engine and req.engine.lower() in ENGINES_WITH_OWN_REGISTRY
+
     hf_info = None  # Shared metadata for multiple checks
 
-    if not is_external and req.model_id:
+    if not is_external and not uses_own_registry and req.model_id:
         # Check 1: Model accessibility
         result = await check_model_accessibility(req.model_id, req.hf_token)
         if result.skipped:
@@ -549,11 +555,40 @@ async def deployment_preflight(req: PreflightRequest):
                     message=ctx.error if not ctx.ok else "Requested context length is within model limits.",
                 ))
     else:
-        checks.append(PreflightCheckResult(
-            check="model_accessible",
-            passed=True,
-            message="External provider — HuggingFace checks not applicable.",
-        ))
+        if uses_own_registry:
+            # Validate against the engine's own registry
+            if req.engine and req.engine.lower() == "ollama" and req.model_id:
+                ollama_result = await check_ollama_model_exists(req.model_id)
+                if ollama_result.skipped:
+                    checks.append(PreflightCheckResult(
+                        check="model_accessible",
+                        passed=True,
+                        message="Ollama registry unreachable — check skipped.",
+                    ))
+                elif ollama_result.accessible:
+                    checks.append(PreflightCheckResult(
+                        check="model_accessible",
+                        passed=True,
+                        message=f"Model '{req.model_id}' found in Ollama registry.",
+                    ))
+                else:
+                    checks.append(PreflightCheckResult(
+                        check="model_accessible",
+                        passed=False,
+                        message=ollama_result.error,
+                    ))
+            else:
+                checks.append(PreflightCheckResult(
+                    check="model_accessible",
+                    passed=True,
+                    message=f"{req.engine} uses its own model registry — check skipped.",
+                ))
+        else:
+            checks.append(PreflightCheckResult(
+                check="model_accessible",
+                passed=True,
+                message="External provider — HuggingFace checks not applicable.",
+            ))
 
     # Check 6: Docker image existence (applies to all managed deployments)
     if req.image and not is_external:
