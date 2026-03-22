@@ -291,7 +291,7 @@ const initialState: State = {
   gpuUtil: "0.80",
   hfToken: "",
   vllmImage: "docker.io/vllm/vllm-openai:v0.16.0",
-  cudaVersions: ["12.9", "13.0", "13.1", "13.2"],
+  cudaVersions: ["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"],
   selectedProvider: "",
   customProviderName: "",
   externalModelName: "",
@@ -304,7 +304,7 @@ const initialState: State = {
   kvCacheDtype: "auto",
   trustRemoteCode: true,
   cudaModuleLoading: "LAZY",
-  nvidiaDisableCudaCompat: "1",
+  nvidiaDisableCudaCompat: "",
   quantization: "",
   isAdvancedOpen: false,
   // Advanced Embedding defaults
