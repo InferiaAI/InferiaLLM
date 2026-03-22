@@ -16,6 +16,12 @@ ENGINES_REQUIRING_CONFIG_JSON = {"vllm", "tei", "infinity"}
 # Engines that work with GGUF files
 ENGINES_SUPPORTING_GGUF = {"ollama", "localai", "llama.cpp"}
 
+# Engines that use their own model registry (not HuggingFace)
+# These use model_name:tag format and should skip HF checks
+ENGINES_WITH_OWN_REGISTRY = {"ollama", "localai"}
+
+OLLAMA_REGISTRY_BASE = "https://ollama.com"
+
 # Engine → expected pipeline_tag mapping
 ENGINE_PIPELINE_MAP = {
     "vllm": {"text-generation"},
@@ -172,6 +178,60 @@ async def check_model_format(
     except Exception as e:
         logger.warning("HF format check failed for %s: %s", model_id, e)
         return FormatCheckResult(compatible=True, skipped=True)
+
+
+# ── Ollama / own-registry model check ────────────────────────────────
+
+
+@dataclass
+class OllamaCheckResult:
+    accessible: bool = True
+    error: Optional[str] = None
+    skipped: bool = False
+
+
+async def check_ollama_model_exists(model_id: str) -> OllamaCheckResult:
+    """
+    Check if a model exists in the Ollama registry.
+
+    Ollama model formats:
+    - Standard: "llama3", "llama3:8b"
+    - Namespaced: "mannix/llama3.1-8b-abliterated"
+
+    URL patterns:
+    - Standard: https://ollama.com/library/{name} or https://ollama.com/library/{name}:{tag}
+    - Namespaced: https://ollama.com/{namespace}/{name}
+    """
+    if not model_id:
+        return OllamaCheckResult(accessible=True, skipped=True)
+
+    # Determine URL based on whether model_id has a namespace (contains /)
+    base_name = model_id.split(":")[0]  # strip tag
+    if "/" in base_name:
+        # Namespaced: mannix/llama3.1-8b → https://ollama.com/mannix/llama3.1-8b
+        url = f"{OLLAMA_REGISTRY_BASE}/{base_name}"
+    else:
+        # Standard: llama3:8b → https://ollama.com/library/llama3:8b
+        url = f"{OLLAMA_REGISTRY_BASE}/library/{model_id}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.head(url)
+
+            if resp.status_code == 200:
+                return OllamaCheckResult(accessible=True)
+
+            if resp.status_code == 404:
+                return OllamaCheckResult(
+                    accessible=False,
+                    error=f"Model '{model_id}' not found in Ollama registry. Check the model name at ollama.com/library.",
+                )
+
+            return OllamaCheckResult(accessible=True, skipped=True)
+
+    except Exception as e:
+        logger.warning("Ollama registry check failed for %s: %s", model_id, e)
+        return OllamaCheckResult(accessible=True, skipped=True)
 
 
 # ── Shared HF metadata fetcher ──────────────────────────────────────

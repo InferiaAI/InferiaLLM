@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from inferia.services.orchestration.services.model_deployment.preflight import (
     check_model_accessibility,
     check_model_format,
+    check_ollama_model_exists,
     check_vram_fit,
     check_pipeline_compatibility,
     check_docker_image_exists,
     check_duplicate_deployment,
     check_context_length,
+    ENGINES_WITH_OWN_REGISTRY,
     PreflightResult,
     FormatCheckResult,
 )
@@ -259,4 +261,85 @@ class TestCheckDuplicateDeployment:
     async def test_external_pool_id_skips(self):
         result = await check_duplicate_deployment("org/model", "00000000-0000-0000-0000-000000000000", None)
         assert result.ok is True
+        assert result.skipped is True
+
+
+class TestEnginesWithOwnRegistry:
+    """Engines like ollama use model:tag format, not HF org/model."""
+
+    def test_ollama_is_in_own_registry(self):
+        assert "ollama" in ENGINES_WITH_OWN_REGISTRY
+
+    def test_localai_is_in_own_registry(self):
+        assert "localai" in ENGINES_WITH_OWN_REGISTRY
+
+    def test_vllm_is_not_in_own_registry(self):
+        assert "vllm" not in ENGINES_WITH_OWN_REGISTRY
+
+    @pytest.mark.asyncio
+    async def test_ollama_model_id_not_sent_to_hf(self):
+        """Ollama model IDs like 'llama3:8b' should NOT be checked against HF API."""
+        result = await check_model_format("llama3:8b", "ollama")
+        assert result.compatible is True
+        assert result.skipped is True
+
+
+def _mock_head_client(status_code=200, side_effect=None):
+    """Helper for HEAD-based mocks with follow_redirects."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+
+    client_instance = AsyncMock()
+    if side_effect:
+        client_instance.head = AsyncMock(side_effect=side_effect)
+    else:
+        client_instance.head = AsyncMock(return_value=mock_resp)
+    client_instance.__aenter__ = AsyncMock(return_value=client_instance)
+    client_instance.__aexit__ = AsyncMock(return_value=False)
+    return client_instance
+
+
+class TestCheckOllamaModelExists:
+
+    @pytest.mark.asyncio
+    async def test_existing_model_returns_accessible(self):
+        with patch("inferia.services.orchestration.services.model_deployment.preflight.httpx.AsyncClient", return_value=_mock_head_client(200)):
+            result = await check_ollama_model_exists("llama3:8b")
+            assert result.accessible is True
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_model_returns_not_found(self):
+        with patch("inferia.services.orchestration.services.model_deployment.preflight.httpx.AsyncClient", return_value=_mock_head_client(404)):
+            result = await check_ollama_model_exists("nonexistent-model-xyz")
+            assert result.accessible is False
+            assert "not found" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_model_without_tag(self):
+        with patch("inferia.services.orchestration.services.model_deployment.preflight.httpx.AsyncClient", return_value=_mock_head_client(200)):
+            result = await check_ollama_model_exists("llama3")
+            assert result.accessible is True
+
+    @pytest.mark.asyncio
+    async def test_namespaced_model(self):
+        """Namespaced models like 'mannix/model' use a different URL path."""
+        with patch("inferia.services.orchestration.services.model_deployment.preflight.httpx.AsyncClient", return_value=_mock_head_client(200)) as mock_cls:
+            result = await check_ollama_model_exists("mannix/llama3.1-8b")
+            assert result.accessible is True
+            # Verify URL doesn't use /library/ for namespaced models
+            call_args = mock_cls.return_value.head.call_args[0][0]
+            assert "/library/" not in call_args
+            assert "mannix/llama3.1-8b" in call_args
+
+    @pytest.mark.asyncio
+    async def test_connection_error_fails_open(self):
+        with patch("inferia.services.orchestration.services.model_deployment.preflight.httpx.AsyncClient", return_value=_mock_head_client(side_effect=Exception("timeout"))):
+            result = await check_ollama_model_exists("llama3")
+            assert result.accessible is True
+            assert result.skipped is True
+
+    @pytest.mark.asyncio
+    async def test_empty_model_id_skips(self):
+        result = await check_ollama_model_exists("")
+        assert result.accessible is True
         assert result.skipped is True
