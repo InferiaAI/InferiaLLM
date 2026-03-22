@@ -343,6 +343,31 @@ async def log_audit_event(
             await conn.close()
 
 
+async def _lookup_org_id(resource_type: str, resource_id: str) -> str | None:
+    """Look up org_id from a deployment or pool record for audit logging."""
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        if resource_type == "deployment":
+            return await conn.fetchval(
+                "SELECT org_id FROM model_deployments WHERE deployment_id = $1",
+                UUID(resource_id),
+            )
+        elif resource_type == "compute_pool":
+            row = await conn.fetchrow(
+                "SELECT owner_type, owner_id FROM compute_pools WHERE id = $1",
+                UUID(resource_id),
+            )
+            if row and row["owner_type"] == "org":
+                return row["owner_id"]
+    except Exception as e:
+        logger.warning(f"Failed to look up org_id for {resource_type}/{resource_id}: {e}")
+    finally:
+        if conn:
+            await conn.close()
+    return None
+
+
 async def _get_pool_lifecycle_state(pool_id: UUID) -> str | None:
     conn = None
     try:
@@ -746,7 +771,7 @@ async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
                 resource_type="deployment",
                 resource_id=deployment_id,
                 details=req.model_dump(exclude_none=True),
-                org_id=None,  # No org context in update request
+                org_id=await _lookup_org_id("deployment", deployment_id),
             )
 
             return {"success": resp.success, "message": resp.message}
@@ -775,6 +800,7 @@ async def terminate_deployment(req: TerminateDeploymentRequest):
                 resource_type="deployment",
                 resource_id=req.deployment_id,
                 status="success",
+                org_id=await _lookup_org_id("deployment", req.deployment_id),
             )
         except grpc.RpcError as e:
             raise HTTPException(
@@ -807,6 +833,7 @@ async def start_deployment(
                 resource_type="deployment",
                 resource_id=req.deployment_id,
                 status="success",
+                org_id=await _lookup_org_id("deployment", req.deployment_id),
             )
         except grpc.RpcError as e:
             raise HTTPException(
@@ -887,6 +914,7 @@ async def delete_deployment(deployment_id: str):
         resource_type="deployment",
         resource_id=deployment_id,
         status="success",
+        org_id=await _lookup_org_id("deployment", deployment_id),
     )
 
     return {
@@ -1176,6 +1204,7 @@ async def stop_pool(pool_id: str):
         resource_type="compute_pool",
         resource_id=pool_id,
         status="success",
+        org_id=await _lookup_org_id("compute_pool", pool_id),
     )
 
     asyncio.create_task(_terminate_pool_background(pool_uuid))
@@ -1219,6 +1248,7 @@ async def delete_pool(pool_id: str):
         resource_type="compute_pool",
         resource_id=pool_id,
         status="success",
+        org_id=await _lookup_org_id("compute_pool", pool_id),
     )
 
     return {"pool_id": pool_id, "status": "DELETED"}
