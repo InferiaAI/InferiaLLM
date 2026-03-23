@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     # App info
     app_name: str = "Orchestration Service"
-    app_version: str = "1.0.0"
+    app_version: str = "0.1.0"
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
     logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
     logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
