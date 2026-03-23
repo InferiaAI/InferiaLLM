@@ -5,14 +5,14 @@
 
 ### The Operating System for LLMs in Production
 
-  [![License](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](./LICENSE)[![Python](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)[![Status](https://img.shields.io/badge/status-beta-orange?style=flat-square)]()[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)[![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)[![Kubernetes](https://img.shields.io/badge/kubernetes-%23326ce5.svg?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
+  [![PyPI](https://img.shields.io/pypi/v/inferiallm?style=flat-square&label=PyPI)](https://pypi.org/project/inferiallm/)[![Docker](https://img.shields.io/docker/v/inferiaai/inferiallm?style=flat-square&label=Docker%20Hub&sort=semver)](https://hub.docker.com/r/inferiaai/inferiallm)[![License](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](./LICENSE)[![Python](https://img.shields.io/badge/python-3.10+-blue?style=flat-square)](https://www.python.org/)[![Status](https://img.shields.io/badge/status-beta-orange?style=flat-square)]()[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)[![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)[![Kubernetes](https://img.shields.io/badge/kubernetes-%23326ce5.svg?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 
 </div>
 
   <br/>
   
   ```bash
-  pip install inferiallm
+  pip install inferiallm==0.1.0b1
   ```
 
   <br/>
@@ -67,7 +67,7 @@ InferiaLLM provides these primitives as a single, cohesive system.
 The easiest way to get started is to run InferiaLLM as a comprehensive Python package.
 
 ```bash
-pip install inferiallm
+pip install inferiallm==0.1.0b1
 ```
 
 **Setup & Configuration:**
@@ -129,7 +129,7 @@ The official unified image is available on [Docker Hub](https://hub.docker.com/r
 
 ```bash
 # 1. Pull the official image
-docker pull inferiaai/inferiallm:latest
+docker pull inferiaai/inferiallm:v0.1.0-beta.1
 
 # 2. Download and configure environment
 curl -L https://raw.githubusercontent.com/InferiaAI/InferiaLLM/main/.env.sample -o .env
@@ -140,7 +140,7 @@ docker run -d \
   --name inferia-app \
   --env-file .env \
   -p 8000:8000 -p 8001:8001 -p 8002:8002 -p 8003:8003 -p 8080:8080 -p 3000:3000 -p 3001:3001 \
-  inferiaai/inferiallm:latest
+  inferiaai/inferiallm:v0.1.0-beta.1
 ```
 
 #### Option B: Build from Source
@@ -170,6 +170,9 @@ docker compose -f deploy/docker-compose.yml --profile unified up --build
 # Split Profile (Microservices)
 docker compose -f deploy/docker-compose.yml --profile split up --build
 ```
+
+> [!NOTE]
+> When running in Docker, use `DASHBOARD_` prefixed env vars for frontend URLs (e.g., `DASHBOARD_API_GATEWAY_URL`, `DASHBOARD_INFERENCE_URL`). These are separate from backend service URLs to avoid configuration collisions.
 
 **Services will be available at:**
 
@@ -279,13 +282,17 @@ Initialize the control-plane databases, roles, and schemas.
 [inferia:init] Bootstrap complete
 ```
 
-If you already have an initialized database and only need the latest schema updates, run:
+### 2. `inferiallm migrate`
+
+Apply pending database migrations to an existing database. Run this after upgrading to a new version.
 
 ```bash
-psql "$DATABASE_URL" -f db/migrations/20260212_add_inference_logs_ip.sql
+inferiallm migrate
 ```
 
-### 2. `inferiallm start`
+This automatically discovers and applies any `.sql` migration files that haven't been run yet. In Docker, this runs automatically on container startup.
+
+### 3. `inferiallm start`
 
 Start Inferia services. You can start all services at once or specific components.
 
@@ -326,7 +333,7 @@ inferiallm start orchestration
 ...
 ```
 
-### 3. Service Specific Commands
+### 4. Service Specific Commands
 
 Instead of running everything, you can run individual gateways:
 
@@ -454,7 +461,7 @@ InferiaLLM is built on a modern, high-performance foundation designed for scale 
 
 ### Security
 
-* **Authentication**: Stateless JWT (RS256)
+* **Authentication**: Stateless JWT (HS256, in-memory token storage)
 * **Encryption**: Fernet (Symmetric encryption for secrets)
 * **Policy Engine**: Custom RBAC with hierarchical permissions
 
@@ -506,16 +513,22 @@ Requests failing policy are rejected **before inference**.
 
 Supports:
 
-* Kubernetes GPU clusters
-* VPS infrastructure
-* DePIN compute (e.g. Nosana)
+* **Nosana** — decentralized GPU compute (DePIN)
+* **AWS** — EC2 GPU instances via SkyPilot
+* **GCP** — Compute Engine via SkyPilot
+* **Akash** — decentralized cloud (SDL-based)
+* **Kubernetes** — on-prem / managed clusters
 
 ### Admin Dashboard
 
-* Manage organizations, users, and roles
-* Define policies, budgets, and limits
-* Register and manage compute providers
-* Inspect usage, cost, and audit logs
+* Manage organizations, users, roles, and invitations
+* Deploy models with preflight validation (VRAM, format, compatibility checks)
+* Manage compute pools across Nosana, AWS, GCP, Akash, and Kubernetes
+* Configure guardrails, RAG pipelines, and prompt templates per deployment
+* API key management with per-deployment scoping
+* Audit log viewer with category filtering and actor identification
+* Real-time terminal logs for running deployments via WebSocket
+* Multi-credential management for compute providers
 
 ---
 
@@ -568,20 +581,20 @@ Compute decisions are made by the control plane - not application code.
 
 ## Audit and Observability
 
-InferiaLLM records:
+InferiaLLM records every user action with structured audit logging:
 
-* request metadata
-* policy decisions
-* execution backend
-* resource usage
-* failure modes
+* **Categorized events**: auth, security, deployment, api_key, organization, credential, configuration, knowledge_base
+* **Actor identification**: user email resolved via database join
+* **Organization scoping**: logs filtered by org_id for multi-tenant isolation
+* **Category filtering**: dashboard UI with dropdown filter by event type
+* **Full coverage**: login, deployment CRUD, pool lifecycle, credential management, 2FA, invitations, config changes
 
 This supports:
 
 * cost attribution
-* security review
-* compliance
-* incident investigation
+* security review and incident investigation
+* compliance and regulatory auditing
+* change tracking across the platform
 
 ### Metrics & Tracing
 
@@ -600,7 +613,7 @@ InferiaLLM is:
 
 * **Self-Hosted**: Docker Compose standard stack (Postgres, Redis, Gateways).
 * **Cloud-Agnostic**: Deploys to AWS, GCP, Azure, or bare metal without modification.
-* **Provider-Neutral**: Supports any OpenAI-compatible inference backend (vLLM, TGI, Triton).
+* **Provider-Neutral**: Supports multiple inference engines (vLLM, Ollama, TEI, Infinity, LocalAI, Inferia Diffusion) and external providers (OpenAI, Anthropic, Gemini, Groq, Cerebras, Mistral, DeepSeek).
 
 It integrates with existing infrastructure and avoids proprietary lock-in.
 
