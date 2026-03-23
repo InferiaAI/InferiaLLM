@@ -209,11 +209,13 @@ def create_ollama_job(
             "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && "
             "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list && "
             "apt-get update && apt-get install -y caddy && "
-            'printf ":8080 {\\n  @auth {\\n    not header Authorization \\"Bearer %s\\"\\n  }\\n  respond @auth \\"Unauthorized\\" 401\\n  reverse_proxy localhost:11434 {\\n    flush_interval -1\\n  }\\n}" "$MY_API_KEY" > Caddyfile && '
+            'printf ":8080 {\\n  @auth {\\n    not header Authorization \\"Bearer %s\\"\\n  }\\n  respond @auth \\"Unauthorized\\" 401\\n  reverse_proxy localhost:11434 {\\n    flush_interval -1\\n  }\\n}" "$MY_API_KEY" > Caddyfile ; '
             "ollama serve & echo 'Waiting for Ollama...' && "
             "while ! curl -s http://localhost:11434 > /dev/null; do sleep 2; done && "
-            f"echo 'Ollama is ready!' && ollama pull {safe_model_id} && "
-            "caddy run --config Caddyfile"
+            "echo 'Ollama is ready!' ; "
+            "caddy run --config Caddyfile & echo 'Caddy running on :8080' && "
+            f"ollama pull {safe_model_id} && "
+            "echo 'Model pulled successfully' && wait"
         )
         final_cmd = ["-c", secure_script]
     else:
@@ -223,19 +225,6 @@ def create_ollama_job(
             "-c",
             f"ollama serve & sleep 5 && ollama pull {safe_model_id} && tail -f /dev/null",
         ]
-
-    health_headers: Dict[str, str] = {}
-    if effective_api_key:
-        health_headers["Authorization"] = f"Bearer {effective_api_key}"
-
-    health_check = {
-        "path": "/api/tags",
-        "type": "http",
-        "method": "GET",
-        "headers": health_headers,
-        "continuous": False,
-        "expected_status": 200,
-    }
 
     container_op = {
         "type": "container/run",
@@ -249,7 +238,6 @@ def create_ollama_job(
             "expose": [
                 {
                     "port": exposed_port,
-                    "health_checks": [health_check],
                 }
             ],
         },
