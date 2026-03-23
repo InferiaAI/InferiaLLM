@@ -6,6 +6,15 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Dry run (build only, don't publish)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   pypi-publish:
@@ -28,7 +37,7 @@ jobs:
           pip install build
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
@@ -50,8 +59,13 @@ jobs:
         working-directory: ./package
         run: python -m build
 
+      - name: Show built artifacts
+        run: ls -la package/dist/
+
       - name: Publish to PyPI
+        if: inputs.dry-run != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
-          packages_dir: package/dist/
+          packages-dir: package/dist/
+          skip-existing: true
