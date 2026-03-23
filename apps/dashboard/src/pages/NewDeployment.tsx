@@ -314,9 +314,7 @@ const initialState: State = {
   requiredRam: "4096",
   gpuEnabled: false,
   // InferaDiffusion defaults
-  trustRemoteCode: false,
   modelOffload: false,
-  groupOffload: false,
 
   preflightStatus: 'idle',
   preflightErrors: [],
