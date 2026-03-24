@@ -33,6 +33,7 @@ interface Deployment {
   modelName: string;
   model_type: string;
   engine?: string;
+  workload_type?: string;
   endpointUrl: string;
   status: string;
 }
@@ -45,6 +46,9 @@ interface DeploymentResponse {
     endpoint?: string;
     state?: string;
     model_type?: string;
+    configuration?: {
+      workload_type?: string;
+    };
   }>;
 }
 
@@ -130,6 +134,7 @@ export default function Sandbox() {
           modelName: d.model_name || "-",
           model_type: d.model_type || "inference",
           engine: d.engine,
+          workload_type: d.configuration?.workload_type,
           endpointUrl: d.endpoint || "",
           status: d.state || "UNKNOWN",
         }));
@@ -138,7 +143,7 @@ export default function Sandbox() {
   });
 
   const selectedDeployment = deployments.find((d) => d.id === selectedDeploymentId) || deployments[0] || null;
-  const effectiveCategory = selectedDeployment ? getCategoryFromModelType(selectedDeployment.model_type, selectedDeployment.engine) : "inference";
+  const effectiveCategory = selectedDeployment ? getCategoryFromModelType(selectedDeployment.model_type, selectedDeployment.engine, selectedDeployment.workload_type) : "inference";
 
   const handleDeploymentChange = (deployment: Deployment) => {
     setSelectedDeploymentId(deployment.id);
@@ -1251,9 +1256,9 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
   );
 }
 
-function getCategoryFromModelType(modelType?: string, engine?: string): ModelCategory {
+function getCategoryFromModelType(modelType?: string, engine?: string, workloadType?: string): ModelCategory {
   if (modelType === "embedding" || engine === "infinity" || engine === "tei") return "embedding";
+  if (modelType === "video_generation" || workloadType === "video") return "video";
   if (modelType === "image_generation" || engine === "inferia-diffusion") return "image";
-  if (modelType === "video_generation") return "video";
   return "inference";
 }
