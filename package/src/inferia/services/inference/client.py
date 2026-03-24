@@ -343,7 +343,11 @@ class ApiGatewayClient:
             )
 
     async def resolve_context(
-        self, api_key: str, model: str, model_type: str = "inference"
+        self,
+        api_key: str,
+        model: str,
+        model_type: str = "inference",
+        sandbox: bool = False,
     ) -> Dict[str, Any]:
         """
         Resolve deployment context and config from API Gateway.
@@ -358,7 +362,7 @@ class ApiGatewayClient:
             is_owner = task is None
             if is_owner:
                 task = asyncio.create_task(
-                    self._resolve_context_uncached(api_key, model, model_type)
+                    self._resolve_context_uncached(api_key, model, model_type, sandbox)
                 )
                 self._context_inflight[cache_key] = task
 
@@ -372,7 +376,7 @@ class ApiGatewayClient:
                         self._context_inflight.pop(cache_key, None)
 
     async def _resolve_context_uncached(
-        self, api_key: str, model: str, model_type: str
+        self, api_key: str, model: str, model_type: str, sandbox: bool = False
     ) -> Dict[str, Any]:
         cache_key = (api_key, model, model_type)
         neg_key = f"ctx:{cache_key}"
@@ -380,7 +384,12 @@ class ApiGatewayClient:
 
         client = self._get_client()
         headers = self._get_headers()  # Use internal key
-        payload = {"api_key": api_key, "model": model, "model_type": model_type}
+        payload = {
+            "api_key": api_key,
+            "model": model,
+            "model_type": model_type,
+            "sandbox": sandbox,
+        }
 
         try:
             response = await client.post(

@@ -392,6 +392,7 @@ class ResolveContextRequest(BaseModel):
     api_key: str
     model: str
     model_type: str = "inference"
+    sandbox: bool = False
 
 
 from typing import Any, Dict, Optional
@@ -420,7 +421,7 @@ async def resolve_inference_context(
     """
     # Delegate to Policy Engine
     result = await policy_engine.resolve_context(
-        db, request.api_key, request.model, request.model_type
+        db, request.api_key, request.model, request.model_type, request.sandbox
     )
 
     if not result["valid"]:

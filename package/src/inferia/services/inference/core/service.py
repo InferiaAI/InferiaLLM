@@ -16,10 +16,12 @@ logger = logging.getLogger(__name__)
 class GatewayService:
     @staticmethod
     async def resolve_context(
-        api_key: str, model: str, model_type: str = "inference"
+        api_key: str, model: str, model_type: str = "inference", sandbox: bool = False
     ) -> Dict[str, Any]:
         """Resolves deployment context via Filtration Gateway."""
-        context = await api_gateway_client.resolve_context(api_key, model, model_type)
+        context = await api_gateway_client.resolve_context(
+            api_key, model, model_type, sandbox
+        )
 
         if not context.get("valid"):
             raise HTTPException(
@@ -213,7 +215,17 @@ class GatewayService:
         endpoint = endpoint_url.rstrip("/")
 
         # If endpoint already contains the full path, use it as-is
-        if endpoint.endswith("/chat/completions") or endpoint.endswith("/messages") or endpoint.endswith("/embeddings"):
+        if (
+            endpoint.endswith("/chat/completions")
+            or endpoint.endswith("/messages")
+            or endpoint.endswith("/embeddings")
+            or endpoint.endswith("/images/generations")
+            or endpoint.endswith("/images/edits")
+            or endpoint.endswith("/images/variations")
+            or endpoint.endswith("/videos/generations")
+            or endpoint.endswith("/videos/edits")
+            or endpoint.endswith("/videos/extensions")
+        ):
             return endpoint
 
         # If endpoint already contains /v1 or /openai (e.g. Groq, Cerebras, Gemini),
@@ -221,6 +233,13 @@ class GatewayService:
         if endpoint.endswith("/v1") or endpoint.endswith("/openai"):
             if chat_path.startswith("/v1"):
                 return endpoint + chat_path[3:]  # Skip the /v1 part
+            return endpoint + chat_path
+
+        # If endpoint already contains /generate (for InferaDiffusion video endpoints)
+        # Video paths already include /generate, so we need to strip it to avoid duplication
+        if endpoint.endswith("/generate"):
+            if chat_path.startswith("/generate"):
+                return endpoint + chat_path[9:]  # Skip /generate
             return endpoint + chat_path
 
         # Standard case - just append the path
@@ -301,6 +320,7 @@ class GatewayService:
         engine: str = "vllm",
         path: str = None,
         concurrency_key: str = "default",
+        timeout: float = None,
     ) -> Dict:
         adapter = get_adapter(engine)
         # Use custom path if provided, otherwise use adapter's chat path
@@ -336,10 +356,14 @@ class GatewayService:
             )
 
         client = http_client.get_client()
+        request_timeout = timeout or settings.upstream_http_timeout_seconds
         try:
             async with upstream_concurrency_limiter.limit(concurrency_key):
                 resp = await client.post(
-                    full_url, json=transformed_payload, headers=headers
+                    full_url,
+                    json=transformed_payload,
+                    headers=headers,
+                    timeout=request_timeout,
                 )
                 resp.raise_for_status()
 

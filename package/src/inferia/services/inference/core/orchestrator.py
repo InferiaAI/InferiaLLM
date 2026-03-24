@@ -3,10 +3,13 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 from inferia.services.inference.client import api_gateway_client
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 
+from .http_client import http_client
 from .providers import get_adapter, is_external_engine, InferaDiffusionAdapter
 from .rate_limiter import rate_limiter
 from .service import GatewayService
@@ -23,7 +26,7 @@ class OrchestrationService:
     """
 
     @staticmethod
-    async def list_models(api_key: str):
+    async def list_models(api_key: str, sandbox: bool = False):
         """
         List available models.
         """
@@ -37,6 +40,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle embedding requests.
@@ -54,7 +58,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for embedding model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="embedding"
+            api_key, model, model_type="embedding", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -173,6 +177,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle text-to-image generation requests (POST /v1/images/generations).
@@ -190,7 +195,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for image model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="image_generation"
+            api_key, model, model_type="image_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -305,6 +310,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle image-to-image edit requests (POST /v1/images/edits).
@@ -316,18 +322,13 @@ class OrchestrationService:
 
         # Validation
         model = body.get("model")
-        if not model:
-            raise HTTPException(status_code=400, detail="Model is required")
-        # image-to-image requires either image+prompt or image field
-        if not body.get("image") and not body.get("prompt"):
-            raise HTTPException(
-                status_code=400,
-                detail="Either 'image' (base64) or 'prompt' is required for image edits",
-            )
+        prompt = body.get("prompt")
+        if not model or not prompt:
+            raise HTTPException(status_code=400, detail="Model and prompt are required")
 
         # 1. Resolve Context for image model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="image_generation"
+            api_key, model, model_type="image_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -359,7 +360,7 @@ class OrchestrationService:
 
         # 4. Execute Image Edit Request
         endpoint_url = deployment.get("endpoint")
-        engine = deployment.get("engine", "localai")
+        engine = deployment.get("engine", "inferia-diffusion")
 
         adapter = get_adapter(engine)
 
@@ -383,11 +384,11 @@ class OrchestrationService:
         else:
             provider_key = settings.api_gateway_internal_key or ""
 
+        # Override model name if deployment specifies inference_model
         if deployment.get("inference_model"):
             body["model"] = deployment["inference_model"]
 
         provider_headers = adapter.get_headers(provider_key)
-        # For image edits, pass the body through (image + prompt + params)
         provider_payload = adapter.transform_request(body.copy())
 
         # Add image-specific fields that transform_request may not handle
@@ -441,11 +442,109 @@ class OrchestrationService:
             )
 
     @staticmethod
+    async def handle_image_variations(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+        sandbox: bool = False,
+    ):
+        """
+        Handle image variations requests (POST /v1/images/variations).
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        model = body.get("model")
+        if not model:
+            raise HTTPException(status_code=400, detail="Model is required")
+        if not body.get("image"):
+            raise HTTPException(status_code=400, detail="Image is required")
+
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="image_generation", sandbox=sandbox
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                    )
+
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "inferia-diffusion")
+        adapter = get_adapter(engine)
+
+        if is_external_engine(engine):
+            credentials = (
+                deployment.get("credentials_json")
+                or deployment.get("configuration")
+                or {}
+            )
+            provider_key = str(
+                credentials.get("api_key")
+                or credentials.get("key")
+                or credentials.get("token")
+                or ""
+            )
+            if credentials.get("model"):
+                body["model"] = credentials["model"]
+            elif deployment.get("inference_model"):
+                body["model"] = deployment["inference_model"]
+        else:
+            provider_key = settings.api_gateway_internal_key or ""
+
+        if deployment.get("inference_model"):
+            body["model"] = deployment["inference_model"]
+
+        provider_headers = adapter.get_headers(provider_key)
+        provider_payload = adapter.transform_request(body.copy())
+        if "image" in body:
+            provider_payload["image"] = body["image"]
+
+        try:
+            if isinstance(adapter, InferaDiffusionAdapter):
+                image_path = adapter.get_image_variations_path()
+            else:
+                image_path = "/v1/images/variations"
+
+            return await GatewayService.call_upstream(
+                endpoint_url,
+                provider_payload,
+                provider_headers,
+                engine,
+                path=image_path,
+                concurrency_key=concurrency_key,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @staticmethod
     async def handle_video_generation(
         api_key: str,
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle text-to-video generation requests (POST /v1/videos/generations).
@@ -463,7 +562,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for video model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="video_generation"
+            api_key, model, model_type="video_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -543,12 +642,11 @@ class OrchestrationService:
                 engine,
                 path=video_path,
                 concurrency_key=concurrency_key,
+                timeout=settings.upstream_video_timeout_seconds,
             )
 
             return response_data
-        except HTTPException as e:
-            status_code = e.status_code
-            error_message = str(e.detail) if hasattr(e, "detail") else str(e)
+        except HTTPException:
             raise
         except Exception as e:
             status_code = 500
@@ -562,10 +660,10 @@ class OrchestrationService:
                 model,
                 body,
                 start_time,
-                n_videos,
                 applied_policies,
                 log_payloads,
                 ip_address,
+                n_videos,
                 request_type="video_generation",
                 status_code=status_code,
                 error_message=error_message,
@@ -577,6 +675,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle video editing requests (POST /v1/videos/edits).
@@ -598,7 +697,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for video model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="video_generation"
+            api_key, model, model_type="video_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -681,6 +780,7 @@ class OrchestrationService:
                 engine,
                 path=video_path,
                 concurrency_key=concurrency_key,
+                timeout=settings.upstream_video_timeout_seconds,
             )
 
             return response_data
@@ -715,6 +815,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle video extension requests (POST /v1/videos/extensions).
@@ -736,7 +837,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for video model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="video_generation"
+            api_key, model, model_type="video_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -819,6 +920,7 @@ class OrchestrationService:
                 engine,
                 path=video_path,
                 concurrency_key=concurrency_key,
+                timeout=settings.upstream_video_timeout_seconds,
             )
 
             return response_data
@@ -848,11 +950,87 @@ class OrchestrationService:
             )
 
     @staticmethod
+    async def handle_video_status(
+        api_key: str,
+        video_id: str,
+        model: str,
+        sandbox: bool = False,
+    ):
+        """
+        Get video generation status from the model container.
+        Single pass-through — the dashboard handles polling.
+        """
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="video_generation", sandbox=sandbox
+        )
+        if not context.get("valid"):
+            raise HTTPException(
+                status_code=404, detail=context.get("error", "Deployment not found")
+            )
+
+        deployment = context["deployment"]
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "inferia-diffusion")
+
+        if not endpoint_url or not endpoint_url.startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=502,
+                detail="Video endpoint URL is invalid or missing",
+            )
+
+        adapter = get_adapter(engine)
+
+        provider_key = settings.api_gateway_internal_key or ""
+        if is_external_engine(engine):
+            credentials = (
+                deployment.get("credentials_json")
+                or deployment.get("configuration")
+                or {}
+            )
+            provider_key = str(
+                credentials.get("api_key")
+                or credentials.get("key")
+                or credentials.get("token")
+                or ""
+            )
+
+        provider_headers = adapter.get_headers(provider_key)
+
+        status_url = f"{endpoint_url}/generate/v1/videos/{video_id}"
+        client = http_client.get_client()
+
+        try:
+            resp = await client.get(
+                status_url, headers=provider_headers, timeout=30.0
+            )
+            resp.raise_for_status()
+            status_data = resp.json()
+
+            status = status_data.get("status", "unknown")
+            if status == "failed":
+                raise HTTPException(
+                    status_code=500,
+                    detail=status_data.get("error", "Video generation failed"),
+                )
+
+            return adapter.transform_response(status_data)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return {"status": "processing", "id": video_id}
+            raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error checking video status: {e}")
+            raise HTTPException(status_code=502, detail=str(e))
+
+    @staticmethod
     async def handle_completion(
         api_key: str,
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         start_time = time.time()
         applied_policies = []
@@ -866,7 +1044,7 @@ class OrchestrationService:
             )
 
         # 1. Resolve Context
-        context = await GatewayService.resolve_context(api_key, model)
+        context = await GatewayService.resolve_context(api_key, model, sandbox=sandbox)
 
         deployment = context["deployment"]
         deployment_id = deployment.get("id")

@@ -73,6 +73,24 @@ class Settings(BaseSettings):
         alias="UPSTREAM_HTTP_CONNECT_TIMEOUT_SECONDS",
         validation_alias="UPSTREAM_HTTP_CONNECT_TIMEOUT_SECONDS",
     )
+    upstream_video_timeout_seconds: float = Field(
+        default=300.0,
+        alias="UPSTREAM_VIDEO_TIMEOUT_SECONDS",
+        validation_alias="UPSTREAM_VIDEO_TIMEOUT_SECONDS",
+        description="Timeout for video generation requests (default 5 minutes)",
+    )
+
+    # Redis Settings (for rate limiting)
+    redis_host: str = Field(
+        default="localhost",
+        alias="REDIS_HOST",
+        validation_alias="REDIS_HOST",
+    )
+    redis_port: int = Field(
+        default=6379,
+        alias="REDIS_PORT",
+        validation_alias="REDIS_PORT",
+    )
     upstream_http_max_connections: int = Field(
         default=500,
         alias="UPSTREAM_HTTP_MAX_CONNECTIONS",
@@ -145,6 +163,14 @@ class Settings(BaseSettings):
         validation_alias="QUOTA_CHECK_CACHE_MAXSIZE",
         description="Maximum number of entries in successful quota check cache",
     )
+
+    # JWT Settings (for sandbox mode)
+    jwt_secret_key: str = Field(
+        default="placeholder-secret-key-at-least-32-chars-long",
+        alias="JWT_SECRET_KEY",
+        validation_alias="JWT_SECRET_KEY",
+    )
+    jwt_algorithm: str = "HS256"
 
     @property
     def is_production(self) -> bool:

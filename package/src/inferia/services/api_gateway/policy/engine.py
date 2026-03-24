@@ -78,8 +78,89 @@ class PolicyEngine:
 
         return None
 
+    async def _resolve_sandbox_context(
+        self,
+        db: AsyncSession,
+        org_id: str,
+        user_id: str,
+        model: str,
+        model_type: str,
+        cache_key: tuple,
+    ) -> Dict[str, Any]:
+        """
+        Resolve context for sandbox mode - uses org_id and user_id directly.
+        """
+        # Look up deployment by org_id and model
+        stmt = (
+            select(DBDeployment, DBOrganization)
+            .join(DBOrganization, DBDeployment.org_id == DBOrganization.id)
+            .where(
+                (DBDeployment.org_id == org_id)
+                & (
+                    (DBDeployment.model_name == model)
+                    | (DBDeployment.llmd_resource_name == model)
+                )
+                & (DBDeployment.model_type == model_type)
+            )
+        )
+
+        result = await db.execute(stmt)
+        row = result.first()
+
+        if not row:
+            return {
+                "valid": False,
+                "error": "Deployment not found for model in this organization",
+            }
+
+        deployment, organization = row
+
+        # Validate Deployment State
+        if deployment.state not in ["RUNNING", "READY", "ready"]:
+            return {
+                "valid": False,
+                "error": f"Model '{model}' is currently {deployment.state}. Please start the deployment first.",
+            }
+
+        # Convert deployment to dict
+        deployment_dict = {
+            "id": deployment.id,
+            "model_name": deployment.model_name,
+            "endpoint": deployment.endpoint,
+            "engine": deployment.engine,
+            "configuration": deployment.configuration,
+            "org_id": deployment.org_id,
+            "policies": deployment.policies,
+            "inference_model": deployment.inference_model,
+        }
+
+        # For sandbox mode, return minimal config (no policies enforcement)
+        config = {
+            "guardrail": {"enabled": False},
+            "rag": {"enabled": False},
+            "prompt_template": None,
+            "rate_limit": {"enabled": False},
+        }
+
+        # Cache the result
+        self.context_cache[cache_key] = {
+            "valid": True,
+            "deployment": deployment_dict,
+            "config": config,
+            "user_id_context": user_id,
+            "org_id": org_id,
+            "log_payloads": True,
+        }
+
+        return self.context_cache[cache_key]
+
     async def resolve_context(
-        self, db: AsyncSession, api_key: str, model: str, model_type: str = "inference"
+        self,
+        db: AsyncSession,
+        api_key: str,
+        model: str,
+        model_type: str = "inference",
+        sandbox: bool = False,
     ) -> Dict[str, Any]:
         """
         Resolve complete inference context (Deployment + Policies) from an API Key.
@@ -87,6 +168,19 @@ class PolicyEngine:
         cache_key = (api_key, model, model_type)
         if cache_key in self.context_cache:
             return self.context_cache[cache_key]
+
+        # Handle sandbox mode - api_key is in format "sandbox:{org_id}:{user_id}"
+        if sandbox and api_key.startswith("sandbox:"):
+            parts = api_key.split(":")
+            if len(parts) != 3:
+                return {"valid": False, "error": "Invalid sandbox token format"}
+
+            org_id = parts[1]
+            user_id = parts[2]
+
+            return await self._resolve_sandbox_context(
+                db, org_id, user_id, model, model_type, cache_key
+            )
 
         # 1. Verify API Key
         auth_key_record = await self.verify_api_key(db, api_key)

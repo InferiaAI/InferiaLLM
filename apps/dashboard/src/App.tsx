@@ -30,6 +30,7 @@ import ProviderCategories from "@/pages/Settings/Providers/ProviderCategories";
 import ProviderList from "@/pages/Settings/Providers/ProviderList";
 import ProviderConfigPage from "@/pages/Settings/Providers/ProviderConfig";
 import Status from "@/pages/Status";
+import Sandbox from "@/pages/Sandbox";
 import Instances from "@/pages/Compute/Instances";
 import InstanceDetail from "@/pages/Compute/InstanceDetail";
 import NewPool from "@/pages/Compute/NewPool";
@@ -100,6 +101,10 @@ const router = createBrowserRouter([
           {
             element: <PermissionGuard permission="deployment:list" />,
             children: [
+              {
+                path: "sandbox",
+                element: <Sandbox />,
+              },
               {
                 path: "deployments",
                 element: <Deployments />,

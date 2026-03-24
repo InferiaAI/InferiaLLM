@@ -321,13 +321,13 @@ class InferaDiffusionAdapter(ProviderAdapter):
         return "/v1/images/variations"
 
     def get_video_generation_path(self) -> str:
-        return "/v1/videos/generations"
+        return "/generate/v1/videos/generations"
 
     def get_video_edit_path(self) -> str:
-        return "/v1/videos/edits"
+        return "/generate/v1/videos/edits"
 
     def get_video_extension_path(self) -> str:
-        return "/v1/videos/extensions"
+        return "/generate/v1/videos/extensions"
 
     def get_headers(self, api_key: str) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -348,6 +348,8 @@ class InferaDiffusionAdapter(ProviderAdapter):
           - seed, mode, scheduler, strength
           - seconds (video duration, 4-20)
           - input_reference (image for image-to-video)
+          - image (for image-to-image)
+          - mask (for inpainting)
         """
         transformed = {}
 
@@ -362,7 +364,7 @@ class InferaDiffusionAdapter(ProviderAdapter):
             if field in payload:
                 transformed[field] = payload[field]
 
-        for field in ("seconds", "input_reference"):
+        for field in ("seconds", "input_reference", "image", "mask"):
             if field in payload:
                 transformed[field] = payload[field]
 
@@ -370,6 +372,28 @@ class InferaDiffusionAdapter(ProviderAdapter):
 
     def transform_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """Returns OpenAI-compatible image/video response format."""
+        logger.debug(f"InferaDiffusion raw response: {response}")
+
+        # Handle video status response - convert to OpenAI format
+        if response.get("status") == "completed":
+            video_data = response.get("video") or response.get("output")
+            if video_data:
+                return {
+                    "object": "video",
+                    "data": [
+                        {
+                            "id": response.get("id", ""),
+                            "url": video_data
+                            if video_data.startswith("data:")
+                            else f"data:video/mp4;base64,{video_data}",
+                            "video_url": video_data
+                            if video_data.startswith("data:")
+                            else f"data:video/mp4;base64,{video_data}",
+                        }
+                    ],
+                }
+
+        # Pass through other responses as-is (already in OpenAI format)
         return response
 
     def is_external(self) -> bool:

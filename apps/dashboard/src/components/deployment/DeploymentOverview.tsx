@@ -56,8 +56,8 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
     const deploymentId = deployment?.id || deployment?.deployment_id
 
     const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
-    const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "inferia-diffusion"
-    const isVideoGen = deployment?.model_type === "video_generation"
+    const isVideoGen = deployment?.model_type === "video_generation" || deployment?.workload_type === "video"
+    const isImageGen = deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)
     const state = deployment?.state || deployment?.status || "Unknown"
 
     const { data: embeddingMetrics, isLoading: loadingLogMetrics } = useQuery({

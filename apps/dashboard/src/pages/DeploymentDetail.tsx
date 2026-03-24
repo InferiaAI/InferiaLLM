@@ -143,8 +143,8 @@ export default function DeploymentDetail() {
   const isRunning = !["STOPPED", "TERMINATED", "FAILED", "UNKNOWN"].includes(deploymentState)
   const isTraining = deployment?.workload_type === "training"
   const isEmbedding = deployment?.model_type === "embedding" || deployment?.engine === "infinity" || deployment?.engine === "tei"
-  const isImageGen = deployment?.model_type === "image_generation" || deployment?.engine === "inferia-diffusion"
-  const isVideoGen = deployment?.model_type === "video_generation"
+  const isVideoGen = deployment?.model_type === "video_generation" || deployment?.workload_type === "video"
+  const isImageGen = deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)
 
   const tabs = useMemo(() => {
     const logLabel = isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : isVideoGen ? "Video Gen Logs" : "Inference Logs"
@@ -283,8 +283,8 @@ function TabContent({ activeTab, deployment, fetchDeployment }: { activeTab: Tab
   if (!id) return null;
   const isTraining = deployment.workload_type === "training"
   const isEmbedding = deployment.model_type === "embedding" || deployment.engine === "infinity" || deployment.engine === "tei"
-  const isImageGen = deployment.model_type === "image_generation" || deployment.engine === "inferia-diffusion"
-  const isVideoGen = deployment.model_type === "video_generation"
+  const isVideoGen = deployment.model_type === "video_generation" || deployment.workload_type === "video"
+  const isImageGen = deployment.model_type === "image_generation" || (deployment.engine === "inferia-diffusion" && !isVideoGen)
 
   switch (activeTab) {
     case "overview": return <DeploymentOverview deployment={deployment} />;
