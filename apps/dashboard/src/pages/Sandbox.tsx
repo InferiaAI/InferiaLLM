@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { computeApi, INFERENCE_URL } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,20 +9,20 @@ import {
   Check,
   Bot,
   User,
-  Image,
   Video,
   Database,
-  Play,
   Sparkles,
   AlertCircle,
   Settings2,
-  Download,
   Wand2,
   FileImage,
   MessageSquare,
   RefreshCw,
   ChevronDown,
   Upload,
+  Layers,
+  Maximize2,
+  Hash,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/tokenStore";
@@ -48,7 +48,7 @@ interface DeploymentResponse {
   }>;
 }
 
-type ModelCategory = "inference" | "embedding" | "image_generation" | "image_edit" | "video_generation" | "video_edit" | "video_extension";
+type ModelCategory = "inference" | "embedding" | "image" | "video";
 
 interface ChatMessage {
   id: string;
@@ -57,52 +57,66 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-interface GenerationParams {
+interface ImageParams {
+  prompt: string;
+  n: number;
+  size: string;
+  response_format: string;
+  quality?: string;
+  style?: string;
+  scheduler?: string;
+  negative_prompt?: string;
+  seed?: number;
+}
+
+interface VideoGenParams {
+  prompt: string;
+  input_reference?: string;
+  size: string;
+  seconds: number;
+  n: number;
+  response_format: string;
+}
+
+interface ChatParams {
   temperature: number;
   max_tokens: number;
   top_p: number;
   stream: boolean;
-  seed?: number;
-  aspect_ratio?: string;
-  negative_prompt?: string;
-  controlnet?: string;
-  num_images?: number;
 }
 
-const DEFAULT_PARAMS: Record<ModelCategory, GenerationParams> = {
-  inference: { temperature: 0.7, max_tokens: 8192, top_p: 0.95, stream: false },
-  embedding: { temperature: 0, max_tokens: 0, top_p: 0, stream: false },
-  image_generation: { temperature: 0, max_tokens: 0, top_p: 0, stream: false, aspect_ratio: "1:1", negative_prompt: "", seed: 0, num_images: 1 },
-  image_edit: { temperature: 0, max_tokens: 0, top_p: 0, stream: false, negative_prompt: "", seed: 0 },
-  video_generation: { temperature: 0, max_tokens: 0, top_p: 0, stream: false, seed: 0 },
-  video_edit: { temperature: 0, max_tokens: 0, top_p: 0, stream: false, seed: 0 },
-  video_extension: { temperature: 0, max_tokens: 0, top_p: 0, stream: false, seed: 0 },
-};
-
-const ASPECT_RATIOS = [
-  { value: "1:1", label: "1:1" },
-  { value: "16:9", label: "16:9" },
-  { value: "3:2", label: "3:2" },
-  { value: "2:3", label: "2:3" },
-  { value: "4:3", label: "4:3" },
-  { value: "9:16", label: "9:16" },
-  { value: "9:21", label: "9:21" },
+const IMAGE_SIZES = [
+  { value: "512x512", label: "512x512" },
+  { value: "768x768", label: "768x768" },
+  { value: "1024x1024", label: "1024x1024" },
+  { value: "1024x576", label: "1024x576 (16:9)" },
+  { value: "576x1024", label: "576x1024 (9:16)" },
 ];
 
-const CONTROLNET_OPTIONS = [
+const VIDEO_SIZES = [
+  { value: "720x1280", label: "720x1280 (9:16)" },
+  { value: "1280x720", label: "1280x720 (16:9)" },
+  { value: "1024x1024", label: "1024x1024" },
+];
+
+const SCHEDULERS = [
+  { value: "", label: "Default" },
+  { value: "EulerDiscreteScheduler", label: "Euler" },
+  { value: "DPM++ 2M", label: "DPM++ 2M" },
+  { value: "UniPCMultistepScheduler", label: "UniPC" },
+  { value: "DDIMScheduler", label: "DDIM" },
+];
+
+const STYLES = [
   { value: "", label: "None" },
-  { value: "canny", label: "Canny" },
-  { value: "depth", label: "Depth" },
-  { value: "pose", label: "Pose" },
-  { value: "recolor", label: "Recolor" },
-  { value: "sketch", label: "Sketch" },
-  { value: "seg", label: "Segmentation" },
+  { value: "natural", label: "Natural" },
+  { value: "vivid", label: "Vivid" },
+  { value: "anime", label: "Anime" },
+  { value: "photorealistic", label: "Photorealistic" },
 ];
 
 export default function Sandbox() {
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
-  const [category, setCategory] = useState<ModelCategory>("inference");
-  const [params, setParams] = useState<GenerationParams>(DEFAULT_PARAMS.inference);
 
   const { data: deployments = [], isLoading } = useQuery<Deployment[]>({
     queryKey: ["sandbox-deployments"],
@@ -124,19 +138,10 @@ export default function Sandbox() {
   });
 
   const selectedDeployment = deployments.find((d) => d.id === selectedDeploymentId) || deployments[0] || null;
-  const effectiveCategory = selectedDeployment
-    ? getCategoryFromModelType(selectedDeployment.model_type, selectedDeployment.engine)
-    : category;
+  const effectiveCategory = selectedDeployment ? getCategoryFromModelType(selectedDeployment.model_type, selectedDeployment.engine) : "inference";
 
   const handleDeploymentChange = (deployment: Deployment) => {
     setSelectedDeploymentId(deployment.id);
-    const cat = getCategoryFromModelType(deployment.model_type, deployment.engine);
-    setCategory(cat);
-    setParams(DEFAULT_PARAMS[cat]);
-  };
-
-  const updateParam = <K extends keyof GenerationParams>(key: K, value: GenerationParams[K]) => {
-    setParams((prev) => ({ ...prev, [key]: value }));
   };
 
   return (
@@ -158,191 +163,48 @@ export default function Sandbox() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-4 xl:col-span-3 space-y-4">
+        <div className="lg:col-span-3 space-y-4">
           <div className="rounded-xl border bg-card shadow-sm">
             <div className="p-3 border-b bg-muted/30">
               <h3 className="text-sm font-medium flex items-center gap-2">
                 <Settings2 className="w-4 h-4" />
-                Configuration
+                Model
               </h3>
             </div>
-            <div className="p-3 space-y-4">
-              <div>
-                <label className="text-xs font-medium mb-1.5 block">Model</label>
-                {isLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Loading...
-                  </div>
-                ) : deployments.length === 0 ? (
-                  <div className="text-sm text-muted-foreground flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4" />
-                    No deployments
-                  </div>
-                ) : (
-                  <select
-                    value={selectedDeploymentId || ""}
-                    onChange={(e) => {
-                      const dep = deployments.find((d) => d.id === e.target.value);
-                      if (dep) handleDeploymentChange(dep);
-                    }}
-                    className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
-                  >
-                    {deployments.map((dep) => (
-                      <option key={dep.id} value={dep.id}>
-                        {dep.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              {effectiveCategory === "inference" && (
-                <>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">Temperature</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="range"
-                        min="0"
-                        max="2"
-                        step="0.01"
-                        value={params.temperature}
-                        onChange={(e) => updateParam("temperature", parseFloat(e.target.value))}
-                        className="flex-1"
-                      />
-                      <span className="text-xs w-10 text-right">{params.temperature.toFixed(2)}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">Max Tokens</label>
-                    <input
-                      type="number"
-                      value={params.max_tokens}
-                      onChange={(e) => updateParam("max_tokens", parseInt(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
-                      placeholder="8192"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">Top P</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={params.top_p}
-                        onChange={(e) => updateParam("top_p", parseFloat(e.target.value))}
-                        className="flex-1"
-                      />
-                      <span className="text-xs w-10 text-right">{params.top_p.toFixed(2)}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium">Stream</label>
-                    <button
-                      onClick={() => updateParam("stream", !params.stream)}
-                      className={cn(
-                        "w-10 h-5 rounded-full transition-colors relative",
-                        params.stream ? "bg-emerald-500" : "bg-muted"
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
-                          params.stream ? "left-5" : "left-0.5"
-                        )}
-                      />
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {effectiveCategory === "image_generation" && (
-                <>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">Aspect Ratio</label>
-                    <select
-                      value={params.aspect_ratio || "1:1"}
-                      onChange={(e) => updateParam("aspect_ratio", e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
-                    >
-                      {ASPECT_RATIOS.map((ratio) => (
-                        <option key={ratio.value} value={ratio.value}>
-                          {ratio.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">Negative Prompt</label>
-                    <textarea
-                      value={params.negative_prompt || ""}
-                      onChange={(e) => updateParam("negative_prompt", e.target.value)}
-                      placeholder="What to avoid..."
-                      className="w-full h-20 px-3 py-2 rounded-lg border bg-background text-sm resize-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">Seed (optional)</label>
-                    <input
-                      type="number"
-                      value={params.seed || ""}
-                      onChange={(e) => updateParam("seed", parseInt(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
-                      placeholder="Random"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">ControlNet</label>
-                    <select
-                      value={params.controlnet || ""}
-                      onChange={(e) => updateParam("controlnet", e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
-                    >
-                      {CONTROLNET_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium mb-1.5 block">Number of Images</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="4"
-                      value={params.num_images || 1}
-                      onChange={(e) => updateParam("num_images", parseInt(e.target.value) || 1)}
-                      className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
-                    />
-                  </div>
-                </>
-              )}
-
-              {(effectiveCategory === "video_generation" || effectiveCategory === "video_edit" || effectiveCategory === "video_extension") && (
-                <div>
-                  <label className="text-xs font-medium mb-1.5 block">Seed (optional)</label>
-                  <input
-                    type="number"
-                    value={params.seed || ""}
-                    onChange={(e) => updateParam("seed", parseInt(e.target.value) || 0)}
-                    className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
-                    placeholder="Random"
-                  />
+            <div className="p-3">
+              {isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading...
                 </div>
-              )}
-
-              {effectiveCategory === "embedding" && (
-                <div className="text-sm text-muted-foreground text-center py-4">
-                  <Database className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  No additional parameters for embeddings
+              ) : deployments.length === 0 ? (
+                <div className="text-sm text-muted-foreground flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  No deployments
                 </div>
+              ) : (
+                <select
+                  value={selectedDeploymentId || ""}
+                  onChange={(e) => {
+                    const dep = deployments.find((d) => d.id === e.target.value);
+                    if (dep) handleDeploymentChange(dep);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
+                >
+                  {deployments.map((dep) => (
+                    <option key={dep.id} value={dep.id}>
+                      {dep.name}
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
           </div>
+
+          {selectedDeployment && effectiveCategory === "inference" && <ChatParamsPanel />}
+          {selectedDeployment && effectiveCategory === "image" && <ImageParamsPanel />}
+          {selectedDeployment && effectiveCategory === "video" && <VideoParamsPanel />}
+          {selectedDeployment && effectiveCategory === "embedding" && <EmbeddingInfoPanel />}
 
           <div className="rounded-xl border bg-card shadow-sm">
             <div className="p-3 border-b bg-muted/30">
@@ -355,7 +217,7 @@ export default function Sandbox() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Type</span>
-                <span className="capitalize">{category.replace("_", " ")}</span>
+                <span className="capitalize">{effectiveCategory}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Status</span>
@@ -368,7 +230,7 @@ export default function Sandbox() {
           </div>
         </div>
 
-        <div className="lg:col-span-8 xl:col-span-9">
+        <div className="lg:col-span-9">
           {!selectedDeployment ? (
             <div className="rounded-xl border bg-card p-12 shadow-sm text-center">
               <Sparkles className="w-16 h-16 mx-auto text-muted-foreground/20 mb-4" />
@@ -379,27 +241,10 @@ export default function Sandbox() {
             </div>
           ) : (
             <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-              <div className="border-b p-3 bg-muted/30 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {effectiveCategory === "inference" && <MessageSquare className="w-4 h-4" />}
-                  {effectiveCategory === "embedding" && <Database className="w-4 h-4" />}
-                  {effectiveCategory === "image_generation" && <Image className="w-4 h-4" />}
-                  {effectiveCategory === "image_edit" && <Wand2 className="w-4 h-4" />}
-                  {(effectiveCategory === "video_generation" || effectiveCategory === "video_edit" || effectiveCategory === "video_extension") && <Video className="w-4 h-4" />}
-                  <span className="font-medium text-sm capitalize">{category.replace("_", " ")}</span>
-                </div>
-                <span className="text-xs text-muted-foreground font-mono">{selectedDeployment.modelName}</span>
-              </div>
-
-              <div className="min-h-[500px]">
-                {effectiveCategory === "inference" && <ChatInterface deployment={selectedDeployment} params={params} />}
-                {effectiveCategory === "embedding" && <EmbeddingInterface deployment={selectedDeployment} />}
-                {effectiveCategory === "image_generation" && <ImageGenerationInterface deployment={selectedDeployment} params={params} />}
-                {effectiveCategory === "image_edit" && <ImageEditInterface deployment={selectedDeployment} />}
-                {effectiveCategory === "video_generation" && <VideoGenerationInterface deployment={selectedDeployment} />}
-                {effectiveCategory === "video_edit" && <VideoEditInterface deployment={selectedDeployment} />}
-                {effectiveCategory === "video_extension" && <VideoExtensionInterface deployment={selectedDeployment} />}
-              </div>
+              {effectiveCategory === "inference" && <InferencePanel deployment={selectedDeployment} />}
+              {effectiveCategory === "embedding" && <EmbeddingPanel deployment={selectedDeployment} />}
+              {effectiveCategory === "image" && <ImagePanel deployment={selectedDeployment} />}
+              {effectiveCategory === "video" && <VideoPanel deployment={selectedDeployment} />}
             </div>
           )}
         </div>
@@ -408,7 +253,401 @@ export default function Sandbox() {
   );
 }
 
-function ChatInterface({ deployment, params }: { deployment: Deployment; params: GenerationParams }) {
+function ChatParamsPanel() {
+  const [params, setParams] = useState<ChatParams>({
+    temperature: 0.7,
+    max_tokens: 8192,
+    top_p: 0.95,
+    stream: false,
+  });
+
+  const updateParam = <K extends keyof ChatParams>(key: K, value: ChatParams[K]) => {
+    setParams((prev) => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div className="rounded-xl border bg-card shadow-sm">
+      <div className="p-3 border-b bg-muted/30">
+        <h3 className="text-sm font-medium">Parameters</h3>
+      </div>
+      <div className="p-3 space-y-4">
+        <div>
+          <label className="text-xs font-medium mb-1.5 flex items-center gap-1">
+            <Hash className="w-3 h-3" />
+            Temperature
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min="0"
+              max="2"
+              step="0.01"
+              value={params.temperature}
+              onChange={(e) => updateParam("temperature", parseFloat(e.target.value))}
+              className="flex-1"
+            />
+            <span className="text-xs w-10 text-right">{params.temperature.toFixed(2)}</span>
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium mb-1.5 flex items-center gap-1">
+            <Maximize2 className="w-3 h-3" />
+            Max Tokens
+          </label>
+          <input
+            type="number"
+            value={params.max_tokens}
+            onChange={(e) => updateParam("max_tokens", parseInt(e.target.value) || 0)}
+            className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium mb-1.5 flex items-center gap-1">
+            <Layers className="w-3 h-3" />
+            Top P
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={params.top_p}
+              onChange={(e) => updateParam("top_p", parseFloat(e.target.value))}
+              className="flex-1"
+            />
+            <span className="text-xs w-10 text-right">{params.top_p.toFixed(2)}</span>
+          </div>
+        </div>
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium">Stream</label>
+          <button
+            onClick={() => updateParam("stream", !params.stream)}
+            className={cn(
+              "w-10 h-5 rounded-full transition-colors relative",
+              params.stream ? "bg-emerald-500" : "bg-muted"
+            )}
+          >
+            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform", params.stream ? "left-5" : "left-0.5")} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImageParamsPanel() {
+  const [params, setParams] = useState<ImageParams>({
+    prompt: "",
+    n: 1,
+    size: "1024x1024",
+    response_format: "b64_json",
+    quality: "standard",
+    style: "",
+    scheduler: "",
+    negative_prompt: "",
+    seed: 0,
+  });
+
+  const updateParam = <K extends keyof ImageParams>(key: K, value: ImageParams[K]) => {
+    setParams((prev) => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div className="rounded-xl border bg-card shadow-sm">
+      <div className="p-3 border-b bg-muted/30">
+        <h3 className="text-sm font-medium">Image Parameters</h3>
+      </div>
+      <div className="p-3 space-y-4 max-h-[400px] overflow-y-auto">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs font-medium mb-1 block">Number</label>
+            <input
+              type="number"
+              min="1"
+              max="4"
+              value={params.n}
+              onChange={(e) => updateParam("n", Math.min(4, Math.max(1, parseInt(e.target.value) || 1)))}
+              className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium mb-1 block">Size</label>
+            <select
+              value={params.size}
+              onChange={(e) => updateParam("size", e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+            >
+              {IMAGE_SIZES.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium mb-1 block">Format</label>
+          <select
+            value={params.response_format}
+            onChange={(e) => updateParam("response_format", e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+          >
+            <option value="b64_json">Base64</option>
+            <option value="url">URL</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium mb-1 block">Style</label>
+          <select
+            value={params.style || ""}
+            onChange={(e) => updateParam("style", e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+          >
+            {STYLES.map((s) => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium mb-1 block">Scheduler</label>
+          <select
+            value={params.scheduler || ""}
+            onChange={(e) => updateParam("scheduler", e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+          >
+            {SCHEDULERS.map((s) => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium mb-1 block">Seed (0 = random)</label>
+          <input
+            type="number"
+            value={params.seed || ""}
+            onChange={(e) => updateParam("seed", parseInt(e.target.value) || 0)}
+            className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VideoParamsPanel() {
+  const [params, setParams] = useState<VideoGenParams>({
+    prompt: "",
+    size: "720x1280",
+    seconds: 4,
+    n: 1,
+    response_format: "mp4",
+  });
+
+  const updateParam = <K extends keyof VideoGenParams>(key: K, value: VideoGenParams[K]) => {
+    setParams((prev) => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div className="rounded-xl border bg-card shadow-sm">
+      <div className="p-3 border-b bg-muted/30">
+        <h3 className="text-sm font-medium">Video Parameters</h3>
+      </div>
+      <div className="p-3 space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs font-medium mb-1 block">Duration (s)</label>
+            <input
+              type="number"
+              min="4"
+              max="20"
+              value={params.seconds}
+              onChange={(e) => updateParam("seconds", Math.min(20, Math.max(4, parseInt(e.target.value) || 4)))}
+              className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium mb-1 block">Number</label>
+            <input
+              type="number"
+              min="1"
+              max="2"
+              value={params.n}
+              onChange={(e) => updateParam("n", Math.min(2, Math.max(1, parseInt(e.target.value) || 1)))}
+              className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium mb-1 block">Resolution</label>
+          <select
+            value={params.size}
+            onChange={(e) => updateParam("size", e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border bg-background text-sm"
+          >
+            {VIDEO_SIZES.map((s) => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmbeddingInfoPanel() {
+  return (
+    <div className="rounded-xl border bg-card shadow-sm">
+      <div className="p-3 border-b bg-muted/30">
+        <h3 className="text-sm font-medium">Info</h3>
+      </div>
+      <div className="p-3 text-sm text-muted-foreground text-center">
+        No additional parameters for embeddings
+      </div>
+    </div>
+  );
+}
+
+function InferencePanel({ deployment }: { deployment: Deployment }) {
+  const [activeTab, setActiveTab] = useState<"chat" | "completions">("chat");
+  
+  return (
+    <div>
+      <div className="border-b">
+        <div className="flex">
+          <button
+            onClick={() => setActiveTab("chat")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "chat" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <MessageSquare className="w-4 h-4 inline-block mr-2" />
+            Chat
+          </button>
+          <button
+            onClick={() => setActiveTab("completions")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "completions" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Bot className="w-4 h-4 inline-block mr-2" />
+            Completions
+          </button>
+        </div>
+      </div>
+      <div className="p-4">
+        {activeTab === "chat" && <ChatInterface deployment={deployment} />}
+        {activeTab === "completions" && <CompletionsInterface deployment={deployment} />}
+      </div>
+    </div>
+  );
+}
+
+function EmbeddingPanel({ deployment }: { deployment: Deployment }) {
+  return (
+    <div className="p-4">
+      <EmbeddingInterface deployment={deployment} />
+    </div>
+  );
+}
+
+function ImagePanel({ deployment }: { deployment: Deployment }) {
+  const [activeTab, setActiveTab] = useState<"generate" | "edit" | "variations">("generate");
+  
+  return (
+    <div>
+      <div className="border-b">
+        <div className="flex">
+          <button
+            onClick={() => setActiveTab("generate")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "generate" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Sparkles className="w-4 h-4 inline-block mr-2" />
+            Generate
+          </button>
+          <button
+            onClick={() => setActiveTab("edit")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "edit" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Wand2 className="w-4 h-4 inline-block mr-2" />
+            Edit
+          </button>
+          <button
+            onClick={() => setActiveTab("variations")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "variations" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Layers className="w-4 h-4 inline-block mr-2" />
+            Variations
+          </button>
+        </div>
+      </div>
+      <div className="p-4">
+        {activeTab === "generate" && <ImageGenerationInterface deployment={deployment} />}
+        {activeTab === "edit" && <ImageEditInterface deployment={deployment} />}
+        {activeTab === "variations" && <ImageVariationInterface deployment={deployment} />}
+      </div>
+    </div>
+  );
+}
+
+function VideoPanel({ deployment }: { deployment: Deployment }) {
+  const [activeTab, setActiveTab] = useState<"generate" | "edit" | "extend">("generate");
+  
+  return (
+    <div>
+      <div className="border-b">
+        <div className="flex">
+          <button
+            onClick={() => setActiveTab("generate")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "generate" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Sparkles className="w-4 h-4 inline-block mr-2" />
+            Generate
+          </button>
+          <button
+            onClick={() => setActiveTab("edit")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "edit" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Wand2 className="w-4 h-4 inline-block mr-2" />
+            Edit
+          </button>
+          <button
+            onClick={() => setActiveTab("extend")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "extend" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <RefreshCw className="w-4 h-4 inline-block mr-2" />
+            Extend
+          </button>
+        </div>
+      </div>
+      <div className="p-4">
+        {activeTab === "generate" && <VideoGenerationInterface deployment={deployment} />}
+        {activeTab === "edit" && <VideoEditInterface deployment={deployment} />}
+        {activeTab === "extend" && <VideoExtensionInterface deployment={deployment} />}
+      </div>
+    </div>
+  );
+}
+
+function ChatInterface({ deployment }: { deployment: Deployment }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -442,17 +681,6 @@ function ChatInterface({ deployment, params }: { deployment: Deployment; params:
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
-
-      const requestBody: Record<string, unknown> = {
-        model: deployment.modelName,
-        messages: fullMessages,
-        stream: params.stream,
-      };
-
-      if (params.temperature > 0) requestBody.temperature = params.temperature;
-      if (params.max_tokens > 0) requestBody.max_tokens = params.max_tokens;
-      if (params.top_p > 0) requestBody.top_p = params.top_p;
-
       const response = await fetch(`${inferenceBaseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: {
@@ -460,7 +688,10 @@ function ChatInterface({ deployment, params }: { deployment: Deployment; params:
           "Authorization": `Bearer ${token}`,
           "x-sandbox": "true",
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          model: deployment.modelName,
+          messages: fullMessages,
+        }),
       });
 
       if (!response.ok) {
@@ -468,71 +699,23 @@ function ChatInterface({ deployment, params }: { deployment: Deployment; params:
         throw new Error(err.detail || `API Error: ${response.status}`);
       }
 
-      if (params.stream) {
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        let assistantContent = "";
-
-        const assistantMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "",
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
-
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value);
-            const lines = chunk.split("\n");
-            for (const line of lines) {
-              if (line.startsWith("data: ")) {
-                const data = line.slice(6);
-                if (data === "[DONE]") continue;
-                try {
-                  const parsed = JSON.parse(data);
-                  const delta = parsed.choices?.[0]?.delta?.content || "";
-                  assistantContent += delta;
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === assistantMessage.id ? { ...m, content: assistantContent } : m
-                    )
-                  );
-                } catch {
-                  // Ignore parsing errors for streaming
-                }
-              }
-            }
-          }
-        }
-      } else {
-        const data = await response.json();
-        const assistantMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: data.choices?.[0]?.message?.content || "No response generated",
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to generate response");
-      const errorMessage: ChatMessage = {
+      const data = await response.json();
+      const assistantMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "Error: Failed to get response from the model.",
+        content: data.choices?.[0]?.message?.content || "No response generated",
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to generate response");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[500px]">
+    <div className="flex flex-col h-[450px]">
       <div className="border-b">
         <button
           onClick={() => setShowSettings(!showSettings)}
@@ -567,7 +750,7 @@ function ChatInterface({ deployment, params }: { deployment: Deployment; params:
             <ChatMessageItem key={message.id} message={message} />
           ))
         )}
-        {isLoading && !params.stream && (
+        {isLoading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="w-4 h-4 animate-spin" />
             Generating...
@@ -599,40 +782,82 @@ function ChatInterface({ deployment, params }: { deployment: Deployment; params:
   );
 }
 
+function CompletionsInterface({ deployment }: { deployment: Deployment }) {
+  const [prompt, setPrompt] = useState("");
+  const [response, setResponse] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!prompt.trim() || isLoading) return;
+    setIsLoading(true);
+    try {
+      const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
+      const token = getToken();
+      const res = await fetch(`${inferenceBaseUrl}/v1/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "x-sandbox": "true",
+        },
+        body: JSON.stringify({
+          model: deployment.modelName,
+          prompt: prompt.trim(),
+          max_tokens: 1024,
+        }),
+      });
+      if (!res.ok) throw new Error(`API Error: ${res.status}`);
+      const data = await res.json();
+      setResponse(data.choices?.[0]?.text || "No response");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-[450px]">
+      <div className="flex-1 space-y-3">
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Enter your prompt..."
+          className="w-full h-24 px-3 py-2 rounded-lg border bg-background text-sm resize-none"
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={!prompt.trim() || isLoading}
+          className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+        >
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate"}
+        </button>
+        {response && (
+          <div className="p-3 bg-muted rounded-lg border text-sm whitespace-pre-wrap">
+            {response}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ChatMessageItem({ message }: { message: ChatMessage }) {
   const [copied, setCopied] = useState(false);
-
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
   return (
     <div className={cn("flex gap-3", message.role === "user" ? "flex-row-reverse" : "flex-row")}>
-      <div
-        className={cn(
-          "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
-          message.role === "user" ? "bg-emerald-100 dark:bg-emerald-900/30" : "bg-slate-100 dark:bg-slate-800"
-        )}
-      >
-        {message.role === "user" ? (
-          <User className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-        ) : (
-          <Bot className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-        )}
+      <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0", message.role === "user" ? "bg-emerald-100 dark:bg-emerald-900/30" : "bg-slate-100 dark:bg-slate-800")}>
+        {message.role === "user" ? <User className="w-4 h-4 text-emerald-600" /> : <Bot className="w-4 h-4 text-slate-600" />}
       </div>
-      <div
-        className={cn(
-          "flex-1 max-w-[85%] rounded-lg p-3",
-          message.role === "user"
-            ? "bg-emerald-500/10 border border-emerald-500/20"
-            : "bg-muted border border-border"
-        )}
-      >
+      <div className={cn("flex-1 max-w-[85%] rounded-lg p-3", message.role === "user" ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-muted border border-border")}>
         <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         <div className="flex justify-end mt-2">
-          <button onClick={handleCopy} className="p-1 hover:bg-accent rounded transition-colors" title="Copy">
+          <button onClick={handleCopy} className="p-1 hover:bg-accent rounded">
             {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
           </button>
         </div>
@@ -649,38 +874,22 @@ function EmbeddingInterface({ deployment }: { deployment: Deployment }) {
 
   const handleGenerate = async () => {
     if (!input.trim() || isLoading) return;
-
     setIsLoading(true);
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
       const response = await fetch(`${inferenceBaseUrl}/v1/embeddings`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-sandbox": "true",
-        },
-        body: JSON.stringify({
-          model: deployment.modelName,
-          input: input.trim(),
-        }),
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        body: JSON.stringify({ model: deployment.modelName, input: input.trim() }),
       });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `API Error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
       const embedding = data.data?.[0]?.embedding;
-      if (embedding) {
-        setEmbeddings(embedding);
-      } else {
-        throw new Error("No embedding returned");
-      }
+      if (embedding) setEmbeddings(embedding);
+      else throw new Error("No embedding returned");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to generate embeddings");
+      toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
     }
@@ -695,57 +904,31 @@ function EmbeddingInterface({ deployment }: { deployment: Deployment }) {
   };
 
   return (
-    <div className="flex flex-col h-[500px]">
-      <div className="p-4 border-b">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Enter text to generate embeddings..."
-          className="w-full h-32 px-3 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-emerald-500 outline-none resize-none"
-          disabled={isLoading}
-        />
-        <div className="flex justify-between items-center mt-3">
-          <button
-            onClick={handleGenerate}
-            disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors inline-flex items-center gap-2"
-          >
-            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            Compute Embeddings
+    <div className="flex flex-col h-[450px]">
+      <div className="p-4 border-b space-y-3">
+        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Enter text to embed..." className="w-full h-24 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
+        <div className="flex justify-between items-center">
+          <button onClick={handleGenerate} disabled={!input.trim() || isLoading} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Compute"} Embeddings
           </button>
-          {embeddings && (
-            <span className="text-xs text-muted-foreground">
-              Dimensions: {embeddings.length}
-            </span>
-          )}
+          {embeddings && <span className="text-xs text-muted-foreground">Dimensions: {embeddings.length}</span>}
         </div>
       </div>
-
       <div className="flex-1 overflow-y-auto p-4">
         {embeddings ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="flex justify-between">
               <h4 className="text-sm font-medium">Embedding Vector</h4>
-              <button
-                onClick={handleCopy}
-                className="p-1.5 hover:bg-accent rounded transition-colors inline-flex items-center gap-1 text-xs"
-              >
-                {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                {copied ? "Copied!" : "Copy"}
-              </button>
+              <button onClick={handleCopy} className="text-xs">{copied ? "Copied!" : "Copy"}</button>
             </div>
             <div className="p-3 bg-muted rounded-lg border font-mono text-xs overflow-x-auto max-h-64">
-              [{embeddings.slice(0, 50).map((v) => v.toFixed(6)).join(", ")}
-              {embeddings.length > 50 && (
-                <span className="text-muted-foreground"> ... +{embeddings.length - 50} more</span>
-              )}
-              ]
+              [{embeddings.slice(0, 50).map((v) => v.toFixed(6)).join(", ")}{embeddings.length > 50 && ` ... +${embeddings.length - 50} more`}]
             </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <Database className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <p className="text-sm text-muted-foreground">Enter text above to generate embeddings</p>
+            <p className="text-sm text-muted-foreground">Enter text to generate embeddings</p>
           </div>
         )}
       </div>
@@ -753,132 +936,55 @@ function EmbeddingInterface({ deployment }: { deployment: Deployment }) {
   );
 }
 
-function ImageGenerationInterface({ deployment, params }: { deployment: Deployment; params: GenerationParams }) {
+function ImageGenerationInterface({ deployment }: { deployment: Deployment }) {
   const [prompt, setPrompt] = useState("");
-  const [negativePrompt] = useState(params.negative_prompt || "");
+  const [negativePrompt, setNegativePrompt] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || isLoading) return;
-
     setIsLoading(true);
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
       const response = await fetch(`${inferenceBaseUrl}/v1/images/generations`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-sandbox": "true",
-        },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
         body: JSON.stringify({
           model: deployment.modelName,
           prompt: prompt.trim(),
           negative_prompt: negativePrompt.trim() || undefined,
-          aspect_ratio: params.aspect_ratio,
-          seed: params.seed || undefined,
-          controlnet: params.controlnet || undefined,
-          num_images: params.num_images || 1,
+          n: 1,
+          size: "1024x1024",
+          response_format: "b64_json",
         }),
       });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `API Error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      const generatedImages = data.data?.map((img: { url?: string; b64_json?: string }) => {
-        if (img.url) return img.url;
-        if (img.b64_json) return `data:image/png;base64,${img.b64_json}`;
-        return null;
-      }).filter(Boolean);
-
-      if (generatedImages && generatedImages.length > 0) {
-        setImages(generatedImages);
-      } else {
-        throw new Error("No images returned");
-      }
+      const generatedImages = data.data?.map((img: { url?: string; b64_json?: string }) => img.url || (img.b64_json ? `data:image/png;base64,${img.b64_json}` : null)).filter(Boolean);
+      if (generatedImages?.length) setImages(generatedImages);
+      else throw new Error("No images returned");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to generate image");
+      toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDownload = (url: string, idx: number) => {
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `generated-${idx + 1}.png`;
-    link.click();
-  };
-
-  const handleCopy = async (url: string) => {
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-      toast.success("Copied to clipboard!");
-    } catch {
-      toast.error("Failed to copy");
-    }
-  };
-
   return (
-    <div className="flex flex-col h-[500px]">
+    <div className="flex flex-col h-[450px]">
       <div className="p-4 border-b space-y-3">
-        <div>
-          <label className="text-xs font-medium mb-1 block">Prompt</label>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe the image you want to generate..."
-            className="w-full h-20 px-3 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-emerald-500 outline-none resize-none"
-            disabled={isLoading}
-          />
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleGenerate}
-            disabled={!prompt.trim() || isLoading}
-            className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-2"
-          >
-            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            Generate
-          </button>
-        </div>
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the image you want to generate..." className="w-full h-20 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
+        <textarea value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} placeholder="Negative prompt (what to avoid)..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
+        <button onClick={handleGenerate} disabled={!prompt.trim() || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Generate
+        </button>
       </div>
-
       <div className="flex-1 overflow-y-auto p-4">
         {images.length > 0 ? (
           <div className="grid grid-cols-2 gap-4">
-            {images.map((img, idx) => (
-              <div key={idx} className="relative group">
-                <img
-                  src={img}
-                  alt={`Generated ${idx + 1}`}
-                  className="rounded-lg border w-full"
-                />
-                <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => handleDownload(img, idx)}
-                    className="p-1.5 bg-black/50 rounded text-white hover:bg-black/70"
-                    title="Download"
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleCopy(img)}
-                    className="p-1.5 bg-black/50 rounded text-white hover:bg-black/70"
-                    title="Copy"
-                  >
-                    <Copy className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
+            {images.map((img, idx) => <img key={idx} src={img} alt={`Generated ${idx + 1}`} className="rounded-lg border w-full" />)}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center">
@@ -896,142 +1002,97 @@ function ImageEditInterface({ deployment }: { deployment: Deployment }) {
   const [image, setImage] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [mode, setMode] = useState<"edit" | "variation">("edit");
 
   const handleGenerate = async () => {
-    if ((!prompt.trim() && !image.trim()) || isLoading) return;
-
+    if (!prompt.trim() || !image || isLoading) return;
     setIsLoading(true);
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
       const response = await fetch(`${inferenceBaseUrl}/v1/images/edits`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-sandbox": "true",
-        },
-        body: JSON.stringify({
-          model: deployment.modelName,
-          prompt: prompt.trim(),
-          image: image.trim() || undefined,
-          n: 1,
-        }),
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        body: JSON.stringify({ model: deployment.modelName, prompt: prompt.trim(), image, n: 1, size: "1024x1024" }),
       });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `API Error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      const generatedImages = data.data?.map((img: { url?: string; b64_json?: string }) => {
-        if (img.url) return img.url;
-        if (img.b64_json) return `data:image/png;base64,${img.b64_json}`;
-        return null;
-      }).filter(Boolean);
-
-      if (generatedImages && generatedImages.length > 0) {
-        setImages(generatedImages);
-      } else {
-        throw new Error("No images returned");
-      }
+      const generatedImages = data.data?.map((img: { url?: string; b64_json?: string }) => img.url || (img.b64_json ? `data:image/png;base64,${img.b64_json}` : null)).filter(Boolean);
+      if (generatedImages?.length) setImages(generatedImages);
+      else throw new Error("No images returned");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to edit image");
+      toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[500px]">
+    <div className="flex flex-col h-[450px]">
       <div className="p-4 border-b space-y-3">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setMode("edit")}
-            className={cn(
-              "px-3 py-1.5 rounded text-xs font-medium",
-              mode === "edit" ? "bg-emerald-600 text-white" : "bg-muted"
-            )}
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => setMode("variation")}
-            className={cn(
-              "px-3 py-1.5 rounded text-xs font-medium",
-              mode === "variation" ? "bg-emerald-600 text-white" : "bg-muted"
-            )}
-          >
-            Variation
-          </button>
+        <div className="border-2 border-dashed rounded-lg p-4 text-center">
+          <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = () => setImage((r.result as string).split(",")[1]); r.readAsDataURL(f); } }} className="hidden" id="img-edit" />
+          <label htmlFor="img-edit" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{image ? "Image loaded" : "Upload image"}</p></label>
         </div>
-        <div>
-          <label className="text-xs font-medium mb-1 block">Upload Image</label>
-          <div className="border-2 border-dashed rounded-lg p-6 text-center">
-            <input
-              type="file"
-              accept="image/*"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    const base64 = (reader.result as string).split(",")[1];
-                    setImage(base64);
-                  };
-                  reader.readAsDataURL(file);
-                }
-              }}
-              className="hidden"
-              id="image-upload"
-            />
-            <label htmlFor="image-upload" className="cursor-pointer">
-              <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-              <p className="text-xs text-muted-foreground">
-                {image ? "Image loaded" : "Click to upload image"}
-              </p>
-            </label>
-          </div>
-        </div>
-        <div>
-          <label className="text-xs font-medium mb-1 block">Prompt {mode === "edit" && "(optional)"}</label>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={mode === "edit" ? "Describe the edit..." : "Describe the variation..."}
-            className="w-full h-16 px-3 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-emerald-500 outline-none resize-none"
-            disabled={isLoading}
-          />
-        </div>
-        <button
-          onClick={handleGenerate}
-          disabled={!image || isLoading}
-          className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-2"
-        >
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-          {mode === "edit" ? "Edit Image" : "Create Variation"}
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the edit..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
+        <button onClick={handleGenerate} disabled={!image || !prompt.trim() || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Edit Image"}
         </button>
       </div>
-
       <div className="flex-1 overflow-y-auto p-4">
         {images.length > 0 ? (
-          <div className="grid grid-cols-2 gap-4">
-            {images.map((img, idx) => (
-              <img
-                key={idx}
-                src={img}
-                alt={`Edited ${idx + 1}`}
-                className="rounded-lg border"
-              />
-            ))}
-          </div>
+          <div className="grid grid-cols-2 gap-4">{images.map((img, idx) => <img key={idx} src={img} alt={`Edited ${idx + 1}`} className="rounded-lg border" />)}</div>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <Wand2 className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <p className="text-sm text-muted-foreground">Upload an image to edit</p>
-          </div>
+          <div className="flex flex-col items-center justify-center h-full text-center"><Wand2 className="w-12 h-12 text-muted-foreground/20 mb-3" /><p className="text-sm text-muted-foreground">Upload an image to edit</p></div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ImageVariationInterface({ deployment }: { deployment: Deployment }) {
+  const [image, setImage] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleGenerate = async () => {
+    if (!image || isLoading) return;
+    setIsLoading(true);
+    try {
+      const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
+      const token = getToken();
+      const response = await fetch(`${inferenceBaseUrl}/v1/images/variations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        body: JSON.stringify({ model: deployment.modelName, image, n: 1, size: "1024x1024" }),
+      });
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
+      const data = await response.json();
+      const generatedImages = data.data?.map((img: { url?: string; b64_json?: string }) => img.url || (img.b64_json ? `data:image/png;base64,${img.b64_json}` : null)).filter(Boolean);
+      if (generatedImages?.length) setImages(generatedImages);
+      else throw new Error("No images returned");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-[450px]">
+      <div className="p-4 border-b space-y-3">
+        <div className="border-2 border-dashed rounded-lg p-4 text-center">
+          <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = () => setImage((r.result as string).split(",")[1]); r.readAsDataURL(f); } }} className="hidden" id="img-var" />
+          <label htmlFor="img-var" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{image ? "Image loaded" : "Upload image"}</p></label>
+        </div>
+        <button onClick={handleGenerate} disabled={!image || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create Variation"}
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        {images.length > 0 ? (
+          <div className="grid grid-cols-2 gap-4">{images.map((img, idx) => <img key={idx} src={img} alt={`Variation ${idx + 1}`} className="rounded-lg border" />)}</div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-center"><Layers className="w-12 h-12 text-muted-foreground/20 mb-3" /><p className="text-sm text-muted-foreground">Upload an image to create variations</p></div>
         )}
       </div>
     </div>
@@ -1040,82 +1101,48 @@ function ImageEditInterface({ deployment }: { deployment: Deployment }) {
 
 function VideoGenerationInterface({ deployment }: { deployment: Deployment }) {
   const [prompt, setPrompt] = useState("");
+  const [imageRef, setImageRef] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || isLoading) return;
-
     setIsLoading(true);
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
+      const body: Record<string, unknown> = { model: deployment.modelName, prompt: prompt.trim(), seconds: 4, n: 1 };
+      if (imageRef.trim()) body.input_reference = imageRef.trim();
       const response = await fetch(`${inferenceBaseUrl}/v1/videos/generations`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-sandbox": "true",
-        },
-        body: JSON.stringify({
-          model: deployment.modelName,
-          prompt: prompt.trim(),
-        }),
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        body: JSON.stringify(body),
       });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `API Error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      if (data.url || data.video_url) {
-        setVideoUrl(data.url || data.video_url);
-      } else {
-        throw new Error("No video returned");
-      }
+      if (data.url || data.video_url) setVideoUrl(data.url || data.video_url);
+      else throw new Error("No video returned");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to generate video");
+      toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[500px]">
+    <div className="flex flex-col h-[450px]">
       <div className="p-4 border-b space-y-3">
-        <div>
-          <label className="text-xs font-medium mb-1 block">Prompt</label>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe the video you want to generate..."
-            className="w-full h-24 px-3 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-emerald-500 outline-none resize-none"
-            disabled={isLoading}
-          />
-        </div>
-        <button
-          onClick={handleGenerate}
-          disabled={!prompt.trim() || isLoading}
-          className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-2"
-        >
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
-          Generate Video
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the video you want to generate..." className="w-full h-20 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
+        <input value={imageRef} onChange={(e) => setImageRef(e.target.value)} placeholder="Image URL for image-to-video (optional)..." className="w-full px-3 py-2 rounded-lg border bg-background text-sm" disabled={isLoading} />
+        <button onClick={handleGenerate} disabled={!prompt.trim() || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate Video"}
         </button>
       </div>
-
       <div className="flex-1 overflow-y-auto p-4">
         {videoUrl ? (
-          <video
-            src={videoUrl}
-            controls
-            className="rounded-lg border w-full max-h-80 mx-auto"
-          />
+          <video src={videoUrl} controls className="rounded-lg border w-full max-h-80 mx-auto" />
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <Video className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <p className="text-sm text-muted-foreground">Enter a prompt to generate a video</p>
-          </div>
+          <div className="flex flex-col items-center justify-center h-full text-center"><Video className="w-12 h-12 text-muted-foreground/20 mb-3" /><p className="text-sm text-muted-foreground">Enter a prompt to generate a video</p></div>
         )}
       </div>
     </div>
@@ -1129,107 +1156,44 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleGenerate = async () => {
-    if (!video.trim() || isLoading) return;
-
+    if (!video || isLoading) return;
     setIsLoading(true);
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
       const response = await fetch(`${inferenceBaseUrl}/v1/videos/edits`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-sandbox": "true",
-        },
-        body: JSON.stringify({
-          model: deployment.modelName,
-          prompt: prompt.trim() || undefined,
-          video: video.trim(),
-        }),
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        body: JSON.stringify({ model: deployment.modelName, prompt: prompt.trim() || undefined, video, seconds: 4 }),
       });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `API Error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      if (data.url || data.video_url) {
-        setVideoUrl(data.url || data.video_url);
-      } else {
-        throw new Error("No video returned");
-      }
+      if (data.url || data.video_url) setVideoUrl(data.url || data.video_url);
+      else throw new Error("No video returned");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to edit video");
+      toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[500px]">
+    <div className="flex flex-col h-[450px]">
       <div className="p-4 border-b space-y-3">
-        <div>
-          <label className="text-xs font-medium mb-1 block">Upload Video</label>
-          <div className="border-2 border-dashed rounded-lg p-6 text-center">
-            <input
-              type="file"
-              accept="video/*"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    const base64 = (reader.result as string).split(",")[1];
-                    setVideo(base64);
-                  };
-                  reader.readAsDataURL(file);
-                }
-              }}
-              className="hidden"
-              id="video-upload"
-            />
-            <label htmlFor="video-upload" className="cursor-pointer">
-              <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-              <p className="text-xs text-muted-foreground">
-                {video ? "Video loaded" : "Click to upload video"}
-              </p>
-            </label>
-          </div>
+        <div className="border-2 border-dashed rounded-lg p-4 text-center">
+          <input type="file" accept="video/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = () => setVideo((r.result as string).split(",")[1]); r.readAsDataURL(f); } }} className="hidden" id="vid-edit" />
+          <label htmlFor="vid-edit" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{video ? "Video loaded" : "Upload video"}</p></label>
         </div>
-        <div>
-          <label className="text-xs font-medium mb-1 block">Prompt (optional)</label>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe how to edit the video..."
-            className="w-full h-16 px-3 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-emerald-500 outline-none resize-none"
-            disabled={isLoading}
-          />
-        </div>
-        <button
-          onClick={handleGenerate}
-          disabled={!video || isLoading}
-          className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-2"
-        >
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-          Edit Video
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the edit (optional)..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
+        <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Edit Video"}
         </button>
       </div>
-
       <div className="flex-1 overflow-y-auto p-4">
         {videoUrl ? (
-          <video
-            src={videoUrl}
-            controls
-            className="rounded-lg border w-full max-h-80 mx-auto"
-          />
+          <video src={videoUrl} controls className="rounded-lg border w-full max-h-80 mx-auto" />
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <Wand2 className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <p className="text-sm text-muted-foreground">Upload a video to edit</p>
-          </div>
+          <div className="flex flex-col items-center justify-center h-full text-center"><Wand2 className="w-12 h-12 text-muted-foreground/20 mb-3" /><p className="text-sm text-muted-foreground">Upload a video to edit</p></div>
         )}
       </div>
     </div>
@@ -1237,101 +1201,50 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
 }
 
 function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
+  const [prompt, setPrompt] = useState("");
   const [video, setVideo] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleGenerate = async () => {
-    if (!video.trim() || isLoading) return;
-
+    if (!video || isLoading) return;
     setIsLoading(true);
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
       const response = await fetch(`${inferenceBaseUrl}/v1/videos/extensions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-sandbox": "true",
-        },
-        body: JSON.stringify({
-          model: deployment.modelName,
-          video: video.trim(),
-        }),
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        body: JSON.stringify({ model: deployment.modelName, prompt: prompt.trim() || undefined, video, seconds: 8 }),
       });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `API Error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      if (data.url || data.video_url) {
-        setVideoUrl(data.url || data.video_url);
-      } else {
-        throw new Error("No video returned");
-      }
+      if (data.url || data.video_url) setVideoUrl(data.url || data.video_url);
+      else throw new Error("No video returned");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to extend video");
+      toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-[500px]">
+    <div className="flex flex-col h-[450px]">
       <div className="p-4 border-b space-y-3">
-        <div>
-          <label className="text-xs font-medium mb-1 block">Upload Video to Extend</label>
-          <div className="border-2 border-dashed rounded-lg p-6 text-center">
-            <input
-              type="file"
-              accept="video/*"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    const base64 = (reader.result as string).split(",")[1];
-                    setVideo(base64);
-                  };
-                  reader.readAsDataURL(file);
-                }
-              }}
-              className="hidden"
-              id="video-extend-upload"
-            />
-            <label htmlFor="video-extend-upload" className="cursor-pointer">
-              <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-              <p className="text-xs text-muted-foreground">
-                {video ? "Video loaded" : "Click to upload video"}
-              </p>
-            </label>
-          </div>
+        <div className="border-2 border-dashed rounded-lg p-4 text-center">
+          <input type="file" accept="video/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = () => setVideo((r.result as string).split(",")[1]); r.readAsDataURL(f); } }} className="hidden" id="vid-ext" />
+          <label htmlFor="vid-ext" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{video ? "Video loaded" : "Upload video to extend"}</p></label>
         </div>
-        <button
-          onClick={handleGenerate}
-          disabled={!video || isLoading}
-          className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-2"
-        >
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          Extend Video
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe how to extend (optional)..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
+        <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Extend Video"}
         </button>
       </div>
-
       <div className="flex-1 overflow-y-auto p-4">
         {videoUrl ? (
-          <video
-            src={videoUrl}
-            controls
-            className="rounded-lg border w-full max-h-80 mx-auto"
-          />
+          <video src={videoUrl} controls className="rounded-lg border w-full max-h-80 mx-auto" />
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <RefreshCw className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <p className="text-sm text-muted-foreground">Upload a video to extend</p>
-          </div>
+          <div className="flex flex-col items-center justify-center h-full text-center"><RefreshCw className="w-12 h-12 text-muted-foreground/20 mb-3" /><p className="text-sm text-muted-foreground">Upload a video to extend</p></div>
         )}
       </div>
     </div>
@@ -1339,14 +1252,8 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
 }
 
 function getCategoryFromModelType(modelType?: string, engine?: string): ModelCategory {
-  if (modelType === "embedding" || engine === "infinity" || engine === "tei") {
-    return "embedding";
-  }
-  if (modelType === "image_generation" || engine === "inferia-diffusion") {
-    return "image_generation";
-  }
-  if (modelType === "video_generation") {
-    return "video_generation";
-  }
+  if (modelType === "embedding" || engine === "infinity" || engine === "tei") return "embedding";
+  if (modelType === "image_generation" || engine === "inferia-diffusion") return "image";
+  if (modelType === "video_generation") return "video";
   return "inference";
 }

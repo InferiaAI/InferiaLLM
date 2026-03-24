@@ -235,6 +235,31 @@ async def create_image_edit(
     )
 
 
+@app.post("/v1/images/variations")
+async def create_image_variation(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
+):
+    """
+    Image variations endpoint - OpenAI compatible.
+    Creates variations of the input image.
+    """
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
+    body = await parse_json_body(request)
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_image_variations(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+        sandbox=is_sandbox,
+    )
+
+
 @app.post("/v1/videos/generations")
 async def create_video(
     request: Request,

@@ -219,6 +219,12 @@ class GatewayService:
             endpoint.endswith("/chat/completions")
             or endpoint.endswith("/messages")
             or endpoint.endswith("/embeddings")
+            or endpoint.endswith("/images/generations")
+            or endpoint.endswith("/images/edits")
+            or endpoint.endswith("/images/variations")
+            or endpoint.endswith("/videos/generations")
+            or endpoint.endswith("/videos/edits")
+            or endpoint.endswith("/videos/extensions")
         ):
             return endpoint
 
@@ -227,6 +233,13 @@ class GatewayService:
         if endpoint.endswith("/v1") or endpoint.endswith("/openai"):
             if chat_path.startswith("/v1"):
                 return endpoint + chat_path[3:]  # Skip the /v1 part
+            return endpoint + chat_path
+
+        # If endpoint already contains /generate (for InferaDiffusion video endpoints)
+        # Video paths already include /generate, so we need to strip it to avoid duplication
+        if endpoint.endswith("/generate"):
+            if chat_path.startswith("/generate"):
+                return endpoint + chat_path[9:]  # Skip /generate
             return endpoint + chat_path
 
         # Standard case - just append the path
