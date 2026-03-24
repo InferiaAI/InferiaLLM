@@ -146,6 +146,14 @@ class Settings(BaseSettings):
         description="Maximum number of entries in successful quota check cache",
     )
 
+    # JWT Settings (for sandbox mode)
+    jwt_secret_key: str = Field(
+        default="placeholder-secret-key-at-least-32-chars-long",
+        alias="JWT_SECRET_KEY",
+        validation_alias="JWT_SECRET_KEY",
+    )
+    jwt_algorithm: str = "HS256"
+
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""

@@ -23,7 +23,7 @@ class OrchestrationService:
     """
 
     @staticmethod
-    async def list_models(api_key: str):
+    async def list_models(api_key: str, sandbox: bool = False):
         """
         List available models.
         """
@@ -37,6 +37,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle embedding requests.
@@ -54,7 +55,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for embedding model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="embedding"
+            api_key, model, model_type="embedding", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -173,6 +174,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle text-to-image generation requests (POST /v1/images/generations).
@@ -190,7 +192,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for image model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="image_generation"
+            api_key, model, model_type="image_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -441,14 +443,15 @@ class OrchestrationService:
             )
 
     @staticmethod
-    async def handle_video_generation(
+    async def handle_image_edit(
         api_key: str,
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
-        Handle text-to-video generation requests (POST /v1/videos/generations).
+        Handle image-to-image edit requests (POST /v1/images/edits).
         Uses InferaDiffusion backend.
         Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
         """
@@ -461,9 +464,9 @@ class OrchestrationService:
         if not model or not prompt:
             raise HTTPException(status_code=400, detail="Model and prompt are required")
 
-        # 1. Resolve Context for video model
+        # 1. Resolve Context for image model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="video_generation"
+            api_key, model, model_type="image_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -577,6 +580,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle video editing requests (POST /v1/videos/edits).
@@ -598,7 +602,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for video model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="video_generation"
+            api_key, model, model_type="video_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -715,6 +719,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         """
         Handle video extension requests (POST /v1/videos/extensions).
@@ -736,7 +741,7 @@ class OrchestrationService:
 
         # 1. Resolve Context for video model
         context = await GatewayService.resolve_context(
-            api_key, model, model_type="video_generation"
+            api_key, model, model_type="video_generation", sandbox=sandbox
         )
 
         deployment = context["deployment"]
@@ -853,6 +858,7 @@ class OrchestrationService:
         body: Dict,
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
+        sandbox: bool = False,
     ):
         start_time = time.time()
         applied_policies = []
@@ -866,7 +872,7 @@ class OrchestrationService:
             )
 
         # 1. Resolve Context
-        context = await GatewayService.resolve_context(api_key, model)
+        context = await GatewayService.resolve_context(api_key, model, sandbox=sandbox)
 
         deployment = context["deployment"]
         deployment_id = deployment.get("id")

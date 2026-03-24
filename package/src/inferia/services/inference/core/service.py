@@ -16,10 +16,12 @@ logger = logging.getLogger(__name__)
 class GatewayService:
     @staticmethod
     async def resolve_context(
-        api_key: str, model: str, model_type: str = "inference"
+        api_key: str, model: str, model_type: str = "inference", sandbox: bool = False
     ) -> Dict[str, Any]:
         """Resolves deployment context via Filtration Gateway."""
-        context = await api_gateway_client.resolve_context(api_key, model, model_type)
+        context = await api_gateway_client.resolve_context(
+            api_key, model, model_type, sandbox
+        )
 
         if not context.get("valid"):
             raise HTTPException(
@@ -213,7 +215,11 @@ class GatewayService:
         endpoint = endpoint_url.rstrip("/")
 
         # If endpoint already contains the full path, use it as-is
-        if endpoint.endswith("/chat/completions") or endpoint.endswith("/messages") or endpoint.endswith("/embeddings"):
+        if (
+            endpoint.endswith("/chat/completions")
+            or endpoint.endswith("/messages")
+            or endpoint.endswith("/embeddings")
+        ):
             return endpoint
 
         # If endpoint already contains /v1 or /openai (e.g. Groq, Cerebras, Gemini),

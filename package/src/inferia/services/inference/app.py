@@ -7,6 +7,7 @@ then routes to the actual model provider.
 import logging
 import json
 from typing import Optional
+from jose import JWTError, jwt
 
 from inferia.common.schemas.common import HealthCheckResponse
 from inferia.services.inference.client import api_gateway_client
@@ -59,10 +60,27 @@ async def shutdown_event():
     await api_gateway_client.close_client()
 
 
-def extract_api_key(authorization: str) -> str:
+def extract_api_key(authorization: str, sandbox: bool = False) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid API Key format")
-    return authorization.split(" ")[1]
+    token = authorization.split(" ")[1]
+
+    if sandbox:
+        try:
+            payload = jwt.decode(
+                token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+            )
+            if payload.get("type") != "access":
+                raise HTTPException(
+                    status_code=401, detail="Invalid token type for sandbox mode"
+                )
+            return f"sandbox:{payload.get('org_id')}:{payload.get('sub')}"
+        except JWTError:
+            raise HTTPException(
+                status_code=401, detail="Invalid JWT token for sandbox mode"
+            )
+
+    return token
 
 
 def extract_client_ip(request: Request) -> Optional[str]:
@@ -105,12 +123,16 @@ async def parse_json_body(request: Request) -> dict:
 
 
 @app.get("/v1/models")
-async def list_models(authorization: str = Header(None)):
+async def list_models(
+    authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
+):
     """
     List available models.
     """
-    api_key = extract_api_key(authorization)
-    return await OrchestrationService.list_models(api_key)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
+    return await OrchestrationService.list_models(api_key, sandbox=is_sandbox)
 
 
 @app.post("/v1/chat/completions")
@@ -118,12 +140,14 @@ async def create_completion(
     request: Request,
     background_tasks: BackgroundTasks,
     authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
 ):
     """
     Main chat completion endpoint.
     Delegates orchestration to OrchestrationService.
     """
-    api_key = extract_api_key(authorization)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
     body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
@@ -132,6 +156,7 @@ async def create_completion(
         body=body,
         background_tasks=background_tasks,
         ip_address=client_ip,
+        sandbox=is_sandbox,
     )
 
 
@@ -140,12 +165,14 @@ async def create_embeddings(
     request: Request,
     background_tasks: BackgroundTasks,
     authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
 ):
     """
     Embeddings endpoint - OpenAI compatible.
     Supports text embedding models deployed via Infinity or TEI.
     """
-    api_key = extract_api_key(authorization)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
     body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
@@ -154,6 +181,7 @@ async def create_embeddings(
         body=body,
         background_tasks=background_tasks,
         ip_address=client_ip,
+        sandbox=is_sandbox,
     )
 
 
@@ -162,12 +190,14 @@ async def create_image(
     request: Request,
     background_tasks: BackgroundTasks,
     authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
 ):
     """
     Image generation endpoint - OpenAI compatible (text-to-image).
     Supports image generation models deployed via InferaDiffusion.
     """
-    api_key = extract_api_key(authorization)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
     body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
@@ -176,6 +206,7 @@ async def create_image(
         body=body,
         background_tasks=background_tasks,
         ip_address=client_ip,
+        sandbox=is_sandbox,
     )
 
 
@@ -184,12 +215,14 @@ async def create_image_edit(
     request: Request,
     background_tasks: BackgroundTasks,
     authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
 ):
     """
     Image edit endpoint - OpenAI compatible (image-to-image).
     Supports image editing/variation models deployed via InferaDiffusion.
     """
-    api_key = extract_api_key(authorization)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
     body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
@@ -198,6 +231,7 @@ async def create_image_edit(
         body=body,
         background_tasks=background_tasks,
         ip_address=client_ip,
+        sandbox=is_sandbox,
     )
 
 
@@ -206,12 +240,14 @@ async def create_video(
     request: Request,
     background_tasks: BackgroundTasks,
     authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
 ):
     """
     Video generation endpoint - OpenAI compatible (text-to-video and image-to-video).
     Supports video generation models deployed via InferaDiffusion.
     """
-    api_key = extract_api_key(authorization)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
     body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
@@ -220,6 +256,7 @@ async def create_video(
         body=body,
         background_tasks=background_tasks,
         ip_address=client_ip,
+        sandbox=is_sandbox,
     )
 
 
@@ -228,12 +265,14 @@ async def create_video_edit(
     request: Request,
     background_tasks: BackgroundTasks,
     authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
 ):
     """
     Video edit endpoint - OpenAI compatible.
     Supports video editing models deployed via InferaDiffusion.
     """
-    api_key = extract_api_key(authorization)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
     body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
@@ -242,6 +281,7 @@ async def create_video_edit(
         body=body,
         background_tasks=background_tasks,
         ip_address=client_ip,
+        sandbox=is_sandbox,
     )
 
 
@@ -250,12 +290,14 @@ async def create_video_extension(
     request: Request,
     background_tasks: BackgroundTasks,
     authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
 ):
     """
     Video extension endpoint - OpenAI compatible.
     Supports video extension models deployed via InferaDiffusion.
     """
-    api_key = extract_api_key(authorization)
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
     body = await parse_json_body(request)
     client_ip = extract_client_ip(request)
 
@@ -264,4 +306,5 @@ async def create_video_extension(
         body=body,
         background_tasks=background_tasks,
         ip_address=client_ip,
+        sandbox=is_sandbox,
     )
