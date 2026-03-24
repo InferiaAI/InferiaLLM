@@ -28,4 +28,7 @@ export default defineConfig({
     emptyOutDir: true,
     chunkSizeWarningLimit: 1600,
   },
+  esbuild: {
+    drop: process.env.NODE_ENV === "production" ? ["console", "debugger"] : [],
+  },
 })

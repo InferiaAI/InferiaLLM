@@ -141,7 +141,11 @@ export default function ApiKeys() {
                 </div>
             )}
 
-            {loading ? <div>Loading keys...</div> : (
+            {loading ? (
+                <div className="space-y-3">
+                    {[...Array(3)].map((_, i) => <div key={i} className="h-14 bg-muted animate-pulse rounded-lg" />)}
+                </div>
+            ) : (
                 <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
                     <table className="w-full text-sm text-left">
                         <thead className="bg-muted/50 text-muted-foreground border-b dark:bg-muted/20">
@@ -189,7 +193,13 @@ export default function ApiKeys() {
                             ))}
                             {keys.length === 0 && (
                                 <tr>
-                                    <td colSpan={4} className="p-8 text-center text-muted-foreground">No API keys found.</td>
+                                    <td colSpan={4} className="p-12 text-center text-muted-foreground">
+                                        <div className="flex flex-col items-center gap-2">
+                                            <Key className="w-10 h-10 opacity-30" />
+                                            <p className="font-medium">No API keys yet</p>
+                                            <p className="text-xs">Create an API key to start making inference requests.</p>
+                                        </div>
+                                    </td>
                                 </tr>
                             )}
                         </tbody>
