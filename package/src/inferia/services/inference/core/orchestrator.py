@@ -639,6 +639,7 @@ class OrchestrationService:
                 engine,
                 path=video_path,
                 concurrency_key=concurrency_key,
+                timeout=settings.upstream_video_timeout_seconds,
             )
 
             background_tasks.add_task(
@@ -790,6 +791,7 @@ class OrchestrationService:
                 engine,
                 path=video_path,
                 concurrency_key=concurrency_key,
+                timeout=settings.upstream_video_timeout_seconds,
             )
 
             return response_data
@@ -929,6 +931,7 @@ class OrchestrationService:
                 engine,
                 path=video_path,
                 concurrency_key=concurrency_key,
+                timeout=settings.upstream_video_timeout_seconds,
             )
 
             return response_data

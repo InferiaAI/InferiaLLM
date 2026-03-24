@@ -73,6 +73,12 @@ class Settings(BaseSettings):
         alias="UPSTREAM_HTTP_CONNECT_TIMEOUT_SECONDS",
         validation_alias="UPSTREAM_HTTP_CONNECT_TIMEOUT_SECONDS",
     )
+    upstream_video_timeout_seconds: float = Field(
+        default=300.0,
+        alias="UPSTREAM_VIDEO_TIMEOUT_SECONDS",
+        validation_alias="UPSTREAM_VIDEO_TIMEOUT_SECONDS",
+        description="Timeout for video generation requests (default 5 minutes)",
+    )
     upstream_http_max_connections: int = Field(
         default=500,
         alias="UPSTREAM_HTTP_MAX_CONNECTIONS",

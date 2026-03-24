@@ -372,6 +372,29 @@ class InferaDiffusionAdapter(ProviderAdapter):
 
     def transform_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """Returns OpenAI-compatible image/video response format."""
+        logger.debug(f"InferaDiffusion raw response: {response}")
+        if "b64_json" in response:
+            return {
+                "url": f"data:video/mp4;base64,{response['b64_json']}",
+                "video_url": f"data:video/mp4;base64,{response['b64_json']}",
+            }
+        if "video" in response:
+            return {"url": response["video"], "video_url": response["video"]}
+        if "output" in response:
+            return {"url": response["output"], "video_url": response["output"]}
+        if (
+            "data" in response
+            and isinstance(response["data"], list)
+            and len(response["data"]) > 0
+        ):
+            first_item = response["data"][0]
+            if "b64_json" in first_item:
+                return {
+                    "url": f"data:video/mp4;base64,{first_item['b64_json']}",
+                    "video_url": f"data:video/mp4;base64,{first_item['b64_json']}",
+                }
+            if "url" in first_item:
+                return {"url": first_item["url"], "video_url": first_item.get("url")}
         return response
 
     def is_external(self) -> bool:

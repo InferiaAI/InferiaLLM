@@ -320,6 +320,7 @@ class GatewayService:
         engine: str = "vllm",
         path: str = None,
         concurrency_key: str = "default",
+        timeout: float = None,
     ) -> Dict:
         adapter = get_adapter(engine)
         # Use custom path if provided, otherwise use adapter's chat path
@@ -355,10 +356,14 @@ class GatewayService:
             )
 
         client = http_client.get_client()
+        request_timeout = timeout or settings.upstream_http_timeout_seconds
         try:
             async with upstream_concurrency_limiter.limit(concurrency_key):
                 resp = await client.post(
-                    full_url, json=transformed_payload, headers=headers
+                    full_url,
+                    json=transformed_payload,
+                    headers=headers,
+                    timeout=request_timeout,
                 )
                 resp.raise_for_status()
 
