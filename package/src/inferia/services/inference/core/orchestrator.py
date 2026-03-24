@@ -575,6 +575,150 @@ class OrchestrationService:
             )
 
     @staticmethod
+    async def handle_video_generation(
+        api_key: str,
+        body: Dict,
+        background_tasks: BackgroundTasks,
+        ip_address: Optional[str] = None,
+        sandbox: bool = False,
+    ):
+        """
+        Handle text-to-video generation requests (POST /v1/videos/generations).
+        Uses InferaDiffusion backend.
+        Flow: Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
+        """
+        start_time = time.time()
+        applied_policies = []
+
+        # Validation
+        model = body.get("model")
+        prompt = body.get("prompt")
+        if not model or not prompt:
+            raise HTTPException(status_code=400, detail="Model and prompt are required")
+
+        # 1. Resolve Context for video model
+        context = await GatewayService.resolve_context(
+            api_key, model, model_type="video_generation", sandbox=sandbox
+        )
+
+        deployment = context["deployment"]
+        deployment_id = deployment.get("id")
+        concurrency_key = str(deployment_id or model)
+        user_context_id = context["user_id_context"]
+        rate_limit_config = context.get("rate_limit_config")
+        log_payloads = context.get("log_payloads", True)
+
+        # 2. Rate Limit
+        if rate_limit_config and rate_limit_config.get("enabled", True):
+            applied_policies.append("rate_limit")
+            rpm = int(rate_limit_config.get("rpm", 0))
+            if rpm > 0:
+                allowed, wait_time = rate_limiter.check_limit(
+                    f"deployment:{deployment_id}", rpm
+                )
+                if not allowed:
+                    headers = {"Retry-After": str(int(wait_time) + 1)}
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Rate limit exceeded. Limit: {rpm} RPM.",
+                        headers=headers,
+                    )
+
+        # 3. Check Quota
+        applied_policies.append("quota")
+        await api_gateway_client.check_quota(user_context_id, model)
+
+        # 4. Execute Video Generation Request
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "inferia-diffusion")
+
+        adapter = get_adapter(engine)
+
+        # Resolve API key
+        if is_external_engine(engine):
+            credentials = (
+                deployment.get("credentials_json")
+                or deployment.get("configuration")
+                or {}
+            )
+            provider_key = str(
+                credentials.get("api_key")
+                or credentials.get("key")
+                or credentials.get("token")
+                or ""
+            )
+            if credentials.get("model"):
+                body["model"] = credentials["model"]
+            elif deployment.get("inference_model"):
+                body["model"] = deployment["inference_model"]
+        else:
+            provider_key = settings.api_gateway_internal_key or ""
+
+        # Override model name if deployment specifies inference_model
+        if deployment.get("inference_model"):
+            body["model"] = deployment["inference_model"]
+
+        provider_headers = adapter.get_headers(provider_key)
+        provider_payload = adapter.transform_request(body.copy())
+
+        status_code = 200
+        error_message = None
+        n_videos = body.get("n", 1)
+
+        try:
+            if isinstance(adapter, InferaDiffusionAdapter):
+                video_path = adapter.get_video_generation_path()
+            else:
+                video_path = "/v1/videos/generations"
+
+            response_data = await GatewayService.call_upstream(
+                endpoint_url,
+                provider_payload,
+                provider_headers,
+                engine,
+                path=video_path,
+                concurrency_key=concurrency_key,
+            )
+
+            background_tasks.add_task(
+                OrchestrationService._log_video_request,
+                deployment_id,
+                user_context_id,
+                model,
+                body,
+                start_time,
+                applied_policies,
+                log_payloads,
+                ip_address,
+                n_videos,
+                request_type="video_generation",
+            )
+
+            return response_data
+        except HTTPException:
+            raise
+        except Exception as e:
+            status_code = 500
+            error_message = str(e)
+            raise
+        finally:
+            background_tasks.add_task(
+                OrchestrationService._log_video_request,
+                deployment_id,
+                user_context_id,
+                model,
+                body,
+                start_time,
+                applied_policies,
+                log_payloads,
+                ip_address,
+                n_videos,
+                request_type="video_generation",
+                status_code=status_code,
+                error_message=error_message,
+            )
+
+    @staticmethod
     async def handle_video_edit(
         api_key: str,
         body: Dict,
