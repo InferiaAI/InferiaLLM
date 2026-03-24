@@ -20,6 +20,10 @@ from fastapi import BackgroundTasks
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Base patch path — completion handler module
+_HANDLER = "inferia.services.inference.core.handlers.completion"
+
+
 def _make_context(guardrail_enabled=False, pii_enabled=False):
     """Return a minimal resolve_context result."""
     return {
@@ -41,6 +45,17 @@ def _make_context(guardrail_enabled=False, pii_enabled=False):
     }
 
 
+def _patch_completion_deps():
+    """Context manager that patches all completion handler dependencies."""
+    return (
+        patch(f"{_HANDLER}.GatewayService"),
+        patch(f"{_HANDLER}.api_gateway_client"),
+        patch(f"{_HANDLER}.rate_limiter"),
+        patch(f"{_HANDLER}.get_adapter"),
+        patch(f"{_HANDLER}.settings"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Issue #43 — scan_task must NOT be created when guardrails are disabled
 # ---------------------------------------------------------------------------
@@ -57,15 +72,15 @@ class TestScanTaskConditional:
         context = _make_context(guardrail_enabled=False, pii_enabled=False)
 
         with patch(
-            "inferia.services.inference.core.orchestrator.GatewayService"
+            f"{_HANDLER}.GatewayService"
         ) as mock_gw, patch(
-            "inferia.services.inference.core.orchestrator.api_gateway_client"
+            f"{_HANDLER}.api_gateway_client"
         ) as mock_client, patch(
-            "inferia.services.inference.core.orchestrator.rate_limiter"
+            f"{_HANDLER}.rate_limiter"
         ), patch(
-            "inferia.services.inference.core.orchestrator.get_adapter"
+            f"{_HANDLER}.get_adapter"
         ) as mock_adapter, patch(
-            "inferia.services.inference.core.orchestrator.settings"
+            f"{_HANDLER}.settings"
         ):
             mock_gw.resolve_context = AsyncMock(return_value=context)
             mock_gw.scan_input = AsyncMock(return_value=None)
@@ -107,15 +122,15 @@ class TestScanTaskConditional:
         context = _make_context(guardrail_enabled=True, pii_enabled=False)
 
         with patch(
-            "inferia.services.inference.core.orchestrator.GatewayService"
+            f"{_HANDLER}.GatewayService"
         ) as mock_gw, patch(
-            "inferia.services.inference.core.orchestrator.api_gateway_client"
+            f"{_HANDLER}.api_gateway_client"
         ) as mock_client, patch(
-            "inferia.services.inference.core.orchestrator.rate_limiter"
+            f"{_HANDLER}.rate_limiter"
         ), patch(
-            "inferia.services.inference.core.orchestrator.get_adapter"
+            f"{_HANDLER}.get_adapter"
         ) as mock_adapter, patch(
-            "inferia.services.inference.core.orchestrator.settings"
+            f"{_HANDLER}.settings"
         ):
             mock_gw.resolve_context = AsyncMock(return_value=context)
             mock_gw.scan_input = AsyncMock(return_value=None)
@@ -178,15 +193,15 @@ class TestOutputGuardrailNullContent:
         }
 
         with patch(
-            "inferia.services.inference.core.orchestrator.GatewayService"
+            f"{_HANDLER}.GatewayService"
         ) as mock_gw, patch(
-            "inferia.services.inference.core.orchestrator.api_gateway_client"
+            f"{_HANDLER}.api_gateway_client"
         ) as mock_client, patch(
-            "inferia.services.inference.core.orchestrator.rate_limiter"
+            f"{_HANDLER}.rate_limiter"
         ), patch(
-            "inferia.services.inference.core.orchestrator.get_adapter"
+            f"{_HANDLER}.get_adapter"
         ) as mock_adapter, patch(
-            "inferia.services.inference.core.orchestrator.settings"
+            f"{_HANDLER}.settings"
         ):
             mock_gw.resolve_context = AsyncMock(return_value=context)
             mock_gw.scan_input = AsyncMock(return_value=None)
@@ -228,15 +243,15 @@ class TestOutputGuardrailNullContent:
         }
 
         with patch(
-            "inferia.services.inference.core.orchestrator.GatewayService"
+            f"{_HANDLER}.GatewayService"
         ) as mock_gw, patch(
-            "inferia.services.inference.core.orchestrator.api_gateway_client"
+            f"{_HANDLER}.api_gateway_client"
         ) as mock_client, patch(
-            "inferia.services.inference.core.orchestrator.rate_limiter"
+            f"{_HANDLER}.rate_limiter"
         ), patch(
-            "inferia.services.inference.core.orchestrator.get_adapter"
+            f"{_HANDLER}.get_adapter"
         ) as mock_adapter, patch(
-            "inferia.services.inference.core.orchestrator.settings"
+            f"{_HANDLER}.settings"
         ):
             mock_gw.resolve_context = AsyncMock(return_value=context)
             mock_gw.scan_input = AsyncMock(return_value=None)
@@ -280,15 +295,15 @@ class TestOutputGuardrailNullContent:
         ]
 
         with patch(
-            "inferia.services.inference.core.orchestrator.GatewayService"
+            f"{_HANDLER}.GatewayService"
         ) as mock_gw, patch(
-            "inferia.services.inference.core.orchestrator.api_gateway_client"
+            f"{_HANDLER}.api_gateway_client"
         ) as mock_client, patch(
-            "inferia.services.inference.core.orchestrator.rate_limiter"
+            f"{_HANDLER}.rate_limiter"
         ), patch(
-            "inferia.services.inference.core.orchestrator.get_adapter"
+            f"{_HANDLER}.get_adapter"
         ) as mock_adapter, patch(
-            "inferia.services.inference.core.orchestrator.settings"
+            f"{_HANDLER}.settings"
         ):
             mock_gw.resolve_context = AsyncMock(return_value=context)
             mock_gw.scan_input = AsyncMock(return_value=None)
@@ -328,7 +343,8 @@ class TestStreamingFinallyGuarded:
     def test_no_bare_create_task_in_finally(self):
         """Source code must not have a bare asyncio.create_task inside a
         finally block without a try/except guard."""
-        import inferia.services.inference.core.orchestrator as mod
+        # After refactor, the streaming logic lives in handlers/completion.py
+        import inferia.services.inference.core.handlers.completion as mod
 
         source = inspect.getsource(mod)
         tree = ast.parse(source)

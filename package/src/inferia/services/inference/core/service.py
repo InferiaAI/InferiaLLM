@@ -321,6 +321,7 @@ class GatewayService:
         path: str = None,
         concurrency_key: str = "default",
         timeout: float = None,
+        transform_response: bool = True,
     ) -> Dict:
         adapter = get_adapter(engine)
         # Use custom path if provided, otherwise use adapter's chat path
@@ -379,9 +380,10 @@ class GatewayService:
                     )
                 raw_response = resp.json()
 
-                # Transform response back to OpenAI format
                 await breaker._record_success()
-                return adapter.transform_response(raw_response)
+                if transform_response:
+                    return adapter.transform_response(raw_response)
+                return raw_response
         except HTTPException:
             raise
         except httpx.HTTPStatusError as e:
