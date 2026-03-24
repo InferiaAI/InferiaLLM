@@ -1119,10 +1119,43 @@ function VideoGenerationInterface({ deployment }: { deployment: Deployment }) {
   const [imageRef, setImageRef] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [progress, setProgress] = useState<string>("");
+
+  const pollVideoStatus = async (videoId: string) => {
+    const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
+    const token = getToken();
+    const maxAttempts = 60;
+    const pollInterval = 2000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      try {
+        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}`, {
+          headers: { "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        });
+        if (!response.ok) continue;
+        const data = await response.json();
+        if (data.url || data.video_url) {
+          setVideoUrl(data.url || data.video_url);
+          setProgress("");
+          return;
+        }
+        if (data.status === "failed") {
+          throw new Error(data.error || "Video generation failed");
+        }
+        setProgress(`Processing... (${attempt + 1}/${maxAttempts})`);
+      } catch (e) {
+        console.error("Polling error:", e);
+      }
+    }
+    throw new Error("Video generation timed out");
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim() || isLoading) return;
     setIsLoading(true);
+    setVideoUrl(null);
+    setProgress("");
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
@@ -1135,12 +1168,22 @@ function VideoGenerationInterface({ deployment }: { deployment: Deployment }) {
       });
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      if (data.url || data.video_url) setVideoUrl(data.url || data.video_url);
-      else throw new Error("No video returned");
+
+      // Check if we got immediate video (sync) or need to poll
+      if (data.url || data.video_url) {
+        setVideoUrl(data.url || data.video_url);
+      } else if (data.data && data.data[0]?.id) {
+        // Async - poll for video
+        const videoId = data.data[0].id;
+        await pollVideoStatus(videoId);
+      } else {
+        throw new Error("No video or job ID returned");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
+      setProgress("");
     }
   };
 
@@ -1152,6 +1195,7 @@ function VideoGenerationInterface({ deployment }: { deployment: Deployment }) {
         <button onClick={handleGenerate} disabled={!prompt.trim() || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate Video"}
         </button>
+        {progress && <p className="text-xs text-center text-muted-foreground">{progress}</p>}
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {videoUrl ? (
@@ -1169,10 +1213,43 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
   const [video, setVideo] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+
+  const pollVideoStatus = async (videoId: string) => {
+    const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
+    const token = getToken();
+    const maxAttempts = 60;
+    const pollInterval = 2000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      try {
+        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}`, {
+          headers: { "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        });
+        if (!response.ok) continue;
+        const data = await response.json();
+        if (data.url || data.video_url) {
+          setVideoUrl(data.url || data.video_url);
+          setProgress("");
+          return;
+        }
+        if (data.status === "failed") {
+          throw new Error(data.error || "Video edit failed");
+        }
+        setProgress(`Processing... (${attempt + 1}/${maxAttempts})`);
+      } catch (e) {
+        console.error("Polling error:", e);
+      }
+    }
+    throw new Error("Video edit timed out");
+  };
 
   const handleGenerate = async () => {
     if (!video || isLoading) return;
     setIsLoading(true);
+    setVideoUrl(null);
+    setProgress("");
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
@@ -1183,12 +1260,20 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
       });
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      if (data.url || data.video_url) setVideoUrl(data.url || data.video_url);
-      else throw new Error("No video returned");
+
+      if (data.url || data.video_url) {
+        setVideoUrl(data.url || data.video_url);
+      } else if (data.data && data.data[0]?.id) {
+        const videoId = data.data[0].id;
+        await pollVideoStatus(videoId);
+      } else {
+        throw new Error("No video or job ID returned");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
+      setProgress("");
     }
   };
 
@@ -1203,6 +1288,7 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
         <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Edit Video"}
         </button>
+        {progress && <p className="text-xs text-center text-muted-foreground">{progress}</p>}
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {videoUrl ? (
@@ -1220,10 +1306,43 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
   const [video, setVideo] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+
+  const pollVideoStatus = async (videoId: string) => {
+    const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
+    const token = getToken();
+    const maxAttempts = 60;
+    const pollInterval = 2000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      try {
+        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}`, {
+          headers: { "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
+        });
+        if (!response.ok) continue;
+        const data = await response.json();
+        if (data.url || data.video_url) {
+          setVideoUrl(data.url || data.video_url);
+          setProgress("");
+          return;
+        }
+        if (data.status === "failed") {
+          throw new Error(data.error || "Video extension failed");
+        }
+        setProgress(`Processing... (${attempt + 1}/${maxAttempts})`);
+      } catch (e) {
+        console.error("Polling error:", e);
+      }
+    }
+    throw new Error("Video extension timed out");
+  };
 
   const handleGenerate = async () => {
     if (!video || isLoading) return;
     setIsLoading(true);
+    setVideoUrl(null);
+    setProgress("");
     try {
       const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
@@ -1234,12 +1353,20 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
       });
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
-      if (data.url || data.video_url) setVideoUrl(data.url || data.video_url);
-      else throw new Error("No video returned");
+
+      if (data.url || data.video_url) {
+        setVideoUrl(data.url || data.video_url);
+      } else if (data.data && data.data[0]?.id) {
+        const videoId = data.data[0].id;
+        await pollVideoStatus(videoId);
+      } else {
+        throw new Error("No video or job ID returned");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed");
     } finally {
       setIsLoading(false);
+      setProgress("");
     }
   };
 
@@ -1254,6 +1381,7 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
         <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Extend Video"}
         </button>
+        {progress && <p className="text-xs text-center text-muted-foreground">{progress}</p>}
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {videoUrl ? (
