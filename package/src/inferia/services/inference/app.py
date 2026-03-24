@@ -14,7 +14,7 @@ from inferia.services.inference.client import api_gateway_client
 from inferia.services.inference.config import settings
 from inferia.services.inference.core.http_client import http_client
 from inferia.services.inference.core.orchestrator import OrchestrationService
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 
 from inferia.common.exception_handlers import register_exception_handlers
 from inferia.common.logger import setup_logging
@@ -338,6 +338,7 @@ async def create_video_extension(
 @app.get("/v1/videos/{video_id}")
 async def get_video_status(
     video_id: str,
+    model: str = Query(..., description="Model name used for the video generation"),
     authorization: str = Header(None),
     sandbox: str = Header(None, alias="x-sandbox"),
 ):
@@ -351,5 +352,6 @@ async def get_video_status(
     return await OrchestrationService.handle_video_status(
         api_key=api_key,
         video_id=video_id,
+        model=model,
         sandbox=is_sandbox,
     )

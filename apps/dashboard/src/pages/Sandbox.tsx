@@ -1130,13 +1130,14 @@ function VideoGenerationInterface({ deployment }: { deployment: Deployment }) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
       try {
-        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}`, {
+        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}?model=${encodeURIComponent(deployment.modelName)}`, {
           headers: { "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
         });
         if (!response.ok) continue;
         const data = await response.json();
-        if (data.url || data.video_url) {
-          setVideoUrl(data.url || data.video_url);
+        const url = data.url || data.video_url || data.data?.[0]?.url || data.data?.[0]?.video_url;
+        if (url) {
+          setVideoUrl(url);
           setProgress("");
           return;
         }
@@ -1170,12 +1171,15 @@ function VideoGenerationInterface({ deployment }: { deployment: Deployment }) {
       const data = await response.json();
 
       // Check if we got immediate video (sync) or need to poll
-      if (data.url || data.video_url) {
-        setVideoUrl(data.url || data.video_url);
+      const immediateUrl = data.url || data.video_url || data.data?.[0]?.url || data.data?.[0]?.video_url;
+      if (immediateUrl) {
+        setVideoUrl(immediateUrl);
       } else if (data.data && data.data[0]?.id) {
         // Async - poll for video
         const videoId = data.data[0].id;
         await pollVideoStatus(videoId);
+      } else if (data.id) {
+        await pollVideoStatus(data.id);
       } else {
         throw new Error("No video or job ID returned");
       }
@@ -1224,13 +1228,14 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
       try {
-        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}`, {
+        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}?model=${encodeURIComponent(deployment.modelName)}`, {
           headers: { "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
         });
         if (!response.ok) continue;
         const data = await response.json();
-        if (data.url || data.video_url) {
-          setVideoUrl(data.url || data.video_url);
+        const url = data.url || data.video_url || data.data?.[0]?.url || data.data?.[0]?.video_url;
+        if (url) {
+          setVideoUrl(url);
           setProgress("");
           return;
         }
@@ -1261,11 +1266,14 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
 
-      if (data.url || data.video_url) {
-        setVideoUrl(data.url || data.video_url);
+      const immediateUrl = data.url || data.video_url || data.data?.[0]?.url || data.data?.[0]?.video_url;
+      if (immediateUrl) {
+        setVideoUrl(immediateUrl);
       } else if (data.data && data.data[0]?.id) {
         const videoId = data.data[0].id;
         await pollVideoStatus(videoId);
+      } else if (data.id) {
+        await pollVideoStatus(data.id);
       } else {
         throw new Error("No video or job ID returned");
       }
@@ -1317,13 +1325,14 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
       try {
-        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}`, {
+        const response = await fetch(`${inferenceBaseUrl}/v1/videos/${videoId}?model=${encodeURIComponent(deployment.modelName)}`, {
           headers: { "Authorization": `Bearer ${token}`, "x-sandbox": "true" },
         });
         if (!response.ok) continue;
         const data = await response.json();
-        if (data.url || data.video_url) {
-          setVideoUrl(data.url || data.video_url);
+        const url = data.url || data.video_url || data.data?.[0]?.url || data.data?.[0]?.video_url;
+        if (url) {
+          setVideoUrl(url);
           setProgress("");
           return;
         }
@@ -1354,11 +1363,14 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
 
-      if (data.url || data.video_url) {
-        setVideoUrl(data.url || data.video_url);
+      const immediateUrl = data.url || data.video_url || data.data?.[0]?.url || data.data?.[0]?.video_url;
+      if (immediateUrl) {
+        setVideoUrl(immediateUrl);
       } else if (data.data && data.data[0]?.id) {
         const videoId = data.data[0].id;
         await pollVideoStatus(videoId);
+      } else if (data.id) {
+        await pollVideoStatus(data.id);
       } else {
         throw new Error("No video or job ID returned");
       }

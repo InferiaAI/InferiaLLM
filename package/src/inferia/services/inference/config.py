@@ -79,6 +79,18 @@ class Settings(BaseSettings):
         validation_alias="UPSTREAM_VIDEO_TIMEOUT_SECONDS",
         description="Timeout for video generation requests (default 5 minutes)",
     )
+
+    # Redis Settings (for rate limiting)
+    redis_host: str = Field(
+        default="localhost",
+        alias="REDIS_HOST",
+        validation_alias="REDIS_HOST",
+    )
+    redis_port: int = Field(
+        default=6379,
+        alias="REDIS_PORT",
+        validation_alias="REDIS_PORT",
+    )
     upstream_http_max_connections: int = Field(
         default=500,
         alias="UPSTREAM_HTTP_MAX_CONNECTIONS",
