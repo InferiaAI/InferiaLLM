@@ -142,8 +142,18 @@ export default function Sandbox() {
     staleTime: 30000,
   });
 
+  const { data: deploymentDetails } = useQuery({
+    queryKey: ["deployment-details", selectedDeploymentId],
+    queryFn: async () => {
+      if (!selectedDeploymentId) return null;
+      const { data } = await computeApi.get(`/deployment/status/${selectedDeploymentId}`);
+      return data;
+    },
+    enabled: !!selectedDeploymentId,
+  });
+
   const selectedDeployment = deployments.find((d) => d.id === selectedDeploymentId) || deployments[0] || null;
-  const effectiveCategory = selectedDeployment ? getCategoryFromModelType(selectedDeployment.model_type, selectedDeployment.engine, selectedDeployment.workload_type) : "inference";
+  const effectiveCategory = selectedDeployment ? getCategoryFromModelType(selectedDeployment.model_type, selectedDeployment.engine, deploymentDetails?.configuration?.workload_type) : "inference";
 
   const handleDeploymentChange = (deployment: Deployment) => {
     setSelectedDeploymentId(deployment.id);
