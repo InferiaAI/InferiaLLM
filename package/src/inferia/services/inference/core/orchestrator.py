@@ -3,10 +3,13 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 from inferia.services.inference.client import api_gateway_client
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 
+from .http_client import http_client
 from .providers import get_adapter, is_external_engine, InferaDiffusionAdapter
 from .rate_limiter import rate_limiter
 from .service import GatewayService
@@ -959,6 +962,84 @@ class OrchestrationService:
                 status_code=status_code,
                 error_message=error_message,
             )
+
+    @staticmethod
+    async def handle_video_status(
+        api_key: str,
+        video_id: str,
+        sandbox: bool = False,
+    ):
+        """
+        Get video generation status by polling the model container.
+        Used for async video generation - poll this endpoint to get the completed video.
+        """
+        # We need to find the deployment to get the endpoint
+        # For now, we'll try to resolve context with a placeholder model
+        # In production, you might want to store video_id -> deployment mapping
+        context = await GatewayService.resolve_context(
+            api_key, "video", model_type="video_generation", sandbox=sandbox
+        )
+
+        deployment = context["deployment"]
+        endpoint_url = deployment.get("endpoint")
+        engine = deployment.get("engine", "inferia-diffusion")
+
+        adapter = get_adapter(engine)
+
+        # Get API key
+        if is_external_engine(engine):
+            credentials = (
+                deployment.get("credentials_json")
+                or deployment.get("configuration")
+                or {}
+            )
+            provider_key = str(
+                credentials.get("api_key")
+                or credentials.get("key")
+                or credentials.get("token")
+                or ""
+            )
+        else:
+            provider_key = settings.api_gateway_internal_key or ""
+
+        provider_headers = adapter.get_headers(provider_key)
+
+        # Poll for video status
+        status_url = f"{endpoint_url}/generate/v1/videos/{video_id}"
+        max_retries = 60
+        retry_delay = 2
+
+        client = http_client.get_client()
+        for attempt in range(max_retries):
+            try:
+                resp = await client.get(
+                    status_url, headers=provider_headers, timeout=30.0
+                )
+                resp.raise_for_status()
+                status_data = resp.json()
+
+                status = status_data.get("status", "unknown")
+                if status == "completed":
+                    # Transform response to OpenAI format
+                    return adapter.transform_response(status_data)
+                elif status == "failed":
+                    raise HTTPException(
+                        status_code=500,
+                        detail=status_data.get("error", "Video generation failed"),
+                    )
+                # Still processing, wait and retry
+                await asyncio.sleep(retry_delay)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    await asyncio.sleep(retry_delay)
+                    continue
+                raise
+            except Exception as e:
+                logger.error(f"Error polling video status: {e}")
+                await asyncio.sleep(retry_delay)
+                continue
+
+        raise HTTPException(status_code=504, detail="Video generation timed out")
 
     @staticmethod
     async def handle_completion(

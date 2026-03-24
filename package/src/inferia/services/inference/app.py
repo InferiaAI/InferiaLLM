@@ -333,3 +333,23 @@ async def create_video_extension(
         ip_address=client_ip,
         sandbox=is_sandbox,
     )
+
+
+@app.get("/v1/videos/{video_id}")
+async def get_video_status(
+    video_id: str,
+    authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
+):
+    """
+    Get video generation status and retrieve completed video.
+    Poll this endpoint after initiating video generation.
+    """
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
+
+    return await OrchestrationService.handle_video_status(
+        api_key=api_key,
+        video_id=video_id,
+        sandbox=is_sandbox,
+    )

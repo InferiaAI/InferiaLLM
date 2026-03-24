@@ -373,6 +373,27 @@ class InferaDiffusionAdapter(ProviderAdapter):
     def transform_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """Returns OpenAI-compatible image/video response format."""
         logger.debug(f"InferaDiffusion raw response: {response}")
+
+        # Handle video status response - convert to OpenAI format
+        if response.get("status") == "completed":
+            video_data = response.get("video") or response.get("output")
+            if video_data:
+                return {
+                    "object": "video",
+                    "data": [
+                        {
+                            "id": response.get("id", ""),
+                            "url": video_data
+                            if video_data.startswith("data:")
+                            else f"data:video/mp4;base64,{video_data}",
+                            "video_url": video_data
+                            if video_data.startswith("data:")
+                            else f"data:video/mp4;base64,{video_data}",
+                        }
+                    ],
+                }
+
+        # Pass through other responses as-is (already in OpenAI format)
         return response
 
     def is_external(self) -> bool:
