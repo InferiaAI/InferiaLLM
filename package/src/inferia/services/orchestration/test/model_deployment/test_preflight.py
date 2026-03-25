@@ -168,6 +168,13 @@ class TestCheckVRAMFit:
         assert result.ok is True
         assert result.skipped is True
 
+    def test_zero_gpus_skips(self):
+        """Embedding models with gpu_per_replica=0 should skip VRAM check."""
+        hf_info = {"safetensors": {"parameters": {"F32": 33_360_000}}}
+        result = check_vram_fit(hf_info, gpu_per_replica=0, gpu_vram_gb=24)
+        assert result.ok is True
+        assert result.skipped is True
+
     def test_none_hf_info_skips(self):
         result = check_vram_fit(None)
         assert result.ok is True
