@@ -14,7 +14,8 @@ import {
     ShieldCheck,
     Zap,
     ChevronDown,
-    ChevronRight
+    ChevronRight,
+    Image
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion"
@@ -67,6 +68,13 @@ type State = {
     requiredCpu: string;
     requiredRam: string;
     gpuEnabled: boolean;
+    // Diffusion (image/video) config
+    diffusionImage: string;
+    diffusionPort: string;
+    diffusionMinVram: string;
+    diffusionTrustRemoteCode: boolean;
+    diffusionModelOffload: boolean;
+    diffusionGroupOffload: boolean;
 };
 
 type Action =
@@ -104,6 +112,13 @@ const initialState = (deployment: DeploymentData): State => ({
     requiredCpu: "2",
     requiredRam: "4096",
     gpuEnabled: false,
+    // Diffusion defaults
+    diffusionImage: "docker.io/inferiaai/inferiadiffusion:latest",
+    diffusionPort: "8080",
+    diffusionMinVram: "8",
+    diffusionTrustRemoteCode: true,
+    diffusionModelOffload: false,
+    diffusionGroupOffload: false,
 });
 
 function reducer(state: State, action: Action): State {
@@ -131,6 +146,9 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
     const isTraining = deployment?.workload_type === "training"
     const isVllm = deployment?.engine === "vllm"
     const isEmbedding = deployment?.engine === "tei" || deployment?.engine === "infinity"
+    const isVideoGen = deployment?.model_type === "video_generation" || deployment?.workload_type === "video"
+    const isImageGen = (deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)) && !isVllm && !isEmbedding
+    const isDiffusion = isImageGen || isVideoGen
 
     useEffect(() => {
         if (deployment?.configuration) {
@@ -171,9 +189,18 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updates.datasetUrl = c.dataset_url || "";
                 updates.hf_token = c.hf_token || "";
             }
+            if (isDiffusion) {
+                updates.diffusionImage = c.image || "docker.io/inferiaai/inferiadiffusion:latest";
+                updates.diffusionPort = String(c.port || 8080);
+                updates.diffusionMinVram = String(c.min_vram || 8);
+                updates.diffusionTrustRemoteCode = c.trust_remote_code ?? true;
+                updates.diffusionModelOffload = c.model_offload ?? false;
+                updates.diffusionGroupOffload = c.group_offload ?? false;
+                if (c.env?.HF_TOKEN) updates.hfToken = c.env.HF_TOKEN;
+            }
             dispatch({ type: 'INIT_CONFIG', payload: updates });
         }
-    }, [deployment, isVllm, isTraining, isEmbedding])
+    }, [deployment, isVllm, isTraining, isEmbedding, isDiffusion])
 
     const handleSave = async () => {
         dispatch({ type: 'SET_LOADING', payload: true });
@@ -245,6 +272,17 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updatedConfig.dataset_url = datasetUrl
                 updatedConfig.hf_token = hfToken
             }
+            if (isDiffusion) {
+                updatedConfig.image = state.diffusionImage;
+                updatedConfig.port = parseInt(state.diffusionPort) || 8080;
+                updatedConfig.min_vram = parseInt(state.diffusionMinVram) || 8;
+                updatedConfig.trust_remote_code = state.diffusionTrustRemoteCode;
+                updatedConfig.model_offload = state.diffusionModelOffload;
+                updatedConfig.group_offload = state.diffusionGroupOffload;
+                if (hfToken) {
+                    updatedConfig.env = { ...updatedConfig.env, HF_TOKEN: hfToken }
+                }
+            }
             const payload: any = { configuration: updatedConfig, replicas: replicas, inference_model: inferenceModel || undefined }
             if (isEmbedding) {
                 payload.inference_model = updatedConfig.model_id || inferenceModel;
@@ -298,6 +336,16 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                                 dispatch={dispatch}
                             />}
                             {isTraining && <TrainingSettings gitRepo={gitRepo} trainingScript={trainingScript} datasetUrl={datasetUrl} dispatch={dispatch} />}
+                            {isDiffusion && <DiffusionSettings
+                                isVideoGen={isVideoGen}
+                                diffusionImage={state.diffusionImage}
+                                diffusionPort={state.diffusionPort}
+                                diffusionMinVram={state.diffusionMinVram}
+                                diffusionTrustRemoteCode={state.diffusionTrustRemoteCode}
+                                diffusionModelOffload={state.diffusionModelOffload}
+                                diffusionGroupOffload={state.diffusionGroupOffload}
+                                dispatch={dispatch}
+                            />}
                         </AnimatePresence>
                     </div>
                     <div className="space-y-6">
@@ -585,6 +633,42 @@ function TrainingSettings({ gitRepo, trainingScript, datasetUrl, dispatch }: { g
                 <div className="space-y-2"><label htmlFor="git-repo" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Git Repository</label><input id="git-repo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" placeholder="https://..." /></div>
                 <div className="space-y-2"><label htmlFor="training-script" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Training Command</label><textarea id="training-script" rows={3} value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm resize-none" /></div>
                 <div className="space-y-2"><label htmlFor="dataset-url" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Dataset URL</label><input id="dataset-url" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" /></div>
+            </div>
+        </m.div>
+    );
+}
+
+function DiffusionSettings({
+    isVideoGen, diffusionImage, diffusionPort, diffusionMinVram,
+    diffusionTrustRemoteCode, diffusionModelOffload, diffusionGroupOffload, dispatch
+}: {
+    isVideoGen: boolean; diffusionImage: string; diffusionPort: string; diffusionMinVram: string;
+    diffusionTrustRemoteCode: boolean; diffusionModelOffload: boolean; diffusionGroupOffload: boolean;
+    dispatch: React.Dispatch<Action>
+}) {
+    return (
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Image className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">{isVideoGen ? "Video Generation" : "Image Generation"} Settings</h3></div>
+            <div className="space-y-6">
+                <div className="space-y-2"><label htmlFor="diffusion-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="diffusion-image" value={diffusionImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionImage', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2"><label htmlFor="diffusion-port" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Service Port</label><input id="diffusion-port" type="number" value={diffusionPort} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionPort', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="diffusion-min-vram" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Min VRAM (GB)</label><input id="diffusion-min-vram" type="number" min="1" value={diffusionMinVram} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionMinVram', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex items-center gap-3">
+                        <input id="diffusion-trust-remote" type="checkbox" checked={diffusionTrustRemoteCode} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionTrustRemoteCode', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40" />
+                        <label htmlFor="diffusion-trust-remote" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Trust Remote Code</label>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <input id="diffusion-model-offload" type="checkbox" checked={diffusionModelOffload} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionModelOffload', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40" />
+                        <label htmlFor="diffusion-model-offload" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Model Offload</label>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <input id="diffusion-group-offload" type="checkbox" checked={diffusionGroupOffload} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionGroupOffload', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40" />
+                        <label htmlFor="diffusion-group-offload" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Group Offload</label>
+                    </div>
+                </div>
             </div>
         </m.div>
     );
