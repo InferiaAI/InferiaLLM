@@ -729,7 +729,7 @@ export default function NewDeployment() {
       const parsedConfig = (() => { try { return JSON.parse(jobDescription) } catch { return {} } })();
       const { data } = await computeApi.post("/deployment/preflight", {
         model_id: modelId, engine, hf_token: token || undefined,
-        gpu_per_replica: modelType === "embedding" ? 0 : 1,
+        gpu_per_replica: 1,
         pool_id: selectedPool?.pool_id || undefined,
         model_type: modelType,
         max_model_len: parseInt(maxModelLen) || undefined,
@@ -768,7 +768,7 @@ export default function NewDeployment() {
     if (!preflightOk) return;
 
     const payload = {
-      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: modelType === "embedding" ? 0 : 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
+      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config
     }
