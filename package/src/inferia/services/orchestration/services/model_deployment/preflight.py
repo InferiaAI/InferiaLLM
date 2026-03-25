@@ -469,10 +469,10 @@ async def check_duplicate_deployment(
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id FROM model_deployments
+                SELECT deployment_id FROM model_deployments
                 WHERE inference_model = $1
-                  AND pool_id = $2
-                  AND state IN ('RUNNING', 'READY', 'PENDING', 'PROVISIONING', 'DEPLOYING')
+                  AND pool_id = $2::uuid
+                  AND UPPER(state) IN ('RUNNING', 'READY', 'PENDING', 'PROVISIONING', 'DEPLOYING')
                 LIMIT 1
                 """,
                 model_id,
@@ -481,10 +481,10 @@ async def check_duplicate_deployment(
             if row:
                 return DuplicateCheckResult(
                     ok=False,
-                    existing_deployment_id=str(row["id"]),
+                    existing_deployment_id=str(row["deployment_id"]),
                     error=(
                         f"Model '{model_id}' already has an active deployment on this pool "
-                        f"(ID: {str(row['id'])[:8]}...). Terminate it first or use a different pool."
+                        f"(ID: {str(row['deployment_id'])[:8]}...). Terminate it first or use a different pool."
                     ),
                 )
             return DuplicateCheckResult(ok=True)

@@ -658,6 +658,28 @@ async def deployment_preflight(req: PreflightRequest):
 
 @router.post("/deploy")
 async def deploy_model(req: DeployModelRequest):
+    # Check for duplicate deployment name within the same org
+    if req.org_id and req.model_name:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        try:
+            existing = await conn.fetchrow(
+                """
+                SELECT deployment_id FROM model_deployments
+                WHERE model_name = $1
+                  AND org_id = $2
+                LIMIT 1
+                """,
+                req.model_name,
+                req.org_id,
+            )
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A deployment with this name already exists. Please try another name.",
+                )
+        finally:
+            await conn.close()
+
     async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 

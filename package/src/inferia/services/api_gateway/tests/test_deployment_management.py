@@ -53,6 +53,11 @@ class TestCreateDeployment:
         mock_db.commit = AsyncMock()
         mock_db.refresh = AsyncMock(side_effect=lambda obj: setattr(obj, "id", "dep-001") or None)
 
+        # Mock the duplicate-name check query to return no existing deployment
+        no_existing_result = MagicMock()
+        no_existing_result.scalars.return_value.first.return_value = None
+        mock_db.execute = AsyncMock(return_value=no_existing_result)
+
         from inferia.services.api_gateway.db.models import Policy as DBPolicy
 
         with patch(
@@ -77,6 +82,39 @@ class TestCreateDeployment:
             # All disabled by default
             for p in policy_objects:
                 assert p.config_json["enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_create_duplicate_name_raises_409(self):
+        """Creating a deployment with a name that already exists in the org raises 409."""
+        from inferia.services.api_gateway.management.deployments import create_deployment
+        from inferia.services.api_gateway.schemas.management import DeploymentCreate
+
+        dep_data = DeploymentCreate(
+            name="test-dep",
+            model_name="llama-3",
+            provider="openai",
+            endpoint_url="https://api.openai.com/v1",
+            credentials_json={},
+        )
+        mock_request = MagicMock()
+        mock_db = AsyncMock()
+
+        # Mock the duplicate-name check to return an existing deployment
+        existing_dep = MagicMock()
+        existing_result = MagicMock()
+        existing_result.scalars.return_value.first.return_value = existing_dep
+        mock_db.execute = AsyncMock(return_value=existing_result)
+
+        with patch(
+            "inferia.services.api_gateway.management.deployments.get_current_user_context",
+            return_value=_make_user_ctx(),
+        ), patch(
+            "inferia.services.api_gateway.management.deployments.authz_service"
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await create_deployment(dep_data, mock_request, mock_db)
+            assert exc.value.status_code == 409
+            assert "already exists" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_create_without_org_raises_400(self):

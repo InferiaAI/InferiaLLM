@@ -38,6 +38,19 @@ async def create_deployment(
             status_code=400, detail="Action requires organization context"
         )
 
+    # Check if a deployment with the same name already exists in this org
+    existing = await db.execute(
+        select(DBDeployment).where(
+            (DBDeployment.model_name == deployment_data.name)
+            & (DBDeployment.org_id == user_ctx.org_id)
+        )
+    )
+    if existing.scalars().first():
+        raise HTTPException(
+            status_code=409,
+            detail=f"A deployment with this name already exists. Please try another name.",
+        )
+
     new_deployment = DBDeployment(
         model_name=deployment_data.name,
         inference_model=deployment_data.model_name,
