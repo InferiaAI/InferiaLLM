@@ -285,6 +285,10 @@ def check_vram_fit(
     if not hf_info:
         return VRAMCheckResult(ok=True, skipped=True)
 
+    # Skip VRAM check for CPU-only deployments (e.g., embedding models with 0 GPUs)
+    if gpu_per_replica <= 0:
+        return VRAMCheckResult(ok=True, skipped=True)
+
     safetensors = hf_info.get("safetensors", {})
     params = safetensors.get("parameters", {})
 
