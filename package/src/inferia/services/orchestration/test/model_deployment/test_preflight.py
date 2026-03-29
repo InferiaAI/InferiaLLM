@@ -257,7 +257,7 @@ class TestCheckDuplicateDeployment:
     @pytest.mark.asyncio
     async def test_existing_deployment_fails(self):
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"id": "dep-123"})
+        mock_conn.fetchrow = AsyncMock(return_value={"deployment_id": "dep-123"})
         mock_pool = AsyncMock()
         mock_pool.acquire = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_conn), __aexit__=AsyncMock(return_value=False)))
         result = await check_duplicate_deployment("org/model", "pool-1", mock_pool)
