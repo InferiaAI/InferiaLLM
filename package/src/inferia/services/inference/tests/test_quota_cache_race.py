@@ -69,7 +69,7 @@ async def test_concurrent_resolve_context_calls_single_task(gateway_client):
     barrier = asyncio.Event()
     fake_data = {"valid": True, "deployment_id": "dep-1"}
 
-    async def slow_resolve(api_key, model, model_type):
+    async def slow_resolve(api_key, model, model_type, sandbox=False):
         nonlocal call_count
         call_count += 1
         await barrier.wait()
