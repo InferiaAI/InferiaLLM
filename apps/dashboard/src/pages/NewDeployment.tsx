@@ -21,6 +21,7 @@ import {
   type ModelTypeKey
 } from "@/services/huggingfaceService"
 import { calculateCompatibility, fetchExternalRegistry, GPU_SPECS, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
+import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 
 // --- Constants ---
@@ -487,6 +488,107 @@ function HuggingFaceModelBrowser({
               ? "No models found. Try a different search term."
               : "Type to search for models on Hugging Face"
             }
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function OllamaModelBrowser({
+  onSelect,
+  selectedModelId,
+}: {
+  onSelect: (model: HFModel) => void
+  selectedModelId: string
+}) {
+  const [searchQuery, setSearchQuery] = useState("")
+  const [showBrowser, setShowBrowser] = useState(false)
+
+  const { data: ollamaModels, isLoading } = useQuery({
+    queryKey: ["ollama-models"],
+    queryFn: () => getOllamaModels(),
+    enabled: showBrowser,
+  })
+
+  const filteredModels = searchQuery.length > 0
+    ? (ollamaModels || []).filter((m: OllamaModel) => m.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    : ollamaModels || []
+
+  if (!showBrowser) {
+    return (
+      <button
+        onClick={() => setShowBrowser(true)}
+        className="w-full px-3 py-2 text-sm border border-dashed border-emerald-300 dark:border-emerald-700 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-2 transition-colors"
+      >
+        <Search className="w-4 h-4" />
+        Browse Ollama Models
+      </button>
+    )
+  }
+
+  return (
+    <div className="border rounded-lg overflow-hidden bg-white dark:bg-zinc-900">
+      <div className="p-3 border-b dark:border-zinc-700 flex items-center gap-2">
+        <Search className="w-4 h-4 text-slate-400" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search Ollama models..."
+          className="flex-1 text-sm outline-none bg-transparent"
+        />
+        <button onClick={() => setShowBrowser(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded">
+          <X className="w-4 h-4 text-slate-400" />
+        </button>
+      </div>
+
+      <div className="max-h-64 overflow-y-auto">
+        {isLoading ? (
+          <div className="p-8 text-center text-slate-500">
+            <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+            Loading Ollama models...
+          </div>
+        ) : filteredModels.length > 0 ? (
+          <div className="divide-y dark:divide-zinc-700">
+            {filteredModels.map((model: OllamaModel) => (
+              <button
+                key={model.name}
+                onClick={() => {
+                  onSelect({
+                    id: model.name,
+                    modelId: model.name,
+                    author: "ollama",
+                    lastModified: model.modified_at,
+                    tags: ["ollama"],
+                    pipeline_tag: "text-generation",
+                    downloads: 0,
+                    likes: 0,
+                    library_name: "ollama",
+                  } as HFModel)
+                  setShowBrowser(false)
+                }}
+                className={cn(
+                  "w-full p-3 text-left hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors",
+                  selectedModelId === model.name && "bg-emerald-50 dark:bg-emerald-900/20 border-l-2 border-emerald-500"
+                )}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm truncate">{model.name}</div>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                      {model.size > 0 && <span>{formatModelSize(model.size)}</span>}
+                      {model.details?.parameter_size && <span>{model.details.parameter_size}</span>}
+                      {model.details?.family && <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-zinc-800 rounded text-[10px]">{model.details.family}</span>}
+                    </div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="p-8 text-center text-slate-500 text-sm">
+            {searchQuery ? "No Ollama models found for this search." : "No models available."}
           </div>
         )}
       </div>
@@ -1045,8 +1147,12 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
               <button type="button" onClick={() => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: null }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: "" }); }} className="p-1 hover:bg-emerald-100 dark:hover:bg-emerald-800 rounded"><X className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /></button>
             </div>
           </div>
-        ) : <HuggingFaceModelBrowser modelType={modelType} onSelect={(m) => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: m }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: m.id }); }} selectedModelId={modelId} />}
-        <input id="modelId" value={modelId} onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white" placeholder={modelType === "embedding" ? "e.g. sentence-transformers/all-MiniLM-L6-v2" : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"} />
+        ) : selectedEngine === "ollama" ? (
+          <OllamaModelBrowser onSelect={(m) => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: m }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: m.id }); }} selectedModelId={modelId} />
+        ) : (
+          <HuggingFaceModelBrowser modelType={modelType} onSelect={(m) => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: m }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: m.id }); }} selectedModelId={modelId} />
+        )}
+        <input id="modelId" value={modelId} onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white" placeholder={selectedEngine === "ollama" ? "e.g. llama3:8b, mistral, qwen2" : modelType === "embedding" ? "e.g. sentence-transformers/all-MiniLM-L6-v2" : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"} />
       </div>
 
       {compatibility && (
