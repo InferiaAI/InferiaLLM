@@ -22,7 +22,14 @@ class ApiGatewayClient:
         self.base_url = settings.api_gateway_url
         self.internal_key = settings.api_gateway_internal_key
         self.timeout = settings.request_timeout
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[httpx.AsyncClient] = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=self.timeout,
+            limits=httpx.Limits(
+                max_keepalive_connections=settings.gateway_http_max_keepalive_connections,
+                max_connections=settings.gateway_http_max_connections,
+            ),
+        )
         # Local in-memory cache for resolved contexts to reduce network hops
         import cachetools
 
@@ -43,13 +50,14 @@ class ApiGatewayClient:
         self._negative_cache_ttl = 5.0
 
     def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the shared httpx client."""
+        """Get the shared httpx client, recreating only if closed."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout,
                 limits=httpx.Limits(
-                    max_keepalive_connections=100, max_connections=1000
+                    max_keepalive_connections=settings.gateway_http_max_keepalive_connections,
+                    max_connections=settings.gateway_http_max_connections,
                 ),
             )
         return self._client

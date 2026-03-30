@@ -19,6 +19,8 @@ def gateway_client():
         mock_settings.context_cache_ttl = 60
         mock_settings.quota_check_cache_ttl_seconds = 5.0
         mock_settings.quota_check_cache_maxsize = 100
+        mock_settings.gateway_http_max_connections = 100
+        mock_settings.gateway_http_max_keepalive_connections = 10
 
         from inferia.services.inference.client import ApiGatewayClient
 

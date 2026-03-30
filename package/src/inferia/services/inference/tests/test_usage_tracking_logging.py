@@ -15,6 +15,8 @@ def mock_settings():
         s.context_cache_ttl = 30
         s.quota_check_cache_ttl_seconds = 1.0
         s.quota_check_cache_maxsize = 100
+        s.gateway_http_max_connections = 100
+        s.gateway_http_max_keepalive_connections = 10
         yield s
 
 
