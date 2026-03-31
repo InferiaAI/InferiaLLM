@@ -102,6 +102,20 @@ class Settings(BaseSettings):
         validation_alias="UPSTREAM_HTTP_MAX_KEEPALIVE_CONNECTIONS",
     )
 
+    # API Gateway HTTP Client Pool (for context/quota/guardrail calls)
+    gateway_http_max_connections: int = Field(
+        default=1000,
+        alias="GATEWAY_HTTP_MAX_CONNECTIONS",
+        validation_alias="GATEWAY_HTTP_MAX_CONNECTIONS",
+        description="Max connections to API Gateway",
+    )
+    gateway_http_max_keepalive_connections: int = Field(
+        default=100,
+        alias="GATEWAY_HTTP_MAX_KEEPALIVE_CONNECTIONS",
+        validation_alias="GATEWAY_HTTP_MAX_KEEPALIVE_CONNECTIONS",
+        description="Max keepalive connections to API Gateway",
+    )
+
     # Upstream Concurrency Guards
     upstream_global_max_in_flight: int = Field(
         default=0,
