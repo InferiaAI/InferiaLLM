@@ -43,7 +43,8 @@ class ApiGatewayClient:
         )
         self._context_inflight: Dict[tuple[str, str, str], asyncio.Task] = {}
         self._quota_inflight: Dict[tuple[str, str], asyncio.Task] = {}
-        self._inflight_lock = asyncio.Lock()
+        self._context_lock = asyncio.Lock()
+        self._quota_lock = asyncio.Lock()
         # Negative cache: short-circuits repeated connection failures to prevent
         # thundering herd when the gateway is down.
         self._negative_cache: Dict[str, float] = {}
@@ -103,7 +104,7 @@ class ApiGatewayClient:
         if self.quota_cache_ttl > 0 and cache_key in self.quota_check_cache:
             return
 
-        async with self._inflight_lock:
+        async with self._quota_lock:
             task = self._quota_inflight.get(cache_key)
             is_owner = task is None
             if is_owner:
@@ -113,11 +114,10 @@ class ApiGatewayClient:
         try:
             await task
             if self.quota_cache_ttl > 0:
-                # Value is irrelevant; presence in TTL cache means "checked recently and allowed".
                 self.quota_check_cache[cache_key] = time.monotonic()
         finally:
             if is_owner:
-                async with self._inflight_lock:
+                async with self._quota_lock:
                     if self._quota_inflight.get(cache_key) is task:
                         self._quota_inflight.pop(cache_key, None)
 
@@ -365,7 +365,7 @@ class ApiGatewayClient:
         if cache_key in self.context_cache:
             return self.context_cache[cache_key]
 
-        async with self._inflight_lock:
+        async with self._context_lock:
             task = self._context_inflight.get(cache_key)
             is_owner = task is None
             if is_owner:
@@ -379,7 +379,7 @@ class ApiGatewayClient:
             return data
         finally:
             if is_owner:
-                async with self._inflight_lock:
+                async with self._context_lock:
                     if self._context_inflight.get(cache_key) is task:
                         self._context_inflight.pop(cache_key, None)
 
