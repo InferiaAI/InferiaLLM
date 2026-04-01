@@ -1,4 +1,4 @@
-import { CheckCircle2, Loader2, AlertCircle, StopCircle, Eye, EyeOff, Copy, Database, Cpu, Clock, Activity, Gauge } from "lucide-react"
+import { CheckCircle2, Loader2, AlertCircle, StopCircle, RefreshCcw, Eye, EyeOff, Copy, Database, Cpu, Clock, Activity, Gauge } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
@@ -132,12 +132,14 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                             (state === "READY" || state === "RUNNING") ? "text-green-600 dark:text-green-500" :
                                 state === "STOPPED" ? "text-slate-500" :
                                     state === "FAILED" ? "text-red-600" :
-                                        "text-yellow-600"
+                                        state === "RETRYING" ? "text-amber-600 dark:text-amber-500" :
+                                            "text-yellow-600"
                         )}>
                             {(state === "READY" || state === "RUNNING") ? <CheckCircle2 className="w-5 h-5" /> :
                                 state === "STOPPED" || state === "TERMINATED" ? <StopCircle className="w-5 h-5" /> :
                                     state === "FAILED" ? <AlertCircle className="w-5 h-5" /> :
-                                        <Loader2 className="w-5 h-5 animate-spin" />}
+                                        state === "RETRYING" ? <RefreshCcw className="w-5 h-5 animate-spin" /> :
+                                            <Loader2 className="w-5 h-5 animate-spin" />}
                             {state}
                         </div>
                     </div>

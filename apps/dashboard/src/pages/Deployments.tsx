@@ -67,6 +67,9 @@ function getStatusStyles(status: string) {
   if (status === "FAILED") {
     return "border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800";
   }
+  if (status === "RETRYING") {
+    return "border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800";
+  }
   return "border-yellow-200 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-800";
 }
 
@@ -74,6 +77,7 @@ function getStatusDot(status: string) {
   if (status === "READY" || status === "RUNNING") return "bg-green-500";
   if (status === "STOPPED" || status === "TERMINATED") return "bg-zinc-400";
   if (status === "FAILED") return "bg-red-500";
+  if (status === "RETRYING") return "bg-amber-500 animate-pulse";
   return "bg-yellow-500";
 }
 
@@ -468,7 +472,7 @@ function DeploymentActions({
   onDelete: (id: string) => void;
   align?: "start" | "end";
 }) {
-  const isRunning = ["READY", "RUNNING", "PENDING", "DEPLOYING"].includes(deployment.status);
+  const isRunning = ["READY", "RUNNING", "PENDING", "DEPLOYING", "RETRYING"].includes(deployment.status);
   const canStart = ["STOPPED", "TERMINATED", "FAILED"].includes(deployment.status);
   const canDelete = ["STOPPED", "TERMINATED", "FAILED"].includes(deployment.status);
 

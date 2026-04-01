@@ -114,6 +114,11 @@ class Settings(BaseSettings):
         default=20, validation_alias="DEFAULT_POLLING_INTERVAL"
     )
 
+    # Deployment Retry Logic
+    max_deployment_retries: int = Field(
+        default=2, validation_alias="MAX_DEPLOYMENT_RETRIES"
+    )
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

@@ -124,7 +124,7 @@ class ModelDeploymentRepository(BaseRepository):
         error_message: str | None = None,
     ):
         # Clear error_message when transitioning to non-failure states
-        if state != "FAILED":
+        if state not in ("FAILED", "RETRYING"):
             error_message = None
 
         q = """
@@ -159,7 +159,7 @@ class ModelDeploymentRepository(BaseRepository):
         Returns True if update was successful, False otherwise.
         """
         # Clear error_message when transitioning to non-failure states
-        if new_state != "FAILED":
+        if new_state not in ("FAILED", "RETRYING"):
             error_message = None
 
         q = """
@@ -370,3 +370,16 @@ class ModelDeploymentRepository(BaseRepository):
                 "deployment_id": str(deployment_id),
             },
         )
+
+    async def update_configuration(self, deployment_id: UUID, configuration: dict):
+        """Update the configuration JSONB field for a deployment."""
+        import json
+
+        q = """
+        UPDATE model_deployments
+        SET configuration=$2, updated_at=now()
+        WHERE deployment_id=$1
+        """
+        config_json = json.dumps(configuration)
+        async with self.db.acquire() as c:
+            await c.execute(q, deployment_id, config_json)
