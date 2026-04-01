@@ -8,6 +8,7 @@ from typing import Any, Dict, Tuple
 from fastapi import HTTPException, status, Request
 from datetime import datetime
 import asyncio
+from cachetools import TTLCache
 
 from inferia.services.api_gateway.config import settings
 
@@ -61,7 +62,7 @@ class InMemoryRateLimiter:
     """In-memory rate limiter using token bucket algorithm."""
 
     def __init__(self):
-        self.buckets: Dict[str, TokenBucket] = {}
+        self.buckets: TTLCache = TTLCache(maxsize=10000, ttl=120)
         self.requests_per_minute = settings.rate_limit_requests_per_minute
         self.burst_size = settings.rate_limit_burst_size
 
@@ -100,39 +101,40 @@ class RedisRateLimiter:
         if not REDIS_AVAILABLE:
             raise ImportError("redis package is required for RedisRateLimiter")
 
-        self.redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+        from inferia.services.api_gateway.gateway.redis_pool import get_redis_client
+        self.redis_client = get_redis_client()
         self.requests_per_minute = settings.rate_limit_requests_per_minute
         self.window_seconds = 60
 
     async def is_allowed(self, key: str) -> Tuple[bool, Dict[str, Any]]:
         """
         Check if request is allowed using sliding window algorithm.
+        Uses a Redis pipeline to batch all commands in a single round-trip.
         Returns (is_allowed, metadata)
         """
         now = time.time()
         window_start = now - self.window_seconds
-
-        # Redis key for rate limiting
         redis_key = f"rate_limit:{key}"
 
-        # Remove old entries
-        await self.redis_client.zremrangebyscore(redis_key, 0, window_start)
+        # Single pipeline: clean old entries, add new, count, set expiry
+        async with self.redis_client.pipeline(transaction=True) as pipe:
+            pipe.zremrangebyscore(redis_key, 0, window_start)
+            pipe.zadd(redis_key, {str(now): now})
+            pipe.zcard(redis_key)
+            pipe.expire(redis_key, self.window_seconds * 2)
+            results = await pipe.execute()
 
-        # Count requests in current window
-        current_count = await self.redis_client.zcard(redis_key)
+        # results: [removed_count, added_count, current_count, expire_ok]
+        current_count = results[2]
+        allowed = current_count <= self.requests_per_minute
 
-        # Check if allowed
-        allowed = current_count < self.requests_per_minute
-
-        if allowed:
-            # Add new request timestamp
-            await self.redis_client.zadd(redis_key, {str(now): now})
-            # Set expiry on key
-            await self.redis_client.expire(redis_key, self.window_seconds * 2)
+        if not allowed:
+            # Over limit — remove the optimistic add
+            await self.redis_client.zrem(redis_key, str(now))
 
         metadata = {
             "limit": self.requests_per_minute,
-            "remaining": max(0, self.requests_per_minute - current_count - 1),
+            "remaining": max(0, self.requests_per_minute - current_count),
             "reset": int(now + self.window_seconds),
         }
 
@@ -143,6 +145,7 @@ class RedisRateLimiter:
 
 
 import logging
+import os
 
 logger = logging.getLogger("rate_limiter")
 
@@ -164,6 +167,16 @@ class RateLimiter:
         else:
             self.limiter = InMemoryRateLimiter()
             self.backend = "in-memory"
+
+        if self.backend == "in-memory":
+            workers = int(os.getenv("WEB_CONCURRENCY", "1"))
+            if workers > 1:
+                logger.warning(
+                    "In-memory rate limiter is active with %d workers. "
+                    "Rate limits will NOT be enforced across workers. "
+                    "Set use_redis_rate_limit=true or WEB_CONCURRENCY=1.",
+                    workers,
+                )
 
     async def check_rate_limit(self, request: Request) -> None:
         """
