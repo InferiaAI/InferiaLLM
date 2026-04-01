@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Optional
 
+from cachetools import TTLCache
 from fastapi import HTTPException
 
 from inferia.services.inference.config import settings
@@ -21,7 +22,7 @@ class UpstreamConcurrencyLimiter:
         self._global_limit = settings.upstream_global_max_in_flight
         self._per_deployment_limit = settings.upstream_per_deployment_max_in_flight
         self._acquire_timeout_seconds = settings.upstream_slot_acquire_timeout_seconds
-        self._deployment_semaphores: Dict[str, asyncio.Semaphore] = {}
+        self._deployment_semaphores: TTLCache = TTLCache(maxsize=10000, ttl=300)
         self._lock: Optional[asyncio.Lock] = None
 
     def _ensure_initialized(self):
