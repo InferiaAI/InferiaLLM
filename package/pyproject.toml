@@ -99,6 +99,10 @@ all-providers = [
 ]
 logstash = [
   "python-logstash>=0.4.6",
+  "elasticsearch[async]>=8.0,<9.0",
+]
+elasticsearch = [
+  "elasticsearch[async]>=8.0,<9.0",
 ]
 dev = [
   "pytest>=8.0",

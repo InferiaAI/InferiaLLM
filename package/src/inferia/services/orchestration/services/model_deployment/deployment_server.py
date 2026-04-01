@@ -24,6 +24,12 @@ from inferia.services.orchestration.repositories.provider_repo import (
     ProviderResourceRepository,
 )
 from inferia.services.orchestration.services.adapter_engine.registry import get_adapter
+from inferia.services.orchestration.services.model_deployment.log_store import (
+    DeploymentLogStore,
+    DeploymentLogBuffer,
+)
+from inferia.services.orchestration.config import settings as orch_settings
+from typing import Optional
 
 import os
 
@@ -36,6 +42,34 @@ NOSANA_CLIENT_MANAGER_URL = os.getenv(
     "NOSANA_CLIENT_MANAGER_URL", "https://client-manager.k8s.prd.nosana.com"
 )
 NOSANA_INGRESS_DOMAIN = os.getenv("NOSANA_INGRESS_DOMAIN", "node.k8s.prd.nos.ci")
+
+# Singleton log store — initialized lazily on first use
+_log_store: Optional[DeploymentLogStore] = None
+
+
+async def _get_log_store() -> DeploymentLogStore:
+    """Get or initialize the deployment log store singleton."""
+    global _log_store
+    if _log_store is None:
+        _log_store = DeploymentLogStore(
+            elasticsearch_url=orch_settings.elasticsearch_url
+        )
+        await _log_store.initialize()
+    return _log_store
+
+
+async def _create_log_buffer(deployment_id: str, org_id: str) -> DeploymentLogBuffer:
+    """Create a log buffer for a WebSocket session, seeded with ES line count."""
+    store = await _get_log_store()
+    start_line = await store.get_max_line_number(deployment_id)
+    return DeploymentLogBuffer(
+        store=store,
+        deployment_id=deployment_id,
+        org_id=org_id,
+        max_lines=orch_settings.deployment_log_buffer_size,
+        flush_interval=orch_settings.deployment_log_flush_interval,
+        start_line_number=start_line,
+    )
 
 
 async def _get_nosana_signature(api_key: str) -> str:
@@ -1378,19 +1412,28 @@ async def get_deployment_logs(deployment_id: str):
 
         provider_instance_id = node["provider_instance_id"]
 
-        # 3. Call Adapter
+        # 3. Try adapter first, fall back to ES
         try:
             adapter = get_adapter(provider)
             if hasattr(adapter, "get_logs"):
                 logs_data = await adapter.get_logs(
                     provider_instance_id=provider_instance_id
                 )
-                return logs_data
-            else:
-                return {"logs": [f"Logs not supported for provider: {provider}"]}
-
+                if logs_data and logs_data.get("logs"):
+                    return logs_data
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Adapter error: {str(e)}")
+            logger.warning(f"Adapter log fetch failed, trying ES fallback: {e}")
+
+        # 4. Fallback: try Elasticsearch persisted logs
+        try:
+            store = await _get_log_store()
+            es_logs = await store.get_logs(deployment_id)
+            if es_logs:
+                return {"logs": es_logs, "source": "persisted"}
+        except Exception as e:
+            logger.warning(f"ES log fallback also failed: {e}")
+
+        return {"logs": [f"No logs available for provider: {provider}"], "source": "none"}
 
     finally:
         await conn.close()
@@ -1414,7 +1457,7 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
         # 1. Get deployment, provider, and credential name
         dep = await conn.fetchrow(
             """
-            SELECT p.provider, p.provider_credential_name, d.node_ids 
+            SELECT p.provider, p.provider_credential_name, d.node_ids, d.org_id
             FROM model_deployments d
             JOIN compute_pools p ON d.pool_id = p.id
             WHERE d.deployment_id = $1
@@ -1465,6 +1508,12 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
             stream_info = await adapter.get_log_streaming_info(
                 provider_instance_id=provider_instance_id, **extra_args
             )
+            # Inject deployment_id and org_id into subscription for log persistence
+            if isinstance(stream_info, dict) and "subscription" in stream_info:
+                stream_info["subscription"]["deployment_id"] = deployment_id
+                stream_info["subscription"]["org_id"] = dep.get("org_id", "")
+            elif isinstance(stream_info, dict):
+                stream_info["deployment_id"] = deployment_id
             return stream_info
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Adapter error: {str(e)}")
@@ -1736,14 +1785,20 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
             )
 
+            # Create log buffer for persistence
+            log_buffer = await _create_log_buffer(deployment_id=data.get("deployment_id", "unknown"), org_id=data.get("org_id", ""))
+            await log_buffer.start_periodic_flush()
+
             async def read_logs():
                 try:
                     while True:
                         line = await process.stdout.readline()
                         if not line:
                             break
+                        decoded = line.decode().strip()
+                        log_buffer.append(decoded)
                         await websocket.send_json(
-                            {"type": "log", "data": line.decode().strip()}
+                            {"type": "log", "data": decoded}
                         )
                 except asyncio.CancelledError:
                     pass
@@ -1752,13 +1807,15 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
             stream_task = asyncio.create_task(read_logs())
 
-            # Wait for client to close or process to end
-            while True:
-                # Keep connection alive and wait for client messages (like close)
-                try:
-                    await websocket.receive_text()
-                except WebSocketDisconnect:
-                    break
+            try:
+                # Wait for client to close or process to end
+                while True:
+                    try:
+                        await websocket.receive_text()
+                    except WebSocketDisconnect:
+                        break
+            finally:
+                await log_buffer.stop()
 
         elif provider == "nosana":
             job_id = data.get("jobId")
@@ -1819,6 +1876,13 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
                     logger.info("Connected to Nosana node, relaying logs...")
 
+                    # Create log buffer for persistence
+                    log_buffer = await _create_log_buffer(
+                        deployment_id=data.get("deployment_id", job_id),
+                        org_id=data.get("org_id", ""),
+                    )
+                    await log_buffer.start_periodic_flush()
+
                     async def client_to_sidecar():
                         while True:
                             payload = await websocket.receive()
@@ -1831,48 +1895,41 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                     async def sidecar_to_client():
                         async for msg in sidecar_ws:
                             if isinstance(msg, bytes):
-                                # Wrap bytes message in frontend-expected format
+                                decoded = msg.decode("utf-8", errors="replace")
+                                log_buffer.append(decoded)
                                 await websocket.send_json(
-                                    {
-                                        "type": "log",
-                                        "data": msg.decode("utf-8", errors="replace"),
-                                    }
+                                    {"type": "log", "data": decoded}
                                 )
                             else:
-                                # Wrap text message in frontend-expected format
-                                # Frontend expects message.data to be the log content
                                 try:
-                                    # Try to parse as JSON and extract the inner data
                                     parsed = json.loads(msg)
                                     if isinstance(parsed, dict) and "data" in parsed:
-                                        # Already has data field, wrap it
-                                        await websocket.send_json(
-                                            {"type": "log", "data": parsed["data"]}
-                                        )
+                                        log_data = parsed["data"]
                                     else:
-                                        # No data field, send the whole thing
-                                        await websocket.send_json(
-                                            {"type": "log", "data": msg}
-                                        )
+                                        log_data = msg
                                 except json.JSONDecodeError:
-                                    # Not JSON, send as-is wrapped
-                                    await websocket.send_json(
-                                        {"type": "log", "data": msg}
-                                    )
+                                    log_data = msg
+                                log_buffer.append(str(log_data))
+                                await websocket.send_json(
+                                    {"type": "log", "data": log_data}
+                                )
 
                     tasks = {
                         asyncio.create_task(client_to_sidecar()),
                         asyncio.create_task(sidecar_to_client()),
                     }
-                    done, pending = await asyncio.wait(
-                        tasks, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    for task in pending:
-                        task.cancel()
-                    for task in done:
-                        exc = task.exception()
-                        if exc:
-                            logger.error(f"Nosana WS task error: {exc}")
+                    try:
+                        done, pending = await asyncio.wait(
+                            tasks, return_when=asyncio.FIRST_COMPLETED
+                        )
+                        for task in pending:
+                            task.cancel()
+                        for task in done:
+                            exc = task.exception()
+                            if exc:
+                                logger.error(f"Nosana WS task error: {exc}")
+                    finally:
+                        await log_buffer.stop()
 
             except Exception as e:
                 logger.error(f"Nosana WebSocket error: {e}")
