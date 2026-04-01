@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import os
 import logging
@@ -46,7 +47,8 @@ class SkyPilotProvisioner(Provisioner):
         )
 
         try:
-            sky.launch(
+            await asyncio.to_thread(
+                sky.launch,
                 task,
                 cluster_name=cluster_name,
                 detach_run=True,
@@ -61,7 +63,6 @@ class SkyPilotProvisioner(Provisioner):
         try:
             import sky
             logger.info("Terminating SkyPilot cluster", extra={"cluster": cluster_id})
-            sky.down(cluster_name=cluster_id)
+            await asyncio.to_thread(sky.down, cluster_name=cluster_id)
         except Exception as e:
-            # best-effort termination
             logger.error(f"Failed to terminate SkyPilot cluster {cluster_id}: {e}", extra={"cluster": cluster_id})
