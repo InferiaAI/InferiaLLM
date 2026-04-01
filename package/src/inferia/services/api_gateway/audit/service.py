@@ -1,5 +1,7 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
+import asyncio
+import logging
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -9,6 +11,8 @@ from inferia.services.api_gateway.db.models import AuditLog
 from inferia.services.api_gateway.models import AuditLogFilter, AuditLogCreate, AuditLogResponse
 from inferia.services.api_gateway.schemas.logging import derive_category
 
+logger = logging.getLogger(__name__)
+
 def utcnow_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -16,34 +20,42 @@ class AuditService:
     def __init__(self):
         pass
 
+    async def _write_audit_log(self, event: AuditLogCreate) -> None:
+        """Background task that writes audit log in its own DB session."""
+        from inferia.services.api_gateway.db.database import AsyncSessionLocal
+
+        category = event.category or derive_category(event.action)
+        try:
+            async with AsyncSessionLocal() as db:
+                db_log = AuditLog(
+                    id=str(uuid.uuid4()),
+                    timestamp=utcnow_naive(),
+                    user_id=event.user_id,
+                    org_id=event.org_id,
+                    action=event.action,
+                    category=category,
+                    resource_type=event.resource_type,
+                    resource_id=event.resource_id,
+                    details=event.details,
+                    ip_address=event.ip_address,
+                    status=event.status,
+                )
+                db.add(db_log)
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to write audit log for action=%s", event.action)
+
     async def log_event(
         self,
         db: AsyncSession,
         event: AuditLogCreate
-    ) -> AuditLog:
+    ) -> None:
         """
-        Create an immutable audit log entry.
-        Category is auto-derived from action if not explicitly set.
+        Create an immutable audit log entry as a background task.
+        Does not block the caller — the write happens asynchronously
+        in its own DB session.
         """
-        category = event.category or derive_category(event.action)
-
-        db_log = AuditLog(
-            id=str(uuid.uuid4()),
-            timestamp=utcnow_naive(),
-            user_id=event.user_id,
-            org_id=event.org_id,
-            action=event.action,
-            category=category,
-            resource_type=event.resource_type,
-            resource_id=event.resource_id,
-            details=event.details,
-            ip_address=event.ip_address,
-            status=event.status
-        )
-        db.add(db_log)
-        await db.commit()
-        await db.refresh(db_log)
-        return db_log
+        asyncio.create_task(self._write_audit_log(event))
 
     async def get_logs(
         self,
