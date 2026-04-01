@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { computeApi, WEB_SOCKET_URL, API_GATEWAY_URL } from "@/lib/api"
 import { getToken } from "@/lib/tokenStore"
-import { Terminal, RefreshCcw, Wifi, WifiOff, Trash2, ChevronDown, Download, Monitor } from "lucide-react"
+import { Terminal, RefreshCcw, Wifi, WifiOff, Trash2, ChevronDown, Download, Monitor, Database } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -15,6 +15,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
     const [status, setStatus] = useState<"connecting" | "connected" | "disconnected" | "error">("connecting")
     const [error, setError] = useState<string | null>(null)
     const [autoScroll, setAutoScroll] = useState(true)
+    const [logSource, setLogSource] = useState<"live" | "persisted" | null>(null)
     const wsRef = useRef<WebSocket | null>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -146,6 +147,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
             ws.onopen = () => {
                 console.log("[TerminalLogs] Connected to sidecar WS")
                 setStatus("connected")
+                setLogSource("live")
                 // Subscribe to logs
                 ws.send(JSON.stringify(subscription))
             }
@@ -174,12 +176,16 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                 console.error("[TerminalLogs] WS Error:", e)
                 setStatus("error")
                 setError("WebSocket connection failed.")
+                fetchPersistedLogs()
             }
 
             ws.onclose = () => {
                 console.log("[TerminalLogs] WS Closed")
                 if (status !== "error") {
                     setStatus("disconnected")
+                }
+                if (lines.length === 0) {
+                    fetchPersistedLogs()
                 }
             }
 
@@ -188,6 +194,22 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
             setStatus("error")
             setError(err.message || "Failed to initialize log stream.")
             toast.error("Log stream initialization failed")
+            fetchPersistedLogs()
+        }
+    }
+
+    const fetchPersistedLogs = async () => {
+        try {
+            const { data } = await computeApi.get(`/deployment/logs/${deploymentId}`)
+            if (data.logs && data.logs.length > 0) {
+                const formatted = data.logs.map((log: string) => cleanAnsi(log)).filter((l: string) => l.trim().length > 0)
+                setLines(formatted)
+                setLogSource("persisted")
+                setStatus("disconnected")
+                setError(null)
+            }
+        } catch (err) {
+            console.error("Failed to fetch persisted logs:", err)
         }
     }
 
@@ -259,6 +281,13 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                         <div className="flex items-center gap-1.5 ml-2">
                             <RefreshCcw className="w-3.5 h-3.5 text-yellow-500 animate-spin" />
                             <span className="text-[10px] font-mono text-yellow-500 uppercase tracking-widest font-bold">Connecting</span>
+                        </div>
+                    ) : logSource === "persisted" ? (
+                        <div className="flex items-center gap-1.5 ml-2">
+                            <span className="relative flex h-2 w-2">
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                            </span>
+                            <span className="text-[10px] font-mono text-amber-500/80 uppercase tracking-widest font-bold">Saved Logs</span>
                         </div>
                     ) : (
                         <div className="flex items-center gap-1.5 ml-2">
