@@ -7,11 +7,13 @@ from inferia.services.orchestration.services.adapter_engine.registry import get_
 from inferia.services.orchestration.services.adapter_engine.base import (
     ProviderCapabilities,
 )
+from inferia.services.orchestration.config import settings
 
 log = logging.getLogger(__name__)
 
 MAX_PROVISION_RETRIES = 4
 PROVISION_WAIT_SECONDS = 40
+RETRY_BASE_DELAY_SECONDS = 10
 
 
 class ModelDeploymentWorker:
@@ -241,297 +243,348 @@ class ModelDeploymentWorker:
 
         # ------------------------------------
         # JOB-BASED DEPLOYMENT (Nosana, Akash) or PLACEMENT
+        # with retry logic
         # ------------------------------------
 
+        max_retries = settings.max_deployment_retries
+        last_error = None
         node_spec = None
-        try:
-            # Determine resource needs (default to full node if not specified, or hardcoded fallback)
-            vcpu_req = resources_required["vcpu_total"] if resources_required else 8
-            ram_gb_req = (
-                resources_required["ram_gb_total"] if resources_required else 32
-            )
 
-            # -------- CAPACITY LOOP --------
-            candidates = []
-            for attempt in range(MAX_PROVISION_RETRIES + 1):
-                candidates = await self.placement.fetch_candidate_nodes(
-                    pool_id=d["pool_id"],
-                    gpu_req=d["gpu_per_replica"],
-                    vcpu_req=vcpu_req,
-                    ram_req=ram_gb_req,
-                )
-
-                if candidates:
-                    break
-
-                if attempt == MAX_PROVISION_RETRIES:
+        for retry_attempt in range(max_retries + 1):  # 0 = initial, 1..max_retries = retries
+            try:
+                if retry_attempt > 0:
+                    # --- RETRY PATH ---
+                    backoff = RETRY_BASE_DELAY_SECONDS * (2 ** (retry_attempt - 1))
+                    log.info(
+                        f"Retry {retry_attempt}/{max_retries} for deployment {deployment_id} "
+                        f"after {backoff}s backoff. Last error: {last_error}"
+                    )
                     await self.deployments.update_state(
                         deployment_id,
-                        "FAILED",
-                        error_message=f"No available nodes after {MAX_PROVISION_RETRIES} provisioning attempts",
+                        "RETRYING",
+                        error_message=f"Retry {retry_attempt}/{max_retries}: {last_error}",
                     )
-                    return
 
-                adapter = get_adapter(pool["provider"])
-                capabilities = adapter.get_capabilities()
-
-                # Determine Metadata / Job Spec
-                metadata = {}
-
-                # 1. Use Configuration directly if available (Unified Schema)
-                if d.get("configuration"):
-                    # Ensure it's a dict (it should be since it's JSONB/dict)
-                    import json
-
-                    config = d["configuration"]
+                    # Save retry metadata in configuration
+                    config = d.get("configuration") or {}
                     if isinstance(config, str):
+                        import json
                         try:
                             config = json.loads(config)
-                        except json.JSONDecodeError:
+                        except Exception:
                             config = {}
-                    # Update metadata with config, which now includes workload_type
-                    metadata = config
+                    config["retry_count"] = retry_attempt
+                    config["max_retries"] = max_retries
+                    config["last_retry_error"] = str(last_error)
+                    await self.deployments.update_configuration(deployment_id, config)
 
-                # Inject model identifiers for job_builder (API key security)
-                if d.get("inference_model"):
-                    metadata["model_id"] = d["inference_model"]
-                if d.get("model_name"):
-                    metadata["model_name"] = d["model_name"]
-                if d.get("engine"):
-                    metadata["engine"] = d["engine"]
+                    await asyncio.sleep(backoff)
 
-                # 2. Legacy / Registry Fallback
-                elif model:
-                    metadata = {
-                        "image": model["artifact_uri"],
-                        "cmd": [
-                            "meta-llama/Llama-2-7b-chat-hf",  # Generic placeholder if not in config
-                            "--port",
-                            "9000",
-                        ],
-                        "gpu": True,
-                        "expose": [{"port": 9000, "type": "http"}],
-                    }
+                    # CAS check: bail if deployment was cancelled during backoff
+                    d_check = await self.deployments.get(deployment_id)
+                    if not d_check or d_check["state"] not in ("RETRYING", "PROVISIONING"):
+                        log.info(
+                            f"Deployment {deployment_id} state changed to "
+                            f"{d_check['state'] if d_check else 'deleted'} during retry backoff, aborting."
+                        )
+                        return
 
-                # 3. Last Resort / Error Check
-                if (
-                    not metadata.get("image")
-                    and not metadata.get("cmd")
-                    and metadata.get("workload_type") != "training"
-                ):
-                    # If we still lack info, we can't provision
-                    log.error(f"Missing job definition for deployment {deployment_id}")
+                    await self.deployments.update_state(deployment_id, "PROVISIONING")
+
+                    # Cleanup previous node if exists
+                    if node_spec and node_spec.get("provider_instance_id"):
+                        try:
+                            cleanup_adapter = get_adapter(pool["provider"])
+                            log.info(
+                                f"Cleaning up node {node_spec['provider_instance_id']} before retry"
+                            )
+                            await cleanup_adapter.deprovision_node(
+                                provider_instance_id=node_spec["provider_instance_id"],
+                                provider_credential_name=pool.get("provider_credential_name"),
+                            )
+                        except Exception as cleanup_err:
+                            log.warning(f"Failed to cleanup node before retry: {cleanup_err}")
+                    node_spec = None
+
+                # Determine resource needs
+                vcpu_req = resources_required["vcpu_total"] if resources_required else 8
+                ram_gb_req = (
+                    resources_required["ram_gb_total"] if resources_required else 32
+                )
+
+                # -------- CAPACITY LOOP --------
+                candidates = []
+                for attempt in range(MAX_PROVISION_RETRIES + 1):
+                    candidates = await self.placement.fetch_candidate_nodes(
+                        pool_id=d["pool_id"],
+                        gpu_req=d["gpu_per_replica"],
+                        vcpu_req=vcpu_req,
+                        ram_req=ram_gb_req,
+                    )
+
+                    if candidates:
+                        break
+
+                    if attempt == MAX_PROVISION_RETRIES:
+                        # No candidates after all provisioning attempts
+                        raise RuntimeError(
+                            f"No available nodes after {MAX_PROVISION_RETRIES} provisioning attempts"
+                        )
+
+                    adapter = get_adapter(pool["provider"])
+                    capabilities = adapter.get_capabilities()
+
+                    # Determine Metadata / Job Spec
+                    metadata = {}
+
+                    # 1. Use Configuration directly if available (Unified Schema)
+                    if d.get("configuration"):
+                        import json
+
+                        config = d["configuration"]
+                        if isinstance(config, str):
+                            try:
+                                config = json.loads(config)
+                            except json.JSONDecodeError:
+                                config = {}
+                        metadata = config
+
+                    # Inject model identifiers for job_builder (API key security)
+                    if d.get("inference_model"):
+                        metadata["model_id"] = d["inference_model"]
+                    if d.get("model_name"):
+                        metadata["model_name"] = d["model_name"]
+                    if d.get("engine"):
+                        metadata["engine"] = d["engine"]
+
+                    # 2. Legacy / Registry Fallback
+                    elif model:
+                        metadata = {
+                            "image": model["artifact_uri"],
+                            "cmd": [
+                                "meta-llama/Llama-2-7b-chat-hf",
+                                "--port",
+                                "9000",
+                            ],
+                            "gpu": True,
+                            "expose": [{"port": 9000, "type": "http"}],
+                        }
+
+                    # 3. Last Resort / Error Check
+                    if (
+                        not metadata.get("image")
+                        and not metadata.get("cmd")
+                        and metadata.get("workload_type") != "training"
+                    ):
+                        log.error(f"Missing job definition for deployment {deployment_id}")
+                        await self.deployments.update_state(
+                            deployment_id,
+                            "FAILED",
+                            error_message="Missing job definition or image for deployment",
+                        )
+                        return
+
+                    node_spec = await adapter.provision_node(
+                        provider_resource_id=pool["allowed_gpu_types"][0],
+                        pool_id=pool["provider_pool_id"],
+                        metadata=metadata,
+                        provider_credential_name=pool.get("provider_credential_name"),
+                    )
+
+                    # Handle simulation mode (provider-agnostic)
+                    if node_spec.get("metadata", {}).get("mode") == "simulation":
+                        await self.deployments.attach_runtime(
+                            deployment_id=deployment_id,
+                            allocation_ids=[],
+                            node_ids=[],
+                            runtime=f"{pool['provider']}-sim",
+                        )
+                        await self.deployments.update_state(deployment_id, "RUNNING")
+                        return
+
+                    # ---- Universal Readiness Poll ----
+                    timeout = capabilities.readiness_timeout_seconds
+                    expose_url = await adapter.wait_for_ready(
+                        provider_instance_id=node_spec["provider_instance_id"],
+                        timeout=timeout,
+                        provider_credential_name=pool.get("provider_credential_name"),
+                    )
+
+                    # SAFETY CHECK
+                    d_latest = await self.deployments.get(deployment_id)
+                    if not d_latest or d_latest["state"] not in ("PROVISIONING", "RETRYING"):
+                        log.warning(
+                            f"Deployment {deployment_id} state changed to "
+                            f"{d_latest.get('state') if d_latest else 'None'} during provisioning. Aborting."
+                        )
+                        return
+
+                    if not expose_url or expose_url.endswith("-ready"):
+                        expose_url = expose_url or node_spec.get("expose_url")
+
+                    if not expose_url and node_spec.get("expose_url"):
+                        expose_url = node_spec.get("expose_url")
+
+                    if expose_url:
+                        await self.deployments.update_endpoint(
+                            deployment_id=deployment_id,
+                            endpoint=expose_url,
+                            model_name=d.get("model_name"),
+                        )
+
+                    node_id = await self.inventory.register_node(
+                        pool_id=d["pool_id"],
+                        provider=node_spec["provider"],
+                        provider_instance_id=node_spec["provider_instance_id"],
+                        provider_resource_id=None,
+                        hostname=node_spec["hostname"],
+                        gpu_total=node_spec["gpu_total"],
+                        vcpu_total=node_spec["vcpu_total"],
+                        ram_gb_total=node_spec["ram_gb_total"],
+                        state="ready",
+                        node_class=node_spec["node_class"],
+                        metadata=node_spec["metadata"],
+                        expose_url=expose_url,
+                    )
+
+                    if node_id:
+                        await self.deployments.attach_runtime(
+                            deployment_id=deployment_id,
+                            allocation_ids=[],
+                            node_ids=[node_id],
+                            runtime=pool["provider"],
+                        )
+                        log.info(
+                            f"Deployment {deployment_id} on {pool['provider']} attached node_id {node_id}."
+                        )
+                    else:
+                        log.warning(
+                            f"Deployment {deployment_id} on {pool['provider']} "
+                            f"has no node_id returned from register_node."
+                        )
+
+                    await self.deployments.update_state(deployment_id, "RUNNING")
+
+                    # For ephemeral providers, deployment is complete once provisioned
+                    if capabilities.is_ephemeral:
+                        return
+
+                # -------- PLACEMENT --------
+                if not candidates:
+                    log.error(
+                        f"Insufficient capacity for deployment {deployment_id}"
+                    )
                     await self.deployments.update_state(
                         deployment_id,
                         "FAILED",
-                        error_message="Missing job definition or image for deployment",
+                        error_message=f"Insufficient capacity: GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}",
                     )
                     return
 
-                node_spec = await adapter.provision_node(
-                    provider_resource_id=pool["allowed_gpu_types"][0],
-                    pool_id=pool["provider_pool_id"],
-                    metadata=metadata,
-                    provider_credential_name=pool.get("provider_credential_name"),
-                )
+                best_node = min(candidates, key=score_node)
+                node_id = UUID(str(best_node["node_id"]))
 
-                # Handle simulation mode (provider-agnostic)
-                if node_spec.get("metadata", {}).get("mode") == "simulation":
-                    # No real compute job exists - simulation mode
-                    await self.deployments.attach_runtime(
+                await self.deployments.update_state(deployment_id, "SCHEDULING")
+
+                try:
+                    await self.deployments.update_state(deployment_id, "DEPLOYING")
+
+                    runtime = self.runtime_resolver.resolve(
+                        replicas=d["replicas"],
+                        gpu_per_replica=d["gpu_per_replica"],
+                        engine=d.get("engine"),
+                        model_type=d.get("model_type"),
+                    )
+
+                    strategy = self.strategies.get(runtime)
+                    if not strategy:
+                        raise RuntimeError(
+                            f"No deployment strategy registered for runtime '{runtime}'"
+                        )
+
+                    result = await strategy.deploy(
                         deployment_id=deployment_id,
-                        allocation_ids=[],
-                        node_ids=[],
-                        runtime=f"{pool['provider']}-sim",
+                        model=model,
+                        pool_id=d["pool_id"],
+                        node_id=node_id,
+                        replicas=d["replicas"],
+                        gpu_per_replica=d["gpu_per_replica"],
+                        vcpu_per_replica=vcpu_req,
+                        ram_gb_per_replica=ram_gb_req,
+                        workload_type=None,
                     )
-                    await self.deployments.update_state(deployment_id, "RUNNING")
-                    return
 
-                # ---- Universal Readiness Poll ----
-                # Use adapter-specific timeout from capabilities
-                timeout = capabilities.readiness_timeout_seconds
-                expose_url = await adapter.wait_for_ready(
-                    provider_instance_id=node_spec["provider_instance_id"],
-                    timeout=timeout,
-                    provider_credential_name=pool.get("provider_credential_name"),
+                except Exception as e:
+                    await self.deployments.update_state(
+                        deployment_id,
+                        "FAILED",
+                        error_message=f"Strategy deployment error: {e}",
+                    )
+                    raise
+
+                allocation_ids = result.get("allocation_ids") or result.get("allocations")
+                node_ids = result.get("node_ids")
+
+                if allocation_ids and not isinstance(allocation_ids, list):
+                    allocation_ids = [allocation_ids]
+                if node_ids and not isinstance(node_ids, list):
+                    node_ids = [node_ids]
+
+                await self.deployments.attach_runtime(
+                    deployment_id=deployment_id,
+                    allocation_ids=allocation_ids,
+                    node_ids=node_ids,
+                    runtime=result["runtime"],
                 )
-
-                # SAFETY CHECK: Verify that the deployment hasn't been terminated while we were waiting
-                d_latest = await self.deployments.get(deployment_id)
-                if not d_latest or d_latest["state"] != "PROVISIONING":
-                    log.warning(
-                        f"Deployment {deployment_id} state changed from PROVISIONING to {d_latest.get('state') if d_latest else 'None'} while waiting for provider. Aborting node registration."
-                    )
-                    # We should ideally deprovision if it was a real node,
-                    # but termination handler might have already handled it or will handle it.
-                    return
-
-                # If the adapter returned a special indicator instead of a real URL,
-                # check if the node_spec already had one (common for Akash/AWS)
-                if not expose_url or expose_url.endswith("-ready"):
-                    expose_url = expose_url or node_spec.get("expose_url")
-
-                # Use URL directly from adapter if available (e.g. Akash, AWS)
-                if not expose_url and node_spec.get("expose_url"):
-                    expose_url = node_spec.get("expose_url")
-
-                if expose_url:
-                    await self.deployments.update_endpoint(
-                        deployment_id=deployment_id,
-                        endpoint=expose_url,
-                        model_name=d.get("model_name"),
-                    )
-
-                node_id = await self.inventory.register_node(
-                    pool_id=d["pool_id"],
-                    provider=node_spec["provider"],
-                    provider_instance_id=node_spec["provider_instance_id"],
-                    provider_resource_id=None,  # Fix: Avoid passing string "image_uri" to UUID field
-                    hostname=node_spec["hostname"],
-                    gpu_total=node_spec["gpu_total"],
-                    vcpu_total=node_spec["vcpu_total"],
-                    ram_gb_total=node_spec["ram_gb_total"],
-                    state="ready",
-                    node_class=node_spec["node_class"],
-                    metadata=node_spec["metadata"],
-                    expose_url=expose_url,
-                )
-
-                # Attach node to deployment so terminate handler can find it
-                if node_id:
-                    await self.deployments.attach_runtime(
-                        deployment_id=deployment_id,
-                        allocation_ids=[],
-                        node_ids=[node_id],
-                        runtime=pool["provider"],
-                    )
-                    log.info(
-                        f"Deployment {deployment_id} on {pool['provider']} attached node_id {node_id}."
-                    )
-                else:
-                    log.warning(
-                        f"Deployment {deployment_id} on {pool['provider']} "
-                        f"has no node_id returned from register_node."
-                    )
 
                 await self.deployments.update_state(deployment_id, "RUNNING")
+                return  # Success — exit retry loop
 
-                # For ephemeral providers (DePIN, spot instances), deployment is complete once provisioned
-                if capabilities.is_ephemeral:
-                    return
-
-            # -------- PLACEMENT --------
-            if not candidates:
-                log.error(
-                    f"Insufficient capacity for deployment {deployment_id} after {MAX_PROVISION_RETRIES} provisioning attempts. Needs GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}"
-                )
-                await self.deployments.update_state(
-                    deployment_id,
-                    "FAILED",
-                    error_message=f"Insufficient capacity: GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}",
-                )
-                return
-
-            best_node = min(candidates, key=score_node)
-            node_id = UUID(str(best_node["node_id"]))
-
-            await self.deployments.update_state(deployment_id, "SCHEDULING")
-
-            try:
-                await self.deployments.update_state(deployment_id, "DEPLOYING")
-
-                runtime = self.runtime_resolver.resolve(
-                    replicas=d["replicas"],
-                    gpu_per_replica=d["gpu_per_replica"],
-                    engine=d.get("engine"),
-                    model_type=d.get("model_type"),
+            except Exception as e:
+                last_error = e
+                log.warning(
+                    f"Attempt {retry_attempt}/{max_retries} failed for deployment {deployment_id}: {e}"
                 )
 
-                strategy = self.strategies.get(runtime)
-                if not strategy:
-                    raise RuntimeError(
-                        f"No deployment strategy registered for runtime '{runtime}'"
+                if retry_attempt < max_retries:
+                    # More retries available — continue loop
+                    continue
+
+                # All retries exhausted — cleanup and mark FAILED
+                log.error(f"All retries exhausted for deployment {deployment_id}: {e}")
+
+                if node_spec and node_spec.get("provider_instance_id"):
+                    try:
+                        cleanup_adapter = get_adapter(pool["provider"])
+                        log.info(
+                            f"Cleaning up orphaned node {node_spec['provider_instance_id']} "
+                            f"after final retry failure for {deployment_id}"
+                        )
+                        await cleanup_adapter.deprovision_node(
+                            provider_instance_id=node_spec["provider_instance_id"],
+                            provider_credential_name=pool.get("provider_credential_name"),
+                        )
+                    except Exception as cleanup_err:
+                        log.warning(
+                            f"Failed to cleanup orphaned node for {deployment_id}: {cleanup_err}"
+                        )
+
+                d_current = await self.deployments.get(deployment_id)
+                if d_current and d_current["state"] not in (
+                    "STOPPED",
+                    "TERMINATED",
+                    "TERMINATING",
+                ):
+                    await self.deployments.update_state(
+                        deployment_id,
+                        "FAILED",
+                        error_message=f"Failed after {max_retries} retries: {e}",
                     )
-
-                result = await strategy.deploy(
-                    deployment_id=deployment_id,
-                    model=model,
-                    pool_id=d["pool_id"],
-                    node_id=node_id,
-                    replicas=d["replicas"],
-                    gpu_per_replica=d["gpu_per_replica"],
-                    vcpu_per_replica=vcpu_req,
-                    ram_gb_per_replica=ram_gb_req,
-                    workload_type=None,  # d["workload_type"],
-                )
-
-            except Exception:
-                await self.deployments.update_state(
-                    deployment_id,
-                    "FAILED",
-                    error_message=f"Strategy deployment error: {e}",
-                )
-                raise
-
-            # Normalize strategy outputs to UUID list shape expected by repository
-            allocation_ids = result.get("allocation_ids") or result.get("allocations")
-            node_ids = result.get("node_ids")
-
-            if allocation_ids and not isinstance(allocation_ids, list):
-                allocation_ids = [allocation_ids]
-            if node_ids and not isinstance(node_ids, list):
-                node_ids = [node_ids]
-
-            await self.deployments.attach_runtime(
-                deployment_id=deployment_id,
-                allocation_ids=allocation_ids,
-                node_ids=node_ids,
-                runtime=result["runtime"],
-                # **result,
-            )
-
-            await self.deployments.update_state(deployment_id, "RUNNING")
-
-        except Exception as e:
-            log.error(f"Unhandled error during provisioning for {deployment_id}: {e}")
-
-            # Cleanup: if we provisioned a node but failed afterwards (e.g. DB error),
-            # deprovision the cloud resources to avoid orphaned VMs.
-            if node_spec and node_spec.get("provider_instance_id"):
-                try:
-                    cleanup_adapter = get_adapter(pool["provider"])
+                else:
                     log.info(
-                        f"Cleaning up orphaned node {node_spec['provider_instance_id']} "
-                        f"after provisioning failure for {deployment_id}"
+                        f"Skipping FAILED state update for {deployment_id} — "
+                        f"already in terminal state: {d_current['state'] if d_current else 'deleted'}"
                     )
-                    await cleanup_adapter.deprovision_node(
-                        provider_instance_id=node_spec["provider_instance_id"],
-                        provider_credential_name=pool.get("provider_credential_name"),
-                    )
-                except Exception as cleanup_err:
-                    log.warning(
-                        f"Failed to cleanup orphaned node for {deployment_id}: {cleanup_err}"
-                    )
-
-            # Only mark as FAILED if the deployment hasn't moved to a terminal state
-            # (e.g. terminate handler may have already set STOPPED/TERMINATED)
-            d_current = await self.deployments.get(deployment_id)
-            if d_current and d_current["state"] not in (
-                "STOPPED",
-                "TERMINATED",
-                "TERMINATING",
-            ):
-                await self.deployments.update_state(
-                    deployment_id,
-                    "FAILED",
-                    error_message=str(e),
-                )
-            else:
-                log.info(
-                    f"Skipping FAILED state update for {deployment_id} — "
-                    f"already in terminal state: {d_current['state'] if d_current else 'deleted'}"
-                )
-            raise e
 
     async def handle_terminate_requested(self, deployment_id: UUID):
         d = await self.deployments.get(deployment_id)

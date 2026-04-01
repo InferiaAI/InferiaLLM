@@ -251,8 +251,8 @@ function DeploymentHeader({
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground text-sm">Provider:</span>
           <span className="px-2 py-0.5 rounded-md bg-muted text-xs font-medium uppercase tracking-wider">{deployment.provider || "Unknown"}</span>
-          <div className={cn("flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium uppercase tracking-wider border", isRunning ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-red-500/10 text-red-500 border-red-500/20")}>
-            <div className={cn("w-1.5 h-1.5 rounded-full", isRunning ? "bg-green-50 animate-pulse" : "bg-red-500")} />
+          <div className={cn("flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium uppercase tracking-wider border", state === "RETRYING" ? "bg-amber-500/10 text-amber-500 border-amber-500/20" : isRunning ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-red-500/10 text-red-500 border-red-500/20")}>
+            <div className={cn("w-1.5 h-1.5 rounded-full", state === "RETRYING" ? "bg-amber-500 animate-pulse" : isRunning ? "bg-green-50 animate-pulse" : "bg-red-500")} />
             {state}
           </div>
         </div>

@@ -114,6 +114,9 @@ class Settings(BaseSettings):
         default=20, validation_alias="DEFAULT_POLLING_INTERVAL"
     )
 
+    # Deployment Retry Logic
+    max_deployment_retries: int = Field(
+        default=2, validation_alias="MAX_DEPLOYMENT_RETRIES"
     # Deployment Log Persistence (Elasticsearch)
     elasticsearch_url: Optional[str] = Field(
         default=None, validation_alias="ELASTICSEARCH_URL"
