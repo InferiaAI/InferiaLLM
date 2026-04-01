@@ -15,6 +15,7 @@ from inferia.services.orchestration.repositories.placement_repo import Placement
 from inferia.services.orchestration.repositories.scheduler_repo import SchedulerRepository
 from inferia.services.orchestration.repositories.inventory_repo import InventoryRepository
 from inferia.services.orchestration.repositories.quota_repo import QuotaRepository
+from inferia.services.orchestration.repositories.terminal_log_repo import TerminalLogRepository
 
 from inferia.services.orchestration.services.scheduler.service import SchedulerService
 from inferia.services.orchestration.services.model_deployment.runtime_resolver import RuntimeResolver
@@ -27,20 +28,22 @@ from inferia.services.orchestration.services.model_deployment.strategies.localai
 POSTGRES_DSN = os.getenv("POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia")
 NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000/nosana")
 POLL_INTERVAL = 30  # seconds
+MAX_CONCURRENT_DEPLOYS = int(os.getenv("MAX_CONCURRENT_DEPLOYS", "8"))
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("deployment-worker")
 
-async def consume_deploy_requests(worker, event_bus):
+async def consume_deploy_requests(worker, event_bus, semaphore):
     async def process_deploy(msg_id, event):
-        try:
-            log.info(f"Processing deploy event: {event}")
-            deployment_id = UUID(event["deployment_id"])
-            await worker.handle_deploy_requested(deployment_id)
-            await event_bus.redis.xack("model.deploy.requested", "deployment-workers", msg_id)
-            log.info(f"Successfully processed deploy event for {deployment_id}")
-        except Exception:
-            log.exception("Failed to process deployment event")
+        async with semaphore:
+            try:
+                log.info(f"Processing deploy event: {event}")
+                deployment_id = UUID(event["deployment_id"])
+                await worker.handle_deploy_requested(deployment_id)
+                await event_bus.redis.xack("model.deploy.requested", "deployment-workers", msg_id)
+                log.info(f"Successfully processed deploy event for {deployment_id}")
+            except Exception:
+                log.exception("Failed to process deployment event")
 
     async for msg_id, event in event_bus.consume(
         stream="model.deploy.requested",
@@ -51,16 +54,17 @@ async def consume_deploy_requests(worker, event_bus):
         asyncio.create_task(process_deploy(msg_id, event))
 
 
-async def consume_terminate_requests(worker, event_bus):
+async def consume_terminate_requests(worker, event_bus, semaphore):
     async def process_terminate(msg_id, event):
-        try:
-            log.info(f"Processing terminate event: {event}")
-            deployment_id = UUID(event["deployment_id"])
-            await worker.handle_terminate_requested(deployment_id)
-            await event_bus.redis.xack("model.terminate.requested", "deployment-workers", msg_id)
-            log.info(f"Successfully processed terminate event for {deployment_id}")
-        except Exception:
-            log.exception("Failed to process termination event")
+        async with semaphore:
+            try:
+                log.info(f"Processing terminate event: {event}")
+                deployment_id = UUID(event["deployment_id"])
+                await worker.handle_terminate_requested(deployment_id)
+                await event_bus.redis.xack("model.terminate.requested", "deployment-workers", msg_id)
+                log.info(f"Successfully processed terminate event for {deployment_id}")
+            except Exception:
+                log.exception("Failed to process termination event")
 
     async for msg_id, event in event_bus.consume(
         stream="model.terminate.requested",
@@ -116,6 +120,7 @@ async def main():
     placement_repo = PlacementRepository(db_pool)
     inventory_repo = InventoryRepository(db_pool)
     quota_repo = QuotaRepository(db_pool)
+    terminal_log_repo = TerminalLogRepository(db_pool)
     scheduler_repo = SchedulerRepository(db_pool, quota_repo=quota_repo)
 
     # ---------------- Services ----------------
@@ -148,28 +153,18 @@ async def main():
             "vllm": vllm_strategy,
             "localai": localai_strategy,
         },
+        terminal_log_repo=terminal_log_repo,
     )
 
-    log.info("ModelDeploymentWorker started")
+    log.info("ModelDeploymentWorker started (max_concurrent=%d)", MAX_CONCURRENT_DEPLOYS)
 
-    # while True:
-    #     pending = await deployment_repo.list_by_state("PENDING")
-
-    #     for d in pending:
-    #         try:
-    #             await worker.handle_deploy_requested(d["deployment_id"])
-    #         except Exception:
-    #             log.exception(
-    #                 "Failed deployment %s",
-    #                 d["deployment_id"],
-    #             )
-
-    #     await asyncio.sleep(POLL_INTERVAL)
+    # Semaphore caps concurrent in-flight tasks to match DB pool capacity
+    deploy_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DEPLOYS)
 
     # ---------------- Event Loop ----------------
     await asyncio.gather(
-        consume_deploy_requests(worker, event_bus),
-        consume_terminate_requests(worker, event_bus),
+        consume_deploy_requests(worker, event_bus, deploy_semaphore),
+        consume_terminate_requests(worker, event_bus, deploy_semaphore),
         health_check_loop(inventory_repo, deployment_repo),
     )
     
