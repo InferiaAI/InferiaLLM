@@ -93,7 +93,7 @@ async def test_accepts_valid_key(client):
         ) as mock_service,
     ):
         mock_settings.internal_api_key = VALID_INTERNAL_KEY
-        mock_service.log_event = AsyncMock(return_value=mock_log)
+        mock_service.log_event_sync = AsyncMock(return_value=mock_log)
 
         response = await client.post(
             "/audit/internal/log",

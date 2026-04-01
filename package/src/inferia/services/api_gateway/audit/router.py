@@ -70,4 +70,4 @@ async def create_internal_log(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid Internal API Key"
         )
-    return await audit_service.log_event(db, log_data)
+    return await audit_service.log_event_sync(db, log_data)
