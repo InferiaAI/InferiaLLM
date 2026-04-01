@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     # Deployment Retry Logic
     max_deployment_retries: int = Field(
         default=2, validation_alias="MAX_DEPLOYMENT_RETRIES"
+    # Deployment Log Persistence (Elasticsearch)
+    elasticsearch_url: Optional[str] = Field(
+        default=None, validation_alias="ELASTICSEARCH_URL"
+    )
+    deployment_log_buffer_size: int = Field(
+        default=10000, validation_alias="DEPLOYMENT_LOG_BUFFER_SIZE"
+    )
+    deployment_log_flush_interval: int = Field(
+        default=10, validation_alias="DEPLOYMENT_LOG_FLUSH_INTERVAL"
     )
 
     @property
