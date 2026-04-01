@@ -1396,6 +1396,36 @@ async def get_deployment_logs(deployment_id: str):
         await conn.close()
 
 
+@router.get("/logs/{deployment_id}/persisted")
+async def get_persisted_deployment_logs(deployment_id: str):
+    """
+    Retrieve persisted terminal logs captured on deployment failure/stop.
+    Returns the most recent log snapshot.
+    """
+    from inferia.services.orchestration.repositories.terminal_log_repo import (
+        TerminalLogRepository,
+    )
+
+    try:
+        dep_uuid = UUID(deployment_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID")
+
+    conn = await asyncpg.connect(POSTGRES_DSN)
+    try:
+        repo = TerminalLogRepository(conn)
+        log_entry = await repo.get_by_deployment(dep_uuid)
+        if not log_entry:
+            return {"logs": [], "message": "No persisted logs found for this deployment"}
+        return {
+            "logs": log_entry["log_lines"],
+            "captured_at": log_entry["captured_at"].isoformat(),
+            "trigger_event": log_entry["trigger_event"],
+        }
+    finally:
+        await conn.close()
+
+
 @router.get("/logs/{deployment_id}/stream")
 async def get_deployment_log_stream_info(deployment_id: str, request: Request):
     """

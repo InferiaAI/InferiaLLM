@@ -26,6 +26,7 @@ class ModelDeploymentWorker:
         inventory_repo,
         runtime_resolver,
         runtime_strategies,  # dict: {"vllm": ..., "llmd": ...}
+        terminal_log_repo=None,
     ):
         self.deployments = deployment_repo
         self.models = model_registry_repo
@@ -35,6 +36,48 @@ class ModelDeploymentWorker:
         self.inventory = inventory_repo
         self.runtime_resolver = runtime_resolver
         self.strategies = runtime_strategies
+        self.terminal_logs = terminal_log_repo
+
+    async def _persist_terminal_logs(
+        self, deployment_id: UUID, trigger_event: str
+    ) -> None:
+        """Best-effort capture of terminal logs before state transition."""
+        if not self.terminal_logs:
+            return
+        try:
+            d = await self.deployments.get(deployment_id)
+            if not d or not d.get("node_ids"):
+                return
+            pool = await self.pools.get(d["pool_id"])
+            if not pool:
+                return
+            adapter = get_adapter(pool["provider"])
+            if not hasattr(adapter, "get_logs"):
+                return
+            node_id = d["node_ids"][0]
+            node = await self.inventory.get_node(node_id) if hasattr(self.inventory, "get_node") else None
+            provider_instance_id = node.get("provider_instance_id") if node else None
+            if not provider_instance_id:
+                return
+            logs_data = await adapter.get_logs(
+                provider_instance_id=provider_instance_id,
+                provider_credential_name=pool.get("provider_credential_name"),
+            )
+            log_lines = logs_data.get("logs", []) if isinstance(logs_data, dict) else []
+            if log_lines:
+                await self.terminal_logs.save(
+                    deployment_id=deployment_id,
+                    log_lines=log_lines[:1000],
+                    trigger_event=trigger_event,
+                )
+                log.info(
+                    "Persisted %d terminal log lines for %s (%s)",
+                    len(log_lines[:1000]),
+                    deployment_id,
+                    trigger_event,
+                )
+        except Exception:
+            log.exception("Failed to persist terminal logs for %s", deployment_id)
 
     # -------------------------------------------------
     # EVENT HANDLER
@@ -521,6 +564,7 @@ class ModelDeploymentWorker:
                 "TERMINATED",
                 "TERMINATING",
             ):
+                await self._persist_terminal_logs(deployment_id, "FAILED")
                 await self.deployments.update_state(
                     deployment_id,
                     "FAILED",
@@ -661,6 +705,7 @@ class ModelDeploymentWorker:
             # 4. FINAL STATE — always reached
             # ------------------------------------
             final_state = "STOPPED" if cleanup_error is None else "FAILED"
+            await self._persist_terminal_logs(deployment_id, final_state)
             await self.deployments.update_state(deployment_id, final_state)
             if cleanup_error:
                 log.error(f"Deployment {deployment_id} marked FAILED due to cleanup error: {cleanup_error}")
