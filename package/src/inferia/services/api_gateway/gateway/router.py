@@ -271,8 +271,8 @@ async def list_models(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check cache after authentication
-    cache_key = (skip, limit)
+    # Check cache after authentication (include org_id to avoid cross-org leaks)
+    cache_key = (key_record.org_id, skip, limit)
     if cache_key in models_cache:
         return models_cache[cache_key]
 
@@ -351,10 +351,16 @@ async def list_models(
 
         return None
 
-    # Run health checks in parallel
+    # Run health checks in parallel with bounded concurrency
+    _health_semaphore = asyncio.Semaphore(10)
+
+    async def _bounded_check(client, d):
+        async with _health_semaphore:
+            return await check_health(client, d)
+
     client = gateway_http_client.get_service_client()
     health_results = await asyncio.gather(
-        *(check_health(client, d) for d in all_deployments), return_exceptions=True
+        *(_bounded_check(client, d) for d in all_deployments), return_exceptions=True
     )
 
     deployments = [
