@@ -2,6 +2,7 @@ from fastapi import Request, HTTPException, status, Depends
 from fastapi.security import HTTPBearer
 from typing import Optional, List
 from fastapi.responses import JSONResponse
+from cachetools import TTLCache
 
 from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.auth import auth_service
@@ -9,6 +10,10 @@ from inferia.services.api_gateway.db.database import AsyncSessionLocal
 from inferia.services.api_gateway.rbac.permissions import normalize_permissions
 
 security = HTTPBearer()
+
+# Short-TTL cache: (token) → (user, org_id, roles, permissions)
+# 30s TTL avoids stale permissions while eliminating 3 DB queries/request
+_auth_cache: TTLCache = TTLCache(maxsize=2048, ttl=30)
 
 
 def _auth_error_response(
@@ -91,59 +96,64 @@ async def auth_middleware(request: Request, call_next):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Create DB Session for Auth
-    async with AsyncSessionLocal() as db:
-        try:
-            # Validate token and get user (Async)
-            user, org_id, roles = await auth_service.get_current_user(db, token)
+    # Check cache first to avoid 3 DB queries per request
+    cached = _auth_cache.get(token)
+    if cached is not None:
+        request.state.user = cached
+    else:
+        # Create DB Session for Auth
+        async with AsyncSessionLocal() as db:
+            try:
+                # Validate token and get user (Async)
+                user, org_id, roles = await auth_service.get_current_user(db, token)
 
-            # Determine permissions based on roles (Dynamic from DB)
-            from sqlalchemy.future import select
-            from inferia.services.api_gateway.db.models import Role
+                # Determine permissions based on roles (Dynamic from DB)
+                from sqlalchemy.future import select
+                from inferia.services.api_gateway.db.models import Role
 
-            permissions_set = set()
-            if roles:
-                stmt = select(Role).where(Role.name.in_(roles))
-                result = await db.execute(stmt)
-                role_records = result.scalars().all()
-                for r in role_records:
-                    if r.permissions:
-                        permissions_set.update(r.permissions)
+                permissions_set = set()
+                if roles:
+                    stmt = select(Role).where(Role.name.in_(roles))
+                    result = await db.execute(stmt)
+                    role_records = result.scalars().all()
+                    for r in role_records:
+                        if r.permissions:
+                            permissions_set.update(r.permissions)
 
-            permissions, _, _ = normalize_permissions(permissions_set)
+                permissions, _, _ = normalize_permissions(permissions_set)
 
-            # Mock Quota (until quota model implemented)
-            # Default to high limit
-            quota_limit = 10000
-            quota_used = 0
+                # Mock Quota (until quota model implemented)
+                # Default to high limit
+                quota_limit = 10000
+                quota_used = 0
 
-            # Create user context
-            user_context = UserContext(
-                user_id=user.id,
-                username=user.email,
-                email=user.email,
-                roles=roles,
-                permissions=permissions,
-                org_id=org_id,
-                quota_limit=quota_limit,
-                quota_used=quota_used,
-                # is_active=True, # user.is_active if column exists
-            )
+                # Create user context
+                user_context = UserContext(
+                    user_id=user.id,
+                    username=user.email,
+                    email=user.email,
+                    roles=roles,
+                    permissions=permissions,
+                    org_id=org_id,
+                    quota_limit=quota_limit,
+                    quota_used=quota_used,
+                )
 
-            # Add user context to request state
-            request.state.user = user_context
+                # Add user context to request state and cache
+                request.state.user = user_context
+                _auth_cache[token] = user_context
 
-        except HTTPException as e:
-            return _auth_error_response(
-                e.status_code,
-                e.detail if isinstance(e.detail, str) else str(e.detail),
-                headers=getattr(e, "headers", None),
-            )
-        except Exception as e:
-            return _auth_error_response(
-                status.HTTP_401_UNAUTHORIZED,
-                f"Authentication failed: {str(e)}",
-            )
+            except HTTPException as e:
+                return _auth_error_response(
+                    e.status_code,
+                    e.detail if isinstance(e.detail, str) else str(e.detail),
+                    headers=getattr(e, "headers", None),
+                )
+            except Exception as e:
+                return _auth_error_response(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Authentication failed: {str(e)}",
+                )
 
     response = await call_next(request)
     return response
