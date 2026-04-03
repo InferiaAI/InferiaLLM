@@ -291,18 +291,26 @@ class GatewayService:
         max_bytes = settings.upstream_max_response_bytes
         client = http_client.get_client()
         try:
+            # Acquire concurrency slot only for connection establishment,
+            # then release it so long-running streams don't cause
+            # head-of-line blocking for new requests.
             async with upstream_concurrency_limiter.limit(concurrency_key):
-                async with client.stream(
+                request = client.build_request(
                     "POST", full_url, json=transformed_payload, headers=headers
-                ) as response:
-                    response.raise_for_status()
-                    total_bytes = 0
-                    async for chunk in response.aiter_raw():
-                        total_bytes += len(chunk)
-                        if total_bytes > max_bytes:
-                            yield b'data: {"error": "Upstream response exceeded size limit"}\n\n'
-                            return
-                        yield chunk
+                )
+                response = await client.send(request, stream=True)
+                response.raise_for_status()
+            # Slot released — stream body without holding it
+            try:
+                total_bytes = 0
+                async for chunk in response.aiter_raw():
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        yield b'data: {"error": "Upstream response exceeded size limit"}\n\n'
+                        return
+                    yield chunk
+            finally:
+                await response.aclose()
         except httpx.HTTPStatusError as e:
             await breaker._record_failure()
             logger.error(f"Upstream Error {e.response.status_code}: {e.response.text}")

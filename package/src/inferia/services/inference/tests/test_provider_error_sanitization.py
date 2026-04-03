@@ -119,10 +119,8 @@ class TestStreamUpstreamErrorSanitization:
         )
 
         mock_client = AsyncMock()
-        stream_cm = MagicMock()
-        stream_cm.__aenter__ = AsyncMock(side_effect=error)
-        stream_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_client.stream = MagicMock(return_value=stream_cm)
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(side_effect=error)
 
         limiter_cm = MagicMock()
         limiter_cm.__aenter__ = AsyncMock(return_value=None)
@@ -152,12 +150,10 @@ class TestStreamUpstreamErrorSanitization:
     async def test_streaming_exception_does_not_expose_details(self):
         """Streaming connection errors must return generic message."""
         mock_client = AsyncMock()
-        stream_cm = MagicMock()
-        stream_cm.__aenter__ = AsyncMock(
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(
             side_effect=ConnectionError("DNS resolution failed for gpu-node-3.internal")
         )
-        stream_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_client.stream = MagicMock(return_value=stream_cm)
 
         limiter_cm = MagicMock()
         limiter_cm.__aenter__ = AsyncMock(return_value=None)

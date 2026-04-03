@@ -267,13 +267,11 @@ class TestCallUpstreamSecurity:
         mock_response.aiter_raw = MagicMock(
             return_value=self._async_iter([b"x" * 500, b"x" * 500, b"x" * 500])
         )
-
-        @asynccontextmanager
-        async def mock_stream(*args, **kwargs):
-            yield mock_response
+        mock_response.aclose = AsyncMock()
 
         mock_client = MagicMock()
-        mock_client.stream = mock_stream
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(return_value=mock_response)
 
         with patch(
             "inferia.services.inference.core.service.settings"
