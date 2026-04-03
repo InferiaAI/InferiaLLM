@@ -1,4 +1,6 @@
-from typing import List, Dict, Any, Optional
+import asyncio
+import logging
+from typing import List
 from datetime import datetime, timezone
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +11,11 @@ from inferia.services.api_gateway.db.models import AuditLog
 from inferia.services.api_gateway.models import AuditLogFilter, AuditLogCreate, AuditLogResponse
 from inferia.services.api_gateway.schemas.logging import derive_category
 
+logger = logging.getLogger(__name__)
+
 def utcnow_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 class AuditService:
     def __init__(self):
@@ -20,10 +25,44 @@ class AuditService:
         self,
         db: AsyncSession,
         event: AuditLogCreate
+    ) -> None:
+        """
+        Fire-and-forget audit log write.
+
+        Spawns a background task with its own DB session so the caller's
+        request is not blocked by the audit commit round-trip.
+        """
+        # Capture everything needed — the background task must not
+        # reference the caller's db session (it may be closed by then).
+        log_data = {
+            "id": str(uuid.uuid4()),
+            "timestamp": utcnow_naive(),
+            "user_id": event.user_id,
+            "org_id": event.org_id,
+            "action": event.action,
+            "category": event.category or derive_category(event.action),
+            "resource_type": event.resource_type,
+            "resource_id": event.resource_id,
+            "details": event.details,
+            "ip_address": event.ip_address,
+            "status": event.status,
+        }
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._write_audit_log(log_data))
+        except RuntimeError:
+            # No running loop (e.g., during shutdown) — write synchronously
+            await self._write_audit_log(log_data)
+
+    async def log_event_sync(
+        self,
+        db: AsyncSession,
+        event: AuditLogCreate,
     ) -> AuditLog:
         """
-        Create an immutable audit log entry.
-        Category is auto-derived from action if not explicitly set.
+        Synchronous audit log write — blocks until committed.
+        Only used by the /internal/log endpoint that needs to return the created record.
         """
         category = event.category or derive_category(event.action)
 
@@ -38,12 +77,24 @@ class AuditService:
             resource_id=event.resource_id,
             details=event.details,
             ip_address=event.ip_address,
-            status=event.status
+            status=event.status,
         )
         db.add(db_log)
         await db.commit()
         await db.refresh(db_log)
         return db_log
+
+    async def _write_audit_log(self, log_data: dict) -> None:
+        """Background writer with its own DB session."""
+        try:
+            from inferia.services.api_gateway.db.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                db_log = AuditLog(**log_data)
+                db.add(db_log)
+                await db.commit()
+        except Exception as e:
+            logger.error("Failed to write audit log: %s", e)
 
     async def get_logs(
         self,
