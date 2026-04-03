@@ -3,6 +3,7 @@ import time
 import logging
 import os
 from typing import Dict, Optional, Tuple
+from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class TokenBucketLimiter:
     """
     def __init__(self):
         # Key -> (tokens, last_refill_timestamp)
-        self.buckets: Dict[str, Tuple[float, float]] = {}
+        self.buckets: TTLCache = TTLCache(maxsize=10000, ttl=120)
 
     def check_limit(self, key: str, rpm: int, cost: int = 1) -> Tuple[bool, float]:
         """
@@ -118,6 +119,15 @@ def create_rate_limiter(redis_url: Optional[str] = None):
                 "Rate limits will NOT be shared across workers.",
                 e,
             )
+
+    workers = int(os.environ.get("WEB_CONCURRENCY", "1"))
+    if workers > 1:
+        logger.warning(
+            "In-memory rate limiter active with %d workers. "
+            "Rate limits will NOT be enforced across workers. "
+            "Provide REDIS_URL or set WEB_CONCURRENCY=1.",
+            workers,
+        )
     return TokenBucketLimiter()
 
 

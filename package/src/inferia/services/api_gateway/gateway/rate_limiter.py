@@ -8,6 +8,7 @@ from typing import Any, Dict, Tuple
 from fastapi import HTTPException, status, Request
 from datetime import datetime
 import asyncio
+from cachetools import TTLCache
 
 from inferia.services.api_gateway.config import settings
 
@@ -61,7 +62,7 @@ class InMemoryRateLimiter:
     """In-memory rate limiter using token bucket algorithm."""
 
     def __init__(self):
-        self.buckets: Dict[str, TokenBucket] = {}
+        self.buckets: TTLCache = TTLCache(maxsize=10000, ttl=120)
         self.requests_per_minute = settings.rate_limit_requests_per_minute
         self.burst_size = settings.rate_limit_burst_size
 
@@ -143,6 +144,7 @@ class RedisRateLimiter:
 
 
 import logging
+import os
 
 logger = logging.getLogger("rate_limiter")
 
@@ -164,6 +166,16 @@ class RateLimiter:
         else:
             self.limiter = InMemoryRateLimiter()
             self.backend = "in-memory"
+
+        if self.backend == "in-memory":
+            workers = int(os.getenv("WEB_CONCURRENCY", "1"))
+            if workers > 1:
+                logger.warning(
+                    "In-memory rate limiter is active with %d workers. "
+                    "Rate limits will NOT be enforced across workers. "
+                    "Set use_redis_rate_limit=true or WEB_CONCURRENCY=1.",
+                    workers,
+                )
 
     async def check_rate_limit(self, request: Request) -> None:
         """
