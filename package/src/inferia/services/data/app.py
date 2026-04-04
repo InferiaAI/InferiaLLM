@@ -82,10 +82,6 @@ class RetrieveRequest(BaseModel):
     n_results: int = 3
 
 
-MAX_INGEST_DOCUMENTS = 500
-MAX_DOCUMENT_SIZE_BYTES = 1_000_000  # 1 MB per document
-
-
 class IngestRequest(BaseModel):
     collection_name: str
     documents: List[str]
@@ -249,16 +245,16 @@ async def ingest(request: IngestRequest):
     """
     Ingest documents into the Vector Database.
     """
-    if len(request.documents) > MAX_INGEST_DOCUMENTS:
+    if len(request.documents) > settings.max_ingest_documents:
         raise HTTPException(
             status_code=400,
-            detail=f"Too many documents ({len(request.documents)}). Maximum is {MAX_INGEST_DOCUMENTS}.",
+            detail=f"Too many documents ({len(request.documents)}). Maximum is {settings.max_ingest_documents}.",
         )
     for i, doc in enumerate(request.documents):
-        if len(doc.encode("utf-8")) > MAX_DOCUMENT_SIZE_BYTES:
+        if len(doc.encode("utf-8")) > settings.max_document_size_bytes:
             raise HTTPException(
                 status_code=400,
-                detail=f"Document at index {i} exceeds maximum size of {MAX_DOCUMENT_SIZE_BYTES} bytes.",
+                detail=f"Document at index {i} exceeds maximum size of {settings.max_document_size_bytes} bytes.",
             )
     try:
         success = await asyncio.to_thread(
