@@ -116,3 +116,74 @@ class TestOutboxFetchPendingTransaction:
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["id"] == 1
+
+
+class TestFetchAndLock:
+    """Verify fetch_and_lock keeps the transaction open through mark_published."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_and_lock_yields_connection(self):
+        """fetch_and_lock should yield (events, conn) inside a transaction."""
+        pool, mock_conn, tx_ctx = _make_mock_pool()
+        repo = OutboxRepository(pool)
+
+        async with repo.fetch_and_lock(limit=10) as (events, conn):
+            assert conn is mock_conn
+
+    @pytest.mark.asyncio
+    async def test_transaction_open_inside_context(self):
+        """Transaction must remain open while inside the context manager."""
+        pool, mock_conn, tx_ctx = _make_mock_pool()
+        repo = OutboxRepository(pool)
+
+        async with repo.fetch_and_lock(limit=10) as (events, conn):
+            # tx_ctx entered but not exited yet
+            assert tx_ctx.entered
+            assert not tx_ctx.exited
+
+        # Now it should have exited
+        assert tx_ctx.exited
+
+    @pytest.mark.asyncio
+    async def test_mark_published_on_uses_given_connection(self):
+        """mark_published_on must execute on the provided connection."""
+        from uuid import uuid4
+
+        conn = AsyncMock()
+        event_id = uuid4()
+
+        await OutboxRepository.mark_published_on(conn, event_id=event_id)
+
+        conn.execute.assert_awaited_once()
+        call_args = conn.execute.call_args[0]
+        assert event_id in call_args
+
+    @pytest.mark.asyncio
+    async def test_mark_failed_on_truncates_error(self):
+        """Error messages should be truncated to 1024 chars."""
+        from uuid import uuid4
+
+        conn = AsyncMock()
+        long_error = "x" * 2000
+
+        await OutboxRepository.mark_failed_on(
+            conn, event_id=uuid4(), error=long_error
+        )
+
+        call_args = conn.execute.call_args[0]
+        error_arg = call_args[2]
+        assert len(error_arg) <= 1024
+
+    @pytest.mark.asyncio
+    async def test_mark_failed_on_handles_none_error(self):
+        """None error should become empty string."""
+        from uuid import uuid4
+
+        conn = AsyncMock()
+        await OutboxRepository.mark_failed_on(
+            conn, event_id=uuid4(), error=None
+        )
+
+        call_args = conn.execute.call_args[0]
+        error_arg = call_args[2]
+        assert error_arg == ""

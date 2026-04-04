@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
@@ -54,8 +55,12 @@ class PolicyEngine:
         # Cache for Quota Policies: Key=org_id, Value=PolicyConfigDict
         self.quota_policy_cache = cachetools.TTLCache(maxsize=2000, ttl=60)
 
-        # Redis Client for Quotas
-        self.redis = redis.from_url(settings.redis_url, decode_responses=True)
+        # Lock to protect TTLCache instances from concurrent async access
+        self._cache_lock = asyncio.Lock()
+
+        # Redis Client for Quotas (shared pool)
+        from inferia.services.api_gateway.gateway.redis_pool import get_redis_client
+        self.redis = get_redis_client()
 
     async def verify_api_key(
         self, db: AsyncSession, api_key: str
@@ -142,17 +147,18 @@ class PolicyEngine:
             "rate_limit": {"enabled": False},
         }
 
-        # Cache the result
-        self.context_cache[cache_key] = {
+        # Cache the result (lock protects TTLCache internal state)
+        async with self._cache_lock:
+            self.context_cache[cache_key] = {
             "valid": True,
             "deployment": deployment_dict,
             "config": config,
             "user_id_context": user_id,
             "org_id": org_id,
-            "log_payloads": True,
-        }
+                "log_payloads": True,
+            }
 
-        return self.context_cache[cache_key]
+            return self.context_cache[cache_key]
 
     async def resolve_context(
         self,
@@ -166,8 +172,9 @@ class PolicyEngine:
         Resolve complete inference context (Deployment + Policies) from an API Key.
         """
         cache_key = (api_key, model, model_type)
-        if cache_key in self.context_cache:
-            return self.context_cache[cache_key]
+        async with self._cache_lock:
+            if cache_key in self.context_cache:
+                return self.context_cache[cache_key]
 
         # Handle sandbox mode - api_key is in format "sandbox:{org_id}:{user_id}"
         if sandbox and api_key.startswith("sandbox:"):
@@ -325,8 +332,9 @@ class PolicyEngine:
             else True,
         }
 
-        # Update Cache
-        self.context_cache[cache_key] = final_result
+        # Update Cache (lock protects TTLCache internal state)
+        async with self._cache_lock:
+            self.context_cache[cache_key] = final_result
         return final_result
 
     async def check_policy(self, user: UserContext, action: str, resource: str) -> bool:
@@ -363,21 +371,26 @@ class PolicyEngine:
         if user_id.startswith("apikey:"):
             try:
                 api_key_id = user_id.split(":")[1]
-                if api_key_id in self.org_id_cache:
-                    org_id = self.org_id_cache[api_key_id]
+                async with self._cache_lock:
+                    cached_org = self.org_id_cache.get(api_key_id)
+                if cached_org is not None:
+                    org_id = cached_org
                 else:
                     stmt = select(DBApiKey.org_id).where(DBApiKey.id == api_key_id)
                     result = await db.execute(stmt)
                     org_id = result.scalars().first()
                     if org_id:
-                        self.org_id_cache[api_key_id] = org_id
+                        async with self._cache_lock:
+                            self.org_id_cache[api_key_id] = org_id
             except (ValueError, IndexError):
                 pass
 
         # 2. If Org ID found, fetch quota policy
         if org_id:
-            if org_id in self.quota_policy_cache:
-                policy_config = self.quota_policy_cache[org_id]
+            async with self._cache_lock:
+                cached_policy = self.quota_policy_cache.get(org_id)
+            if cached_policy is not None:
+                policy_config = cached_policy
                 limit_requests = policy_config.get("request_limit", limit_requests)
                 limit_tokens = policy_config.get("token_limit", limit_tokens)
             else:
@@ -391,7 +404,8 @@ class PolicyEngine:
 
                 if quota_policy and quota_policy.config_json:
                     policy_config = quota_policy.config_json
-                    self.quota_policy_cache[org_id] = policy_config
+                    async with self._cache_lock:
+                        self.quota_policy_cache[org_id] = policy_config
                     limit_requests = policy_config.get("request_limit", limit_requests)
                     limit_tokens = policy_config.get("token_limit", limit_tokens)
 

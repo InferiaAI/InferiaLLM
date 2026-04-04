@@ -33,6 +33,9 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
 
+    # Initialize guardrail providers (loads ML models in background thread)
+    await guardrail_engine.initialize()
+
     # Start polling config from Filtration Service
     from inferia.services.guardrail.config_manager import config_manager
 

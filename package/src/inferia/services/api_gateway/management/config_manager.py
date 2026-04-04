@@ -148,14 +148,14 @@ class ConfigManager(BaseConfigManager):
                 # Merge dict contents to handle masked keys/values
                 for k, v in new_item.items():
                     # Handle specific secret keys: 'key' for nosana, 'value' for universal, 'mnemonic' for akash
-                    if (
-                        k in ["key", "value", "mnemonic"]
-                        and isinstance(v, str)
-                        and "..." in v
-                    ):
-                        existing_val = existing_item.get(k)
-                        if existing_val and v == self._mask_secret(existing_val):
-                            continue  # Skip updating this masked field
+                    if k in ["key", "value", "mnemonic"] and isinstance(v, str):
+                        # Skip any masked/placeholder value — preserve the real secret
+                        if v == "********" or "*" * 4 in v:
+                            continue
+                        if "..." in v:
+                            existing_val = existing_item.get(k)
+                            if existing_val and v == self._mask_secret(existing_val):
+                                continue
                     existing_item[k] = v
             else:
                 # It's a brand new item in this list

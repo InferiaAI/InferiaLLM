@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from typing import Any, AsyncGenerator, Dict, List
+from cachetools import LRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ class StreamProcessor:
 
     _tiktoken = None
     _tiktoken_checked = False
-    _encoder_cache: Dict[str, Any] = {}
+    _encoder_cache: LRUCache = LRUCache(maxsize=128)
 
     @staticmethod
     async def process_stream(

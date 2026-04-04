@@ -640,7 +640,9 @@ export default function NewDeployment() {
         try {
           const targetOrgId = user?.org_id || organizations?.[0]?.id;
           if (!targetOrgId) return;
-          const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`)
+          const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`, {
+            params: { limit: 200, offset: 0 },
+          })
           if (res.data?.pools) {
             dispatch({ type: 'INIT_POOLS', payload: res.data.pools });
           }

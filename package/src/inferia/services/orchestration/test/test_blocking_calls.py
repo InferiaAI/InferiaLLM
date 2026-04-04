@@ -19,6 +19,7 @@ async def _run_sync(func, *args, **kwargs):
 
 
 @pytest.mark.skipif(not HAS_BOTO3, reason="boto3 not installed")
+
 class TestAWSAdapterAsync:
     @pytest.mark.asyncio
     async def test_discover_nodes_uses_run_sync(self):
@@ -214,6 +215,10 @@ class TestRunSyncHelper:
 
     @pytest.mark.asyncio
     async def test_run_sync_propagates_exceptions(self):
+        from inferia.services.orchestration.services.adapter_engine.adapters.aws.adapter import (
+            _run_sync,
+        )
+
         def failing():
             raise ValueError("sync error")
 

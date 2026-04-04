@@ -232,7 +232,9 @@ class ComputePoolRepository:
         async with self.db.acquire() as conn:
             return await conn.fetchrow(query, pool_id)
 
-    async def list_pools(self, owner_id: str | None = None):
+    async def list_pools(
+        self, owner_id: str | None = None, *, limit: int = 100, offset: int = 0
+    ):
         query = """
         SELECT
             id,
@@ -259,10 +261,15 @@ class ComputePoolRepository:
         """
 
         params = []
+        param_idx = 1
 
         if owner_id:
-            query += " AND owner_id = $1"
+            query += f" AND owner_id = ${param_idx}"
             params.append(owner_id)
+            param_idx += 1
+
+        query += f" ORDER BY created_at DESC LIMIT ${param_idx} OFFSET ${param_idx + 1}"
+        params.extend([limit, offset])
 
         async with self.db.acquire() as conn:
             return await conn.fetch(query, *params)

@@ -106,8 +106,11 @@ async def serve():
     server = grpc.aio.server(
         interceptors=[grpc_auth],
         options=[
-            ("grpc.max_concurrent_streams", 10000),
+            ("grpc.max_concurrent_streams", 200),
+            ("grpc.max_receive_message_length", 16 * 1024 * 1024),  # 16 MB
+            ("grpc.max_send_message_length", 16 * 1024 * 1024),  # 16 MB
         ],
+        maximum_concurrent_rpcs=200,
     )
 
     # Initialize database and event bus

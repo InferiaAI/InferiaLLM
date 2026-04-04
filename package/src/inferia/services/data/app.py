@@ -245,6 +245,17 @@ async def ingest(request: IngestRequest):
     """
     Ingest documents into the Vector Database.
     """
+    if len(request.documents) > settings.max_ingest_documents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many documents ({len(request.documents)}). Maximum is {settings.max_ingest_documents}.",
+        )
+    for i, doc in enumerate(request.documents):
+        if len(doc.encode("utf-8")) > settings.max_document_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Document at index {i} exceeds maximum size of {settings.max_document_size_bytes} bytes.",
+            )
     try:
         success = await asyncio.to_thread(
             data_engine.add_documents,

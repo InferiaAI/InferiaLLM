@@ -11,13 +11,15 @@ log = logging.getLogger(__name__)
 
 class RedisEventBus:
     def __init__(self):
-        self.redis = redis.Redis(
+        pool = redis.ConnectionPool(
             host=os.getenv("REDIS_HOST", "localhost"),
-            decode_responses=True,
             port=int(os.getenv("REDIS_PORT") or 6379),
             username=os.getenv("REDIS_USERNAME", "default"),
             password=os.getenv("REDIS_PASSWORD", ""),
+            decode_responses=True,
+            max_connections=int(os.getenv("REDIS_EVENT_BUS_POOL_SIZE", "20")),
         )
+        self.redis = redis.Redis(connection_pool=pool)
 
     async def close(self):
         """Close the Redis connection."""

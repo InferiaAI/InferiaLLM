@@ -124,7 +124,7 @@ class ModelDeploymentRepository(BaseRepository):
         error_message: str | None = None,
     ):
         # Clear error_message when transitioning to non-failure states
-        if state != "FAILED":
+        if state not in ("FAILED", "RETRYING"):
             error_message = None
 
         q = """
@@ -159,7 +159,7 @@ class ModelDeploymentRepository(BaseRepository):
         Returns True if update was successful, False otherwise.
         """
         # Clear error_message when transitioning to non-failure states
-        if new_state != "FAILED":
+        if new_state not in ("FAILED", "RETRYING"):
             error_message = None
 
         q = """
@@ -318,7 +318,14 @@ class ModelDeploymentRepository(BaseRepository):
             row = await c.fetchrow(q, deployment_id)
             return dict(row) if row else None
 
-    async def list(self, pool_id: Optional[UUID] = None, org_id: Optional[str] = None):
+    async def list(
+        self,
+        pool_id: Optional[UUID] = None,
+        org_id: Optional[str] = None,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ):
         conditions = []
         args = []
         idx = 1
@@ -339,7 +346,9 @@ class ModelDeploymentRepository(BaseRepository):
         SELECT * FROM model_deployments
         {where_clause}
         ORDER BY created_at DESC
+        LIMIT ${idx} OFFSET ${idx + 1}
         """
+        args.extend([limit, offset])
 
         async with self.db.acquire() as c:
             rows = await c.fetch(q, *args)
@@ -370,3 +379,16 @@ class ModelDeploymentRepository(BaseRepository):
                 "deployment_id": str(deployment_id),
             },
         )
+
+    async def update_configuration(self, deployment_id: UUID, configuration: dict):
+        """Update the configuration JSONB field for a deployment."""
+        import json
+
+        q = """
+        UPDATE model_deployments
+        SET configuration=$2, updated_at=now()
+        WHERE deployment_id=$1
+        """
+        config_json = json.dumps(configuration)
+        async with self.db.acquire() as c:
+            await c.execute(q, deployment_id, config_json)

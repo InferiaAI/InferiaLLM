@@ -1,6 +1,7 @@
 import boto3
 import grpc
 import asyncio
+import functools
 import datetime as dt
 from adapters.base.adapter import ProviderAdapter
 from inferia.services.orchestration.v1 import (
@@ -9,6 +10,11 @@ from inferia.services.orchestration.v1 import (
 )
 
 GRPC_ADDR = "localhost:50051"
+
+
+async def _run_sync(func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
 
 AWS_INSTANCE_RESOURCES = {
     "g4dn.xlarge": {"cpu": "4", "memory": "16Gi"},
@@ -37,11 +43,12 @@ class AWSAdapter(ProviderAdapter):
         self.ec2 = boto3.client("ec2", region_name=region)
 
     async def discover_nodes(self):
-        resp = self.ec2.describe_instances(
+        resp = await _run_sync(
+            self.ec2.describe_instances,
             Filters=[
                 {"Name": "tag:inferia-managed", "Values": ["true"]},
                 {"Name": "instance-state-name", "Values": ["running"]},
-            ]
+            ],
         )
 
         nodes = []
@@ -57,10 +64,10 @@ class AWSAdapter(ProviderAdapter):
         return nodes
 
     async def get_node_metadata(self, node_id: str):
-        
         try:
-            resp = self.ec2.describe_instances(
-                InstanceIds=[node_id]
+            resp = await _run_sync(
+                self.ec2.describe_instances,
+                InstanceIds=[node_id],
             )
             reservations = resp.get("Reservations", [])
             if not reservations:

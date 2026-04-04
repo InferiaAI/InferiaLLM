@@ -19,39 +19,55 @@ class GuardrailEngine:
     """
 
     def __init__(self):
-        """Initialize guardrail providers."""
+        """Register provider objects without loading heavy ML models."""
         self.settings = guardrail_settings
         self.providers: Dict[str, GuardrailProvider] = {}
 
         self._load_providers()
 
         logger.info(
-            f"Guardrail engine initialized with providers: {list(self.providers.keys())}"
+            f"Guardrail engine created with providers: {list(self.providers.keys())}"
         )
         logger.info(f"Default provider: {self.settings.default_guardrail_engine}")
 
     def _load_providers(self):
-        """Register available providers."""
-        # 1. LLM Guard (Local)
+        """Register available providers (lightweight — no model downloads)."""
+        # 1. LLM Guard (Local) — models loaded later via initialize()
         try:
             llm_guard = LLMGuardProvider()
             self.providers[llm_guard.name] = llm_guard
         except Exception as e:
-            logger.error(f"Failed to initialize LLMGuardProvider: {e}", exc_info=True)
+            logger.error(f"Failed to create LLMGuardProvider: {e}", exc_info=True)
 
         # 2. Llama Guard (Groq)
         try:
             llama_guard = LlamaGuardProvider()
             self.providers[llama_guard.name] = llama_guard
         except Exception as e:
-            logger.error(f"Failed to initialize LlamaGuardProvider: {e}", exc_info=True)
+            logger.error(f"Failed to create LlamaGuardProvider: {e}", exc_info=True)
 
         # 3. Lakera Guard (API)
         try:
             lakera_guard = LakeraProvider()
             self.providers[lakera_guard.name] = lakera_guard
         except Exception as e:
-            logger.error(f"Failed to initialize LakeraProvider: {e}", exc_info=True)
+            logger.error(f"Failed to create LakeraProvider: {e}", exc_info=True)
+
+    async def initialize(self):
+        """
+        Perform async initialization for providers that need it
+        (e.g. LLMGuardProvider loading ML models).
+        Call from the FastAPI lifespan handler.
+        """
+        for name, provider in self.providers.items():
+            init_fn = getattr(provider, "initialize", None)
+            if init_fn is not None:
+                try:
+                    await init_fn()
+                except Exception as e:
+                    logger.error(
+                        f"Failed to initialize provider {name}: {e}", exc_info=True
+                    )
 
     async def scan_input(
         self,

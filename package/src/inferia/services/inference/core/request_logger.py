@@ -6,6 +6,7 @@ from the original OrchestrationService with a single entry point.
 """
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,9 @@ _BINARY_FIELDS = {
     "video": "<base64_video_omitted>",
     "input_reference": "<base64_image_omitted>",
 }
+
+# Maximum serialized payload size stored in inference_logs (64 KB)
+_MAX_PAYLOAD_BYTES = 65_536
 
 
 class RequestLogger:
@@ -108,16 +112,23 @@ class RequestLogger:
 
         # Strip binary fields for image/video requests
         has_binary = any(k in payload for k in _BINARY_FIELDS)
-        if not has_binary:
-            return payload
+        if has_binary:
+            payload = {
+                k: v for k, v in payload.items() if k not in _BINARY_FIELDS
+            }
+            for field_name, placeholder in _BINARY_FIELDS.items():
+                if field_name in payload:
+                    payload[field_name] = placeholder
 
-        sanitized = {
-            k: v for k, v in payload.items() if k not in _BINARY_FIELDS
-        }
-        for field_name, placeholder in _BINARY_FIELDS.items():
-            if field_name in payload:
-                sanitized[field_name] = placeholder
-        return sanitized
+        # Truncate oversized payloads to prevent table bloat
+        try:
+            serialized = json.dumps(payload, default=str)
+            if len(serialized) > _MAX_PAYLOAD_BYTES:
+                return {"_truncated": True, "_size": len(serialized)}
+        except (TypeError, ValueError):
+            pass
+
+        return payload
 
     @staticmethod
     def _build_usage(

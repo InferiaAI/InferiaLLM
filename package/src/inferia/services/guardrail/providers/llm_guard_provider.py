@@ -24,20 +24,32 @@ logger = logging.getLogger(__name__)
 class LLMGuardProvider(GuardrailProvider):
     """
     Provider for 'llm-guard' (Local Standards).
+
+    Scanner initialization is deferred to ``initialize()`` so that
+    heavy HuggingFace model downloads do not block the Python import
+    or the event loop.  Call ``await initialize()`` from a FastAPI
+    lifespan handler.
     """
 
     def __init__(self):
         self.settings = guardrail_settings
         self.input_scanners = []
         self.output_scanners = []
+        self._ready = False
 
-        # Initialize scanners based on granular config
-        if True:  # Always attempt init, granular flags inside control
-            logger.info(
-                "[LLMGuardProvider] Initializing scanners based on granular config..."
-            )
-            self.input_scanners = self._init_input_scanners()
-            self.output_scanners = self._init_output_scanners()
+    async def initialize(self) -> None:
+        """Load ML models in a background thread to avoid blocking the event loop."""
+        logger.info(
+            "[LLMGuardProvider] Initializing scanners in background thread..."
+        )
+        self.input_scanners = await asyncio.to_thread(self._init_input_scanners)
+        self.output_scanners = await asyncio.to_thread(self._init_output_scanners)
+        self._ready = True
+        logger.info("[LLMGuardProvider] Scanners ready.")
+
+    @property
+    def ready(self) -> bool:
+        return self._ready
 
     @property
     def name(self) -> str:

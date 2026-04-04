@@ -3,7 +3,10 @@
 import asyncio
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
+
+# Prevent fire-and-forget log tasks from being GC'd before completion
+_background_log_tasks: Set[asyncio.Task] = set()
 
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
@@ -247,7 +250,7 @@ class CompletionHandler:
                 raise
             finally:
                 try:
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         RequestLogger.log(
                             deployment_id=deployment_id,
                             user_id=user_context_id,
@@ -266,6 +269,9 @@ class CompletionHandler:
                             is_streaming=True,
                         )
                     )
+                    # Hold a strong reference so the task isn't GC'd before completion
+                    _background_log_tasks.add(task)
+                    task.add_done_callback(_background_log_tasks.discard)
                 except RuntimeError:
                     logger.error(
                         "Failed to schedule streaming log task: no running event loop"
