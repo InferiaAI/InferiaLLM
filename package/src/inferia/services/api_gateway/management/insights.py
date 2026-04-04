@@ -604,6 +604,7 @@ async def get_insights_filters(
         .where(*log_conditions)
         .distinct()
         .order_by(DBInferenceLog.model.asc())
+        .limit(500)
     )
     models_result = await db.execute(models_stmt)
     models = [row.model for row in models_result.all() if row.model]
@@ -619,6 +620,7 @@ async def get_insights_filters(
         .where(*ip_conditions)
         .distinct()
         .order_by(DBInferenceLog.ip_address.asc())
+        .limit(1000)
     )
     ip_addresses_result = await db.execute(ip_addresses_stmt)
     ip_addresses = [
