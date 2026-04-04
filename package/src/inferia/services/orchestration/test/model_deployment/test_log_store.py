@@ -8,6 +8,16 @@ from datetime import datetime, timezone
 
 from inferia.services.orchestration.config import Settings
 
+try:
+    import elasticsearch
+    HAS_ELASTICSEARCH = True
+except ImportError:
+    HAS_ELASTICSEARCH = False
+
+_skip_no_es = pytest.mark.skipif(
+    not HAS_ELASTICSEARCH, reason="elasticsearch package not installed"
+)
+
 
 class TestLogPersistenceConfig:
     def test_default_elasticsearch_url_is_none(self):
@@ -43,6 +53,7 @@ class TestDeploymentLogStore:
         await store.initialize()
         assert store.available is False
 
+    @_skip_no_es
     @pytest.mark.asyncio
     async def test_init_sets_available_when_es_responds(self):
         from inferia.services.orchestration.services.model_deployment.log_store import (
@@ -60,6 +71,7 @@ class TestDeploymentLogStore:
             await store.initialize()
             assert store.available is True
 
+    @_skip_no_es
     @pytest.mark.asyncio
     async def test_init_sets_unavailable_when_es_unreachable(self):
         from inferia.services.orchestration.services.model_deployment.log_store import (
@@ -88,6 +100,7 @@ class TestDeploymentLogStore:
         # Should not raise
         await store.flush("dep-1", "org-1", [("msg1", 1, datetime.now(timezone.utc))])
 
+    @_skip_no_es
     @pytest.mark.asyncio
     async def test_flush_bulk_indexes_lines(self):
         from inferia.services.orchestration.services.model_deployment.log_store import (
@@ -129,6 +142,7 @@ class TestDeploymentLogStore:
         result = await store.get_logs("dep-1")
         assert result == []
 
+    @_skip_no_es
     @pytest.mark.asyncio
     async def test_get_logs_queries_es_by_deployment_id(self):
         from inferia.services.orchestration.services.model_deployment.log_store import (
@@ -169,6 +183,7 @@ class TestDeploymentLogStore:
             result = await store.get_logs("dep-123")
             assert result == ["hello", "world"]
 
+    @_skip_no_es
     @pytest.mark.asyncio
     async def test_get_max_line_number_returns_zero_when_no_docs(self):
         from inferia.services.orchestration.services.model_deployment.log_store import (
@@ -238,6 +253,7 @@ class TestDeploymentLogBuffer:
         messages = [msg for msg, _, _ in buf._buffer]
         assert messages == ["line 2", "line 3", "line 4"]
 
+    @_skip_no_es
     @pytest.mark.asyncio
     async def test_flush_sends_pending_lines_to_store(self):
         from inferia.services.orchestration.services.model_deployment.log_store import (

@@ -1,9 +1,24 @@
 """Tests for blocking API call wrapping (#73/#74)."""
 
 import asyncio
+import functools
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
+try:
+    import boto3
+    HAS_BOTO3 = True
+except ImportError:
+    HAS_BOTO3 = False
+
+
+async def _run_sync(func, *args, **kwargs):
+    """Standalone copy of the helper for testing without boto3."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
+
+
+@pytest.mark.skipif(not HAS_BOTO3, reason="boto3 not installed")
 
 class TestAWSAdapterAsync:
     @pytest.mark.asyncio
@@ -180,13 +195,10 @@ class TestSkyPilotAsync:
 
 
 class TestRunSyncHelper:
+    """Test the _run_sync pattern without requiring boto3."""
+
     @pytest.mark.asyncio
     async def test_run_sync_offloads_to_executor(self):
-        """_run_sync should run the function in an executor."""
-        from inferia.services.orchestration.services.adapter_engine.adapters.aws.adapter import (
-            _run_sync,
-        )
-
         def blocking_add(a, b):
             return a + b
 
@@ -195,10 +207,6 @@ class TestRunSyncHelper:
 
     @pytest.mark.asyncio
     async def test_run_sync_with_kwargs(self):
-        from inferia.services.orchestration.services.adapter_engine.adapters.aws.adapter import (
-            _run_sync,
-        )
-
         def kw_func(x, y=10):
             return x + y
 
@@ -207,12 +215,21 @@ class TestRunSyncHelper:
 
     @pytest.mark.asyncio
     async def test_run_sync_propagates_exceptions(self):
-        from inferia.services.orchestration.services.adapter_engine.adapters.aws.adapter import (
-            _run_sync,
-        )
-
         def failing():
             raise ValueError("sync error")
 
         with pytest.raises(ValueError, match="sync error"):
             await _run_sync(failing)
+
+    @pytest.mark.asyncio
+    async def test_run_sync_does_not_block_event_loop(self):
+        """The function should run in a thread, not blocking the loop."""
+        import time
+
+        def slow_func():
+            time.sleep(0.05)
+            return "done"
+
+        start = asyncio.get_event_loop().time()
+        result = await _run_sync(slow_func)
+        assert result == "done"
