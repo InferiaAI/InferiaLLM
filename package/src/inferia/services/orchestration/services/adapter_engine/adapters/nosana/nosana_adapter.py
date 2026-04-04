@@ -23,6 +23,22 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_JOB_STATES = {2, 3, 4, "COMPLETED", "STOPPED", "FAILED", "QUIT"}
 
+# Normalize mixed int/string job states from Nosana API to a canonical string
+_STATE_NAME_MAP = {
+    0: "QUEUED",
+    1: "RUNNING",
+    2: "COMPLETED",
+    3: "STOPPED",
+    4: "QUIT",
+}
+
+
+def _normalize_job_state(raw_state) -> str:
+    """Convert Nosana job state (int or string) to a canonical string."""
+    if isinstance(raw_state, int):
+        return _STATE_NAME_MAP.get(raw_state, f"UNKNOWN({raw_state})")
+    return str(raw_state).upper() if raw_state else "UNKNOWN"
+
 # Standard headers for internal sidecar calls
 internal_headers = {
     "X-Internal-API-Key": settings.internal_api_key,
@@ -387,15 +403,16 @@ class NosanaAdapter(ProviderAdapter):
                     ) as resp:
                         if resp.status == 200:
                             job = await resp.json()
-                            job_state = job.get("jobState")
+                            raw_state = job.get("jobState")
+                            job_state = _normalize_job_state(raw_state)
 
-                            if job_state in TERMINAL_JOB_STATES:
+                            if raw_state in TERMINAL_JOB_STATES or job_state in TERMINAL_JOB_STATES:
                                 raise RuntimeError(
                                     f"Nosana job {provider_instance_id} entered terminal state: {job_state}"
                                 )
 
-                            # 1 = RUNNING
-                            if job_state == 1:
+                            # RUNNING
+                            if raw_state == 1 or job_state == "RUNNING":
                                 url = job.get("serviceUrl")
                                 if url:
                                     return url
@@ -447,25 +464,48 @@ class NosanaAdapter(ProviderAdapter):
                 params["credentialName"] = provider_credential_name
 
             async with aiohttp.ClientSession() as session:
+                # First try fetching logs directly
                 async with session.get(
                     f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}/logs",
                     params=params,
                     headers=internal_headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
-                    if resp.status != 200:
-                        return {"logs": ["Failed to fetch logs"]}
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("status") == "pending":
+                            return {"logs": data.get("logs", ["Job is running..."])}
 
-                    data = await resp.json()
-                    if data.get("status") == "pending":
-                        return {"logs": data.get("logs", ["Job is running..."])}
+                        result = data.get("result", {})
+                        logs = result if isinstance(result, list) else [result]
+                        if isinstance(result, dict):
+                            logs = result.get("logs", result.get("stdout", [result]))
 
-                    result = data.get("result", {})
-                    logs = result if isinstance(result, list) else [result]
-                    if isinstance(result, dict):
-                        logs = result.get("logs", result.get("stdout", [result]))
+                        if logs:
+                            return {"logs": logs}
 
-                    return {"logs": logs}
+                # If direct logs failed or returned empty, check if job is finished
+                # and fetch via the job status endpoint (which includes IPFS result for completed jobs)
+                async with session.get(
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    params=params,
+                    headers=internal_headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status == 200:
+                        job_data = await resp.json()
+                        raw_state = job_data.get("jobState")
+                        normalized = _normalize_job_state(raw_state)
+                        is_finished = raw_state in TERMINAL_JOB_STATES or normalized in TERMINAL_JOB_STATES
+
+                        if is_finished:
+                            return {
+                                "logs": [f"Job finished with state: {normalized}. Use log streaming for historical logs."],
+                                "job_state": normalized,
+                                "source": "job_status",
+                            }
+
+                return {"logs": ["Failed to fetch logs"]}
         except Exception:
             logger.exception("Nosana get_logs error")
             return {"logs": ["Internal error fetching logs"]}
@@ -493,8 +533,9 @@ class NosanaAdapter(ProviderAdapter):
                         raise RuntimeError(f"Failed to fetch job details")
                     job_data = await resp.json()
                     node_address = job_data.get("nodeAddress")
-                    job_state = job_data.get("jobState")
-                    is_finished = job_state in TERMINAL_JOB_STATES
+                    raw_state = job_data.get("jobState")
+                    normalized = _normalize_job_state(raw_state)
+                    is_finished = raw_state in TERMINAL_JOB_STATES or normalized in TERMINAL_JOB_STATES
 
                     if not node_address and not is_finished:
                         raise RuntimeError("Job does not have a node assigned yet")

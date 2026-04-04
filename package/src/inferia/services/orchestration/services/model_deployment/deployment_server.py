@@ -1555,6 +1555,27 @@ async def list_all_deployments(org_id: str | None = None):
                 detail=f"Failed to list all deployments: {e.details()}",
             )
 
+    # Enrich with created_at from DB (not available in gRPC response)
+    created_at_map = {}
+    conn = None
+    try:
+        dep_ids = [d.deployment_id for d in resp.deployments]
+        if dep_ids:
+            conn = await asyncpg.connect(POSTGRES_DSN)
+            rows = await conn.fetch(
+                "SELECT deployment_id::text, created_at FROM model_deployments WHERE deployment_id = ANY($1::uuid[])",
+                dep_ids,
+            )
+            created_at_map = {
+                row["deployment_id"]: row["created_at"].isoformat() if row["created_at"] else None
+                for row in rows
+            }
+    except Exception as e:
+        logger.warning(f"Failed to fetch created_at for deployments: {e}")
+    finally:
+        if conn:
+            await conn.close()
+
     return {
         "deployments": [
             {
@@ -1564,14 +1585,13 @@ async def list_all_deployments(org_id: str | None = None):
                 "state": d.state,
                 "replicas": d.replicas,
                 "pool_id": d.pool_id,
-                "created_at": None,  # or fetch if available
+                "created_at": created_at_map.get(d.deployment_id),
                 "engine": d.engine,
                 "endpoint": d.endpoint,
                 "org_id": d.org_id,
                 "error_message": d.error_message or None,
             }
             for d in resp.deployments
-            # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
         ]
     }
 

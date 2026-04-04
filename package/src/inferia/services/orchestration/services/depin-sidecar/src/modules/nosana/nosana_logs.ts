@@ -13,7 +13,7 @@ export class LogStreamer extends EventEmitter {
     private shouldReconnect: boolean = true;
     private retryCount: number = 0;
     private maxRetries: number = 10;
-    private retryDelay: number = 3000;
+    private baseRetryDelay: number = 2000;  // Start at 2s, exponential backoff
     private authMode: 'wallet' | 'api';
     private walletSigner: any;
     private apiAuthProvider: ApiAuthProvider | null;
@@ -173,9 +173,15 @@ export class LogStreamer extends EventEmitter {
 
                 if (this.shouldReconnect && this.retryCount < this.maxRetries) {
                     this.retryCount++;
-                    console.log(`[LogStreamer] Reconnecting in ${this.retryDelay}ms (attempt ${this.retryCount}/${this.maxRetries})`);
-                    setTimeout(() => this.connect(nodeAddress, jobAddress), this.retryDelay);
+                    // Exponential backoff: 2s, 4s, 8s, 16s... capped at 30s
+                    const delay = Math.min(this.baseRetryDelay * Math.pow(2, this.retryCount - 1), 30000);
+                    console.log(`[LogStreamer] Reconnecting in ${delay}ms (attempt ${this.retryCount}/${this.maxRetries})`);
+                    setTimeout(() => this.connect(nodeAddress, jobAddress), delay);
                 } else {
+                    if (this.retryCount >= this.maxRetries) {
+                        console.error(`[LogStreamer] Max retries (${this.maxRetries}) exhausted for job ${jobAddress}. Log streaming stopped.`);
+                        this.emit('error', new Error(`Log streaming disconnected after ${this.maxRetries} retries`));
+                    }
                     this.emit('close');
                 }
             });

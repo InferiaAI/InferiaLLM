@@ -6,8 +6,9 @@ import { LogStreamer } from './nosana_logs';
 
 // Deployment timing constants (in milliseconds)
 const DEPLOYMENT_POLL_INTERVAL_MS = 10000;
-const DEPLOYMENT_START_TIMEOUT_MS = 5 * 60 * 1000; // 5 mins to wait for RUNNING
+const DEPLOYMENT_START_TIMEOUT_MS = Number(process.env.DEPLOYMENT_START_TIMEOUT_MS) || 5 * 60 * 1000; // 5 mins default
 const MIN_RUNTIME_FOR_REDEPLOY_MS = 20 * 60 * 1000;
+const MAX_WALLET_REDEPLOY_RETRIES = 5;
 
 // Nosana Dashboard API constants
 const NOSANA_API_BASE_URL = process.env.NOSANA_API_URL || 'https://dashboard.k8s.prd.nos.ci/api';
@@ -121,6 +122,23 @@ export class NosanaService {
         }
 
         this.startWatchdogSummary();
+    }
+
+    /**
+     * Invalidate the cached API auth header.
+     * Call when credentials are revoked or rotated mid-deployment.
+     */
+    invalidateAuthCache(deploymentId?: string): void {
+        if (deploymentId) {
+            const cacheKey = `deployment:${deploymentId}`;
+            if (this.cachedApiAuth && this.cachedApiAuth.message === cacheKey) {
+                this.cachedApiAuth = null;
+                console.log(`[API Auth] Invalidated cache for deployment ${deploymentId}`);
+            }
+        } else {
+            this.cachedApiAuth = null;
+            console.log(`[API Auth] Invalidated all cached auth headers`);
+        }
     }
 
     /**
@@ -1717,6 +1735,7 @@ export class NosanaService {
                 ram_gb_allocated: number;
             };
             credentialName?: string;
+            redeployAttempt?: number;
         }
     ) {
         if (this.authMode === 'api' && options?.deploymentUuid) {
@@ -1734,6 +1753,7 @@ export class NosanaService {
         }
 
         // Wallet mode: use the on-chain watchdog
+        const redeployAttempt = options?.redeployAttempt || 0;
         const now = Date.now();
         const resources = options?.resources_allocated || {
             gpu_allocated: 1,
@@ -1856,8 +1876,8 @@ export class NosanaService {
                         } catch (err: any) {
                             console.error(`[heartbeat] Failed to send failed heartbeat for short-lived job ${jobAddress}:`, err.message || err);
                         }
-                    } else if (shouldRedeploy) {
-                        console.log(`[auto-redeploy] Attempting redeploy for ${jobAddress}...`);
+                    } else if (shouldRedeploy && redeployAttempt < MAX_WALLET_REDEPLOY_RETRIES) {
+                        console.log(`[auto-redeploy] Attempting redeploy for ${jobAddress} (attempt ${redeployAttempt + 1}/${MAX_WALLET_REDEPLOY_RETRIES})...`);
                         try {
                             const newJob = await this.launchJob(
                                 currentInfo.jobDefinition,
@@ -1891,6 +1911,7 @@ export class NosanaService {
                                 isConfidential: currentInfo.isConfidential,
                                 deploymentUuid: newJob.deploymentUuid,
                                 resources_allocated: currentInfo.resources,
+                                redeployAttempt: redeployAttempt + 1,
                             });
                             redeploySuccess = true;
                         } catch (redeployErr: any) {
