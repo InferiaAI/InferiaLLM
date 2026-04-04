@@ -215,10 +215,6 @@ class TestRunSyncHelper:
 
     @pytest.mark.asyncio
     async def test_run_sync_propagates_exceptions(self):
-        from inferia.services.orchestration.services.adapter_engine.adapters.aws.adapter import (
-            _run_sync,
-        )
-
         def failing():
             raise ValueError("sync error")
 
