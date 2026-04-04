@@ -1,5 +1,6 @@
 """Tests for API key creation and verification security."""
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import cachetools
@@ -25,6 +26,7 @@ def policy_engine():
     engine.context_cache = cachetools.TTLCache(maxsize=100, ttl=10)
     engine.org_id_cache = cachetools.TTLCache(maxsize=100, ttl=300)
     engine.quota_policy_cache = cachetools.TTLCache(maxsize=100, ttl=60)
+    engine._cache_lock = asyncio.Lock()
     return engine
 
 

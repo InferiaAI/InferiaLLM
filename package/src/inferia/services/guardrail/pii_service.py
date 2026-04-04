@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from typing import List, Tuple, Optional
+from cachetools import LRUCache
 from llm_guard.vault import Vault
 from llm_guard.input_scanners import Anonymize
 from llm_guard import scan_prompt
@@ -20,7 +21,7 @@ class PIIService:
     def __init__(self):
         self.settings = guardrail_settings
         self.vault = None
-        self._anonymize_cache: dict = {}
+        self._anonymize_cache: LRUCache = LRUCache(maxsize=64)
         self._lock = asyncio.Lock()
 
     async def _initialize_vault(self):
