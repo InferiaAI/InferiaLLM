@@ -37,7 +37,9 @@ export default function Instances() {
         return;
       }
 
-      const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`);
+      const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`, {
+        params: { limit: 200, offset: 0 },
+      });
       setInstances(res.data.pools || []);
     } catch (error) {
       console.error("Error fetching pools:", error);

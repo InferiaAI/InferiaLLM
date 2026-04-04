@@ -97,7 +97,7 @@ export default function Deployments() {
     queryKey: ["deployments", targetOrgId],
     queryFn: async () => {
       const res = await computeApi.get<DeploymentResponse>("/deployment/deployments", {
-        params: { org_id: targetOrgId },
+        params: { org_id: targetOrgId, limit: 500, offset: 0 },
       });
       return (res.data.deployments || []).map((d, index) => ({
         id: d.deployment_id || `temp-${index}`,
