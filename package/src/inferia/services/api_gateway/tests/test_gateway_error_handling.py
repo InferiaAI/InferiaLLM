@@ -120,9 +120,8 @@ class TestGatewayRouterErrors:
             total_tokens=15,
         )
 
-        mock_db = AsyncMock()
         mock_bg = MagicMock()
-        response = await create_inference_log(log_data, mock_bg, mock_db)
+        response = await create_inference_log(log_data, mock_bg)
         assert "log_id" in response
         assert response["status"] == "ok"
 
