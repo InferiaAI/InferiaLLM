@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     # Optional OpenAI Key for Rewriting
     openai_api_key: Optional[str] = None
 
+    # Ingest limits
+    max_ingest_documents: int = Field(
+        default=500, validation_alias="MAX_INGEST_DOCUMENTS"
+    )
+    max_document_size_bytes: int = Field(
+        default=1_000_000, validation_alias="MAX_DOCUMENT_SIZE_BYTES"
+    )
+
     # Control Plane Connection
     api_gateway_url: str = Field(
         default="http://localhost:8000", validation_alias="API_GATEWAY_URL"
