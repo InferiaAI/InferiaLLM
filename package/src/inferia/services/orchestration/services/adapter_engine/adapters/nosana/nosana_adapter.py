@@ -494,7 +494,7 @@ class NosanaAdapter(ProviderAdapter):
                     job_data = await resp.json()
                     node_address = job_data.get("nodeAddress")
                     job_state = job_data.get("jobState")
-                    is_finished = job_state in (2, 3, 4, "COMPLETED", "STOPPED")
+                    is_finished = job_state in TERMINAL_JOB_STATES
 
                     if not node_address and not is_finished:
                         raise RuntimeError("Job does not have a node assigned yet")
