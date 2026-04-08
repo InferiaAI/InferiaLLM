@@ -866,7 +866,7 @@ async def terminate_deployment(req: TerminateDeploymentRequest):
 
     return {
         "deployment_id": req.deployment_id,
-        "status": "TERMINATED",
+        "status": "TERMINATING",
     }
 
 
@@ -922,6 +922,11 @@ async def delete_deployment(deployment_id: str):
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         try:
+            # Capture org_id before deletion for audit logging
+            org_id = await conn.fetchval(
+                "SELECT org_id FROM model_deployments WHERE deployment_id = $1", dep_uuid
+            )
+
             # Check if deployment exists and is stopped
             row = await conn.fetchrow(
                 "SELECT state FROM model_deployments WHERE deployment_id = $1", dep_uuid
@@ -970,7 +975,7 @@ async def delete_deployment(deployment_id: str):
         resource_type="deployment",
         resource_id=deployment_id,
         status="success",
-        org_id=await _lookup_org_id("deployment", deployment_id),
+        org_id=org_id,
     )
 
     return {
@@ -1347,6 +1352,7 @@ async def list_deployments(pool_id: str | None = None):
                 "engine": d.engine,
                 "endpoint": d.endpoint,
                 "org_id": d.org_id,
+                "error_message": d.error_message or None,
             }
             for d in resp.deployments
             # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
@@ -1374,7 +1380,7 @@ async def get_deployment_logs(deployment_id: str):
         # Get pool_id to identify provider
         dep = await conn.fetchrow(
             """
-            SELECT d.pool_id, p.provider, d.state 
+            SELECT d.pool_id, p.provider, p.provider_credential_name, d.state
             FROM model_deployments d
             JOIN compute_pools p ON d.pool_id = p.id
             WHERE d.deployment_id = $1
@@ -1386,6 +1392,7 @@ async def get_deployment_logs(deployment_id: str):
             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
         provider = dep["provider"]
+        provider_credential_name = dep.get("provider_credential_name")
 
         # 2. Get the Node ID / Provider Instance ID
         # Since compute_inventory lacks deployment_id, we look up via model_deployments.node_ids
@@ -1423,7 +1430,8 @@ async def get_deployment_logs(deployment_id: str):
             adapter = get_adapter(provider)
             if hasattr(adapter, "get_logs"):
                 logs_data = await adapter.get_logs(
-                    provider_instance_id=provider_instance_id
+                    provider_instance_id=provider_instance_id,
+                    provider_credential_name=provider_credential_name,
                 )
                 if logs_data and logs_data.get("logs"):
                     return logs_data
@@ -1594,7 +1602,7 @@ async def list_all_deployments(
         {
             "deployment_id": d.deployment_id,
             "model_name": d.model_name,
-            "model_version": d.model_version + (" (Compute)" if d.pool_id else ""),
+            "model_version": d.model_version,
             "state": d.state,
             "replicas": d.replicas,
             "pool_id": d.pool_id,
