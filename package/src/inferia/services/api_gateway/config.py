@@ -146,10 +146,25 @@ class Settings(BaseSettings):
     )
     allowed_origins: str = "http://localhost:3001,http://localhost:8001,http://localhost:5173"  # Comma-separated list
 
+    # Auth Provider: "builtin" uses local JWT+DB, "inferia-auth" delegates to inferia-auth service
+    auth_provider: Literal["builtin", "inferia-auth"] = Field(
+        default="builtin", validation_alias="AUTH_PROVIDER"
+    )
+    inferia_auth_url: Optional[str] = Field(
+        default=None,
+        validation_alias="INFERIA_AUTH_URL",
+        description="Base URL of inferia-auth service (e.g. http://localhost:3000)",
+    )
+    inferia_auth_public_key: Optional[str] = Field(
+        default=None,
+        validation_alias="INFERIA_AUTH_PUBLIC_KEY",
+        description="Base64-encoded Ed25519 public key for local JWT validation",
+    )
+
     # RBAC Settings
     jwt_secret_key: str = Field(
-        default="placeholder-secret-key-at-least-32-chars-long", 
-        min_length=32, 
+        default="placeholder-secret-key-at-least-32-chars-long",
+        min_length=32,
         validation_alias="JWT_SECRET_KEY"
     )
     jwt_algorithm: str = "HS256"
