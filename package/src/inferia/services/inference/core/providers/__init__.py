@@ -24,6 +24,7 @@ from .registry import (
     get_adapter,
     is_external_provider,
     is_external_engine,
+    resolve_upstream,
     EXTERNAL_PROVIDERS,
     TEXT_INFERENCE_ENGINES,
     EMBEDDING_ENGINES,
@@ -53,6 +54,7 @@ __all__ = [
     "get_adapter",
     "is_external_provider",
     "is_external_engine",
+    "resolve_upstream",
     # Category sets
     "EXTERNAL_PROVIDERS",
     "TEXT_INFERENCE_ENGINES",

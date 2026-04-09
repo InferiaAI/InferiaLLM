@@ -59,6 +59,18 @@ class Settings(BaseSettings):
         description="Verify SSL certificates for HTTPS service calls",
     )
 
+    # External Provider Proxy (e.g., InferiaGate)
+    # When set, all external provider requests (OpenAI, Anthropic, etc.) are
+    # routed through this URL instead of directly to the provider's API.
+    # The proxy must accept OpenAI-compatible /v1/chat/completions format.
+    # Set to empty string or omit to use direct provider connections.
+    external_proxy_url: Optional[str] = Field(
+        default=None,
+        alias="EXTERNAL_PROXY_URL",
+        validation_alias="EXTERNAL_PROXY_URL",
+        description="URL of external LLM proxy (e.g., InferiaGate). Routes all external provider traffic through this proxy.",
+    )
+
     # Timeouts
     request_timeout: int = 30
 
