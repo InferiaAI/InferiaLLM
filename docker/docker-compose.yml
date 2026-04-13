@@ -46,7 +46,17 @@ services:
       - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
+      - DATABASE_URL=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
+      - REDIS_HOST=inferia-redis
+      - PG_ADMIN_USER=${PG_ADMIN_USER:-inferia}
+      - PG_ADMIN_PASSWORD=${PG_ADMIN_PASSWORD:-inferia}
+      - PG_HOST=inferia-postgres
+      - PG_PORT=5432
+      - INFERIA_DB_USER=inferia
+      - INFERIA_DB_PASSWORD=inferia
+      - INFERIA_DB=inferia
+      - DATABASE_SSL=false
       - SERVICE_TYPE=unified
       # Dashboard frontend URLs (DASHBOARD_ prefix avoids colliding with
       # backend service URL env vars like INFERENCE_URL used by Pydantic config)
@@ -57,6 +67,8 @@ services:
       - LOGSTASH_HOST=${LOGSTASH_HOST:-}
       - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
+    volumes:
+      - appdata:/data
     ports:
       - "8000:8000"
       - "8001:8001"
@@ -228,6 +240,7 @@ services:
 
 volumes:
   pgdata:
+  appdata:
   esdata:
 
 networks:
