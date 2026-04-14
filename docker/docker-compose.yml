@@ -8,8 +8,6 @@ services:
       POSTGRES_DB: inferia
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     networks:
       - inferia-net
     healthcheck:
@@ -21,8 +19,6 @@ services:
   redis:
     image: redis:7
     container_name: inferia-redis
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     networks:
       - inferia-net
     healthcheck:
@@ -245,3 +241,4 @@ volumes:
 
 networks:
   inferia-net:
+    external: true
