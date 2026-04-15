@@ -96,3 +96,28 @@ def is_external_provider(engine: str) -> bool:
 
 # Backward-compat alias
 is_external_engine = is_external_provider
+
+
+def resolve_upstream(
+    engine: str,
+    endpoint_url: str,
+    proxy_url: str | None = None,
+) -> tuple[ProviderAdapter, str]:
+    """
+    Resolve the adapter and endpoint URL for a given engine.
+
+    When proxy_url is set and the engine is an external provider, routes
+    through the proxy using OpenAI-compatible format. Otherwise uses the
+    direct provider endpoint with the engine-specific adapter.
+
+    Returns:
+        (adapter, effective_endpoint_url)
+    """
+    if is_external_provider(engine) and proxy_url:
+        logger.info(
+            "Routing external request through proxy: %s (engine=%s)",
+            proxy_url, engine,
+        )
+        return get_adapter("openai"), proxy_url.rstrip("/")
+
+    return get_adapter(engine), endpoint_url

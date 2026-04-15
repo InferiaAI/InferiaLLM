@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from inferia.services.inference.client import api_gateway_client
 from inferia.services.inference.config import settings
 from ..pipeline import Pipeline, RequestContext
-from ..providers import get_adapter, is_external_engine
+from ..providers import get_adapter, is_external_engine, resolve_upstream
 from ..rate_limiter import rate_limiter
 from ..request_logger import RequestLogger
 from ..service import GatewayService
@@ -125,7 +125,9 @@ class CompletionHandler:
         endpoint_url = endpoint_url.strip()
 
         engine = deployment.get("engine", "vllm")
-        adapter = get_adapter(engine)
+        adapter, endpoint_url = resolve_upstream(
+            engine, endpoint_url, settings.external_proxy_url,
+        )
 
         credentials = (
             deployment.get("credentials_json") or deployment.get("configuration") or {}
