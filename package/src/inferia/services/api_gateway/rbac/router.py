@@ -62,13 +62,18 @@ async def login(
 ):
     """
     Login endpoint to authenticate user and receive JWT tokens.
-    Authentication against Postgres Database.
-    Supports TOTP 2FA.
+
+    When AUTH_PROVIDER=external:
+      1. Try superadmin credentials locally first (always available).
+      2. If not superadmin, delegate to inferia-auth and auto-provision
+         a shadow user in the local DB.
+
+    When AUTH_PROVIDER=local (default): standard local-DB authentication.
     Rate limited: 5 attempts per minute.
     """
-    # Rate limiting check — use ASGI-level client IP only.
-    # Never trust X-Forwarded-For from the client; if behind a reverse proxy,
-    # configure uvicorn with --proxy-headers so it sets request.client correctly.
+    from inferia.services.api_gateway.config import settings as _settings
+
+    # Rate limiting check
     client_ip = http_request.client.host if http_request.client else "unknown"
 
     is_allowed, retry_after = login_rate_limiter.is_allowed(request.username, client_ip)
@@ -79,39 +84,59 @@ async def login(
             headers={"Retry-After": str(retry_after)},
         )
 
-    # 1. Authenticate user credentials first
+    use_external = (
+        _settings.auth_provider == "external" and _settings.external_auth_url
+    )
+
+    # --- Superadmin local login (always active) ---
     user = await auth_service.authenticate_user(db, request.username, request.password)
 
-    if not user:
-        # Log failed logic
-        await auth_service.log_failed_login(db, request.username)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
+    if user:
+        # 2FA check
+        enable_2fa = os.getenv("ENABLE_2FA", "true").lower() == "true"
+        if user.totp_enabled and enable_2fa:
+            if not request.totp_code:
+                raise HTTPException(status_code=403, detail="TOTP_REQUIRED")
+            totp = pyotp.TOTP(user.totp_secret)
+            if not totp.verify(request.totp_code):
+                raise HTTPException(status_code=401, detail="Invalid 2FA Code")
+        return await auth_service.login(db, request)
+
+    # --- External auth path ---
+    if use_external:
+        from inferia.services.api_gateway.rbac.external_auth import external_login
+        from inferia.services.api_gateway.rbac.shadow_user import get_or_create_shadow_user
+
+        ext_result = await external_login(request.username, request.password)
+        if ext_result is None:
+            await auth_service.log_failed_login(db, request.username)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Provision shadow user so local DB references work
+        ext_email = (ext_result.get("user") or {}).get("email", request.username)
+        ext_user_id = (ext_result.get("user") or {}).get("id", "")
+        await get_or_create_shadow_user(db, email=ext_email, external_id=ext_user_id)
+
+        # Return the external tokens directly — the middleware will
+        # introspect them on subsequent requests.
+        return AuthToken(
+            access_token=ext_result["access_token"],
+            refresh_token=ext_result.get("refresh_token"),
+            token_type="bearer",
+            expires_in=900,
         )
 
-    # 2. Check 2FA
-    enable_2fa = os.getenv("ENABLE_2FA", "true").lower() == "true"
-
-    if user.totp_enabled and enable_2fa:
-        if not request.totp_code:
-            # Return specific error code for frontend to prompt 2FA
-            raise HTTPException(
-                status_code=403,
-                detail="TOTP_REQUIRED",
-            )
-
-        # Verify Code
-        totp = pyotp.TOTP(user.totp_secret)
-        if not totp.verify(request.totp_code):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid 2FA Code",
-            )
-
-    # 3. Proceed to Login
-    return await auth_service.login(db, request)
+    # --- Local auth failure ---
+    await auth_service.log_failed_login(db, request.username)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Incorrect username or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 @router.post("/register", response_model=AuthToken)
@@ -362,7 +387,31 @@ async def refresh_token(
     db: AsyncSession = Depends(get_db),
 ):
     """Refresh access token using refresh token."""
-    return await auth_service.refresh_access_token(credentials.credentials, db)
+    from inferia.services.api_gateway.config import settings as _settings
+
+    # Try local refresh first (covers superadmin tokens)
+    try:
+        return await auth_service.refresh_access_token(credentials.credentials, db)
+    except HTTPException:
+        pass
+
+    # Fall back to external refresh if configured
+    use_external = (
+        _settings.auth_provider == "external" and _settings.external_auth_url
+    )
+    if use_external:
+        from inferia.services.api_gateway.rbac.external_auth import external_refresh
+
+        ext_result = await external_refresh(credentials.credentials)
+        if ext_result:
+            return AuthToken(
+                access_token=ext_result["access_token"],
+                refresh_token=ext_result.get("refresh_token"),
+                token_type="bearer",
+                expires_in=900,
+            )
+
+    raise HTTPException(status_code=401, detail="Refresh failed")
 
 
 @router.post("/logout")
