@@ -166,7 +166,7 @@ export default function ApiKeys() {
                                     <td className="px-6 py-4 font-mono text-xs text-muted-foreground">{key.prefix}...</td>
                                     <td className="px-6 py-4 text-muted-foreground text-xs">{new Date(key.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
                                     <td className="px-6 py-4 flex items-center justify-between">
-                                        <span className={`inline-flex items-center px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm ${key.is_active ? 'border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : 'border-red-500/20 text-red-600 dark:text-red-400 bg-red-500/10'}`}>
+                                        <span className={`inline-flex items-center px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm ${key.is_active ? 'border-ember-500/20 text-ember-600 dark:text-ember-400 bg-ember-500/10' : 'border-red-500/20 text-red-600 dark:text-red-400 bg-red-500/10'}`}>
                                             {key.is_active ? 'Active' : 'Revoked'}
                                         </span>
                                         {key.is_active && canRevokeKey && (

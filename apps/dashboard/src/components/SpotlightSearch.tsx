@@ -130,10 +130,10 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
 
             {/* Modal */}
             <div className="fixed top-[20%] left-1/2 -translate-x-1/2 w-full max-w-xl z-50 animate-in fade-in zoom-in-95 duration-200">
-                <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-lg border dark:border-zinc-800 overflow-hidden">
+                <div className="bg-card rounded-xl shadow-lg border dark:border-border overflow-hidden">
                     {/* Search Input */}
-                    <div className="flex items-center px-4 border-b dark:border-zinc-800">
-                        <Search className="w-5 h-5 text-slate-400 shrink-0" />
+                    <div className="flex items-center px-4 border-b dark:border-border">
+                        <Search className="w-5 h-5 text-muted-foreground shrink-0" />
                         <input
                             autoFocus
                             value={query}
@@ -142,13 +142,13 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
                                 setSelectedIndex(0)
                             }}
                             placeholder="Search pages and actions..."
-                            className="flex-1 h-14 px-4 bg-transparent border-none outline-none text-base text-slate-900 dark:text-zinc-100 placeholder:text-slate-400"
+                            className="flex-1 h-14 px-4 bg-transparent border-none outline-none text-base text-foreground dark:text-cream placeholder:text-muted-foreground"
                         />
                         <button
                             onClick={onClose}
-                            className="p-1.5 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded-md transition-colors"
+                            className="p-1.5 hover:bg-muted dark:hover:bg-card rounded-md transition-colors"
                         >
-                            <X className="w-4 h-4 text-slate-400" />
+                            <X className="w-4 h-4 text-muted-foreground" />
                         </button>
                     </div>
 
@@ -156,7 +156,7 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
                     <div className="max-h-[400px] overflow-y-auto">
                         {Object.entries(groupedItems).map(([category, items]) => (
                             <div key={category}>
-                                <div className="px-4 py-2 text-xs font-semibold text-slate-500 dark:text-zinc-500 uppercase tracking-wider bg-slate-50 dark:bg-zinc-950">
+                                <div className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted dark:bg-background">
                                     {category}
                                 </div>
                                 {items.map((item) => {
@@ -171,38 +171,38 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
                                             className={cn(
                                                 "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors",
                                                 isSelected
-                                                    ? "bg-emerald-50 dark:bg-emerald-900/20"
-                                                    : "hover:bg-slate-50 dark:hover:bg-zinc-800/50"
+                                                    ? "bg-ember-50 dark:bg-ember-900/20"
+                                                    : "hover:bg-muted dark:hover:bg-card/80"
                                             )}
                                         >
                                             <div className={cn(
                                                 "p-2 rounded-lg",
                                                 isSelected
-                                                    ? "bg-emerald-100 dark:bg-emerald-900/40"
-                                                    : "bg-slate-100 dark:bg-zinc-800"
+                                                    ? "bg-ember-100 dark:bg-ember-900/40"
+                                                    : "bg-muted dark:bg-card"
                                             )}>
                                                 <item.icon className={cn(
                                                     "w-4 h-4",
                                                     isSelected
-                                                        ? "text-emerald-600 dark:text-emerald-400"
-                                                        : "text-slate-500 dark:text-zinc-400"
+                                                        ? "text-ember-600 dark:text-ember-400"
+                                                        : "text-muted-foreground"
                                                 )} />
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <div className={cn(
                                                     "font-medium text-sm",
                                                     isSelected
-                                                        ? "text-emerald-700 dark:text-emerald-300"
-                                                        : "text-slate-900 dark:text-zinc-100"
+                                                        ? "text-ember-700 dark:text-ember-300"
+                                                        : "text-foreground dark:text-cream"
                                                 )}>
                                                     {item.title}
                                                 </div>
-                                                <div className="text-xs text-slate-500 dark:text-zinc-500 truncate">
+                                                <div className="text-xs text-muted-foreground truncate">
                                                     {item.path}
                                                 </div>
                                             </div>
                                             {isSelected && (
-                                                <kbd className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400 rounded border dark:border-zinc-700">
+                                                <kbd className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs bg-muted dark:bg-card text-muted-foreground rounded border dark:border-border">
                                                     Enter ↵
                                                 </kbd>
                                             )}
@@ -213,7 +213,7 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
                         ))}
 
                         {filteredItems.length === 0 && (
-                            <div className="p-8 text-center text-slate-500 dark:text-zinc-500">
+                            <div className="p-8 text-center text-muted-foreground">
                                 <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
                                 <p>No results found for "{query}"</p>
                             </div>
@@ -221,19 +221,19 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
                     </div>
 
                     {/* Footer */}
-                    <div className="px-4 py-2 border-t dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 flex items-center justify-between text-xs text-slate-500 dark:text-zinc-500">
+                    <div className="px-4 py-2 border-t dark:border-border bg-muted dark:bg-background flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-4">
                             <span className="flex items-center gap-1">
-                                <kbd className="px-1.5 py-0.5 bg-white dark:bg-zinc-800 border dark:border-zinc-700 rounded text-[10px]">↑</kbd>
-                                <kbd className="px-1.5 py-0.5 bg-white dark:bg-zinc-800 border dark:border-zinc-700 rounded text-[10px]">↓</kbd>
+                                <kbd className="px-1.5 py-0.5 bg-card border dark:border-border rounded text-[10px]">↑</kbd>
+                                <kbd className="px-1.5 py-0.5 bg-card border dark:border-border rounded text-[10px]">↓</kbd>
                                 Navigate
                             </span>
                             <span className="flex items-center gap-1">
-                                <kbd className="px-1.5 py-0.5 bg-white dark:bg-zinc-800 border dark:border-zinc-700 rounded text-[10px]">↵</kbd>
+                                <kbd className="px-1.5 py-0.5 bg-card border dark:border-border rounded text-[10px]">↵</kbd>
                                 Select
                             </span>
                             <span className="flex items-center gap-1">
-                                <kbd className="px-1.5 py-0.5 bg-white dark:bg-zinc-800 border dark:border-zinc-700 rounded text-[10px]">esc</kbd>
+                                <kbd className="px-1.5 py-0.5 bg-card border dark:border-border rounded text-[10px]">esc</kbd>
                                 Close
                             </span>
                         </div>

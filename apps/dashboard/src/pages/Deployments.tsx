@@ -62,7 +62,7 @@ function getStatusStyles(status: string) {
     return "border-green-200 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800";
   }
   if (status === "STOPPED" || status === "TERMINATED") {
-    return "border-slate-200 bg-slate-50 text-slate-700 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
+    return "border-border bg-muted text-fg-secondary dark:bg-card dark:text-muted-foreground dark:border-border";
   }
   if (status === "FAILED") {
     return "border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800";
@@ -75,7 +75,7 @@ function getStatusStyles(status: string) {
 
 function getStatusDot(status: string) {
   if (status === "READY" || status === "RUNNING") return "bg-green-500";
-  if (status === "STOPPED" || status === "TERMINATED") return "bg-zinc-400";
+  if (status === "STOPPED" || status === "TERMINATED") return "bg-muted-foreground";
   if (status === "FAILED") return "bg-red-500";
   if (status === "RETRYING") return "bg-amber-500 animate-pulse";
   return "bg-yellow-500";
@@ -161,7 +161,7 @@ export default function Deployments() {
   };
 
   return (
-    <div className="space-y-5 font-sans text-slate-900 dark:text-zinc-100">
+    <div className="space-y-5 font-sans text-foreground dark:text-cream">
       <DeploymentHeader
         canCreateDeployment={canCreateDeployment}
         onRefresh={() => queryClient.invalidateQueries({ queryKey: ["deployments"] })}
@@ -170,12 +170,12 @@ export default function Deployments() {
 
       <div className="flex items-center justify-between gap-3">
         <div className="relative w-full max-w-sm">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <input
             name="deployment-search"
             autoComplete="off"
             placeholder="Search deployments…"
-            className="h-9 w-full rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm"
+            className="h-9 w-full rounded-md border dark:border-border bg-card pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-ember-500 shadow-sm"
             value={search}
             onChange={(e) => {
               updateSearchParams({
@@ -234,9 +234,9 @@ function DeploymentHeader({
           <p className="mt-1 text-sm text-muted-foreground">Operate model runtimes, monitor state transitions, and access deployment settings.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" className="h-9 px-3 inline-flex items-center gap-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:bg-slate-50 transition-colors text-sm font-medium" onClick={onRefresh}><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
+          <button type="button" className="h-9 px-3 inline-flex items-center gap-2 border rounded-md bg-card dark:border-border hover:bg-muted transition-colors text-sm font-medium" onClick={onRefresh}><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
           {canCreateDeployment && (
-            <button type="button" onClick={onNew} className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> New Deployment</button>
+            <button type="button" onClick={onNew} className="h-9 px-4 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 transition-colors shadow-sm inline-flex items-center gap-2"><Plus className="w-4 h-4" /> New Deployment</button>
           )}
         </div>
       </div>
@@ -267,7 +267,7 @@ function DeploymentTable({
     return (
       <div className="p-8">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-12 w-full bg-slate-100 dark:bg-zinc-800 animate-pulse rounded mb-2" />
+          <div key={i} className="h-12 w-full bg-muted dark:bg-card animate-pulse rounded mb-2" />
         ))}
       </div>
     );
@@ -275,7 +275,7 @@ function DeploymentTable({
 
   if (deployments.length === 0) {
     return (
-      <div className="px-4 py-16 text-center text-slate-500">
+      <div className="px-4 py-16 text-center text-muted-foreground">
         <Activity className="h-8 w-8 mx-auto mb-2 opacity-25" />
         <p className="text-sm">No deployments found.</p>
       </div>
@@ -351,7 +351,7 @@ function DeploymentCard({
   return (
     <article className="space-y-3 p-4">
       <div>
-        <Link to={`/dashboard/deployments/${deployment.id}`} className="font-medium text-foreground hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
+        <Link to={`/dashboard/deployments/${deployment.id}`} className="font-medium text-foreground hover:text-ember-500 dark:hover:text-ember-400 transition-colors">
           {deployment.name}
         </Link>
         <div className="mt-1 text-xs text-muted-foreground font-mono">{(deployment.id || "").slice(0, 12)}…</div>
@@ -419,7 +419,7 @@ function DeploymentRow({
   return (
     <tr className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
       <td className="px-6 py-4">
-        <Link to={`/dashboard/deployments/${d.id}`} className="font-medium text-foreground hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">{d.name}</Link>
+        <Link to={`/dashboard/deployments/${d.id}`} className="font-medium text-foreground hover:text-ember-500 dark:hover:text-ember-400 transition-colors">{d.name}</Link>
         <div className="mt-1 text-xs text-muted-foreground font-mono">{(d.id || "").slice(0, 12)}…</div>
       </td>
       <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{d.modelName}</td>
@@ -478,7 +478,7 @@ function DeploymentActions({
 
   return (
     <div className={cn("flex flex-wrap items-center gap-2", align === "end" ? "justify-end" : "")}>
-      {canUpdateDeployment && canStart && <button type="button" disabled={isMutating} onClick={() => onStart(deployment.id)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 font-medium disabled:opacity-50 transition-colors"><Play className="w-3.5 h-3.5" /> Start</button>}
+      {canUpdateDeployment && canStart && <button type="button" disabled={isMutating} onClick={() => onStart(deployment.id)} className="inline-flex items-center gap-1.5 rounded-md border border-ember-500/20 bg-ember-500/10 px-2.5 py-1.5 text-xs text-ember-600 dark:text-ember-400 hover:bg-ember-500/20 font-medium disabled:opacity-50 transition-colors"><Play className="w-3.5 h-3.5" /> Start</button>}
       {canUpdateDeployment && isRunning && <button type="button" disabled={isMutating} onClick={() => onStop(deployment.id)} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-medium disabled:opacity-50 transition-colors"><Square className="w-3.5 h-3.5" /> Stop</button>}
       {canDeleteDeployment && canDelete && <button type="button" disabled={isMutating} onClick={() => onDelete(deployment.id)} className="inline-flex items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium disabled:opacity-50 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>}
     </div>
@@ -490,7 +490,7 @@ function DeploymentPagination({ totalItems, pageSize, currentPage, totalPages, o
     <div className="bg-muted/10 border-t border-border/50 px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground">
       <span>Showing {totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalItems)} of {totalItems}</span>
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2"><span>Rows</span><select className="bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded px-2 py-1 outline-none" value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>{PAGE_SIZE_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}</select></div>
+        <div className="flex items-center gap-2"><span>Rows</span><select className="bg-card border dark:border-border rounded px-2 py-1 outline-none" value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>{PAGE_SIZE_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}</select></div>
         <div className="inline-flex items-center gap-2">
           <button type="button" className="rounded border px-2 py-1 disabled:opacity-50" disabled={currentPage <= 1} onClick={() => onPageChange(currentPage - 1)}>Prev</button>
           <span>Page {currentPage} of {totalPages}</span>

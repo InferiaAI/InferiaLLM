@@ -142,7 +142,7 @@ export default function Security() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-sm font-medium inline-flex items-center gap-2 mb-1">
-              {userInfo?.totp_enabled ? <ShieldCheck className="w-4 h-4 text-emerald-500" /> : <KeyRound className="w-4 h-4 text-amber-500" />}
+              {userInfo?.totp_enabled ? <ShieldCheck className="w-4 h-4 text-ember-500" /> : <KeyRound className="w-4 h-4 text-amber-500" />}
               Status: {userInfo?.totp_enabled ? "Enabled" : "Disabled"}
             </p>
             <p className="text-sm text-muted-foreground max-w-xl">
@@ -177,7 +177,7 @@ export default function Security() {
 
             {setupData && (
               <div className="flex flex-col items-center gap-4 py-2">
-                <div className="bg-white p-2 rounded-lg border">
+                <div className="bg-card p-2 rounded-lg border">
                   {setupData.qr_code.startsWith("data:image/") ? (
                     <img src={setupData.qr_code} alt="2FA QR Code" className="w-48 h-48" />
                   ) : (
@@ -204,7 +204,7 @@ export default function Security() {
             )}
 
             <div className="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
-              <button type="button" onClick={closeModal} className="mt-2 sm:mt-0 px-4 py-2 border rounded-md hover:bg-slate-100 transition-colors">
+              <button type="button" onClick={closeModal} className="mt-2 sm:mt-0 px-4 py-2 border rounded-md hover:bg-muted transition-colors">
                 Cancel
               </button>
               <button

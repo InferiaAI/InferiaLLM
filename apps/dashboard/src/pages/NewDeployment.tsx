@@ -326,10 +326,10 @@ const initialState: State = {
 function StepIndicator({ step, current, label }: { step: number; current: number; label: string }) {
   const isActive = step >= current
   return (
-    <div className={cn("flex items-center gap-2", isActive && "text-emerald-600 dark:text-emerald-400")}>
+    <div className={cn("flex items-center gap-2", isActive && "text-ember-600 dark:text-ember-400")}>
       <div className={cn(
         "w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors",
-        isActive ? "bg-emerald-600 text-white border-emerald-600 dark:border-emerald-500 dark:bg-emerald-600" : "border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+        isActive ? "bg-ember-600 text-white border-ember-600 dark:border-ember-500 dark:bg-ember-600" : "border-border bg-card"
       )}>
         {current}
       </div>
@@ -375,7 +375,7 @@ function HuggingFaceModelBrowser({
     return (
       <button
         onClick={() => setShowBrowser(true)}
-        className="w-full px-3 py-2 text-sm border border-dashed border-emerald-300 dark:border-emerald-700 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-2 transition-colors"
+        className="w-full px-3 py-2 text-sm border border-dashed border-ember-300 dark:border-ember-700 rounded-md hover:bg-ember-50 dark:hover:bg-ember-900/20 text-ember-600 dark:text-ember-400 flex items-center justify-center gap-2 transition-colors"
       >
         <Search className="w-4 h-4" />
         Browse Hugging Face Models
@@ -384,9 +384,9 @@ function HuggingFaceModelBrowser({
   }
 
   return (
-    <div className="border rounded-lg overflow-hidden bg-white dark:bg-zinc-900">
-      <div className="p-3 border-b dark:border-zinc-700 flex items-center gap-2">
-        <Search className="w-4 h-4 text-slate-400" />
+    <div className="border rounded-lg overflow-hidden bg-card">
+      <div className="p-3 border-b dark:border-border flex items-center gap-2">
+        <Search className="w-4 h-4 text-muted-foreground" />
         <input
           type="text"
           value={searchQuery}
@@ -396,20 +396,20 @@ function HuggingFaceModelBrowser({
         />
         <button
           onClick={() => setShowBrowser(false)}
-          className="p-1 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded"
+          className="p-1 hover:bg-muted dark:hover:bg-card rounded"
         >
-          <X className="w-4 h-4 text-slate-400" />
+          <X className="w-4 h-4 text-muted-foreground" />
         </button>
       </div>
 
       <div className="max-h-64 overflow-y-auto">
         {isLoading ? (
-          <div className="p-8 text-center text-slate-500">
+          <div className="p-8 text-center text-muted-foreground">
             <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
             Loading models...
           </div>
         ) : modelType === "embedding" ? (
-          <div className="divide-y dark:divide-zinc-700">
+          <div className="divide-y dark:divide-border">
             {embeddingModels.map((model) => (
               <button
                 key={model.id}
@@ -428,15 +428,15 @@ function HuggingFaceModelBrowser({
                   setShowBrowser(false)
                 }}
                 className={cn(
-                  "w-full p-3 text-left hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors flex items-start gap-3",
-                  selectedModelId === model.id && "bg-emerald-50 dark:bg-emerald-900/20 border-l-2 border-emerald-500"
+                  "w-full p-3 text-left hover:bg-muted dark:hover:bg-card transition-colors flex items-start gap-3",
+                  selectedModelId === model.id && "bg-ember-50 dark:bg-ember-900/20 border-l-2 border-ember-500"
                 )}
               >
-                <Database className="w-5 h-5 text-slate-400 mt-0.5" />
+                <Database className="w-5 h-5 text-muted-foreground mt-0.5" />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-sm truncate">{model.name}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{model.description}</div>
-                  <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-400">
+                  <div className="text-xs text-muted-foreground mt-0.5">{model.description}</div>
+                  <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
                     <span>{model.dimensions}d</span>
                     <span>•</span>
                     <span>Max {model.max_sequence_length} tokens</span>
@@ -446,7 +446,7 @@ function HuggingFaceModelBrowser({
             ))}
           </div>
         ) : displayModels?.length ? (
-          <div className="divide-y dark:divide-zinc-700">
+          <div className="divide-y dark:divide-border">
             {displayModels.map((model: HFModel) => (
               <button
                 key={model.id}
@@ -455,14 +455,14 @@ function HuggingFaceModelBrowser({
                   setShowBrowser(false)
                 }}
                 className={cn(
-                  "w-full p-3 text-left hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors",
-                  selectedModelId === model.id && "bg-emerald-50 dark:bg-emerald-900/20 border-l-2 border-emerald-500"
+                  "w-full p-3 text-left hover:bg-muted dark:hover:bg-card transition-colors",
+                  selectedModelId === model.id && "bg-ember-50 dark:bg-ember-900/20 border-l-2 border-ember-500"
                 )}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm truncate">{model.id}</div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <Download className="w-3 h-3" />
                         {formatDownloads(model.downloads || 0)}
@@ -472,7 +472,7 @@ function HuggingFaceModelBrowser({
                         {model.likes || 0}
                       </span>
                       {model.pipeline_tag && (
-                        <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-zinc-800 rounded text-[10px]">
+                        <span className="px-1.5 py-0.5 bg-muted dark:bg-card rounded text-[10px]">
                           {model.pipeline_tag}
                         </span>
                       )}
@@ -483,7 +483,7 @@ function HuggingFaceModelBrowser({
             ))}
           </div>
         ) : (
-          <div className="p-8 text-center text-slate-500 text-sm">
+          <div className="p-8 text-center text-muted-foreground text-sm">
             {searchQuery.length > 2
               ? "No models found. Try a different search term."
               : "Type to search for models on Hugging Face"
@@ -519,7 +519,7 @@ function OllamaModelBrowser({
     return (
       <button
         onClick={() => setShowBrowser(true)}
-        className="w-full px-3 py-2 text-sm border border-dashed border-emerald-300 dark:border-emerald-700 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-2 transition-colors"
+        className="w-full px-3 py-2 text-sm border border-dashed border-ember-300 dark:border-ember-700 rounded-md hover:bg-ember-50 dark:hover:bg-ember-900/20 text-ember-600 dark:text-ember-400 flex items-center justify-center gap-2 transition-colors"
       >
         <Search className="w-4 h-4" />
         Browse Ollama Models
@@ -528,9 +528,9 @@ function OllamaModelBrowser({
   }
 
   return (
-    <div className="border rounded-lg overflow-hidden bg-white dark:bg-zinc-900">
-      <div className="p-3 border-b dark:border-zinc-700 flex items-center gap-2">
-        <Search className="w-4 h-4 text-slate-400" />
+    <div className="border rounded-lg overflow-hidden bg-card">
+      <div className="p-3 border-b dark:border-border flex items-center gap-2">
+        <Search className="w-4 h-4 text-muted-foreground" />
         <input
           type="text"
           value={searchQuery}
@@ -538,19 +538,19 @@ function OllamaModelBrowser({
           placeholder="Search Ollama models..."
           className="flex-1 text-sm outline-none bg-transparent"
         />
-        <button onClick={() => setShowBrowser(false)} className="p-1 hover:bg-slate-100 dark:hover:bg-zinc-800 rounded">
-          <X className="w-4 h-4 text-slate-400" />
+        <button onClick={() => setShowBrowser(false)} className="p-1 hover:bg-muted dark:hover:bg-card rounded">
+          <X className="w-4 h-4 text-muted-foreground" />
         </button>
       </div>
 
       <div className="max-h-64 overflow-y-auto">
         {isLoading ? (
-          <div className="p-8 text-center text-slate-500">
+          <div className="p-8 text-center text-muted-foreground">
             <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
             Loading Ollama models...
           </div>
         ) : filteredModels.length > 0 ? (
-          <div className="divide-y dark:divide-zinc-700">
+          <div className="divide-y dark:divide-border">
             {filteredModels.map((model: OllamaModel) => (
               <button
                 key={model.name}
@@ -569,17 +569,17 @@ function OllamaModelBrowser({
                   setShowBrowser(false)
                 }}
                 className={cn(
-                  "w-full p-3 text-left hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors",
-                  selectedModelId === model.name && "bg-emerald-50 dark:bg-emerald-900/20 border-l-2 border-emerald-500"
+                  "w-full p-3 text-left hover:bg-muted dark:hover:bg-card transition-colors",
+                  selectedModelId === model.name && "bg-ember-50 dark:bg-ember-900/20 border-l-2 border-ember-500"
                 )}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm truncate">{model.name}</div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                       {model.size > 0 && <span>{formatModelSize(model.size)}</span>}
                       {model.details?.parameter_size && <span>{model.details.parameter_size}</span>}
-                      {model.details?.family && <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-zinc-800 rounded text-[10px]">{model.details.family}</span>}
+                      {model.details?.family && <span className="px-1.5 py-0.5 bg-muted dark:bg-card rounded text-[10px]">{model.details.family}</span>}
                     </div>
                   </div>
                 </div>
@@ -587,7 +587,7 @@ function OllamaModelBrowser({
             ))}
           </div>
         ) : (
-          <div className="p-8 text-center text-slate-500 text-sm">
+          <div className="p-8 text-center text-muted-foreground text-sm">
             {searchQuery ? "No Ollama models found for this search." : "No models available."}
           </div>
         )}
@@ -901,23 +901,23 @@ export default function NewDeployment() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 font-sans text-slate-900 dark:text-zinc-50">
+    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 font-sans text-foreground">
       <div>
         <h2 className="text-3xl font-bold tracking-tight">New Deployment</h2>
         <p className="text-muted-foreground mt-2">Deploy your models on managed pools or connect to external AI providers.</p>
       </div>
 
       <div className="flex justify-center">
-        <div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner">
+        <div className="bg-muted dark:bg-card p-1 rounded-lg inline-flex shadow-inner">
           <button
             onClick={() => { dispatch({ type: 'SET_MODE', payload: "managed" }); }}
-            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2", mode === "managed" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
+            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2", mode === "managed" ? "bg-card shadow-sm text-ember-600 dark:text-ember-400 ring-1 ring-black/5 dark:ring-white/5" : "text-muted-foreground hover:text-foreground dark:text-muted-foreground dark:hover:text-cream/85")}
           >
             <Layers className="w-4 h-4" /> Deploy on Compute
           </button>
           <button
             onClick={() => { dispatch({ type: 'SET_MODE', payload: "external" }); }}
-            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2", mode === "external" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400 ring-1 ring-black/5 dark:ring-white/5" : "text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-zinc-200")}
+            className={cn("px-6 py-2.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2", mode === "external" ? "bg-card shadow-sm text-ember-600 dark:text-ember-400 ring-1 ring-black/5 dark:ring-white/5" : "text-muted-foreground hover:text-foreground dark:text-muted-foreground dark:hover:text-cream/85")}
           >
             <Globe className="w-4 h-4" /> External Provider
           </button>
@@ -953,13 +953,13 @@ function ManagedFlow({ state, dispatch, onLaunch, isPending, externalRegistry }:
 
   return (
     <>
-      <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-zinc-800 pb-4">
+      <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-border pb-4">
         <StepIndicator step={step} current={1} label="Type" />
-        <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />
+        <div className="h-px w-8 bg-muted dark:bg-card" />
         <StepIndicator step={step} current={2} label="Engine" />
-        <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />
+        <div className="h-px w-8 bg-muted dark:bg-card" />
         <StepIndicator step={step} current={3} label="Pool" />
-        <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />
+        <div className="h-px w-8 bg-muted dark:bg-card" />
         <StepIndicator step={step} current={4} label="Config" />
       </div>
 
@@ -984,19 +984,19 @@ function TypeSelection({ selectedId, onSelect }: { selectedId: string; onSelect:
           className={cn(
             "w-full p-5 rounded-xl border relative transition-colors outline-none text-left",
             type.active
-              ? "cursor-pointer bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm focus:ring-2 focus:ring-emerald-500/40"
-              : "opacity-50 cursor-not-allowed bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800",
-            selectedId === type.id && type.active ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : ""
+              ? "cursor-pointer bg-card dark:border-border hover:border-ember-300 dark:hover:border-ember-700 hover:shadow-sm focus:ring-2 focus:ring-ember-500/40"
+              : "opacity-50 cursor-not-allowed bg-muted dark:bg-card/50 dark:border-border",
+            selectedId === type.id && type.active ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : ""
           )}
         >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              {type.icon && <type.icon className={cn("w-5 h-5", type.active ? "text-slate-700 dark:text-zinc-200" : "text-slate-500")} />}
+              {type.icon && <type.icon className={cn("w-5 h-5", type.active ? "text-fg-secondary dark:text-cream/85" : "text-muted-foreground")} />}
               <h3 className="font-bold">{type.name}</h3>
             </div>
-            {type.badge && <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-200 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 rounded-full uppercase tracking-wide">{type.badge}</span>}
+            {type.badge && <span className="text-[10px] font-bold px-2 py-0.5 bg-muted dark:bg-card text-muted-foreground rounded-full uppercase tracking-wide">{type.badge}</span>}
           </div>
-          <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{type.desc}</p>
+          <p className="text-sm text-muted-foreground leading-relaxed">{type.desc}</p>
         </button>
       ))}
     </div>
@@ -1007,21 +1007,21 @@ function EngineSelection({ modelType, selectedEngine, dispatch, setStep }: { mod
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div className="col-span-full">
-        <button type="button" onClick={() => setStep(1)} className="text-sm text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium mb-4 flex items-center gap-1">← Back to Type</button>
+        <button type="button" onClick={() => setStep(1)} className="text-sm text-muted-foreground hover:text-foreground dark:hover:text-cream/85 font-medium mb-4 flex items-center gap-1">← Back to Type</button>
       </div>
       {computeEngines.filter(e => e.modelTypes.includes(modelType)).map(e => (
-        <button type="button" key={e.id} aria-pressed={selectedEngine === e.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-colors outline-none text-left focus:ring-2 focus:ring-emerald-500/40", selectedEngine === e.id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-sm")}>
+        <button type="button" key={e.id} aria-pressed={selectedEngine === e.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedEngine', value: e.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-card dark:border-border relative transition-colors outline-none text-left focus:ring-2 focus:ring-ember-500/40", selectedEngine === e.id ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700 hover:shadow-sm")}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              {e.icon && <e.icon className="w-5 h-5 text-slate-700 dark:text-zinc-200" />}
+              {e.icon && <e.icon className="w-5 h-5 text-fg-secondary dark:text-cream/85" />}
               <h3 className="font-bold text-lg">{e.name}</h3>
             </div>
-            {selectedEngine === e.id && <Check className="w-5 h-5 text-emerald-600 dark:text-emerald-500" />}
+            {selectedEngine === e.id && <Check className="w-5 h-5 text-ember-600 dark:text-ember-500" />}
           </div>
-          <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{e.desc}</p>
+          <p className="text-sm text-muted-foreground leading-relaxed">{e.desc}</p>
         </button>
       ))}
-      <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => setStep(3)} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors font-medium">Continue</button></div>
+      <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => setStep(3)} className="px-6 py-2 bg-ember-600 text-white rounded-md hover:bg-ember-700 transition-colors font-medium">Continue</button></div>
     </div>
   );
 }
@@ -1032,40 +1032,40 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
       {poolsLoading ? (
         <div className="flex items-center justify-center py-12">
           <div className="flex flex-col items-center gap-3">
-            <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-slate-500 dark:text-zinc-400">Loading compute pools...</p>
+            <div className="w-8 h-8 border-4 border-ember-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-muted-foreground">Loading compute pools...</p>
           </div>
         </div>
       ) : userPools.length === 0 ? (
-        <div className="text-center py-12 bg-slate-50 dark:bg-zinc-900/50 rounded-xl border border-dashed dark:border-zinc-800 flex flex-col items-center">
-          <Server className="w-12 h-12 text-slate-300 dark:text-zinc-600 mb-4" />
-          <h3 className="text-lg font-medium text-slate-900 dark:text-zinc-100">No Compute Pools Found</h3>
-          <p className="text-slate-500 dark:text-zinc-400 mt-1 mb-6 max-w-sm">You need active compute resources to deploy this model.</p>
-          <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-md text-sm font-medium text-slate-700 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 shadow-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500" /> Create New Pool</Link>
+        <div className="text-center py-12 bg-muted dark:bg-card/50 rounded-xl border border-dashed dark:border-border flex flex-col items-center">
+          <Server className="w-12 h-12 text-cream/70 dark:text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium text-foreground dark:text-cream">No Compute Pools Found</h3>
+          <p className="text-muted-foreground mt-1 mb-6 max-w-sm">You need active compute resources to deploy this model.</p>
+          <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium text-fg-secondary dark:text-cream/70 hover:bg-muted dark:hover:bg-card shadow-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500" /> Create New Pool</Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {userPools.filter(pool => pool.lifecycle_state === "running").length === 0 && (
-            <div className="col-span-full text-center py-8 text-slate-500 dark:text-zinc-400">
+            <div className="col-span-full text-center py-8 text-muted-foreground">
               <p className="text-sm">No ready pools available. Pools may still be provisioning.</p>
-              <Link to="/dashboard/compute/pools/new" className="text-emerald-600 text-sm font-medium mt-2 inline-block hover:underline">Create New Pool</Link>
+              <Link to="/dashboard/compute/pools/new" className="text-ember-600 text-sm font-medium mt-2 inline-block hover:underline">Create New Pool</Link>
             </div>
           )}
           {userPools.map(pool => {
             const isReady = pool.lifecycle_state === "running" && pool.is_active;
             const isProvisioning = pool.lifecycle_state === "provisioning" || (!pool.cluster_id && pool.pool_type === "cluster");
             return (
-            <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} disabled={!isReady} onClick={() => isReady && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 relative transition-colors outline-none text-left focus:ring-2 focus:ring-emerald-500/40", !isReady && "opacity-50 cursor-not-allowed", selectedPool?.pool_id === pool.pool_id ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}>
+            <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} disabled={!isReady} onClick={() => isReady && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-card dark:border-border relative transition-colors outline-none text-left focus:ring-2 focus:ring-ember-500/40", !isReady && "opacity-50 cursor-not-allowed", selectedPool?.pool_id === pool.pool_id ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700")}>
               <div className="flex items-start justify-between">
-                <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-slate-500 dark:text-zinc-400 font-mono mt-1">{pool.provider}{pool.gpu_count > 1 ? ` (${pool.gpu_count}x GPU)` : ''}</div></div>
-                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", isProvisioning ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-900/50" : isReady ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-slate-50 text-slate-500 border-slate-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700")}>{isProvisioning ? "Provisioning..." : isReady ? "Ready" : "Inactive"}</div>
+                <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-muted-foreground font-mono mt-1">{pool.provider}{pool.gpu_count > 1 ? ` (${pool.gpu_count}x GPU)` : ''}</div></div>
+                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", isProvisioning ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-900/50" : isReady ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-muted text-muted-foreground border-border dark:bg-card dark:text-muted-foreground dark:border-border")}>{isProvisioning ? "Provisioning..." : isReady ? "Ready" : "Inactive"}</div>
               </div>
             </button>
             );
           })}
         </div>
       )}
-      <div className="flex justify-between pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => setStep(2)} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => selectedPool && setStep(4)} disabled={!selectedPool} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
+      <div className="flex justify-between pt-6 border-t dark:border-border"><button type="button" onClick={() => setStep(2)} className="text-muted-foreground hover:text-foreground dark:hover:text-cream/85 font-medium">Back</button><button type="button" onClick={() => selectedPool && setStep(4)} disabled={!selectedPool} className="px-6 py-2 bg-ember-600 text-white rounded-md hover:bg-ember-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
     </div>
   );
 }
@@ -1134,28 +1134,28 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
 
   const getFitColor = (level: FitLevel) => {
     switch (level) {
-      case "Perfect": return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
+      case "Perfect": return "text-ember-500 bg-ember-500/10 border-ember-500/20";
       case "Good": return "text-blue-500 bg-blue-500/10 border-blue-500/20";
       case "Marginal": return "text-amber-500 bg-amber-500/10 border-amber-500/20";
       case "TooTight": return "text-rose-500 bg-rose-500/10 border-rose-500/20";
-      default: return "text-slate-500 bg-slate-500/10 border-slate-500/20";
+      default: return "text-muted-foreground bg-muted-foreground/10 border-muted-foreground/20";
     }
   };
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
       <div className="space-y-4">
-        <label htmlFor="instanceName" className="block text-sm font-medium text-slate-700 dark:text-zinc-300">Deployment Name</label>
-        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none transition-colors bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. Production Llama 3" />
+        <label htmlFor="instanceName" className="block text-sm font-medium text-fg-secondary dark:text-cream/70">Deployment Name</label>
+        <input id="instanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border dark:border-border rounded-md focus:ring-2 focus:ring-ember-500/20 outline-none transition-colors bg-card dark:text-white" placeholder="e.g. Production Llama 3" />
       </div>
 
       <div className="space-y-4">
-        <label className="block text-sm font-medium text-slate-700 dark:text-zinc-300">{modelType === "embedding" ? "Embedding Model" : "Model"}</label>
+        <label className="block text-sm font-medium text-fg-secondary dark:text-cream/70">{modelType === "embedding" ? "Embedding Model" : "Model"}</label>
         {selectedHFModel ? (
-          <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+          <div className="p-4 bg-ember-50 dark:bg-ember-900/20 border border-ember-200 dark:border-ember-800 rounded-lg">
             <div className="flex items-start justify-between">
-              <div><div className="font-medium text-emerald-900 dark:text-emerald-100">{selectedHFModel.id}</div><div className="text-sm text-emerald-600 dark:text-emerald-400 mt-1">{selectedHFModel.pipeline_tag || "feature-extraction"} • {formatDownloads(selectedHFModel.downloads || 0)} downloads</div></div>
-              <button type="button" onClick={() => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: null }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: "" }); }} className="p-1 hover:bg-emerald-100 dark:hover:bg-emerald-800 rounded"><X className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /></button>
+              <div><div className="font-medium text-ember-900 dark:text-ember-100">{selectedHFModel.id}</div><div className="text-sm text-ember-600 dark:text-ember-400 mt-1">{selectedHFModel.pipeline_tag || "feature-extraction"} • {formatDownloads(selectedHFModel.downloads || 0)} downloads</div></div>
+              <button type="button" onClick={() => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: null }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: "" }); }} className="p-1 hover:bg-ember-100 dark:hover:bg-ember-800 rounded"><X className="w-4 h-4 text-ember-600 dark:text-ember-400" /></button>
             </div>
           </div>
         ) : selectedEngine === "ollama" ? (
@@ -1163,7 +1163,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         ) : (
           <HuggingFaceModelBrowser modelType={modelType} onSelect={(m) => { dispatch({ type: 'SET_FIELD', field: 'selectedHFModel', value: m }); dispatch({ type: 'SET_FIELD', field: 'modelId', value: m.id }); }} selectedModelId={modelId} />
         )}
-        <input id="modelId" value={modelId} onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md focus:ring-2 focus:ring-emerald-500/20 outline-none bg-white dark:bg-zinc-900 dark:text-white" placeholder={selectedEngine === "ollama" ? "e.g. llama3:8b, mistral, qwen2" : modelType === "embedding" ? "e.g. sentence-transformers/all-MiniLM-L6-v2" : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"} />
+        <input id="modelId" value={modelId} onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelId', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md focus:ring-2 focus:ring-ember-500/20 outline-none bg-card dark:text-white" placeholder={selectedEngine === "ollama" ? "e.g. llama3:8b, mistral, qwen2" : modelType === "embedding" ? "e.g. sentence-transformers/all-MiniLM-L6-v2" : "e.g. meta-llama/Meta-Llama-3-8B-Instruct"} />
       </div>
 
       {compatibility && (
@@ -1267,12 +1267,12 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
       {selectedEngine === "vllm" && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">vLLM Configuration</h4></div>
-          <div><label htmlFor="vllmImage" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">vLLM Image</label><input id="vllmImage" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+          <div><label htmlFor="vllmImage" className="block text-xs font-medium text-muted-foreground mb-1.5">vLLM Image</label><input id="vllmImage" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Required CUDA Versions</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Required CUDA Versions</label>
             <div className="flex flex-wrap gap-2">
               {["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"].map(v => (
-                <label key={v} className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium cursor-pointer transition-colors", cudaVersions.includes(v) ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-400" : "bg-white border-slate-200 text-slate-500 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-400 hover:border-slate-300 dark:hover:border-zinc-600")}>
+                <label key={v} className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium cursor-pointer transition-colors", cudaVersions.includes(v) ? "bg-ember-50 border-ember-300 text-ember-700 dark:bg-ember-900/20 dark:border-ember-700 dark:text-ember-400" : "bg-card border-border text-muted-foreground dark:bg-card dark:border-border dark:text-muted-foreground hover:border-border dark:hover:border-border")}>
                   <input
                     type="checkbox"
                     checked={cudaVersions.includes(v)}
@@ -1290,19 +1290,19 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div><label htmlFor="maxModelLen" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Model Length</label><input id="maxModelLen" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
-            <div><label htmlFor="gpuUtil" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">GPU Memory Util</label><input id="gpuUtil" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+            <div><label htmlFor="maxModelLen" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Model Length</label><input id="maxModelLen" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
+            <div><label htmlFor="gpuUtil" className="block text-xs font-medium text-muted-foreground mb-1.5">GPU Memory Util</label><input id="gpuUtil" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
           </div>
-          <div><label htmlFor="hfTokenVllm" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HF Token</label><input id="hfTokenVllm" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="hf_..." /></div>
+          <div><label htmlFor="hfTokenVllm" className="block text-xs font-medium text-muted-foreground mb-1.5">HF Token</label><input id="hfTokenVllm" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="hf_..." /></div>
 
 
 
           {/* Advanced Configuration */}
-          <div className="border-t border-slate-200 dark:border-zinc-700 pt-4 mt-4">
+          <div className="border-t border-border pt-4 mt-4">
             <button
               type="button"
               onClick={() => dispatch({ type: 'SET_FIELD', field: 'isAdvancedOpen', value: !isAdvancedOpen })}
-              className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+              className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-ember-600 dark:hover:text-ember-400 transition-colors"
             >
               {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               Advanced Configuration
@@ -1311,8 +1311,8 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
             {isAdvancedOpen && (
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <div>
-                  <label htmlFor="dtype" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Data Type (dtype)</label>
-                  <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                  <label htmlFor="dtype" className="block text-xs font-medium text-muted-foreground mb-1.5">Data Type (dtype)</label>
+                  <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
                     <option value="auto">auto</option>
                     <option value="float16">float16</option>
                     <option value="bfloat16">bfloat16</option>
@@ -1320,8 +1320,8 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="kvCacheDtype" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">KV Cache dtype</label>
-                  <select id="kvCacheDtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                  <label htmlFor="kvCacheDtype" className="block text-xs font-medium text-muted-foreground mb-1.5">KV Cache dtype</label>
+                  <select id="kvCacheDtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
                     <option value="auto">auto</option>
                     <option value="fp8">fp8</option>
                     <option value="fp8_e4m3">fp8_e4m3</option>
@@ -1329,12 +1329,12 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="maxNumSeqs" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Num Sequences</label>
-                  <input id="maxNumSeqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+                  <label htmlFor="maxNumSeqs" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Num Sequences</label>
+                  <input id="maxNumSeqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
                 </div>
                 <div>
-                  <label htmlFor="quantization" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Quantization</label>
-                  <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                  <label htmlFor="quantization" className="block text-xs font-medium text-muted-foreground mb-1.5">Quantization</label>
+                  <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
                     <option value="">None</option>
                     <option value="awq">AWQ</option>
                     <option value="awq_marlin">AWQ Marlin</option>
@@ -1359,9 +1359,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                     type="checkbox"
                     checked={trustRemoteCode}
                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })}
-                    className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
+                    className="w-4 h-4 rounded border-border"
                   />
-                  <label htmlFor="trustRemoteCode" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Trust Remote Code</label>
+                  <label htmlFor="trustRemoteCode" className="text-xs font-medium text-muted-foreground">Trust Remote Code</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
@@ -1369,9 +1369,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                     type="checkbox"
                     checked={enforceEager}
                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: e.target.checked })}
-                    className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
+                    className="w-4 h-4 rounded border-border"
                   />
-                  <label htmlFor="enforceEager" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Enforce Eager Mode</label>
+                  <label htmlFor="enforceEager" className="text-xs font-medium text-muted-foreground">Enforce Eager Mode</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
@@ -1379,9 +1379,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                     type="checkbox"
                     checked={!!cudaModuleLoading}
                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'cudaModuleLoading', value: e.target.checked ? "LAZY" : "" })}
-                    className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
+                    className="w-4 h-4 rounded border-border"
                   />
-                  <label htmlFor="cudaModuleLoading" className="text-xs font-medium text-slate-600 dark:text-zinc-400">CUDA Module Loading: LAZY</label>
+                  <label htmlFor="cudaModuleLoading" className="text-xs font-medium text-muted-foreground">CUDA Module Loading: LAZY</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
@@ -1389,9 +1389,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                     type="checkbox"
                     checked={!!nvidiaDisableCudaCompat}
                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'nvidiaDisableCudaCompat', value: e.target.checked ? "1" : "" })}
-                    className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
+                    className="w-4 h-4 rounded border-border"
                   />
-                  <label htmlFor="nvidiaDisableCudaCompat" className="text-xs font-medium text-slate-600 dark:text-zinc-400">NVIDIA Disable CUDA Compat</label>
+                  <label htmlFor="nvidiaDisableCudaCompat" className="text-xs font-medium text-muted-foreground">NVIDIA Disable CUDA Compat</label>
                 </div>
               </div>
             )}
@@ -1404,10 +1404,10 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
           <div className="flex items-center gap-2 mb-2"><Database className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">Embedding Configuration</h4></div>
           <div className="grid grid-cols-2 gap-4">
             {selectedEngine === "infinity" && (
-              <div><label htmlFor="batchSize" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Batch Size</label><input id="batchSize" type="number" value={batchSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+              <div><label htmlFor="batchSize" className="block text-xs font-medium text-muted-foreground mb-1.5">Batch Size</label><input id="batchSize" type="number" value={batchSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
             )}
             {selectedEngine === "tei" && (
-              <div><label htmlFor="maxBatchTokens" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Max Batch Tokens</label><input id="maxBatchTokens" type="number" value={maxBatchTokens} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxBatchTokens', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+              <div><label htmlFor="maxBatchTokens" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Batch Tokens</label><input id="maxBatchTokens" type="number" value={maxBatchTokens} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxBatchTokens', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
             )}
             <div className="flex items-center gap-2 pt-6">
               <input
@@ -1415,17 +1415,17 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                 type="checkbox"
                 checked={gpuEnabled}
                 onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuEnabled', value: e.target.checked })}
-                className="w-4 h-4 rounded border-slate-300 dark:border-zinc-600"
+                className="w-4 h-4 rounded border-border"
               />
-              <label htmlFor="gpuEnabled" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Enable GPU Acceleration</label>
+              <label htmlFor="gpuEnabled" className="text-xs font-medium text-muted-foreground">Enable GPU Acceleration</label>
             </div>
           </div>
 
-          <div className="border-t border-slate-200 dark:border-zinc-700 pt-4 mt-4">
+          <div className="border-t border-border pt-4 mt-4">
             <button
               type="button"
               onClick={() => dispatch({ type: 'SET_FIELD', field: 'isAdvancedOpen', value: !isAdvancedOpen })}
-              className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+              className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-ember-600 dark:hover:text-ember-400 transition-colors"
             >
               {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               Advanced Hardware Configuration
@@ -1434,17 +1434,17 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
             {isAdvancedOpen && (
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <div>
-                  <label htmlFor="requiredCpu" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Required CPU Cores</label>
-                  <input id="requiredCpu" type="number" min="1" value={requiredCpu} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredCpu', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+                  <label htmlFor="requiredCpu" className="block text-xs font-medium text-muted-foreground mb-1.5">Required CPU Cores</label>
+                  <input id="requiredCpu" type="number" min="1" value={requiredCpu} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredCpu', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
                 </div>
                 <div>
-                  <label htmlFor="requiredRam" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Required RAM (MB)</label>
-                  <input id="requiredRam" type="number" min="1024" step="1024" value={requiredRam} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredRam', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" />
+                  <label htmlFor="requiredRam" className="block text-xs font-medium text-muted-foreground mb-1.5">Required RAM (MB)</label>
+                  <input id="requiredRam" type="number" min="1024" step="1024" value={requiredRam} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredRam', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
                 </div>
                 {selectedEngine === "tei" && (
                   <div>
-                    <label htmlFor="pooling" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Pooling Strategy</label>
-                    <select id="pooling" value={pooling} onChange={e => dispatch({ type: 'SET_FIELD', field: 'pooling', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white">
+                    <label htmlFor="pooling" className="block text-xs font-medium text-muted-foreground mb-1.5">Pooling Strategy</label>
+                    <select id="pooling" value={pooling} onChange={e => dispatch({ type: 'SET_FIELD', field: 'pooling', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
                       <option value="cls">CLS</option>
                       <option value="mean">Mean</option>
                       <option value="last_token">Last Token</option>
@@ -1469,8 +1469,8 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
             Model type is automatically set based on your deployment type. API key is configured automatically by the system.
           </div>
           <div>
-            <label htmlFor="hfTokenLocalai" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">HuggingFace Token (for private/gated models)</label>
-            <input id="hfTokenLocalai" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="hf_xxxxx (optional)" />
+            <label htmlFor="hfTokenLocalai" className="block text-xs font-medium text-muted-foreground mb-1.5">HuggingFace Token (for private/gated models)</label>
+            <input id="hfTokenLocalai" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="hf_xxxxx (optional)" />
             <p className="text-xs text-muted-foreground mt-1">Required only for gated models like SDXL, FLUX, etc.</p>
           </div>
           <div className="grid grid-cols-3 gap-4">
@@ -1480,9 +1480,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                 type="checkbox"
                 checked={state.trustRemoteCode || false}
                 onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })}
-                className="w-4 h-4 rounded border-gray-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                className="w-4 h-4 rounded border-border text-ember-600 focus:ring-ember-500"
               />
-              <label htmlFor="trustRemoteCode" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Trust Remote Code</label>
+              <label htmlFor="trustRemoteCode" className="text-xs font-medium text-muted-foreground">Trust Remote Code</label>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -1490,9 +1490,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                 type="checkbox"
                 checked={state.modelOffload || false}
                 onChange={e => dispatch({ type: 'SET_FIELD', field: 'modelOffload', value: e.target.checked })}
-                className="w-4 h-4 rounded border-gray-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                className="w-4 h-4 rounded border-border text-ember-600 focus:ring-ember-500"
               />
-              <label htmlFor="modelOffload" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Model Offload</label>
+              <label htmlFor="modelOffload" className="text-xs font-medium text-muted-foreground">Model Offload</label>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -1500,9 +1500,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                 type="checkbox"
                 checked={state.groupOffload || false}
                 onChange={e => dispatch({ type: 'SET_FIELD', field: 'groupOffload', value: e.target.checked })}
-                className="w-4 h-4 rounded border-gray-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                className="w-4 h-4 rounded border-border text-ember-600 focus:ring-ember-500"
               />
-              <label htmlFor="groupOffload" className="text-xs font-medium text-slate-600 dark:text-zinc-400">Group Offload</label>
+              <label htmlFor="groupOffload" className="text-xs font-medium text-muted-foreground">Group Offload</label>
             </div>
           </div>
         </div>
@@ -1511,9 +1511,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
       {deploymentType === "training" && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Layers className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">Training Configuration</h4></div>
-          <div><label htmlFor="gitRepo" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Git Repository URL</label><input id="gitRepo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
-          <div><label htmlFor="trainingScript" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Training Script</label><input id="trainingScript" value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md font-mono bg-white dark:bg-zinc-900 dark:text-white" /></div>
-          <div><label htmlFor="datasetUrl" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Dataset URL</label><input id="datasetUrl" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 dark:text-white" /></div>
+          <div><label htmlFor="gitRepo" className="block text-xs font-medium text-muted-foreground mb-1.5">Git Repository URL</label><input id="gitRepo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
+          <div><label htmlFor="trainingScript" className="block text-xs font-medium text-muted-foreground mb-1.5">Training Script</label><input id="trainingScript" value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md font-mono bg-card dark:text-white" /></div>
+          <div><label htmlFor="datasetUrl" className="block text-xs font-medium text-muted-foreground mb-1.5">Dataset URL</label><input id="datasetUrl" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
         </div>
       )}
 
@@ -1537,7 +1537,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
           ))}
         </div>
       )}
-      <div className="flex gap-4 pt-6 border-t dark:border-zinc-800"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} className="flex-1 py-2.5 border rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 font-medium transition-colors text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-70 font-medium shadow-sm transition-colors flex justify-center items-center gap-2">{isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}</button></div>
+      <div className="flex gap-4 pt-6 border-t dark:border-border"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} className="flex-1 py-2.5 border rounded-md hover:bg-muted dark:hover:bg-card font-medium transition-colors text-fg-secondary dark:text-cream/70">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2.5 bg-ember-600 text-white rounded-md hover:bg-ember-700 disabled:opacity-70 font-medium shadow-sm transition-colors flex justify-center items-center gap-2">{isPending ? "Deploying..." : <><Rocket className="w-4 h-4" /> Launch Deployment</>}</button></div>
     </div>
   );
 }
@@ -1550,24 +1550,24 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
 
   return (
     <>
-      <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-zinc-800 pb-4">
+      <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-border pb-4">
         <StepIndicator step={step} current={1} label="Type & Provider" />
-        <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />
+        <div className="h-px w-8 bg-muted dark:bg-card" />
         <StepIndicator step={step} current={2} label="API Configuration" />
-        <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />
+        <div className="h-px w-8 bg-muted dark:bg-card" />
         <StepIndicator step={step} current={3} label="Review & Launch" />
       </div>
 
       {step === 1 && (
         <div className="space-y-6">
-          <div className="flex justify-center"><div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg inline-flex shadow-inner"><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "inference" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><MessageSquare className="w-4 h-4" /> Inference</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "embedding" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><Database className="w-4 h-4" /> Embeddings</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'image_generation' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "image_generation" ? "bg-white dark:bg-zinc-800 shadow-sm text-emerald-600 dark:text-emerald-400" : "text-slate-500")}><Image className="w-4 h-4" /> Image Generation</button></div></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<button type="button" key={p.id} aria-pressed={selectedProvider === p.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 flex items-center gap-4 transition-colors outline-none text-left", selectedProvider === p.id ? "border-emerald-600 dark:border-emerald-500 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20 bg-emerald-50 dark:bg-emerald-900/20 shadow-md" : "hover:border-emerald-300 dark:hover:border-emerald-700")}><div className="p-3 bg-slate-50 dark:bg-zinc-800 rounded-lg"><p.icon className="w-6 h-6 text-slate-700 dark:text-zinc-200" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-slate-500 dark:text-zinc-400">{p.desc}</p></div></button>))}</div>
-          <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} disabled={!selectedProvider} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
+          <div className="flex justify-center"><div className="bg-muted dark:bg-card p-1 rounded-lg inline-flex shadow-inner"><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'inference' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "inference" ? "bg-card shadow-sm text-ember-600 dark:text-ember-400" : "text-muted-foreground")}><MessageSquare className="w-4 h-4" /> Inference</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'embedding' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "embedding" ? "bg-card shadow-sm text-ember-600 dark:text-ember-400" : "text-muted-foreground")}><Database className="w-4 h-4" /> Embeddings</button><button type="button" onClick={() => dispatch({ type: 'SET_FIELD', field: 'modelType', value: 'image_generation' })} className={cn("px-5 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2", externalModelType === "image_generation" ? "bg-card shadow-sm text-ember-600 dark:text-ember-400" : "text-muted-foreground")}><Image className="w-4 h-4" /> Image Generation</button></div></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">{filteredProviders.map(p => (<button type="button" key={p.id} aria-pressed={selectedProvider === p.id} onClick={() => dispatch({ type: 'SET_FIELD', field: 'selectedProvider', value: p.id })} className={cn("w-full cursor-pointer p-6 rounded-xl border bg-card dark:border-border flex items-center gap-4 transition-colors outline-none text-left", selectedProvider === p.id ? "border-ember-600 dark:border-ember-500 ring-2 ring-ember-600/20 dark:ring-ember-500/20 bg-ember-50 dark:bg-ember-900/20 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700")}><div className="p-3 bg-muted dark:bg-card rounded-lg"><p.icon className="w-6 h-6 text-fg-secondary dark:text-cream/85" /></div><div><h3 className="font-bold text-lg">{p.name}</h3><p className="text-sm text-muted-foreground">{p.desc}</p></div></button>))}</div>
+          <div className="col-span-full flex justify-end pt-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} disabled={!selectedProvider} className="px-6 py-2 bg-ember-600 text-white rounded-md hover:bg-ember-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
         </div>
       )}
 
       {step === 2 && externalModelType === 'image_generation' && (
-        <div className="max-w-2xl mx-auto space-y-6 bg-white dark:bg-zinc-900 p-8 rounded-xl border dark:border-zinc-800 shadow-sm">
+        <div className="max-w-2xl mx-auto space-y-6 bg-card p-8 rounded-xl border dark:border-border shadow-sm">
           {/* Gemini image model catalog */}
           {selectedProvider === 'gemini' && (
             <div className="space-y-4">
@@ -1581,8 +1581,8 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
                     className={cn(
                       "w-full text-left px-4 py-3 rounded-lg border transition-all flex items-center justify-between gap-3",
                       externalModelName === m.id && !geminiCustomMode
-                        ? "border-emerald-600 dark:border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20"
-                        : "border-slate-200 dark:border-zinc-700 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-zinc-800/50"
+                        ? "border-ember-600 dark:border-ember-500 bg-ember-50 dark:bg-ember-900/20 ring-2 ring-ember-600/20 dark:ring-ember-500/20"
+                        : "border-border hover:border-ember-300 dark:hover:border-ember-700 bg-card/80"
                     )}
                   >
                     <div className="min-w-0 flex items-center gap-3">
@@ -1592,17 +1592,17 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-sm">{m.name}</span>
-                          <span className="text-xs text-slate-400 dark:text-zinc-500 font-mono">{m.id}</span>
+                          <span className="text-xs text-muted-foreground font-mono">{m.id}</span>
                           {'badge' in m && m.badge && <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-400">{m.badge}</span>}
                         </div>
-                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">{m.desc}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{m.desc}</p>
                       </div>
                     </div>
                     <div className="flex-shrink-0">
                       {externalModelName === m.id && !geminiCustomMode ? (
-                        <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
+                        <div className="w-5 h-5 rounded-full bg-ember-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
                       ) : (
-                        <div className="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-zinc-600" />
+                        <div className="w-5 h-5 rounded-full border-2 border-border" />
                       )}
                     </div>
                   </button>
@@ -1614,19 +1614,19 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
                   className={cn(
                     "w-full text-left px-4 py-3 rounded-lg border transition-all flex items-center justify-between gap-3",
                     geminiCustomMode
-                      ? "border-emerald-600 dark:border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20"
-                      : "border-dashed border-slate-300 dark:border-zinc-700 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-zinc-800/50"
+                      ? "border-ember-600 dark:border-ember-500 bg-ember-50 dark:bg-ember-900/20 ring-2 ring-ember-600/20 dark:ring-ember-500/20"
+                      : "border-dashed border-border hover:border-ember-300 dark:hover:border-ember-700 bg-card/80"
                   )}
                 >
                   <div className="min-w-0 flex-1">
                     <span className="font-medium text-sm">Other Model</span>
-                    <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">Enter a custom image model ID</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Enter a custom image model ID</p>
                   </div>
                   <div className="flex-shrink-0">
                     {geminiCustomMode ? (
-                      <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
+                      <div className="w-5 h-5 rounded-full bg-ember-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
                     ) : (
-                      <div className="w-5 h-5 rounded-full border-2 border-dashed border-slate-300 dark:border-zinc-600" />
+                      <div className="w-5 h-5 rounded-full border-2 border-dashed border-border" />
                     )}
                   </div>
                 </button>
@@ -1635,7 +1635,7 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
                     autoFocus
                     value={externalModelName}
                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white border-slate-200 dark:border-zinc-700 text-sm"
+                    className="w-full px-4 py-2 border rounded-md bg-card dark:text-white border-border text-sm"
                     placeholder="e.g. imagen-3.0-generate-001"
                   />
                 )}
@@ -1647,32 +1647,32 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
           {selectedProvider !== 'gemini' && (
             <div className="space-y-4">
               <label htmlFor="externalImageModel" className="block text-sm font-medium">Model Name</label>
-              <input id="externalImageModel" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. dall-e-3, stabilityai/stable-diffusion-2-1" />
+              <input id="externalImageModel" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white" placeholder="e.g. dall-e-3, stabilityai/stable-diffusion-2-1" />
             </div>
           )}
 
           <div className="space-y-4">
             <label htmlFor="apiKeyImg" className="block text-sm font-medium">API Key</label>
-            <input id="apiKeyImg" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white font-mono" placeholder="sk-..." />
+            <input id="apiKeyImg" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white font-mono" placeholder="sk-..." />
           </div>
 
           {selectedProvider === 'custom' && (
             <div className="space-y-4">
               <label htmlFor="endpointUrlImg" className="block text-sm font-medium">Endpoint URL</label>
-              <input id="endpointUrlImg" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="https://..." />
+              <input id="endpointUrlImg" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white" placeholder="https://..." />
             </div>
           )}
 
-          <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6">
-            <button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button>
-            <button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && !endpointUrl)} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button>
+          <div className="flex justify-between pt-6 border-t dark:border-border mt-6">
+            <button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-muted-foreground hover:text-foreground dark:hover:text-cream/85 font-medium">Back</button>
+            <button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && !endpointUrl)} className="px-6 py-2 bg-ember-600 text-white rounded-md hover:bg-ember-700 disabled:opacity-50 transition-colors font-medium">Continue</button>
           </div>
         </div>
       )}
 
       {step === 2 && externalModelType !== 'image_generation' && (
-        <div className="max-w-2xl mx-auto space-y-6 bg-white dark:bg-zinc-900 p-8 rounded-xl border dark:border-zinc-800 shadow-sm">
-          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="customProviderName" className="block text-sm font-medium">Provider Name</label><input id="customProviderName" value={customProviderName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'customProviderName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="e.g. My Custom Provider" /></div>)}
+        <div className="max-w-2xl mx-auto space-y-6 bg-card p-8 rounded-xl border dark:border-border shadow-sm">
+          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="customProviderName" className="block text-sm font-medium">Provider Name</label><input id="customProviderName" value={customProviderName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'customProviderName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white" placeholder="e.g. My Custom Provider" /></div>)}
 
           {/* Gemini model catalog */}
           {selectedProvider === 'gemini' ? (
@@ -1687,23 +1687,23 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
                     className={cn(
                       "w-full text-left px-4 py-3 rounded-lg border transition-all flex items-center justify-between gap-3",
                       externalModelName === m.id && !geminiCustomMode
-                        ? "border-emerald-600 dark:border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20"
-                        : "border-slate-200 dark:border-zinc-700 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-zinc-800/50"
+                        ? "border-ember-600 dark:border-ember-500 bg-ember-50 dark:bg-ember-900/20 ring-2 ring-ember-600/20 dark:ring-ember-500/20"
+                        : "border-border hover:border-ember-300 dark:hover:border-ember-700 bg-card/80"
                     )}
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{m.name}</span>
-                        <span className="text-xs text-slate-400 dark:text-zinc-500 font-mono">{m.id}</span>
-                        {'badge' in m && m.badge && <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400">{m.badge}</span>}
+                        <span className="text-xs text-muted-foreground font-mono">{m.id}</span>
+                        {'badge' in m && m.badge && <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-ember-100 dark:bg-ember-900/40 text-ember-700 dark:text-ember-400">{m.badge}</span>}
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">{m.desc}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{m.desc}</p>
                     </div>
                     <div className="flex-shrink-0">
                       {externalModelName === m.id && !geminiCustomMode ? (
-                        <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
+                        <div className="w-5 h-5 rounded-full bg-ember-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
                       ) : (
-                        <div className="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-zinc-600" />
+                        <div className="w-5 h-5 rounded-full border-2 border-border" />
                       )}
                     </div>
                   </button>
@@ -1715,19 +1715,19 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
                   className={cn(
                     "w-full text-left px-4 py-3 rounded-lg border transition-all flex items-center justify-between gap-3",
                     geminiCustomMode
-                      ? "border-emerald-600 dark:border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 ring-2 ring-emerald-600/20 dark:ring-emerald-500/20"
-                      : "border-dashed border-slate-300 dark:border-zinc-700 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-zinc-800/50"
+                      ? "border-ember-600 dark:border-ember-500 bg-ember-50 dark:bg-ember-900/20 ring-2 ring-ember-600/20 dark:ring-ember-500/20"
+                      : "border-dashed border-border hover:border-ember-300 dark:hover:border-ember-700 bg-card/80"
                   )}
                 >
                   <div className="min-w-0 flex-1">
                     <span className="font-medium text-sm">Other Model</span>
-                    <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">Enter a custom Gemini model ID</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Enter a custom Gemini model ID</p>
                   </div>
                   <div className="flex-shrink-0">
                     {geminiCustomMode ? (
-                      <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
+                      <div className="w-5 h-5 rounded-full bg-ember-600 flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
                     ) : (
-                      <div className="w-5 h-5 rounded-full border-2 border-dashed border-slate-300 dark:border-zinc-600" />
+                      <div className="w-5 h-5 rounded-full border-2 border-dashed border-border" />
                     )}
                   </div>
                 </button>
@@ -1736,29 +1736,29 @@ function ExternalFlow({ state, dispatch, onLaunch, isPending, filteredProviders,
                     autoFocus
                     value={externalModelName}
                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white border-slate-200 dark:border-zinc-700 text-sm"
+                    className="w-full px-4 py-2 border rounded-md bg-card dark:text-white border-border text-sm"
                     placeholder="e.g. gemini-2.0-flash"
                   />
                 )}
               </div>
             </div>
           ) : (
-            <div className="space-y-4"><label htmlFor="externalModelName" className="block text-sm font-medium">Model Name</label><input id="externalModelName" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3" : "e.g. gpt-4o"} /></div>
+            <div className="space-y-4"><label htmlFor="externalModelName" className="block text-sm font-medium">Model Name</label><input id="externalModelName" value={externalModelName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'externalModelName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white" placeholder={externalModelType === "embedding" ? "e.g. text-embedding-3" : "e.g. gpt-4o"} /></div>
           )}
 
-          <div className="space-y-4"><label htmlFor="apiKey" className="block text-sm font-medium">API Key</label><input id="apiKey" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white font-mono" placeholder="sk-..." /></div>
-          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="endpointUrl" className="block text-sm font-medium">Endpoint URL</label><input id="endpointUrl" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white" placeholder="https://..." /></div>)}
-          <div className="flex justify-between pt-6 border-t dark:border-zinc-800 mt-6"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 font-medium">Back</button><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && (!customProviderName || !endpointUrl))} className="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
+          <div className="space-y-4"><label htmlFor="apiKey" className="block text-sm font-medium">API Key</label><input id="apiKey" type="password" value={apiKey} onChange={e => dispatch({ type: 'SET_FIELD', field: 'apiKey', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white font-mono" placeholder="sk-..." /></div>
+          {selectedProvider === 'custom' && (<div className="space-y-4"><label htmlFor="endpointUrl" className="block text-sm font-medium">Endpoint URL</label><input id="endpointUrl" value={endpointUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'endpointUrl', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white" placeholder="https://..." /></div>)}
+          <div className="flex justify-between pt-6 border-t dark:border-border mt-6"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 1 })} className="text-muted-foreground hover:text-foreground dark:hover:text-cream/85 font-medium">Back</button><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 3 })} disabled={!externalModelName || !apiKey || (selectedProvider === 'custom' && (!customProviderName || !endpointUrl))} className="px-6 py-2 bg-ember-600 text-white rounded-md hover:bg-ember-700 disabled:opacity-50 transition-colors font-medium">Continue</button></div>
         </div>
       )}
 
       {step === 3 && (
         <div className="max-w-xl mx-auto space-y-6">
-          <div className="p-6 rounded-xl border dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 space-y-4">
-            <div className="space-y-2"><label htmlFor="externalInstanceName" className="text-sm font-medium">Name your Deployment</label><input id="externalInstanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:text-white border-slate-200 dark:border-zinc-700" placeholder="My External Model" /></div>
-            <div className="pt-4 border-t dark:border-zinc-800 space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-500">Type</span> <span className="font-medium capitalize">{externalModelType}</span></div><div className="flex justify-between"><span className="text-slate-500">Provider</span> <span className="font-medium capitalize">{selectedProvider}</span></div><div className="flex justify-between"><span className="text-slate-500">Model</span> <span className="font-medium">{externalModelName}</span></div></div>
+          <div className="p-6 rounded-xl border dark:border-border bg-muted/50 dark:bg-card/50 space-y-4">
+            <div className="space-y-2"><label htmlFor="externalInstanceName" className="text-sm font-medium">Name your Deployment</label><input id="externalInstanceName" value={instanceName} onChange={e => dispatch({ type: 'SET_FIELD', field: 'instanceName', value: e.target.value })} className="w-full px-4 py-2 border rounded-md bg-card dark:text-white border-border" placeholder="My External Model" /></div>
+            <div className="pt-4 border-t dark:border-border space-y-2 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">Type</span> <span className="font-medium capitalize">{externalModelType}</span></div><div className="flex justify-between"><span className="text-muted-foreground">Provider</span> <span className="font-medium capitalize">{selectedProvider}</span></div><div className="flex justify-between"><span className="text-muted-foreground">Model</span> <span className="font-medium">{externalModelName}</span></div></div>
           </div>
-          <div className="flex gap-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} className="flex-1 py-2 border rounded-md font-medium text-slate-700 dark:text-zinc-300">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-70 font-medium shadow-sm flex items-center justify-center gap-2">{isPending ? "Deploying..." : "Launch Deployment"}</button></div>
+          <div className="flex gap-4"><button type="button" onClick={() => dispatch({ type: 'SET_STEP', payload: 2 })} className="flex-1 py-2 border rounded-md font-medium text-fg-secondary dark:text-cream/70">Back</button><button type="button" onClick={onLaunch} disabled={isPending} className="flex-[2] py-2 bg-ember-600 text-white rounded-md hover:bg-ember-700 disabled:opacity-70 font-medium shadow-sm flex items-center justify-center gap-2">{isPending ? "Deploying..." : "Launch Deployment"}</button></div>
         </div>
       )}
     </>

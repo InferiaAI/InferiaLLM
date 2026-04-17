@@ -129,7 +129,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                                 <div className="flex items-center gap-2 min-w-0">
                                     <span className="font-medium text-sm truncate max-w-[200px] md:max-w-none">{log.model}</span>
                                     {log.is_streaming && (
-                                        <span className="px-1.5 py-0.5 text-[10px] bg-emerald-500/20 text-emerald-500 rounded shrink-0">
+                                        <span className="px-1.5 py-0.5 text-[10px] bg-ember-500/20 text-ember-500 rounded shrink-0">
                                             STREAM
                                         </span>
                                     )}
@@ -247,7 +247,7 @@ export default function InferenceLogs({ deploymentId }: InferenceLogsProps) {
                             <div className="min-w-0 flex-1">
                                 <div className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-tight">Request Payload</div>
                                 {log.request_payload ? (
-                                    <pre className="p-3 bg-slate-950 text-slate-300 rounded-md text-xs overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap break-all scrollbar-thin scrollbar-thumb-slate-700">
+                                    <pre className="p-3 bg-background text-cream/70 rounded-md text-xs overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap break-all scrollbar-thin scrollbar-thumb-slate-700">
                                         {JSON.stringify(log.request_payload, null, 2)}
                                     </pre>
                                 ) : (

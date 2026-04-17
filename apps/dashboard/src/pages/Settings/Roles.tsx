@@ -229,7 +229,7 @@ export default function Roles() {
               <tr key={role.name} className="hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
                 <td className="px-6 py-4 font-medium">
                   <div className="inline-flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <ShieldCheck className="w-4 h-4 text-ember-600 dark:text-ember-400" />
                     <span>{role.name}</span>
                   </div>
                 </td>
@@ -239,7 +239,7 @@ export default function Roles() {
                     {role.permissions.map((permission) => (
                       <span
                         key={permission}
-                        className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 text-xs border border-emerald-200 dark:border-emerald-800"
+                        className="px-2 py-0.5 rounded-full bg-ember-100 text-ember-700 dark:bg-ember-900/30 dark:text-ember-300 text-xs border border-ember-200 dark:border-ember-800"
                       >
                         {permission}
                       </span>

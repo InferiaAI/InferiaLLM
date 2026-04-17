@@ -362,12 +362,12 @@ function Header({ loading, onSave, onRefresh }: { loading: boolean; onSave: () =
     return (
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-                <div className="p-2 bg-emerald-500/10 rounded-lg"><Settings2 className="w-5 h-5 text-emerald-500" /></div>
+                <div className="p-2 bg-ember-500/10 rounded-lg"><Settings2 className="w-5 h-5 text-ember-500" /></div>
                 <div><h2 className="text-xl font-bold tracking-tight">Deployment Configuration</h2><p className="text-sm text-muted-foreground font-mono">Customize engine parameters and runtime settings</p></div>
             </div>
             <div className="flex items-center gap-2">
                 <button onClick={() => onRefresh?.()} className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"><RotateCcw className="w-5 h-5" /></button>
-                <button onClick={onSave} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition-colors shadow-lg shadow-emerald-500/20 active:scale-95 disabled:opacity-50">{loading ? <Zap className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes</button>
+                <button onClick={onSave} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-ember-600 hover:bg-ember-500 text-white rounded-lg font-medium transition-colors shadow-lg shadow-ember-500/20 active:scale-95 disabled:opacity-50">{loading ? <Zap className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes</button>
             </div>
         </div>
     );
@@ -375,11 +375,11 @@ function Header({ loading, onSave, onRefresh }: { loading: boolean; onSave: () =
 
 function GeneralSettings({ replicas, inferenceModel, dispatch }: { replicas: number; inferenceModel: string; dispatch: React.Dispatch<Action> }) {
     return (
-        <div className="bg-card border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-colors duration-300">
-            <div className="flex items-center gap-2 mb-6 text-foreground"><Server className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">General Settings</h3></div>
+        <div className="bg-card border border-border rounded-2xl p-6 hover:border-ember-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Server className="w-4 h-4 text-ember-500 dark:text-ember-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">General Settings</h3></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2"><label htmlFor="replicas" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Replicas</label><div className="relative group/input"><input id="replicas" type="number" min="1" value={replicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'replicas', value: parseInt(e.target.value) })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-emerald-500"><Layers className="w-4 h-4" /></div></div></div>
-                <div className="space-y-2"><label htmlFor="inference-model" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Inference Model</label><div className="relative group/input"><input id="inference-model" value={inferenceModel} onChange={e => dispatch({ type: 'SET_FIELD', field: 'inferenceModel', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" placeholder="e.g. meta-llama/Llama-3-8B" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-emerald-500"><Cloud className="w-4 h-4" /></div></div></div>
+                <div className="space-y-2"><label htmlFor="replicas" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Replicas</label><div className="relative group/input"><input id="replicas" type="number" min="1" value={replicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'replicas', value: parseInt(e.target.value) })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-ember-500"><Layers className="w-4 h-4" /></div></div></div>
+                <div className="space-y-2"><label htmlFor="inference-model" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Inference Model</label><div className="relative group/input"><input id="inference-model" value={inferenceModel} onChange={e => dispatch({ type: 'SET_FIELD', field: 'inferenceModel', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" placeholder="e.g. meta-llama/Llama-3-8B" /><div className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none group-focus-within/input:text-ember-500"><Cloud className="w-4 h-4" /></div></div></div>
             </div>
         </div>
     );
@@ -399,15 +399,15 @@ function VllmSettings({
     dispatch: React.Dispatch<Action>
 }) {
     return (
-        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-colors duration-300">
-            <div className="flex items-center gap-2 mb-6 text-foreground"><Zap className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">vLLM Optimization</h3></div>
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-ember-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Zap className="w-4 h-4 text-ember-500 dark:text-ember-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">vLLM Optimization</h3></div>
             <div className="space-y-6">
-                <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" /></div>
                 <div className="space-y-2">
                     <label className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Required CUDA Versions</label>
                     <div className="flex flex-wrap gap-2">
                         {["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"].map(v => (
-                            <label key={v} className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold cursor-pointer transition-colors", cudaVersions.includes(v) ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-400" : "bg-white border-border text-muted-foreground dark:bg-zinc-900 hover:border-emerald-300 dark:hover:border-emerald-700")}>
+                            <label key={v} className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold cursor-pointer transition-colors", cudaVersions.includes(v) ? "bg-ember-50 border-ember-300 text-ember-700 dark:bg-ember-900/20 dark:border-ember-700 dark:text-ember-400" : "bg-card border-border text-muted-foreground dark:bg-card hover:border-ember-300 dark:hover:border-ember-700")}>
                                 <input
                                     type="checkbox"
                                     checked={cudaVersions.includes(v)}
@@ -425,15 +425,15 @@ function VllmSettings({
                     </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
-                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
                 </div>
 
                 {/* Advanced Config Section */}
                 <div className="border-t border-border pt-4">
                     <button
                         onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
-                        className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-emerald-500 transition-colors"
+                        className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-ember-500 transition-colors"
                     >
                         {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         Advanced Configuration
@@ -448,7 +448,7 @@ function VllmSettings({
                         >
                             <div className="space-y-2">
                                 <label htmlFor="dtype" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Data Type (dtype)</label>
-                                <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
+                                <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm">
                                     <option value="auto">auto</option>
                                     <option value="float16">float16</option>
                                     <option value="bfloat16">bfloat16</option>
@@ -458,7 +458,7 @@ function VllmSettings({
 
                             <div className="space-y-2">
                                 <label htmlFor="kv-cache-dtype" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">KV Cache dtype</label>
-                                <select id="kv-cache-dtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
+                                <select id="kv-cache-dtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm">
                                     <option value="auto">auto</option>
                                     <option value="fp8">fp8</option>
                                     <option value="fp8_e4m3">fp8_e4m3</option>
@@ -468,12 +468,12 @@ function VllmSettings({
 
                             <div className="space-y-2">
                                 <label htmlFor="max-num-seqs" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Num Sequences</label>
-                                <input id="max-num-seqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" />
+                                <input id="max-num-seqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" />
                             </div>
 
                             <div className="space-y-2">
                                 <label htmlFor="quantization" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Quantization</label>
-                                <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
+                                <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm">
                                     <option value="">None</option>
                                     <option value="awq">AWQ</option>
                                     <option value="awq_marlin">AWQ Marlin</option>
@@ -499,7 +499,7 @@ function VllmSettings({
                                     type="checkbox"
                                     checked={trustRemoteCode}
                                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })}
-                                    className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
+                                    className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
                                 />
                                 <label htmlFor="trust-remote-code" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Trust Remote Code</label>
                             </div>
@@ -510,7 +510,7 @@ function VllmSettings({
                                     type="checkbox"
                                     checked={enforceEager}
                                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: e.target.checked })}
-                                    className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
+                                    className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
                                 />
                                 <label htmlFor="enforce-eager" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enforce Eager Mode</label>
                             </div>
@@ -521,7 +521,7 @@ function VllmSettings({
                                     type="checkbox"
                                     checked={!!cudaModuleLoading}
                                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'cudaModuleLoading', value: e.target.checked ? "LAZY" : "" })}
-                                    className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
+                                    className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
                                 />
                                 <label htmlFor="cuda-module-loading" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">CUDA Module Loading: LAZY</label>
                             </div>
@@ -532,7 +532,7 @@ function VllmSettings({
                                     type="checkbox"
                                     checked={!!nvidiaDisableCudaCompat}
                                     onChange={e => dispatch({ type: 'SET_FIELD', field: 'nvidiaDisableCudaCompat', value: e.target.checked ? "1" : "" })}
-                                    className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
+                                    className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
                                 />
                                 <label htmlFor="nvidia-disable-cuda-compat" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">NVIDIA Disable CUDA Compat</label>
                             </div>
@@ -554,15 +554,15 @@ function EmbeddingSettings({
     dispatch: React.Dispatch<Action>
 }) {
     return (
-        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-colors duration-300">
-            <div className="flex items-center gap-2 mb-6 text-foreground"><Database className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Embedding Optimization</h3></div>
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-ember-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Database className="w-4 h-4 text-ember-500 dark:text-ember-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Embedding Optimization</h3></div>
             <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {engine === "infinity" && (
-                        <div className="space-y-2"><label htmlFor="batch-size" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Batch Size</label><input id="batch-size" type="number" value={batchSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                        <div className="space-y-2"><label htmlFor="batch-size" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Batch Size</label><input id="batch-size" type="number" value={batchSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'batchSize', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
                     )}
                     {engine === "tei" && (
-                        <div className="space-y-2"><label htmlFor="max-batch-tokens" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Batch Tokens</label><input id="max-batch-tokens" type="number" value={maxBatchTokens} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxBatchTokens', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                        <div className="space-y-2"><label htmlFor="max-batch-tokens" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Batch Tokens</label><input id="max-batch-tokens" type="number" value={maxBatchTokens} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxBatchTokens', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
                     )}
                     <div className="flex items-center gap-3 pt-6">
                         <input
@@ -570,7 +570,7 @@ function EmbeddingSettings({
                             type="checkbox"
                             checked={gpuEnabled}
                             onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuEnabled', value: e.target.checked })}
-                            className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40"
+                            className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
                         />
                         <label htmlFor="gpu-enabled" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enable GPU Acceleration</label>
                     </div>
@@ -579,7 +579,7 @@ function EmbeddingSettings({
                 <div className="border-t border-border pt-4">
                     <button
                         onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
-                        className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-emerald-500 transition-colors"
+                        className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-ember-500 transition-colors"
                     >
                         {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         Advanced Hardware Configuration
@@ -594,18 +594,18 @@ function EmbeddingSettings({
                         >
                             <div className="space-y-2">
                                 <label htmlFor="req-cpu" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">CPU Cores</label>
-                                <input id="req-cpu" type="number" value={requiredCpu} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredCpu', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" />
+                                <input id="req-cpu" type="number" value={requiredCpu} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredCpu', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" />
                             </div>
 
                             <div className="space-y-2">
                                 <label htmlFor="req-ram" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">RAM (MB)</label>
-                                <input id="req-ram" type="number" value={requiredRam} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredRam', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" />
+                                <input id="req-ram" type="number" value={requiredRam} onChange={e => dispatch({ type: 'SET_FIELD', field: 'requiredRam', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" />
                             </div>
 
                             {engine === "tei" && (
                                 <div className="space-y-2">
                                     <label htmlFor="pooling-strategy" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Pooling Strategy</label>
-                                    <select id="pooling-strategy" value={pooling} onChange={e => dispatch({ type: 'SET_FIELD', field: 'pooling', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm">
+                                    <select id="pooling-strategy" value={pooling} onChange={e => dispatch({ type: 'SET_FIELD', field: 'pooling', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm">
                                         <option value="cls">CLS</option>
                                         <option value="mean">Mean</option>
                                         <option value="last_token">Last Token</option>
@@ -615,7 +615,7 @@ function EmbeddingSettings({
 
                             <div className="space-y-2">
                                 <label htmlFor="port" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Service Port</label>
-                                <input id="port" type="number" value={port} onChange={e => dispatch({ type: 'SET_FIELD', field: 'port', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" />
+                                <input id="port" type="number" value={port} onChange={e => dispatch({ type: 'SET_FIELD', field: 'port', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" />
                             </div>
                         </m.div>
                     )}
@@ -630,9 +630,9 @@ function TrainingSettings({ gitRepo, trainingScript, datasetUrl, dispatch }: { g
         <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-amber-500/30 transition-colors duration-300">
             <div className="flex items-center gap-2 mb-6 text-foreground"><Terminal className="w-4 h-4 text-amber-500 focus:text-amber-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Training Orchestration</h3></div>
             <div className="space-y-6">
-                <div className="space-y-2"><label htmlFor="git-repo" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Git Repository</label><input id="git-repo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" placeholder="https://..." /></div>
-                <div className="space-y-2"><label htmlFor="training-script" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Training Command</label><textarea id="training-script" rows={3} value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm resize-none" /></div>
-                <div className="space-y-2"><label htmlFor="dataset-url" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Dataset URL</label><input id="dataset-url" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2"><label htmlFor="git-repo" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Git Repository</label><input id="git-repo" value={gitRepo} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gitRepo', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" placeholder="https://..." /></div>
+                <div className="space-y-2"><label htmlFor="training-script" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Training Command</label><textarea id="training-script" rows={3} value={trainingScript} onChange={e => dispatch({ type: 'SET_FIELD', field: 'trainingScript', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm resize-none" /></div>
+                <div className="space-y-2"><label htmlFor="dataset-url" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Dataset URL</label><input id="dataset-url" value={datasetUrl} onChange={e => dispatch({ type: 'SET_FIELD', field: 'datasetUrl', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 font-mono text-sm" /></div>
             </div>
         </m.div>
     );
@@ -647,25 +647,25 @@ function DiffusionSettings({
     dispatch: React.Dispatch<Action>
 }) {
     return (
-        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-emerald-500/30 transition-colors duration-300">
-            <div className="flex items-center gap-2 mb-6 text-foreground"><Image className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">{isVideoGen ? "Video Generation" : "Image Generation"} Settings</h3></div>
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-ember-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Image className="w-4 h-4 text-ember-500 dark:text-ember-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">{isVideoGen ? "Video Generation" : "Image Generation"} Settings</h3></div>
             <div className="space-y-6">
-                <div className="space-y-2"><label htmlFor="diffusion-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="diffusion-image" value={diffusionImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionImage', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono text-sm" /></div>
+                <div className="space-y-2"><label htmlFor="diffusion-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="diffusion-image" value={diffusionImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionImage', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" /></div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2"><label htmlFor="diffusion-port" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Service Port</label><input id="diffusion-port" type="number" value={diffusionPort} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionPort', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
-                    <div className="space-y-2"><label htmlFor="diffusion-min-vram" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Min VRAM (GB)</label><input id="diffusion-min-vram" type="number" min="1" value={diffusionMinVram} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionMinVram', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="diffusion-port" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Service Port</label><input id="diffusion-port" type="number" value={diffusionPort} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionPort', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="diffusion-min-vram" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Min VRAM (GB)</label><input id="diffusion-min-vram" type="number" min="1" value={diffusionMinVram} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionMinVram', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="flex items-center gap-3">
-                        <input id="diffusion-trust-remote" type="checkbox" checked={diffusionTrustRemoteCode} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionTrustRemoteCode', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40" />
+                        <input id="diffusion-trust-remote" type="checkbox" checked={diffusionTrustRemoteCode} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionTrustRemoteCode', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40" />
                         <label htmlFor="diffusion-trust-remote" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Trust Remote Code</label>
                     </div>
                     <div className="flex items-center gap-3">
-                        <input id="diffusion-model-offload" type="checkbox" checked={diffusionModelOffload} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionModelOffload', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40" />
+                        <input id="diffusion-model-offload" type="checkbox" checked={diffusionModelOffload} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionModelOffload', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40" />
                         <label htmlFor="diffusion-model-offload" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Model Offload</label>
                     </div>
                     <div className="flex items-center gap-3">
-                        <input id="diffusion-group-offload" type="checkbox" checked={diffusionGroupOffload} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionGroupOffload', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-emerald-500 focus:ring-emerald-500/40" />
+                        <input id="diffusion-group-offload" type="checkbox" checked={diffusionGroupOffload} onChange={e => dispatch({ type: 'SET_FIELD', field: 'diffusionGroupOffload', value: e.target.checked })} className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40" />
                         <label htmlFor="diffusion-group-offload" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Group Offload</label>
                     </div>
                 </div>
@@ -678,16 +678,16 @@ function EnvironmentSecrets({ hfToken, dispatch }: { hfToken: string; dispatch: 
     return (
         <div className="bg-card border border-border rounded-2xl p-6">
             <div className="flex items-center gap-2 mb-6 text-foreground"><ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">Environment Secrets</h3></div>
-            <div className="space-y-2"><label htmlFor="hf-token" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Hugging Face Token</label><input id="hf-token" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full bg-white dark:bg-zinc-900 border border-border rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono text-sm" placeholder="hf_••••••••" /><p className="text-[10px] text-muted-foreground font-mono mt-2">Required for gated models.</p></div>
+            <div className="space-y-2"><label htmlFor="hf-token" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Hugging Face Token</label><input id="hf-token" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-purple-500/40 font-mono text-sm" placeholder="hf_••••••••" /><p className="text-[10px] text-muted-foreground font-mono mt-2">Required for gated models.</p></div>
         </div>
     );
 }
 
 function ProTip() {
     return (
-        <div className="bg-emerald-600/10 border border-emerald-500/20 rounded-2xl p-6">
-            <h4 className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mb-2">Pro Tip</h4>
-            <p className="text-xs text-emerald-600/70 dark:text-emerald-300/70 leading-relaxed font-mono">Wait for <span className="text-emerald-600 dark:text-emerald-400 underline">STOPPED</span> state before applying major changes.</p>
+        <div className="bg-ember-600/10 border border-ember-500/20 rounded-2xl p-6">
+            <h4 className="text-sm font-bold text-ember-600 dark:text-ember-400 mb-2">Pro Tip</h4>
+            <p className="text-xs text-ember-600/70 dark:text-ember-300/70 leading-relaxed font-mono">Wait for <span className="text-ember-600 dark:text-ember-400 underline">STOPPED</span> state before applying major changes.</p>
         </div>
     );
 }

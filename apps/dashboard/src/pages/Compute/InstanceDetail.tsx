@@ -93,7 +93,7 @@ export default function InstanceDetail() {
   }, [id, poolDetails?.lifecycle_state, fetchInventory]);
 
   if (loading) {
-    return <div className="p-10 text-center text-slate-500">Loading pool details...</div>;
+    return <div className="p-10 text-center text-muted-foreground">Loading pool details...</div>;
   }
 
   const lifecycleState = (poolDetails?.lifecycle_state || "running") as PoolLifecycleState;
@@ -199,8 +199,8 @@ export default function InstanceDetail() {
                 isTerminating
                   ? "border-amber-500/20 text-amber-600 dark:text-amber-400 bg-amber-500/10"
                   : isTerminated
-                    ? "border-slate-500/20 text-slate-600 dark:text-slate-400 bg-slate-500/10"
-                    : "border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+                    ? "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10"
+                    : "border-ember-500/20 text-ember-600 dark:text-ember-400 bg-ember-500/10",
               )}
             >
               {isTerminating ? "Terminating" : isTerminated ? "Terminated" : "Running"}
@@ -276,22 +276,22 @@ export default function InstanceDetail() {
         {activeTab === "overview" && (
           <div className="grid grid-cols-1 gap-6">
             <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
-              <h3 className="font-mono text-sm font-semibold mb-4 text-slate-900 dark:text-zinc-100">Pool Information</h3>
+              <h3 className="font-mono text-sm font-semibold mb-4 text-foreground dark:text-cream">Pool Information</h3>
               <div className="grid grid-cols-2 lg:grid-cols-5 gap-6">
                 <div>
                   <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Total Nodes</div>
-                  <div className="text-2xl font-bold text-slate-800 dark:text-zinc-200">{nodes.length}</div>
+                  <div className="text-2xl font-bold text-fg-secondary dark:text-cream/85">{nodes.length}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Active Nodes</div>
-                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{nodes.filter(n => n.state === "active" || n.state === "ready").length}</div>
+                  <div className="text-2xl font-bold text-ember-600 dark:text-ember-400">{nodes.filter(n => n.state === "active" || n.state === "ready").length}</div>
                 </div>
 
                 {poolDetails && (
                   <>
                     <div>
                       <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Provider</div>
-                      <div className="text-sm font-medium capitalize bg-slate-100 dark:bg-zinc-800 px-2 py-1 rounded inline-flex mt-1 text-slate-800 dark:text-zinc-200">
+                      <div className="text-sm font-medium capitalize bg-muted dark:bg-card px-2 py-1 rounded inline-flex mt-1 text-fg-secondary dark:text-cream/85">
                         {poolDetails.provider}
                       </div>
                     </div>
@@ -300,7 +300,7 @@ export default function InstanceDetail() {
                       <div className="flex flex-wrap gap-1 mt-1">
                         {poolDetails.allowed_gpu_types?.length > 0 ? (
                           poolDetails.allowed_gpu_types.map((gpu: string) => (
-                            <span key={gpu} className="text-xs font-mono bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-100 dark:border-emerald-800">
+                            <span key={gpu} className="text-xs font-mono bg-ember-50 text-ember-700 dark:bg-ember-900/30 dark:text-ember-300 px-1.5 py-0.5 rounded border border-ember-100 dark:border-ember-800">
                               {gpu}
                             </span>
                           ))
@@ -311,7 +311,7 @@ export default function InstanceDetail() {
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Max Cost</div>
-                      <div className="text-sm font-medium mt-1 text-slate-800 dark:text-zinc-200">
+                      <div className="text-sm font-medium mt-1 text-fg-secondary dark:text-cream/85">
                         {poolDetails.max_cost_per_hour > 0
                           ? `$${poolDetails.max_cost_per_hour.toFixed(2)} / hr`
                           : "Uncapped"}
@@ -349,13 +349,13 @@ export default function InstanceDetail() {
                   ) : (
                     nodes.map((node) => (
                       <tr key={node.node_id} className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
-                        <td className="px-6 py-4 font-mono text-emerald-600 truncate max-w-[120px]" title={node.node_id}>{node.node_id}</td>
+                        <td className="px-6 py-4 font-mono text-ember-600 truncate max-w-[120px]" title={node.node_id}>{node.node_id}</td>
                         <td className="px-6 py-4">
                           <span className={cn(
                             "inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium shadow-sm",
                             node.state === "active" || node.state === "ready"
-                              ? "border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
-                              : "border-slate-500/20 text-slate-600 dark:text-slate-400 bg-slate-500/10"
+                              ? "border-ember-500/20 text-ember-600 dark:text-ember-400 bg-ember-500/10"
+                              : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10"
                           )}>
                             {node.state}
                           </span>
@@ -369,14 +369,14 @@ export default function InstanceDetail() {
                               href={node.expose_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-emerald-600 hover:text-emerald-800 flex items-center gap-1 font-mono text-xs truncate max-w-[200px]"
+                              className="text-ember-600 hover:text-ember-800 flex items-center gap-1 font-mono text-xs truncate max-w-[200px]"
                               title={node.expose_url}
                             >
                               <ExternalLink className="w-3 h-3 flex-shrink-0" />
                               {node.expose_url}
                             </a>
                           ) : (
-                            <span className="text-slate-400 font-mono text-xs">-</span>
+                            <span className="text-muted-foreground font-mono text-xs">-</span>
                           )}
                         </td>
                       </tr>

@@ -22,7 +22,7 @@ const providerIcons: Record<string, React.ComponentType<{ className?: string }>>
 const providerColors: Record<string, string> = {
     nosana: "text-green-500 bg-green-500/10",
     akash: "text-purple-500 bg-purple-500/10",
-    aws: "text-emerald-500 bg-emerald-500/10",
+    aws: "text-ember-500 bg-ember-500/10",
     gcp: "text-blue-500 bg-blue-500/10",
     k8s: "text-orange-500 bg-orange-500/10",
     skypilot: "text-cyan-500 bg-cyan-500/10",
@@ -236,7 +236,7 @@ export default function NewPool() {
             name: `${id.charAt(0).toUpperCase() + id.slice(1)} Network`,
             description: providerDescriptions[id] || `${id} compute provider`,
             icon: providerIcons[id] || Server,
-            color: providerColors[id] || "text-slate-500 bg-slate-500/10",
+            color: providerColors[id] || "text-muted-foreground bg-muted-foreground/10",
             category: data.adapter_type || "cloud",
             configPath: `/dashboard/settings/providers/${data.adapter_type || 'cloud'}/${id}`,
             capabilities: data.capabilities,
@@ -430,7 +430,7 @@ export default function NewPool() {
     }
 
     return (
-        <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 font-sans text-slate-900 dark:text-zinc-50">
+        <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 font-sans text-foreground">
             <div>
                 <h2 className="text-3xl font-bold tracking-tight">Create New Compute Pool</h2>
                 <p className="text-muted-foreground mt-2">
@@ -460,7 +460,7 @@ export default function NewPool() {
             {/* Step 2: Configure Compute - Cluster Providers (GCP/SkyPilot) */}
             {step === 2 && isClusterProvider && (
                 <div className="space-y-6">
-                    <div className="p-6 rounded-xl border bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800">
+                    <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border">
                         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                             <Cloud className="w-5 h-5" />
                             {selectedProvider === 'gcp' ? 'Google Cloud Platform' : 'SkyPilot'} Configuration
@@ -477,12 +477,12 @@ export default function NewPool() {
                                         className={cn(
                                             "p-3 rounded-lg border text-left text-sm transition-colors",
                                             selectedRegion === region.id
-                                                ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20"
-                                                : "border-slate-200 dark:border-zinc-700 hover:border-emerald-400"
+                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
+                                                : "border-border hover:border-ember-400"
                                         )}
                                     >
                                         <div className="font-medium">{region.name}</div>
-                                        <div className="text-xs text-slate-500">{region.id}</div>
+                                        <div className="text-xs text-muted-foreground">{region.id}</div>
                                     </button>
                                 ))}
                             </div>
@@ -499,13 +499,13 @@ export default function NewPool() {
                                         className={cn(
                                             "p-3 rounded-lg border text-left transition-colors",
                                             selectedResource?.gpu_type === gpu.gpu_type
-                                                ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20"
-                                                : "border-slate-200 dark:border-zinc-700 hover:border-emerald-400"
+                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
+                                                : "border-border hover:border-ember-400"
                                         )}
                                     >
                                         <div className="font-bold">{gpu.gpu_type}</div>
-                                        <div className="text-xs text-slate-500">{gpu.gpu_memory_gb}GB VRAM</div>
-                                        <div className="text-xs text-slate-400">{gpu.vcpu} vCPU</div>
+                                        <div className="text-xs text-muted-foreground">{gpu.gpu_memory_gb}GB VRAM</div>
+                                        <div className="text-xs text-muted-foreground">{gpu.vcpu} vCPU</div>
                                     </button>
                                 ))}
                             </div>
@@ -522,15 +522,15 @@ export default function NewPool() {
                                         className={cn(
                                             "p-3 rounded-lg border text-center font-bold transition-colors",
                                             gpuCount === count
-                                                ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20"
-                                                : "border-slate-200 dark:border-zinc-700 hover:border-emerald-400"
+                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
+                                                : "border-border hover:border-ember-400"
                                         )}
                                     >
                                         {count}x
                                     </button>
                                 ))}
                             </div>
-                            <p className="text-xs text-slate-500 mt-1">
+                            <p className="text-xs text-muted-foreground mt-1">
                                 {gpuCount > 1
                                     ? `${gpuCount} GPUs will be provisioned on a single node (multi-GPU).`
                                     : "Single GPU per node."}
@@ -538,27 +538,27 @@ export default function NewPool() {
                         </div>
 
                         {/* Spot Toggle */}
-                        <div className="p-4 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
+                        <div className="p-4 rounded-lg border border-border bg-card">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="font-medium">Use Spot Instances</div>
-                                    <div className="text-xs text-slate-500">Up to 60% cheaper, but may be interrupted</div>
+                                    <div className="text-xs text-muted-foreground">Up to 60% cheaper, but may be interrupted</div>
                                 </div>
                                 <button
                                     onClick={() => dispatch({ type: "SET_USE_SPOT", payload: !useSpot })}
                                     className={cn(
                                         "relative w-12 h-6 rounded-full transition-colors",
-                                        useSpot ? "bg-emerald-600" : "bg-slate-300 dark:bg-zinc-600"
+                                        useSpot ? "bg-ember-600" : "bg-muted dark:bg-card"
                                     )}
                                 >
                                     <div className={cn(
-                                        "absolute top-1 w-4 h-4 bg-white rounded-full transition-transform",
+                                        "absolute top-1 w-4 h-4 bg-card rounded-full transition-transform",
                                         useSpot ? "translate-x-7" : "translate-x-1"
                                     )} />
                                 </button>
                             </div>
                             {useSpot && (
-                                <div className="mt-2 text-xs text-emerald-600">
+                                <div className="mt-2 text-xs text-ember-600">
                                     Estimated cost: ~${(estimateGcpCost(selectedResource?.gpu_type || 'A100', true) * gpuCount).toFixed(2)}/hr (60% savings)
                                 </div>
                             )}
@@ -566,12 +566,12 @@ export default function NewPool() {
 
                         {/* Summary */}
                         {selectedRegion && selectedResource && (
-                            <div className="mt-4 p-4 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
-                                <div className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                            <div className="mt-4 p-4 rounded-lg bg-ember-50 dark:bg-ember-900/20 border border-ember-200 dark:border-ember-800">
+                                <div className="text-sm font-medium text-ember-800 dark:text-ember-200">
                                     Summary: {gpuCount}x {selectedResource.gpu_type} in {selectedRegion}
                                     {useSpot && " (Spot)"}
                                 </div>
-                                <div className="text-xs text-emerald-600 dark:text-emerald-400">
+                                <div className="text-xs text-ember-600 dark:text-ember-400">
                                     Estimated: ${(estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount).toFixed(2)}/hr
                                 </div>
                             </div>
@@ -581,14 +581,14 @@ export default function NewPool() {
                     <div className="flex justify-between pt-6">
                         <button
                             onClick={() => dispatch({ type: "SET_STEP", payload: 1 })}
-                            className="px-4 py-2 text-sm font-medium text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200"
+                            className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground dark:hover:text-cream/85"
                         >
                             Back
                         </button>
                         <button
                             onClick={() => selectedRegion && selectedResource && dispatch({ type: "SET_STEP", payload: 3 })}
                             disabled={!selectedRegion || !selectedResource}
-                            className="px-6 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-6 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Continue
                         </button>
@@ -609,7 +609,7 @@ export default function NewPool() {
                     />
 
                     {loadingResources ? (
-                        <div className="text-center py-12 text-slate-500">Loading available resources...</div>
+                        <div className="text-center py-12 text-muted-foreground">Loading available resources...</div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {availableResources
@@ -639,14 +639,14 @@ export default function NewPool() {
                     <div className="flex justify-between pt-6">
                         <button
                             onClick={() => dispatch({ type: "SET_STEP", payload: 1 })}
-                            className="px-4 py-2 text-sm font-medium text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200"
+                            className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground dark:hover:text-cream/85"
                         >
                             Back
                         </button>
                         <button
                             onClick={() => selectedResource && dispatch({ type: "SET_STEP", payload: 3 })}
                             disabled={!selectedResource}
-                            className="px-6 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-6 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Continue
                         </button>
@@ -657,12 +657,12 @@ export default function NewPool() {
             {/* Step 3: Review */}
             {step === 3 && (
                 <div className="max-w-xl mx-auto space-y-6">
-                    <div className="p-6 rounded-xl border bg-slate-50 dark:bg-zinc-900/50 dark:border-zinc-800 space-y-4">
+                    <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border space-y-4">
                         <div className="space-y-2">
                             <label htmlFor="pool-name" className="text-sm font-medium">Pool Name</label>
                             <input
                                 id="pool-name"
-                                className="w-full px-3 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-700 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-zinc-100"
+                                className="w-full px-3 py-2 border rounded-md bg-card dark:border-border focus:ring-2 focus:ring-ember-500/20 outline-none dark:text-cream"
                                 placeholder={isClusterProvider ? "e.g. My GCP Production Pool" : "e.g. My Nosana Pool"}
                                 value={poolName}
                                 onChange={(e) => dispatch({ type: "SET_POOL_NAME", payload: e.target.value })}
@@ -679,12 +679,12 @@ export default function NewPool() {
 
                         {/* Cluster-specific info */}
                         {isClusterProvider && (
-                            <div className="pt-4 border-t border-slate-200/60 dark:border-zinc-800/60">
-                                <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                            <div className="pt-4 border-t border-border/60 dark:border-border/60">
+                                <div className="flex items-center gap-2 text-sm text-ember-600 dark:text-ember-400">
                                     <Cloud className="w-4 h-4" />
                                     <span className="font-medium">Cluster-based provisioning</span>
                                 </div>
-                                <p className="text-xs text-slate-500 mt-1">
+                                <p className="text-xs text-muted-foreground mt-1">
                                     A persistent GPU cluster will be created. Deployments run on the cluster and can be started/stopped without recreating infrastructure.
                                 </p>
                             </div>
@@ -704,14 +704,14 @@ export default function NewPool() {
                     <div className="flex gap-3">
                         <button
                             onClick={() => dispatch({ type: "SET_STEP", payload: 2 })}
-                            className="flex-1 px-4 py-2 text-sm font-medium border rounded-md hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 dark:border-zinc-700"
+                            className="flex-1 px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted dark:hover:bg-card text-fg-secondary dark:text-cream/70 bg-card dark:border-border"
                         >
                             Back
                         </button>
                         <button
                             onClick={handleCreate}
                             disabled={isCreating || !poolName}
-                            className="flex-[2] px-6 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                            className="flex-[2] px-6 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 disabled:opacity-50 flex items-center justify-center gap-2"
                         >
                             {isCreating ? (
                                 <>Creating Pool...</>
@@ -728,14 +728,14 @@ export default function NewPool() {
 
 function StepProgress({ currentStep }: { currentStep: number }) {
     return (
-        <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-zinc-800 pb-4">
+        <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-border pb-4">
             {[1, 2, 3].map((s, i) => (
                 <div key={s} className="flex items-center gap-4">
-                    <div className={cn("flex items-center gap-2", currentStep >= s && "text-emerald-600 dark:text-emerald-400")}>
-                        <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors", currentStep >= s ? "bg-emerald-600 text-white border-emerald-600 dark:border-emerald-500 dark:bg-emerald-600" : "border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800")}>{s}</div>
+                    <div className={cn("flex items-center gap-2", currentStep >= s && "text-ember-600 dark:text-ember-400")}>
+                        <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors", currentStep >= s ? "bg-ember-600 text-white border-ember-600 dark:border-ember-500 dark:bg-ember-600" : "border-border bg-card")}>{s}</div>
                         {s === 1 ? "Select Provider" : s === 2 ? "Compute Config" : "Review & Create"}
                     </div>
-                    {i < 2 && <div className="h-px w-8 bg-slate-200 dark:bg-zinc-800" />}
+                    {i < 2 && <div className="h-px w-8 bg-muted dark:bg-card" />}
                 </div>
             ))}
         </div>
@@ -749,20 +749,20 @@ function ProviderCard({ provider: p, onSelect }: { provider: any, onSelect: (id:
                 disabled={p.disabled}
                 onClick={() => onSelect(p.id)}
                 className={cn(
-                    "text-left group relative p-6 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:border-emerald-500/50 dark:hover:border-emerald-500/50 transition-colors hover:shadow-md flex flex-col gap-4",
-                    p.disabled && "opacity-50 cursor-not-allowed hover:border-slate-200 dark:hover:border-zinc-800 hover:shadow-none bg-slate-50 dark:bg-zinc-900/50"
+                    "text-left group relative p-6 rounded-xl border bg-card dark:border-border hover:border-ember-500/50 dark:hover:border-ember-500/50 transition-colors hover:shadow-md flex flex-col gap-4",
+                    p.disabled && "opacity-50 cursor-not-allowed hover:border-border dark:hover:border-border hover:shadow-none bg-muted dark:bg-card/50"
                 )}
             >
                 <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center transition-colors", p.color)}>
                     <p.icon className="w-6 h-6" />
                 </div>
                 <div>
-                    <h3 className="font-bold text-lg mb-1 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors uppercase tracing-tight text-xs">{p.name}</h3>
-                    <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">{p.description}</p>
+                    <h3 className="font-bold text-lg mb-1 group-hover:text-ember-600 dark:group-hover:text-ember-400 transition-colors uppercase tracing-tight text-xs">{p.name}</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{p.description}</p>
                     {p.capabilities && (
                         <div className="mt-2 flex flex-wrap gap-1">
                             {p.capabilities.is_ephemeral && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Ephemeral</span>}
-                            {p.capabilities.pricing_model !== 'fixed' && <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded capitalize">{p.capabilities.pricing_model}</span>}
+                            {p.capabilities.pricing_model !== 'fixed' && <span className="text-[10px] bg-ember-100 text-ember-700 px-1.5 py-0.5 rounded capitalize">{p.capabilities.pricing_model}</span>}
                         </div>
                     )}
                 </div>
@@ -774,16 +774,16 @@ function ProviderCard({ provider: p, onSelect }: { provider: any, onSelect: (id:
     return (
         <Link
             to={p.configPath}
-            className="text-left group relative p-6 rounded-xl border border-dashed border-slate-300 dark:border-zinc-800 bg-slate-50/30 dark:bg-zinc-900/20 hover:border-slate-400 dark:hover:border-zinc-700 transition-colors flex flex-col gap-4"
+            className="text-left group relative p-6 rounded-xl border border-dashed border-border bg-muted/30 dark:bg-card/20 hover:border-border dark:hover:border-border transition-colors flex flex-col gap-4"
         >
             <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center opacity-40 grayscale", p.color)}>
                 <p.icon className="w-6 h-6" />
             </div>
             <div>
-                <h3 className="font-bold text-lg mb-1 text-slate-400 dark:text-zinc-500">{p.name}</h3>
-                <p className="text-xs text-slate-400 dark:text-zinc-600">Configuration required to create pools on this network.</p>
+                <h3 className="font-bold text-lg mb-1 text-muted-foreground">{p.name}</h3>
+                <p className="text-xs text-muted-foreground">Configuration required to create pools on this network.</p>
             </div>
-            <div className="mt-auto flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="mt-auto flex items-center gap-1.5 text-ember-600 dark:text-ember-400 text-xs font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
                 Connect Provider <ArrowRight className="w-3 h-3" />
             </div>
         </Link>
@@ -794,17 +794,17 @@ function ResourceFilter({ searchQuery, setSearchQuery, minVram, setMinVram, sort
     return (
         <div className="flex flex-col md:flex-row gap-3">
             <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                     name="gpuSearch"
                     placeholder="Search GPUs (v100, t4, a100)…"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     autoComplete="off"
-                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/20 transition-colors text-sm"
+                    className="w-full pl-10 pr-4 py-2 bg-card border dark:border-border rounded-lg outline-none focus:ring-2 focus:ring-ember-500/20 transition-colors text-sm"
                 />
             </div>
-            <select value={minVram} onChange={(e) => setMinVram(Number(e.target.value))} className="px-3 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500/20">
+            <select value={minVram} onChange={(e) => setMinVram(Number(e.target.value))} className="px-3 py-2 bg-card border dark:border-border rounded-lg text-sm outline-none focus:ring-2 focus:ring-ember-500/20">
                 <option value={0}>All Memory</option>
                 <option value={8}>8GB+ VRAM</option>
                 <option value={16}>16GB+ VRAM</option>
@@ -812,7 +812,7 @@ function ResourceFilter({ searchQuery, setSearchQuery, minVram, setMinVram, sort
                 <option value={40}>40GB+ VRAM</option>
                 <option value={80}>80GB+ VRAM</option>
             </select>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="px-3 py-2 bg-white dark:bg-zinc-900 border dark:border-zinc-800 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500/20">
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="px-3 py-2 bg-card border dark:border-border rounded-lg text-sm outline-none focus:ring-2 focus:ring-ember-500/20">
                 <option value="price_asc">Price: Low to High</option>
                 <option value="price_desc">Price: High to Low</option>
                 <option value="memory">Memory: High to Low</option>
@@ -828,21 +828,21 @@ function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, 
             aria-pressed={isSelected}
             onClick={() => onSelect(res)}
             className={cn(
-                "w-full cursor-pointer p-4 rounded-xl border bg-white dark:bg-zinc-900 dark:border-zinc-800 transition-colors relative text-left",
-                isSelected ? "border-emerald-600 dark:border-emerald-500 ring-1 ring-emerald-600 dark:ring-emerald-500 shadow-sm" : "hover:border-emerald-400/30 dark:hover:border-emerald-600/30"
+                "w-full cursor-pointer p-4 rounded-xl border bg-card dark:border-border transition-colors relative text-left",
+                isSelected ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-sm" : "hover:border-ember-400/30 dark:hover:border-ember-600/30"
             )}
         >
             <div className="flex justify-between items-start mb-2">
-                <div className="p-2 bg-slate-100 dark:bg-zinc-800 rounded-md"><Cpu className="w-5 h-5 text-slate-700 dark:text-zinc-200" /></div>
+                <div className="p-2 bg-muted dark:bg-card rounded-md"><Cpu className="w-5 h-5 text-fg-secondary dark:text-cream/85" /></div>
                 <span className="font-bold text-green-600 dark:text-green-400">${res.price_per_hour}/hr</span>
             </div>
             <h4 className="font-bold">{res.provider_resource_id}</h4>
-            <p className="text-sm text-slate-500 dark:text-zinc-400">{res.gpu_type} ({res.gpu_memory_gb}GB VRAM)</p>
-            <div className="mt-2 flex gap-2 text-xs text-slate-400 dark:text-zinc-500">
+            <p className="text-sm text-muted-foreground">{res.gpu_type} ({res.gpu_memory_gb}GB VRAM)</p>
+            <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
                 <span>{res.vcpu} vCPU</span> • <span>{res.ram_gb}GB RAM</span>
             </div>
-            {res.pricing_model && res.pricing_model !== 'fixed' && <div className="mt-1"><span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded capitalize">{res.pricing_model}</span></div>}
-            {isSelected && <div className="absolute top-4 right-4 w-5 h-5 bg-emerald-600 text-white rounded-full flex items-center justify-center"><Check className="w-3 h-3" /></div>}
+            {res.pricing_model && res.pricing_model !== 'fixed' && <div className="mt-1"><span className="text-[10px] bg-ember-100 text-ember-700 px-1.5 py-0.5 rounded capitalize">{res.pricing_model}</span></div>}
+            {isSelected && <div className="absolute top-4 right-4 w-5 h-5 bg-ember-600 text-white rounded-full flex items-center justify-center"><Check className="w-3 h-3" /></div>}
         </button>
     )
 }
@@ -855,36 +855,36 @@ function PoolDetails({ providerName, resource, isClusterProvider, region, useSpo
     useSpot?: boolean
 }) {
     return (
-        <div className="pt-4 border-t border-slate-200/60 dark:border-zinc-800/60 space-y-3">
+        <div className="pt-4 border-t border-border/60 dark:border-border/60 space-y-3">
             <div className="flex justify-between text-sm">
-                <span className="text-slate-500 dark:text-zinc-400">Provider</span>
+                <span className="text-muted-foreground">Provider</span>
                 <span className="font-medium capitalize">{providerName}</span>
             </div>
             
             {isClusterProvider ? (
                 <>
                     <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-zinc-400">Region</span>
+                        <span className="text-muted-foreground">Region</span>
                         <span className="font-medium">{region || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-zinc-400">GPU Type</span>
+                        <span className="text-muted-foreground">GPU Type</span>
                         <span className="font-medium">{resource?.gpu_type || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-zinc-400">Instance Type</span>
+                        <span className="text-muted-foreground">Instance Type</span>
                         <span className="font-medium capitalize">{useSpot ? 'Spot' : 'On-demand'}</span>
                     </div>
                 </>
             ) : (
                 <>
                     <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-zinc-400">GPU Type</span>
+                        <span className="text-muted-foreground">GPU Type</span>
                         <span className="font-medium">{resource?.gpu_type}</span>
                     </div>
                     {resource?.pricing_model && resource?.pricing_model !== 'fixed' && (
                         <div className="flex justify-between text-sm">
-                            <span className="text-slate-500 dark:text-zinc-400">Pricing Model</span>
+                            <span className="text-muted-foreground">Pricing Model</span>
                             <span className="font-medium capitalize">{resource?.pricing_model}</span>
                         </div>
                     )}
@@ -892,7 +892,7 @@ function PoolDetails({ providerName, resource, isClusterProvider, region, useSpo
             )}
             
             <div className="flex justify-between text-sm">
-                <span className="text-slate-500 dark:text-zinc-400">Est. Cost per Hour</span>
+                <span className="text-muted-foreground">Est. Cost per Hour</span>
                 <span className="font-medium">${resource?.price_per_hour || '0.00'}</span>
             </div>
         </div>
@@ -901,11 +901,11 @@ function PoolDetails({ providerName, resource, isClusterProvider, region, useSpo
 
 function CredentialSelection({ provider, credentials, selectedCredential, setSelectedCredential, loading }: any) {
     return (
-        <div className="pt-4 border-t border-slate-200/60 dark:border-zinc-800/60 space-y-3">
+        <div className="pt-4 border-t border-border/60 dark:border-border/60 space-y-3">
             <div className="space-y-2">
                 <label htmlFor="credential-select" className="text-sm font-medium flex items-center gap-2"><Key className="w-4 h-4" /> {provider === "nosana" ? "Nosana API Key" : provider === "akash" ? "Akash Wallet" : "Provider Credential"}</label>
                 {loading ? <div className="text-sm text-muted-foreground">Loading credentials...</div> : (
-                    <select id="credential-select" value={selectedCredential} onChange={(e) => setSelectedCredential(e.target.value)} className="w-full px-3 py-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-700 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-zinc-100 text-sm">
+                    <select id="credential-select" value={selectedCredential} onChange={(e) => setSelectedCredential(e.target.value)} className="w-full px-3 py-2 border rounded-md bg-card dark:border-border focus:ring-2 focus:ring-ember-500/20 outline-none dark:text-cream text-sm">
                         <option value="">Select a credential…</option>
                         {credentials.filter((key: any) => key.is_active).map((key: any) => <option key={key.name} value={key.name}>{key.name}</option>)}
                     </select>

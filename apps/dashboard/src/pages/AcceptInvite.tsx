@@ -100,7 +100,7 @@ export default function AcceptInvite() {
 
       <div className="overflow-hidden rounded-3xl border border-border/70 bg-card/90 shadow-2xl shadow-black/10 backdrop-blur-xl">
         <div className="grid lg:grid-cols-[1.1fr_0.9fr]">
-          <aside className="relative overflow-hidden border-b border-border/70 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 p-6 text-slate-100 lg:border-b-0 lg:border-r lg:p-10">
+          <aside className="relative overflow-hidden border-b border-border/70 bg-gradient-to-br from-[#0C0C0C] via-[#0C0C0C] to-[#161616] p-6 text-cream lg:border-b-0 lg:border-r lg:p-10">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(36,180,126,0.25),_transparent_45%),radial-gradient(circle_at_bottom_right,_rgba(125,211,252,0.16),_transparent_48%)]" />
             <div className="relative space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em]">
@@ -112,32 +112,32 @@ export default function AcceptInvite() {
                 <h1 className="text-3xl font-semibold leading-tight sm:text-4xl">
                   Join Your Team Workspace with a Secure Invite
                 </h1>
-                <p className="max-w-md text-sm text-slate-300 sm:text-base">
+                <p className="max-w-md text-sm text-cream/70 sm:text-base">
                   Provisioned access is linked to your invite token and role scope so your onboarding stays controlled and auditable.
                 </p>
               </div>
 
               <div className="space-y-3">
                 <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-cream/70">
                     <Mail className="h-3.5 w-3.5" />
                     Invited Email
                   </div>
-                  <p className="break-all text-sm text-slate-100">{inviteInfo?.email || "Checking invitation..."}</p>
+                  <p className="break-all text-sm text-cream">{inviteInfo?.email || "Checking invitation..."}</p>
                 </div>
                 <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-cream/70">
                     <ShieldCheck className="h-3.5 w-3.5" />
                     Assigned Role
                   </div>
-                  <p className="text-sm capitalize text-slate-100">{inviteInfo?.role || "Member"}</p>
+                  <p className="text-sm capitalize text-cream">{inviteInfo?.role || "Member"}</p>
                 </div>
                 <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-cream/70">
                     <KeyRound className="h-3.5 w-3.5" />
                     Invite Expires
                   </div>
-                  <p className="text-sm text-slate-100">{formattedExpiry}</p>
+                  <p className="text-sm text-cream">{formattedExpiry}</p>
                 </div>
               </div>
             </div>

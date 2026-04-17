@@ -94,7 +94,7 @@ export default function DeploymentRateLimit({ deploymentId }: DeploymentRateLimi
                                 checked={config.enabled}
                                 onChange={(e) => updateConfig({ ...config, enabled: e.target.checked })}
                             />
-                            <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-background after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                            <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-background after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                         </label>
                     </div>
 
@@ -103,7 +103,7 @@ export default function DeploymentRateLimit({ deploymentId }: DeploymentRateLimi
                             <label className="text-sm font-medium">Requests Per Minute (RPM)</label>
                             <input
                                 type="number"
-                                className="flex h-10 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="flex h-10 w-full rounded-md border border-input bg-card text-foreground px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 value={config.rpm}
                                 onChange={(e) => updateConfig({ ...config, rpm: parseInt(e.target.value) })}
                                 min={1}

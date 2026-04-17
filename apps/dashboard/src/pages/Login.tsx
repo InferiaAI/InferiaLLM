@@ -62,44 +62,44 @@ export default function Login() {
 
       <div className="overflow-hidden rounded-3xl border border-border/70 bg-card/90 shadow-2xl shadow-black/10 backdrop-blur-xl">
         <div className="grid lg:grid-cols-[1.15fr_0.85fr]">
-          <aside className="relative overflow-hidden border-b border-border/70 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 p-6 text-slate-100 lg:border-b-0 lg:border-r lg:p-10">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(36,180,126,0.25),_transparent_45%),radial-gradient(circle_at_bottom_right,_rgba(125,211,252,0.18),_transparent_48%)]" />
+          <aside className="relative overflow-hidden border-b border-border/70 bg-gradient-to-br from-[#0C0C0C] via-[#0C0C0C] to-[#161616] p-6 text-cream lg:border-b-0 lg:border-r lg:p-10">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(201,77,42,0.30),_transparent_45%),radial-gradient(circle_at_bottom_right,_rgba(244,232,224,0.10),_transparent_48%)]" />
             <div className="relative space-y-8">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em]">
+              <div className="inline-flex items-center gap-2 rounded-full border border-ember-500/40 bg-ember-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-ember-300">
                 <Sparkles className="h-3.5 w-3.5" />
                 Organisation Console
               </div>
 
               <div className="space-y-4">
-                <h1 className="text-3xl font-semibold leading-tight sm:text-4xl">
+                <h1 className="font-serif text-3xl leading-tight sm:text-4xl">
                   Build, Ship, and Monitor AI Deployments in One Place
                 </h1>
-                <p className="max-w-md text-sm text-slate-300 sm:text-base">
+                <p className="max-w-md text-sm text-cream/70 sm:text-base">
                   Secure inference operations with policy controls, multi-provider routing, and real-time deployment intelligence.
                 </p>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                    <Radar className="h-3.5 w-3.5" />
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-cream/60">
+                    <Radar className="h-3.5 w-3.5 text-ember-400" />
                     Live Observability
                   </div>
-                  <p className="text-sm text-slate-200">Latency and throughput tracked per deployment in real time.</p>
+                  <p className="text-sm text-cream/85">Latency and throughput tracked per deployment in real time.</p>
                 </div>
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                    <ShieldCheck className="h-3.5 w-3.5" />
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-cream/60">
+                    <ShieldCheck className="h-3.5 w-3.5 text-ember-400" />
                     Trust Layer
                   </div>
-                  <p className="text-sm text-slate-200">Role-gated access with auditable actions across your organization.</p>
+                  <p className="text-sm text-cream/85">Role-gated access with auditable actions across your organization.</p>
                 </div>
-                <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                    <LockKeyhole className="h-3.5 w-3.5" />
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-cream/60">
+                    <LockKeyhole className="h-3.5 w-3.5 text-ember-400" />
                     Built-in 2FA
                   </div>
-                  <p className="text-sm text-slate-200">Hardware and authenticator-based sign-in hardening by default.</p>
+                  <p className="text-sm text-cream/85">Hardware and authenticator-based sign-in hardening by default.</p>
                 </div>
               </div>
             </div>

@@ -98,7 +98,7 @@ export default function TrainingLogs({ deploymentId }: TrainingLogsProps) {
                 </div>
             </div>
 
-            <div className="bg-zinc-950 rounded-lg border border-zinc-800 p-4 font-mono text-xs md:text-sm text-zinc-300 min-h-[500px] shadow-inner font-ligth">
+            <div className="bg-background rounded-lg border border-border p-4 font-mono text-xs md:text-sm text-cream/70 min-h-[500px] shadow-inner font-ligth">
                 <div
                     ref={scrollRef}
                     className="h-[500px] w-full overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent pr-2 leading-tight"
@@ -106,12 +106,12 @@ export default function TrainingLogs({ deploymentId }: TrainingLogsProps) {
                     {displayLogs.length > 0 ? (
                         displayLogs.map((line, i) => (
                             <div key={i} className="whitespace-pre-wrap break-all py-0.5 min-h-[1.2em]">
-                                <span className="text-zinc-500 mr-2 select-none">$</span>
+                                <span className="text-muted-foreground mr-2 select-none">$</span>
                                 {line}
                             </div>
                         ))
                     ) : (
-                        <div className="text-zinc-600 italic">
+                        <div className="text-muted-foreground italic">
                             {loading ? "Fetching logs..." : "No logs available yet..."}
                         </div>
                     )}

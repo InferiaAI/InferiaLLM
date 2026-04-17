@@ -120,11 +120,11 @@ export function CompatibilityProjectionChart({
                                 if (!active || !payload || payload.length === 0) return null;
                                 const point = payload[0].payload as ProjectionDatum;
                                 return (
-                                    <div className="rounded-md border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-xs shadow-lg">
-                                        <div className="font-semibold text-slate-900 dark:text-zinc-100 mb-1">
+                                    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
+                                        <div className="font-semibold text-foreground dark:text-cream mb-1">
                                             {point.concurrency} concurrent users
                                         </div>
-                                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-slate-600 dark:text-zinc-300">
+                                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground dark:text-cream/70">
                                             <span>Projected TTFT</span>
                                             <span className="text-right font-mono">{formatSeconds(point.ttftSeconds)}</span>
                                             <span>Reference TTFT</span>

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,74 +6,67 @@
 
 @layer base {
   :root {
-    /* Clean Light Mode - Minimal & Airy */
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    /* Editorial palette — cream + ember, matches InferiaAI/new-website */
+    /* Surfaces */
+    --background: 40 41% 97%;        /* #FAF7F2 cream */
+    --foreground: 0 0% 5%;           /* #0C0C0C dark */
+    --card: 37 35% 92%;              /* #F2EDE4 cream-deep */
+    --card-foreground: 0 0% 5%;
+    --popover: 40 41% 97%;
+    --popover-foreground: 0 0% 5%;
 
-    /* Primary: Supabase Green */
-    --primary: 158 66% 42%;
-    /* #24b47e */
-    --primary-foreground: 0 0% 100%;
+    /* Primary: Ember */
+    --primary: 13 65% 48%;           /* #C94D2A ember */
+    --primary-foreground: 40 41% 97%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222 47% 11.2%;
+    --secondary: 37 35% 92%;         /* cream-deep */
+    --secondary-foreground: 0 0% 24%; /* #3D3D3D fg-secondary */
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 37 35% 92%;
+    --muted-foreground: 0 0% 54%;    /* #8A8A8A fg-muted */
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 24 50% 92%;            /* #F4E8E0 ember-light */
+    --accent-foreground: 13 65% 48%; /* ember */
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 40 41% 97%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 158 66% 42%;
+    --border: 37 22% 88%;            /* #E6E1D8 */
+    --input: 37 22% 88%;
+    --ring: 13 65% 48%;              /* ember */
 
     --radius: 0.5rem;
   }
 
   .dark {
-    /* Supabase-inspired Dark Theme */
-    --background: 0 0% 11%;
-    /* #1c1c1c */
-    --foreground: 0 0% 93%;
-    /* #ededed */
+    /* Dark mode from new-website */
+    --background: 0 0% 6%;           /* #0F0F0F */
+    --foreground: 36 18% 89%;        /* #E8E4DE */
 
-    --card: 0 0% 14%;
-    /* #232323 */
-    --card-foreground: 0 0% 93%;
+    --card: 0 0% 10%;                /* #1A1A1A cream-deep dark */
+    --card-foreground: 36 18% 89%;
 
-    --popover: 0 0% 14%;
-    --popover-foreground: 0 0% 93%;
+    --popover: 0 0% 7%;              /* #111111 dark-raised */
+    --popover-foreground: 36 18% 89%;
 
-    --primary: 158 66% 42%;
-    /* Supabase Green #24b47e */
-    --primary-foreground: 0 0% 100%;
+    --primary: 14 71% 57%;           /* #E06640 ember in dark */
+    --primary-foreground: 0 0% 6%;
 
-    --secondary: 0 0% 18%;
-    /* #2e2e2e */
-    --secondary-foreground: 0 0% 93%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 66%; /* #A8A8A8 fg-secondary dark */
 
-    --muted: 0 0% 18%;
-    --muted-foreground: 240 5% 65%;
-    /* #a1a1aa */
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 40%;    /* #666666 fg-muted dark */
 
-    --accent: 0 0% 18%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 14 35% 12%;            /* #2A1A14 ember-light dark */
+    --accent-foreground: 14 71% 57%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 63% 45%;
+    --destructive-foreground: 36 18% 89%;
 
-    --border: 0 0% 18%;
-    /* #2e2e2e */
-    --input: 0 0% 18%;
-    --ring: 158 66% 42%;
+    --border: 0 0% 15%;              /* ~rgba(255,255,255,0.1) */
+    --input: 0 0% 15%;
+    --ring: 14 71% 57%;              /* ember in dark */
   }
 }
 
@@ -84,10 +77,25 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  ::selection {
+    background: #E8D5C4;
+    color: #0C0C0C;
+  }
+  .dark ::selection {
+    background: #5C3D2A;
+    color: #E8E4DE;
+  }
+
+  :focus-visible {
+    outline: 1.5px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 }
 
-/* Custom Scrollbar for cleaner look */
+/* Custom Scrollbar — tuned to warm palette */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
