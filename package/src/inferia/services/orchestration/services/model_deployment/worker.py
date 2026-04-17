@@ -61,6 +61,7 @@ class ModelDeploymentWorker:
         # Treat NULL state as PENDING - fix for deployments with NULL state
         if current_state is None:
             log.info(f"Deployment {deployment_id} has NULL state, treating as PENDING")
+            # First set the NULL state to PENDING explicitly so the CAS can match it
             await self.deployments.update_state(deployment_id, "PENDING")
             d = dict(d)
             d["state"] = "PENDING"
@@ -350,7 +351,7 @@ class ModelDeploymentWorker:
                     if d.get("engine"):
                         metadata["engine"] = d["engine"]
 
-                    # 2. Legacy / Registry Fallback
+                    # 2. Legacy / Registry Fallback (only if no configuration was set)
                     if not metadata and model:
                         metadata = {
                             "image": model["artifact_uri"],
@@ -410,22 +411,20 @@ class ModelDeploymentWorker:
                             f"Deployment {deployment_id} state changed to "
                             f"{d_latest.get('state') if d_latest else 'None'} during provisioning. Aborting."
                         )
-                        # Deprovision the already-provisioned node to avoid orphaned resources
+                        # Cleanup the provisioned node to avoid orphaned resources
                         if node_spec and node_spec.get("provider_instance_id"):
                             try:
                                 cleanup_adapter = get_adapter(pool["provider"])
                                 log.info(
                                     f"Cleaning up orphaned node {node_spec['provider_instance_id']} "
-                                    f"after safety-check abort for {deployment_id}"
+                                    f"after safety check abort for {deployment_id}"
                                 )
                                 await cleanup_adapter.deprovision_node(
                                     provider_instance_id=node_spec["provider_instance_id"],
                                     provider_credential_name=pool.get("provider_credential_name"),
                                 )
                             except Exception as cleanup_err:
-                                log.warning(
-                                    f"Failed to cleanup node after safety-check abort: {cleanup_err}"
-                                )
+                                log.warning(f"Failed to cleanup orphaned node on abort: {cleanup_err}")
                         return
 
                     if not expose_url or expose_url.endswith("-ready"):

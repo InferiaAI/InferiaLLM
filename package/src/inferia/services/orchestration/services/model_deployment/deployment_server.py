@@ -919,14 +919,12 @@ async def delete_deployment(deployment_id: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid deployment ID format")
 
+    # Capture org_id BEFORE deletion so the audit log has it
+    audit_org_id = await _lookup_org_id("deployment", deployment_id)
+
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         try:
-            # Capture org_id before deletion for audit logging
-            org_id = await conn.fetchval(
-                "SELECT org_id FROM model_deployments WHERE deployment_id = $1", dep_uuid
-            )
-
             # Check if deployment exists and is stopped
             row = await conn.fetchrow(
                 "SELECT state FROM model_deployments WHERE deployment_id = $1", dep_uuid
@@ -975,7 +973,7 @@ async def delete_deployment(deployment_id: str):
         resource_type="deployment",
         resource_id=deployment_id,
         status="success",
-        org_id=org_id,
+        org_id=audit_org_id,
     )
 
     return {
@@ -1355,7 +1353,6 @@ async def list_deployments(pool_id: str | None = None):
                 "error_message": d.error_message or None,
             }
             for d in resp.deployments
-            # if not d.state.lower().startswith("terminat") # Showing all for sticky deployment visibility
         ]
     }
 
@@ -1377,7 +1374,7 @@ async def get_deployment_logs(deployment_id: str):
 
     conn = await asyncpg.connect(POSTGRES_DSN)
     try:
-        # Get pool_id to identify provider
+        # Get pool_id to identify provider and credential
         dep = await conn.fetchrow(
             """
             SELECT d.pool_id, p.provider, p.provider_credential_name, d.state
@@ -1598,6 +1595,27 @@ async def list_all_deployments(
                 detail=f"Failed to list all deployments: {e.details()}",
             )
 
+    # Enrich with created_at from DB (not available in gRPC response)
+    created_at_map = {}
+    conn = None
+    try:
+        dep_ids = [d.deployment_id for d in resp.deployments]
+        if dep_ids:
+            conn = await asyncpg.connect(POSTGRES_DSN)
+            rows = await conn.fetch(
+                "SELECT deployment_id::text, created_at FROM model_deployments WHERE deployment_id = ANY($1::uuid[])",
+                dep_ids,
+            )
+            created_at_map = {
+                row["deployment_id"]: row["created_at"].isoformat() if row["created_at"] else None
+                for row in rows
+            }
+    except Exception as e:
+        logger.warning(f"Failed to fetch created_at for deployments: {e}")
+    finally:
+        if conn:
+            await conn.close()
+
     all_deployments = [
         {
             "deployment_id": d.deployment_id,
@@ -1606,7 +1624,7 @@ async def list_all_deployments(
             "state": d.state,
             "replicas": d.replicas,
             "pool_id": d.pool_id,
-            "created_at": None,
+            "created_at": created_at_map.get(d.deployment_id),
             "engine": d.engine,
             "endpoint": d.endpoint,
             "org_id": d.org_id,
