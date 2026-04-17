@@ -201,7 +201,9 @@ export default function Overview() {
     queryKey: ["pools", orgId],
     queryFn: async () => {
       if (!orgId) return { pools: [] } satisfies PoolsResponse;
-      const { data } = await computeApi.get<PoolsResponse>(`/deployment/listPools/${orgId}`);
+      const { data } = await computeApi.get<PoolsResponse>(`/deployment/listPools/${orgId}`, {
+        params: { limit: 50, offset: 0 },
+      });
       return data;
     },
     enabled: !!orgId && canViewDeployments,
@@ -212,7 +214,7 @@ export default function Overview() {
     queryFn: async () => {
       if (!orgId) return [] as DeploymentRecord[];
       const { data } = await computeApi.get<{ deployments?: DeploymentRecord[] } | DeploymentRecord[]>(
-        `/deployment/deployments?org_id=${orgId}`
+        `/deployment/deployments`, { params: { org_id: orgId, limit: 100, offset: 0 } }
       );
       return Array.isArray(data) ? data : (data.deployments ?? []);
     },

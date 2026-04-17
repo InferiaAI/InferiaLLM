@@ -315,14 +315,15 @@ class InventoryRepository:
             return None
 
     async def get_pool_by_id(self, pool_id: UUID):
+        """Return all inventory nodes belonging to a pool."""
         query = """
         SELECT *
         FROM compute_inventory
         WHERE pool_id = $1
         """
         async with self.db.acquire() as conn:
-            row = await conn.fetchrow(query, pool_id)
-            return dict(row) if row else None
+            rows = await conn.fetch(query, pool_id)
+            return [dict(r) for r in rows]
 
     async def get_node_by_id(self, node_id: UUID):
         query = """
@@ -377,10 +378,12 @@ class InventoryRepository:
             rows = await conn.fetch(query, node_id)
             return [row["deployment_id"] for row in rows]
 
-    async def list_nodes_by_provider(self, provider: str) -> list[dict]:
-        """List all nodes for a specific provider."""
+    async def list_nodes_by_provider(
+        self, provider: str, *, limit: int = 200, offset: int = 0
+    ) -> list[dict]:
+        """List nodes for a specific provider with pagination."""
         query = """
-        SELECT 
+        SELECT
             id,
             pool_id,
             provider,
@@ -401,7 +404,8 @@ class InventoryRepository:
         FROM compute_inventory
         WHERE provider = $1
         ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
         """
         async with self.db.acquire() as conn:
-            rows = await conn.fetch(query, provider)
+            rows = await conn.fetch(query, provider, limit, offset)
             return [dict(row) for row in rows]

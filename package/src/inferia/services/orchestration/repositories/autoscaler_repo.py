@@ -25,6 +25,27 @@ class AutoscalerRepository:
         async with self.db.acquire() as c:
             return await c.fetchrow(q, pool_id)
 
+    async def get_pools_with_stats(self):
+        """Fetch all autoscaling-enabled pools with their stats in one query."""
+        q = """
+        SELECT
+          cp.id,
+          cp.provider,
+          cp.autoscaling_policy,
+          COUNT(*) FILTER (WHERE ci.state='ready') AS ready_nodes,
+          COALESCE(
+            AVG(ci.vcpu_allocated::float / NULLIF(ci.vcpu_total, 0)), 0
+          ) AS avg_cpu_util,
+          COUNT(*) FILTER (WHERE ci.state='ready' AND ci.vcpu_allocated=0) AS idle_nodes
+        FROM compute_pools cp
+        LEFT JOIN compute_inventory ci ON ci.pool_id = cp.id
+        WHERE cp.is_active = true
+          AND cp.autoscaling_policy->>'enabled' = 'true'
+        GROUP BY cp.id, cp.provider, cp.autoscaling_policy
+        """
+        async with self.db.acquire() as c:
+            return await c.fetch(q)
+
     async def state(self, pool_id):
         async with self.db.acquire() as c:
             await c.execute(

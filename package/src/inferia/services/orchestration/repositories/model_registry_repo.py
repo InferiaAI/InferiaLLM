@@ -49,22 +49,26 @@ class ModelRegistryRepository:
             row = await c.fetchrow(q, model_id)
             return dict(row) if row else None
 
-    async def list_models(self, name: Optional[str] = None):
+    async def list_models(
+        self, name: Optional[str] = None, *, limit: int = 100, offset: int = 0
+    ):
         if name:
             q = """
             SELECT model_id, name, version, backend, artifact_uri, config
             FROM model_registry
             WHERE name=$1
             ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
             """
-            args = (name,)
+            args = (name, limit, offset)
         else:
             q = """
             SELECT model_id, name, version, backend, artifact_uri, config
             FROM model_registry
             ORDER BY created_at DESC
+            LIMIT $1 OFFSET $2
             """
-            args = ()
+            args = (limit, offset)
 
         async with self.db.acquire() as c:
             rows = await c.fetch(q, *args)

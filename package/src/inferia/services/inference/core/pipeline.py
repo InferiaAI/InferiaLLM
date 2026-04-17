@@ -14,7 +14,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from inferia.services.inference.client import api_gateway_client
 from inferia.services.inference.config import settings
-from .providers import ProviderAdapter, get_adapter, is_external_engine
+from .providers import ProviderAdapter, get_adapter, is_external_engine, resolve_upstream
 from .rate_limiter import rate_limiter
 from .service import GatewayService
 
@@ -118,8 +118,10 @@ class Pipeline:
         deployment = ctx.deployment
         engine = deployment.get("engine", default_engine)
         ctx.engine = engine
-        ctx.endpoint_url = deployment.get("endpoint", "")
-        ctx.adapter = get_adapter(engine)
+        raw_endpoint = deployment.get("endpoint", "")
+        ctx.adapter, ctx.endpoint_url = resolve_upstream(
+            engine, raw_endpoint, settings.external_proxy_url,
+        )
 
         # Resolve API key and model name from credentials
         if is_external_engine(engine):

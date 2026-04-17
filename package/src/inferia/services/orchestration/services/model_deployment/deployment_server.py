@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Request
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1077,7 +1077,11 @@ async def list_pool_inventory(pool_id: str):
 
 
 @router.get("/listPools/{owner_id}")
-async def list_pools(owner_id: str | None = None):
+async def list_pools(
+    owner_id: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
     async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
@@ -1172,7 +1176,9 @@ async def list_pools(owner_id: str | None = None):
         if conn:
             await conn.close()
 
-    return {"pools": enriched_pools}
+    # Apply server-side pagination
+    paginated = enriched_pools[offset : offset + limit]
+    return {"pools": paginated, "total": len(enriched_pools)}
 
 
 @router.get("/pool/{pool_id}")
@@ -1444,6 +1450,36 @@ async def get_deployment_logs(deployment_id: str):
         await conn.close()
 
 
+@router.get("/logs/{deployment_id}/persisted")
+async def get_persisted_deployment_logs(deployment_id: str):
+    """
+    Retrieve persisted terminal logs captured on deployment failure/stop.
+    Returns the most recent log snapshot.
+    """
+    from inferia.services.orchestration.repositories.terminal_log_repo import (
+        TerminalLogRepository,
+    )
+
+    try:
+        dep_uuid = UUID(deployment_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID")
+
+    conn = await asyncpg.connect(POSTGRES_DSN)
+    try:
+        repo = TerminalLogRepository(conn)
+        log_entry = await repo.get_by_deployment(dep_uuid)
+        if not log_entry:
+            return {"logs": [], "message": "No persisted logs found for this deployment"}
+        return {
+            "logs": log_entry["log_lines"],
+            "captured_at": log_entry["captured_at"].isoformat(),
+            "trigger_event": log_entry["trigger_event"],
+        }
+    finally:
+        await conn.close()
+
+
 @router.get("/logs/{deployment_id}/stream")
 async def get_deployment_log_stream_info(deployment_id: str, request: Request):
     """
@@ -1528,7 +1564,11 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
 
 
 @router.get("/deployments")
-async def list_all_deployments(org_id: str | None = None):
+async def list_all_deployments(
+    org_id: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
     """
     List ALL deployments across all pools.
     Optionally filter by org_id.
@@ -1576,24 +1616,26 @@ async def list_all_deployments(org_id: str | None = None):
         if conn:
             await conn.close()
 
-    return {
-        "deployments": [
-            {
-                "deployment_id": d.deployment_id,
-                "model_name": d.model_name,
-                "model_version": d.model_version,
-                "state": d.state,
-                "replicas": d.replicas,
-                "pool_id": d.pool_id,
-                "created_at": created_at_map.get(d.deployment_id),
-                "engine": d.engine,
-                "endpoint": d.endpoint,
-                "org_id": d.org_id,
-                "error_message": d.error_message or None,
-            }
-            for d in resp.deployments
-        ]
-    }
+    all_deployments = [
+        {
+            "deployment_id": d.deployment_id,
+            "model_name": d.model_name,
+            "model_version": d.model_version,
+            "state": d.state,
+            "replicas": d.replicas,
+            "pool_id": d.pool_id,
+            "created_at": created_at_map.get(d.deployment_id),
+            "engine": d.engine,
+            "endpoint": d.endpoint,
+            "org_id": d.org_id,
+            "error_message": d.error_message or None,
+        }
+        for d in resp.deployments
+    ]
+
+    # Apply server-side pagination
+    paginated = all_deployments[offset : offset + limit]
+    return {"deployments": paginated, "total": len(all_deployments)}
 
 
 @router.get("/provider/resources")

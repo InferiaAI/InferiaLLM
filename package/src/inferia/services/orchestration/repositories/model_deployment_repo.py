@@ -318,7 +318,14 @@ class ModelDeploymentRepository(BaseRepository):
             row = await c.fetchrow(q, deployment_id)
             return dict(row) if row else None
 
-    async def list(self, pool_id: Optional[UUID] = None, org_id: Optional[str] = None):
+    async def list(
+        self,
+        pool_id: Optional[UUID] = None,
+        org_id: Optional[str] = None,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ):
         conditions = []
         args = []
         idx = 1
@@ -339,7 +346,9 @@ class ModelDeploymentRepository(BaseRepository):
         SELECT * FROM model_deployments
         {where_clause}
         ORDER BY created_at DESC
+        LIMIT ${idx} OFFSET ${idx + 1}
         """
+        args.extend([limit, offset])
 
         async with self.db.acquire() as c:
             rows = await c.fetch(q, *args)

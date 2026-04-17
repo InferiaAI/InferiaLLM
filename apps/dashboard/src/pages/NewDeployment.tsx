@@ -640,7 +640,9 @@ export default function NewDeployment() {
         try {
           const targetOrgId = user?.org_id || organizations?.[0]?.id;
           if (!targetOrgId) return;
-          const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`)
+          const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`, {
+            params: { limit: 200, offset: 0 },
+          })
           if (res.data?.pools) {
             dispatch({ type: 'INIT_POOLS', payload: res.data.pools });
           }
@@ -734,7 +736,8 @@ export default function NewDeployment() {
       }
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "ollama") {
-      return JSON.stringify({ image: "ollama/ollama:latest", cmd: ["serve"], expose: [{ port: 11434, type: "http" }], gpu: true }, null, 4)
+      const finalModelId = modelId || "llama3:8b";
+      return JSON.stringify({ model_id: finalModelId, engine: "ollama", image: "ollama/ollama:latest", cmd: ["serve"], expose: [{ port: 11434, type: "http" }], gpu: true }, null, 4)
     } else if (selectedEngine === "infinity") {
       const finalModelId = modelId || "sentence-transformers/all-MiniLM-L6-v2";
       const spec = {

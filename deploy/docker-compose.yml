@@ -21,6 +21,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+        reservations:
+          memory: 512M
     networks:
       - inferia-net
 
@@ -33,6 +40,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1"
+        reservations:
+          memory: 128M
     networks:
       - inferia-net
 
@@ -42,7 +56,6 @@ services:
       dockerfile: docker/Dockerfile
     container_name: inferia-app
     restart: unless-stopped
-    pull_policy: always
     env_file: .env
     environment:
       - SERVICE_TYPE=unified
@@ -58,14 +71,16 @@ services:
     volumes:
       - appdata:/data
     ports:
-      - "8000:8000"   # Filtration Gateway
-      - "8001:8001"   # Inference Gateway
-      - "8002:8002"   # Guardrail Engine
-      - "8003:8003"   # Data Engine
-      - "8080:8080"   # Orchestration Gateway
-      - "8004:3000"   # DePIN Sidecar
-      - "3001:3001"   # Dashboard
-      - "50051:50051" # gRPC
+      - "8000:8000"   # Filtration Gateway (external API)
+      - "8001:8001"   # Inference Gateway (external API)
+      - "3001:3001"   # Dashboard (web UI)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "4"
+        reservations:
+          memory: 1G
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,11 +99,16 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
     volumes:
       - esdata:/usr/share/elasticsearch/data
-    ports:
-      - "9200:9200"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+        reservations:
+          memory: 1G
     networks:
       - inferia-net
     healthcheck:
@@ -113,8 +133,13 @@ services:
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
     volumes:
       - ../docker/logstash/pipeline:/usr/share/logstash/pipeline:ro
-    ports:
-      - "${LOGSTASH_PORT:-5959}:5959"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1"
+        reservations:
+          memory: 512M
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -138,6 +163,11 @@ services:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     ports:
       - "5601:5601"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1"
     depends_on:
       elasticsearch:
         condition: service_healthy

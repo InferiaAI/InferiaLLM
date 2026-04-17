@@ -3,7 +3,10 @@
 import asyncio
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
+
+# Prevent fire-and-forget log tasks from being GC'd before completion
+_background_log_tasks: Set[asyncio.Task] = set()
 
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
@@ -11,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from inferia.services.inference.client import api_gateway_client
 from inferia.services.inference.config import settings
 from ..pipeline import Pipeline, RequestContext
-from ..providers import get_adapter, is_external_engine
+from ..providers import get_adapter, is_external_engine, resolve_upstream
 from ..rate_limiter import rate_limiter
 from ..request_logger import RequestLogger
 from ..service import GatewayService
@@ -122,7 +125,9 @@ class CompletionHandler:
         endpoint_url = endpoint_url.strip()
 
         engine = deployment.get("engine", "vllm")
-        adapter = get_adapter(engine)
+        adapter, endpoint_url = resolve_upstream(
+            engine, endpoint_url, settings.external_proxy_url,
+        )
 
         credentials = (
             deployment.get("credentials_json") or deployment.get("configuration") or {}
@@ -247,7 +252,7 @@ class CompletionHandler:
                 raise
             finally:
                 try:
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         RequestLogger.log(
                             deployment_id=deployment_id,
                             user_id=user_context_id,
@@ -266,6 +271,9 @@ class CompletionHandler:
                             is_streaming=True,
                         )
                     )
+                    # Hold a strong reference so the task isn't GC'd before completion
+                    _background_log_tasks.add(task)
+                    task.add_done_callback(_background_log_tasks.discard)
                 except RuntimeError:
                     logger.error(
                         "Failed to schedule streaming log task: no running event loop"
