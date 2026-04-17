@@ -198,8 +198,7 @@ const router = createBrowserRouter([
           },
           {
             path: "settings/security",
-            element: <PermissionGuard permission="user:update_security" />,
-            children: [{ index: true, element: <Security /> }],
+            element: <Security />,
           },
           {
             path: "compute",

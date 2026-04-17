@@ -172,7 +172,13 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = False
     rate_limit_requests_per_minute: int = 10000
     rate_limit_burst_size: int = 1000
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: Optional[str] = Field(default=None, validation_alias="REDIS_URL")
+    redis_host: str = Field(default="localhost", validation_alias="REDIS_HOST")
+    redis_port: int = Field(default=6379, validation_alias="REDIS_PORT")
+    redis_db: str = Field(default="0", validation_alias="REDIS_DB")
+    redis_username: Optional[str] = Field(default=None, validation_alias="REDIS_USERNAME")
+    redis_password: Optional[str] = Field(default=None, validation_alias="REDIS_PASSWORD")
+    redis_ssl: bool = Field(default=False, validation_alias="REDIS_SSL")
     use_redis_rate_limit: bool = False
 
     # Internal HTTP Client Tuning
@@ -258,6 +264,22 @@ class Settings(BaseSettings):
                     "This is insecure and must not be used in production. "
                     "Generate a secret with: openssl rand -hex 32"
                 )
+
+    @property
+    def resolved_redis_url(self) -> str:
+        """Resolve a concrete Redis URL.
+
+        Prefers an explicit REDIS_URL; otherwise builds one from REDIS_HOST/PORT/DB
+        plus optional REDIS_USERNAME/REDIS_PASSWORD and REDIS_SSL.
+        """
+        if self.redis_url:
+            return self.redis_url
+        scheme = "rediss" if self.redis_ssl else "redis"
+        auth = ""
+        if self.redis_password:
+            user = self.redis_username or ""
+            auth = f"{user}:{self.redis_password}@"
+        return f"{scheme}://{auth}{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     @property
     def sqlalchemy_database_url(self) -> str:
