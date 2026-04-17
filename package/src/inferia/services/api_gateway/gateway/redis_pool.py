@@ -22,7 +22,7 @@ def get_redis_pool() -> redis.ConnectionPool:
     global _pool
     if _pool is None:
         _pool = redis.ConnectionPool.from_url(
-            settings.redis_url,
+            settings.resolved_redis_url,
             decode_responses=True,
             max_connections=int(getattr(settings, "redis_max_connections", 20)),
         )

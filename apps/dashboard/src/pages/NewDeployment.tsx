@@ -824,7 +824,15 @@ export default function NewDeployment() {
       queryClient.invalidateQueries({ queryKey: ["deployments"] })
       navigate("/dashboard/deployments")
     },
-    onError: (err: any) => { toast.error(err.response?.data?.detail || "Failed to create deployment") }
+    onError: (err: any) => {
+      const body = err.response?.data;
+      const msg =
+        body?.detail ||
+        body?.error?.message ||
+        body?.message ||
+        "Failed to create deployment";
+      toast.error(msg);
+    }
   })
 
   const runPreflight = async (modelId: string, engine: string, token?: string): Promise<boolean> => {

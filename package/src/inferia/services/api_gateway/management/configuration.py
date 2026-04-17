@@ -30,6 +30,8 @@ from inferia.services.api_gateway.management.dependencies import (
 )
 from inferia.services.api_gateway.schemas.auth import PermissionEnum
 from inferia.services.api_gateway.rbac.authorization import authz_service
+from inferia.services.api_gateway.audit.service import audit_service
+from inferia.services.api_gateway.models import AuditLogCreate
 
 # New imports for local provider config
 from pydantic import BaseModel, Field
@@ -238,9 +240,6 @@ async def update_config(
     await db.refresh(policy)
 
     # Log to audit service
-    from inferia.services.api_gateway.audit.service import audit_service
-    from inferia.services.api_gateway.models import AuditLogCreate
-
     await audit_service.log_event(
         db,
         AuditLogCreate(
@@ -361,7 +360,9 @@ class ProviderCredentialCreate(BaseModel):
 
 
 class ProviderCredentialUpdate(BaseModel):
-    name: str
+    # `name` is redundant: the credential name is already in the URL path.
+    # Kept optional for backward compatibility with older clients that send it.
+    name: Optional[str] = None
     credential_type: Optional[str] = None
     value: Optional[str] = None
     is_active: Optional[bool] = None

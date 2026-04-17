@@ -33,9 +33,22 @@ from typing import Optional
 
 import os
 
-POSTGRES_DSN = os.getenv(
-    "POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia"
-)
+def _resolve_postgres_dsn() -> str:
+    """Return a raw asyncpg-compatible DSN.
+
+    Prefers POSTGRES_DSN; falls back to DATABASE_URL (stripping a SQLAlchemy
+    +asyncpg driver prefix if present). Last resort is a dev-localhost default.
+    """
+    dsn = os.getenv("POSTGRES_DSN")
+    if dsn:
+        return dsn
+    dsn = os.getenv("DATABASE_URL")
+    if dsn:
+        return dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return "postgresql://inferia:inferia@localhost:5432/inferia"
+
+
+POSTGRES_DSN = _resolve_postgres_dsn()
 GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
 NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000")
 NOSANA_CLIENT_MANAGER_URL = os.getenv(

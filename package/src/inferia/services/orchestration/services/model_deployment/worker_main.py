@@ -25,7 +25,17 @@ from inferia.services.orchestration.services.model_deployment.strategies.localai
 # from services.nosana_runtime.client import NosanaRuntimeClient
 
 
-POSTGRES_DSN = os.getenv("POSTGRES_DSN", "postgresql://inferia:inferia@localhost:5432/inferia")
+def _resolve_postgres_dsn() -> str:
+    dsn = os.getenv("POSTGRES_DSN")
+    if dsn:
+        return dsn
+    dsn = os.getenv("DATABASE_URL")
+    if dsn:
+        return dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return "postgresql://inferia:inferia@localhost:5432/inferia"
+
+
+POSTGRES_DSN = _resolve_postgres_dsn()
 NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000/nosana")
 POLL_INTERVAL = 30  # seconds
 MAX_CONCURRENT_DEPLOYS = int(os.getenv("MAX_CONCURRENT_DEPLOYS", "8"))
@@ -153,7 +163,6 @@ async def main():
             "vllm": vllm_strategy,
             "localai": localai_strategy,
         },
-        terminal_log_repo=terminal_log_repo,
     )
 
     log.info("ModelDeploymentWorker started (max_concurrent=%d)", MAX_CONCURRENT_DEPLOYS)

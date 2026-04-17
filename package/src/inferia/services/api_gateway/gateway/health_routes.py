@@ -95,7 +95,7 @@ async def check_redis() -> DependencyHealth:
     """Check connection to Redis."""
     try:
         import redis.asyncio as redis
-        client = redis.from_url(settings.redis_url)
+        client = redis.from_url(settings.resolved_redis_url)
         await client.ping()
         await client.close()
         return DependencyHealth(name="Redis", status="online")
