@@ -145,8 +145,6 @@ def create_vllm_job(
                             "headers": health_headers,
                             "continuous": False,
                             "expected_status": 200,
-                            "timeout": 30,
-                            "retries": 3,
                         }
                     ],
                 }
