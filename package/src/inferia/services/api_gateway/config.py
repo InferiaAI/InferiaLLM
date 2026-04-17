@@ -133,6 +133,18 @@ class Settings(BaseSettings):
     # Multi-tenancy / Organization Settings
     default_org_name: str = "Default Organization"
 
+    # External Auth Provider (inferia-auth)
+    # Set to "external" to delegate authentication to inferia-auth service.
+    # Superadmin login always works locally regardless of this setting.
+    auth_provider: Literal["local", "external"] = Field(
+        default="local", validation_alias="AUTH_PROVIDER"
+    )
+    external_auth_url: Optional[str] = Field(
+        default=None,
+        validation_alias="EXTERNAL_AUTH_URL",
+        description="Base URL of the inferia-auth service (e.g. http://inferia-auth:3000)",
+    )
+
     # Superadmin credentials - MUST be set via environment variables in production
     superadmin_email: Optional[str] = Field(default=None, validation_alias="SUPERADMIN_EMAIL")
     superadmin_password: Optional[str] = Field(

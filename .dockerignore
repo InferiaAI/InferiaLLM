@@ -7,7 +7,7 @@
 **/*.pyc
 **/*.pyo
 **/*.pyd
-.venv
+**/.venv
 .pytest_cache
 .coverage
 htmlcov

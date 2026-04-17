@@ -75,6 +75,9 @@ async def lifespan(app: FastAPI):
     await config_manager.initialize()
     config_manager.start_polling()
 
+    if settings.auth_provider == "external" and settings.external_auth_url:
+        logger.info(f"External auth enabled via: {settings.external_auth_url}")
+
     yield
     # Shutdown
     logger.info(f"Shutting down {settings.app_name}")
@@ -85,6 +88,10 @@ async def lifespan(app: FastAPI):
 
     await gateway_http_client.close_all()
     await rate_limiter.close()
+
+    if settings.auth_provider == "external":
+        from inferia.services.api_gateway.rbac.external_auth import close_client
+        await close_client()
 
 
 # Create FastAPI app

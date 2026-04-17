@@ -3,11 +3,15 @@ from fastapi.security import HTTPBearer
 from typing import Optional, List
 from fastapi.responses import JSONResponse
 from cachetools import TTLCache
+import logging
 
 from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.auth import auth_service
+from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
 from inferia.services.api_gateway.rbac.permissions import normalize_permissions
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
@@ -26,10 +30,92 @@ def _auth_error_response(
     )
 
 
+async def _resolve_local_token(db, token: str) -> UserContext:
+    """Validate a locally-issued JWT and build UserContext."""
+    user, org_id, roles = await auth_service.get_current_user(db, token)
+
+    from sqlalchemy.future import select
+    from inferia.services.api_gateway.db.models import Role
+
+    permissions_set = set()
+    if roles:
+        stmt = select(Role).where(Role.name.in_(roles))
+        result = await db.execute(stmt)
+        role_records = result.scalars().all()
+        for r in role_records:
+            if r.permissions:
+                permissions_set.update(r.permissions)
+
+    permissions, _, _ = normalize_permissions(permissions_set)
+
+    return UserContext(
+        user_id=user.id,
+        username=user.email,
+        email=user.email,
+        roles=roles,
+        permissions=permissions,
+        org_id=org_id,
+        quota_limit=10000,
+        quota_used=0,
+    )
+
+
+async def _resolve_external_token(db, token: str) -> UserContext:
+    """
+    Validate a token issued by inferia-auth via its introspect endpoint,
+    then map the external identity to a local shadow user.
+    """
+    from inferia.services.api_gateway.rbac.external_auth import external_introspect
+    from inferia.services.api_gateway.rbac.shadow_user import get_or_create_shadow_user
+
+    result = await external_introspect(token)
+    if result is None or not result.get("valid"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    email = result.get("email", "")
+    external_user_id = result.get("subject_id", "")
+
+    user, org_id, roles = await get_or_create_shadow_user(
+        db, email=email, external_id=external_user_id
+    )
+
+    from sqlalchemy.future import select
+    from inferia.services.api_gateway.db.models import Role as RoleModel
+
+    permissions_set = set()
+    if roles:
+        stmt = select(RoleModel).where(RoleModel.name.in_(roles))
+        res = await db.execute(stmt)
+        for r in res.scalars().all():
+            if r.permissions:
+                permissions_set.update(r.permissions)
+
+    permissions, _, _ = normalize_permissions(permissions_set)
+
+    return UserContext(
+        user_id=user.id,
+        username=user.email,
+        email=user.email,
+        roles=roles,
+        permissions=permissions,
+        org_id=org_id,
+        quota_limit=10000,
+        quota_used=0,
+    )
+
+
 async def auth_middleware(request: Request, call_next):
     """
     Authentication middleware that validates JWT token and extracts user context.
     Adds user context to request.state if authenticated.
+
+    When AUTH_PROVIDER=external, tokens are validated in two steps:
+      1. Try local JWT decode (covers superadmin and locally-issued tokens).
+      2. If local decode fails, call inferia-auth introspect.
     """
     # Skip auth for WebSocket connections - they handle auth differently (via query params)
     # Check both 'upgrade' header and the connection type
@@ -96,50 +182,25 @@ async def auth_middleware(request: Request, call_next):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check cache first to avoid 3 DB queries per request
+    # Check cache first to avoid DB/network queries per request
     cached = _auth_cache.get(token)
     if cached is not None:
         request.state.user = cached
     else:
-        # Create DB Session for Auth
+        use_external = settings.auth_provider == "external" and settings.external_auth_url
+
         async with AsyncSessionLocal() as db:
             try:
-                # Validate token and get user (Async)
-                user, org_id, roles = await auth_service.get_current_user(db, token)
+                if not use_external:
+                    # Pure local auth
+                    user_context = await _resolve_local_token(db, token)
+                else:
+                    # External mode: try local first (superadmin), fall back to external
+                    try:
+                        user_context = await _resolve_local_token(db, token)
+                    except HTTPException:
+                        user_context = await _resolve_external_token(db, token)
 
-                # Determine permissions based on roles (Dynamic from DB)
-                from sqlalchemy.future import select
-                from inferia.services.api_gateway.db.models import Role
-
-                permissions_set = set()
-                if roles:
-                    stmt = select(Role).where(Role.name.in_(roles))
-                    result = await db.execute(stmt)
-                    role_records = result.scalars().all()
-                    for r in role_records:
-                        if r.permissions:
-                            permissions_set.update(r.permissions)
-
-                permissions, _, _ = normalize_permissions(permissions_set)
-
-                # Mock Quota (until quota model implemented)
-                # Default to high limit
-                quota_limit = 10000
-                quota_used = 0
-
-                # Create user context
-                user_context = UserContext(
-                    user_id=user.id,
-                    username=user.email,
-                    email=user.email,
-                    roles=roles,
-                    permissions=permissions,
-                    org_id=org_id,
-                    quota_limit=quota_limit,
-                    quota_used=quota_used,
-                )
-
-                # Add user context to request state and cache
                 request.state.user = user_context
                 _auth_cache[token] = user_context
 
