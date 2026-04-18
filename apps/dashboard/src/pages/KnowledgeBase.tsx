@@ -150,7 +150,7 @@ export default function KnowledgeBase() {
                             setIsNew(false)
                             setNewCollectionName("")
                         }}
-                        className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
+                        className="px-4 py-2 bg-transparent border text-ember-500 border-ember-500/50 hover:bg-ember-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
                     >
                         Add new knowledge <Plus className="w-4 h-4" />
                     </button>
@@ -227,7 +227,7 @@ export default function KnowledgeBase() {
                                         {canAddKnowledge && (
                                             <button
                                                 onClick={() => setShowUpload(true)}
-                                                className="px-4 py-2 bg-transparent border text-emerald-500 border-emerald-500/50 hover:bg-emerald-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
+                                                className="px-4 py-2 bg-transparent border text-ember-500 border-ember-500/50 hover:bg-ember-500/10 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
                                             >
                                                 Create new knowledge <Plus className="w-4 h-4" />
                                             </button>
@@ -238,7 +238,7 @@ export default function KnowledgeBase() {
                                         {files?.map((file, idx) => (
                                             <div key={idx} className="flex items-center justify-between p-4 bg-transparent border-b border-border/50 hover:bg-muted/10 transition-colors group first:border-t-0">
                                                 <div className="flex items-center gap-4 overflow-hidden">
-                                                    <div className="p-2.5 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 rounded-lg shrink-0">
+                                                    <div className="p-2.5 bg-ember-500/10 text-ember-500 dark:text-ember-400 rounded-lg shrink-0">
                                                         <FileText className="w-5 h-5" />
                                                     </div>
                                                     <div>

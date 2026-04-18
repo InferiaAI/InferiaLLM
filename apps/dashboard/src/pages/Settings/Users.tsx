@@ -220,7 +220,7 @@ export default function Users() {
             <button
               type="button"
               onClick={() => dispatch({ type: 'SET_SHOW_MODAL', payload: true })}
-              className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+              className="inline-flex items-center gap-2 rounded-md bg-ember-600 px-4 py-2 text-sm font-medium text-white hover:bg-ember-700"
             >
               <UserPlus className="w-4 h-4" />
               Invite Member
@@ -232,7 +232,7 @@ export default function Users() {
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium inline-flex items-center gap-2">
-            <UsersIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <UsersIcon className="w-4 h-4 text-ember-600 dark:text-ember-400" />
             Active Users
           </h2>
           <span className="text-xs text-muted-foreground">{totalUsers} total</span>

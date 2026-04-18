@@ -205,7 +205,7 @@ export default function AuditLogs() {
                                     {log.details && (
                                         <div>
                                             <div className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-tight">Event Details</div>
-                                            <pre className="p-3 bg-slate-950 text-slate-300 rounded-md text-[11px] overflow-x-auto font-mono whitespace-pre-wrap break-all max-h-96 overflow-y-auto">
+                                            <pre className="p-3 bg-background text-cream/70 rounded-md text-[11px] overflow-x-auto font-mono whitespace-pre-wrap break-all max-h-96 overflow-y-auto">
                                                 {JSON.stringify(log.details, null, 2)}
                                             </pre>
                                         </div>

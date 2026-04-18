@@ -94,9 +94,9 @@ function getStatToneConfig(tone: StatTone) {
   switch (tone) {
     case "positive":
       return {
-        iconWrap: "bg-emerald-500/12",
-        iconColor: "text-emerald-600 dark:text-emerald-400",
-        statusColor: "text-emerald-700 dark:text-emerald-400",
+        iconWrap: "bg-ember-500/12",
+        iconColor: "text-ember-600 dark:text-ember-400",
+        statusColor: "text-ember-700 dark:text-ember-400",
         statusIcon: CheckCircle2,
       };
     case "warning":
@@ -115,16 +115,16 @@ function getStatToneConfig(tone: StatTone) {
       };
     case "locked":
       return {
-        iconWrap: "bg-slate-500/12",
-        iconColor: "text-slate-600 dark:text-slate-300",
-        statusColor: "text-slate-600 dark:text-slate-300",
+        iconWrap: "bg-muted-foreground/10",
+        iconColor: "text-muted-foreground",
+        statusColor: "text-muted-foreground",
         statusIcon: Lock,
       };
     case "neutral":
     default:
       return {
-        iconWrap: "bg-slate-500/10",
-        iconColor: "text-slate-600 dark:text-slate-300",
+        iconWrap: "bg-muted-foreground/10",
+        iconColor: "text-muted-foreground",
         statusColor: "text-muted-foreground",
         statusIcon: Circle,
       };
@@ -157,8 +157,8 @@ function QuickAction({
   description,
   href,
   icon: Icon,
-  colorClass = "text-emerald-600 dark:text-emerald-400",
-  bgClass = "bg-emerald-500/10",
+  colorClass = "text-ember-600 dark:text-ember-400",
+  bgClass = "bg-ember-500/10",
 }: QuickActionProps) {
   return (
     <Link
@@ -409,8 +409,8 @@ export default function Overview() {
                 description="Launch an inference or embedding workload."
                 href="/dashboard/deployments/new"
                 icon={Rocket}
-                colorClass="text-emerald-600 dark:text-emerald-400"
-                bgClass="bg-emerald-500/10"
+                colorClass="text-ember-600 dark:text-ember-400"
+                bgClass="bg-ember-500/10"
               />
               <QuickAction
                 title="Add Compute Pool"
@@ -486,7 +486,7 @@ export default function Overview() {
                       to={`/dashboard/deployments/${job.deployment_id}`}
                       className={cn(
                         "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                        tone === "positive" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                        tone === "positive" && "bg-ember-500/10 text-ember-700 dark:text-ember-400",
                         tone === "warning" && "bg-amber-500/10 text-amber-700 dark:text-amber-400",
                         tone === "danger" && "bg-red-500/10 text-red-700 dark:text-red-400",
                         tone === "neutral" && "bg-muted text-muted-foreground",
@@ -539,7 +539,7 @@ export default function Overview() {
                     className={cn(
                       "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold",
                       isPoolHealthy(pool)
-                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                        ? "bg-ember-500/10 text-ember-700 dark:text-ember-400"
                         : ["terminated", "terminating"].includes((pool.lifecycle_state || "").toLowerCase())
                           ? "bg-red-500/10 text-red-700 dark:text-red-400"
                           : "bg-muted text-muted-foreground"
@@ -612,7 +612,7 @@ export default function Overview() {
                           className={cn(
                             "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold",
                             isSuccess
-                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              ? "bg-ember-500/10 text-ember-700 dark:text-ember-400"
                               : "bg-red-500/10 text-red-700 dark:text-red-400"
                           )}
                         >

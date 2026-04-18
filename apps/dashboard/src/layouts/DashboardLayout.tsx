@@ -92,8 +92,8 @@ function SidebarItem({
         cn(
           "group relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
           isActive
-            ? "bg-emerald-500/12 text-emerald-700 dark:bg-primary/15 dark:text-primary"
-            : "text-slate-600 hover:bg-slate-900/[0.03] hover:text-slate-900 dark:text-muted-foreground dark:hover:bg-white/5 dark:hover:text-foreground",
+            ? "bg-ember-500/12 text-ember-700 dark:bg-primary/15 dark:text-primary"
+            : "text-fg-secondary hover:bg-foreground/[0.04] hover:text-foreground dark:text-muted-foreground dark:hover:bg-white/5 dark:hover:text-foreground",
           isCollapsed && "justify-center px-2.5"
         )
       }
@@ -102,7 +102,7 @@ function SidebarItem({
         <>
           <span
             className={cn(
-              "absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-md bg-emerald-600 transition-opacity dark:bg-primary",
+              "absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-md bg-ember-600 transition-opacity dark:bg-primary",
               isActive ? "opacity-100" : "opacity-0"
             )}
             aria-hidden="true"
@@ -111,8 +111,8 @@ function SidebarItem({
             className={cn(
               "h-4 w-4 shrink-0 transition-colors",
               isActive
-                ? "text-emerald-700 dark:text-primary"
-                : "text-slate-500 group-hover:text-slate-900 dark:text-muted-foreground dark:group-hover:text-foreground"
+                ? "text-ember-700 dark:text-primary"
+                : "text-fg-muted group-hover:text-foreground dark:text-muted-foreground dark:group-hover:text-foreground"
             )}
           />
           <span className={cn("truncate", isCollapsed && "sr-only")}>{item.label}</span>

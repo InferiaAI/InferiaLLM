@@ -68,14 +68,14 @@ export default function Instances() {
   );
 
   return (
-    <div className="space-y-4 font-sans text-slate-900 dark:text-zinc-100">
+    <div className="space-y-4 font-sans text-foreground dark:text-cream">
       {/* Header */}
       <div className="flex flex-col gap-4">
         <h1 className="text-2xl font-bold tracking-tight">Pools</h1>
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <button
-              className="h-9 px-3 flex items-center gap-2 border rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors text-sm font-medium text-slate-700 dark:text-zinc-200 shadow-sm"
+              className="h-9 px-3 flex items-center gap-2 border rounded-md bg-card dark:border-border hover:bg-muted dark:hover:bg-card transition-colors text-sm font-medium text-fg-secondary dark:text-cream/85 shadow-sm"
               onClick={handleRefresh}
             >
               <RefreshCw
@@ -84,11 +84,11 @@ export default function Instances() {
               Refresh
             </button>
             <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <input
                 name="poolSearch"
                 placeholder="Search pools…"
-                className="h-9 w-64 rounded-md border dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-emerald-500 shadow-sm placeholder:text-slate-400 dark:text-zinc-200"
+                className="h-9 w-64 rounded-md border dark:border-border bg-card pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-ember-500 shadow-sm placeholder:text-muted-foreground dark:text-cream/85"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 autoComplete="off"
@@ -100,7 +100,7 @@ export default function Instances() {
             <div className="flex gap-2">
               <Link
                 to="/dashboard/compute/pools/new"
-                className="h-9 px-4 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-2"
+                className="h-9 px-4 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 transition-colors shadow-sm inline-flex items-center gap-2"
               >
                 <Play className="w-4 h-4" />
                 New
@@ -122,14 +122,14 @@ export default function Instances() {
                 <th className="px-4 py-3 font-medium text-right">ID</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
+            <tbody className="divide-y divide-border">
               {isLoading ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-slate-500 dark:text-zinc-500">Loading pools...</td>
+                  <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">Loading pools...</td>
                 </tr>
               ) : filteredInstances.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-slate-500 dark:text-zinc-500">No compute pools found. Create one to get started.</td>
+                  <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">No compute pools found. Create one to get started.</td>
                 </tr>
               ) : (
                 filteredInstances.map((instance) => (
@@ -138,7 +138,7 @@ export default function Instances() {
                     className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors"
                   >
 
-                    <td className="px-6 py-4 font-medium text-foreground hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
+                    <td className="px-6 py-4 font-medium text-foreground hover:text-ember-500 dark:hover:text-ember-400 transition-colors">
                       <Link
                         to={`/dashboard/compute/pools/${instance.pool_id}`}
                       >
@@ -160,20 +160,20 @@ export default function Instances() {
                           Terminating
                         </span>
                       ) : instance.lifecycle_state === "terminated" ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-slate-500/20 text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-500/10 shadow-sm">
-                          <div className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-muted-foreground/20 text-xs font-medium text-muted-foreground bg-muted-foreground/10 shadow-sm">
+                          <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
                           Terminated
                         </span>
                       ) : (
                         <span className={cn(
                           "inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-background border text-xs font-medium shadow-sm",
                           instance.is_active
-                            ? "border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
-                            : "border-slate-500/20 text-slate-600 dark:text-slate-400 bg-slate-500/10"
+                            ? "border-ember-500/20 text-ember-600 dark:text-ember-400 bg-ember-500/10"
+                            : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10"
                         )}>
                           <div className={cn(
                             "h-1.5 w-1.5 rounded-full",
-                            instance.is_active ? "bg-emerald-500" : "bg-slate-500"
+                            instance.is_active ? "bg-ember-500" : "bg-muted-foreground"
                           )} />
                           {instance.is_active ? "Active" : "Inactive"}
                         </span>

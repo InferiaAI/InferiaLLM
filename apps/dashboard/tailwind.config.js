@@ -22,6 +22,29 @@ export default {
                 ring: "hsl(var(--ring))",
                 background: "hsl(var(--background))",
                 foreground: "hsl(var(--foreground))",
+                // Editorial palette (matches InferiaAI/new-website)
+                cream: {
+                    DEFAULT: "#FAF7F2",
+                    deep: "#F2EDE4",
+                },
+                ember: {
+                    50:  "#FDF5F0",
+                    100: "#F4E8E0",
+                    200: "#ECC9B2",
+                    300: "#E3AA85",
+                    400: "#D98057",
+                    500: "#C94D2A",
+                    600: "#B84525",
+                    700: "#A33D20",
+                    800: "#82321A",
+                    900: "#5F2616",
+                    950: "#3A1710",
+                },
+                fg: {
+                    DEFAULT: "#0C0C0C",
+                    secondary: "#3D3D3D",
+                    muted: "#8A8A8A",
+                },
                 primary: {
                     DEFAULT: "hsl(var(--primary))",
                     foreground: "hsl(var(--primary-foreground))",
@@ -58,6 +81,7 @@ export default {
             },
             fontFamily: {
                 sans: ["Inter", "sans-serif"],
+                serif: ["'DM Serif Display'", "Georgia", "serif"],
                 mono: ["JetBrains Mono", "monospace"],
             },
         },

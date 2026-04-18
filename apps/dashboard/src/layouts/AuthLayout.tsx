@@ -17,7 +17,7 @@ export default function AuthLayout() {
 
                         <button
                             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-                            className="relative rounded-xl border border-border/70 bg-background/60 p-2 text-slate-500 transition-colors hover:bg-accent hover:text-foreground dark:text-zinc-400"
+                            className="relative rounded-xl border border-border/70 bg-background/60 p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground dark:text-muted-foreground"
                             aria-label="Toggle theme"
                         >
                             <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />

@@ -130,7 +130,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                         <div className={cn(
                             "flex items-center gap-2 font-medium",
                             (state === "READY" || state === "RUNNING") ? "text-green-600 dark:text-green-500" :
-                                state === "STOPPED" ? "text-slate-500" :
+                                state === "STOPPED" ? "text-muted-foreground" :
                                     state === "FAILED" ? "text-red-600" :
                                         state === "RETRYING" ? "text-amber-600 dark:text-amber-500" :
                                             "text-yellow-600"
@@ -248,7 +248,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                 <div className="flex flex-col gap-1">
                                     <span className="text-muted-foreground text-xs uppercase">TensorBoard URL</span>
                                     {deployment.endpoint_url ? (
-                                        <a href={deployment.endpoint_url} target="_blank" rel="noopener noreferrer" className="text-emerald-600 hover:underline break-all">
+                                        <a href={deployment.endpoint_url} target="_blank" rel="noopener noreferrer" className="text-ember-600 hover:underline break-all">
                                             {deployment.endpoint_url}
                                         </a>
                                     ) : (
@@ -263,7 +263,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                         href={deployment.endpoint_url}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="ml-4 px-4 py-2 bg-emerald-600 text-white rounded-md text-xs font-medium hover:bg-emerald-700 transition-colors shrink-0"
+                                        className="ml-4 px-4 py-2 bg-ember-600 text-white rounded-md text-xs font-medium hover:bg-ember-700 transition-colors shrink-0"
                                     >
                                         Open Board
                                     </a>
@@ -305,7 +305,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                 <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => setShowRawEndpoint(!showRawEndpoint)}
-                                        className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                        className="p-2 hover:bg-accent rounded-md transition-colors text-muted-foreground hover:text-foreground dark:hover:text-cream shrink-0"
                                         title={showRawEndpoint ? "Hide Endpoint" : "Show Endpoint"}
                                         disabled={!deployment.endpoint_url}
                                     >
@@ -318,7 +318,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                                 toast.success("Raw endpoint copied to clipboard")
                                             }
                                         }}
-                                        className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                        className="p-2 hover:bg-accent rounded-md transition-colors text-muted-foreground hover:text-foreground dark:hover:text-cream shrink-0"
                                         title="Copy Endpoint"
                                         disabled={!deployment.endpoint_url}
                                     >
@@ -345,7 +345,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                         navigator.clipboard.writeText(publicEmbeddingEndpoint)
                                         toast.success("Endpoint copied to clipboard")
                                     }}
-                                    className="ml-4 p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                    className="ml-4 p-2 hover:bg-accent rounded-md transition-colors text-muted-foreground hover:text-foreground dark:hover:text-cream shrink-0"
                                     title="Copy Endpoint"
                                 >
                                     <Copy className="w-4 h-4" />
@@ -393,7 +393,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                 <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => setShowRawEndpoint(!showRawEndpoint)}
-                                        className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                        className="p-2 hover:bg-accent rounded-md transition-colors text-muted-foreground hover:text-foreground dark:hover:text-cream shrink-0"
                                         title={showRawEndpoint ? "Hide Endpoint" : "Show Endpoint"}
                                         disabled={!deployment.endpoint_url}
                                     >
@@ -406,7 +406,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                                 toast.success("Raw endpoint copied to clipboard")
                                             }
                                         }}
-                                        className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                        className="p-2 hover:bg-accent rounded-md transition-colors text-muted-foreground hover:text-foreground dark:hover:text-cream shrink-0"
                                         title="Copy Endpoint"
                                         disabled={!deployment.endpoint_url}
                                     >
@@ -433,7 +433,7 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                         navigator.clipboard.writeText(publicInferenceEndpoint)
                                         toast.success("Endpoint copied to clipboard")
                                     }}
-                                    className="ml-4 p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 shrink-0"
+                                    className="ml-4 p-2 hover:bg-accent rounded-md transition-colors text-muted-foreground hover:text-foreground dark:hover:text-cream shrink-0"
                                     title="Copy Endpoint"
                                 >
                                     <Copy className="w-4 h-4" />

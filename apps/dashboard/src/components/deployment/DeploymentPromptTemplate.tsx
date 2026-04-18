@@ -113,7 +113,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                 checked={config.enabled}
                                 onChange={(e) => updateConfig({ ...config, enabled: e.target.checked })}
                             />
-                            <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-background after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                            <div className="w-11 h-6 bg-muted peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-background after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                         </label>
                     </div>
 
@@ -122,7 +122,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                             <div className="grid gap-2">
                                 <label className="text-sm font-medium">Base Template</label>
                                 <select
-                                    className="flex h-10 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="flex h-10 w-full rounded-md border border-input bg-card text-foreground px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                     value={config.base_template_id || ""}
                                     onChange={(e) => {
                                         const newConfig = { ...config }
@@ -164,7 +164,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                 <div className="col-span-1 text-center text-muted-foreground">←</div>
                                                 <div className="col-span-3">
                                                     <select
-                                                        className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                        className="flex h-9 w-full rounded-md border border-input bg-card text-foreground px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                         value={varConfig.source}
                                                         onChange={(e) => {
                                                             const newConfig = { ...config }
@@ -180,7 +180,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                 <div className="col-span-5">
                                                     {varConfig.source === "rag" ? (
                                                         <select
-                                                            className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                            className="flex h-9 w-full rounded-md border border-input bg-card text-foreground px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                             value={varConfig.collection_id || ""}
                                                             onChange={(e) => {
                                                                 const newConfig = { ...config }
@@ -193,7 +193,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                         </select>
                                                     ) : varConfig.source === "static" ? (
                                                         <input
-                                                            className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                            className="flex h-9 w-full rounded-md border border-input bg-card text-foreground px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                             placeholder="Static Value"
                                                             value={varConfig.value || ""}
                                                             onChange={(e) => {
@@ -204,7 +204,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                                         />
                                                     ) : (
                                                         <input
-                                                            className="flex h-9 w-full rounded-md border border-input bg-white dark:bg-zinc-900 text-slate-900 dark:text-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                            className="flex h-9 w-full rounded-md border border-input bg-card text-foreground px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                             placeholder="JSON Key (default: same as var)"
                                                             value={varConfig.key || varName}
                                                             onChange={(e) => {
@@ -232,7 +232,7 @@ export default function DeploymentPromptTemplate({ deploymentId }: DeploymentPro
                                     </summary>
                                     <div className="text-neutral-600 group-open:animate-fadeIn mt-3 text-sm">
                                         <textarea
-                                            className="min-h-[200px] w-full rounded-md border border-input bg-zinc-950 text-zinc-50 font-mono px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="min-h-[200px] w-full rounded-md border border-input bg-background text-foreground font-mono px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                             placeholder="{{ system_prompt }} ... {{ user_input }}"
                                             value={config.content || ""}
                                             onChange={(e) => updateConfig({ ...config, content: e.target.value })}

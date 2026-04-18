@@ -146,7 +146,7 @@ export default function DeploymentGuardrails({ deploymentId }: DeploymentGuardra
                         <Cpu className="w-4 h-4" /> Guardrail Engine
                     </label>
                     <select
-                        className="w-full p-2 border rounded-md bg-white dark:bg-zinc-900 text-slate-900 dark:text-white"
+                        className="w-full p-2 border rounded-md bg-card text-foreground"
                         value={config.guardrail_engine || "llm-guard"}
                         onChange={(e) => updateConfig({ ...config, guardrail_engine: e.target.value })}
                     >
@@ -178,7 +178,7 @@ export default function DeploymentGuardrails({ deploymentId }: DeploymentGuardra
                     )}
 
                     {config.guardrail_engine === "llama-guard" && isEngineConfigured("llama-guard") && (
-                        <p className="text-xs text-muted-foreground bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 p-2 rounded">
+                        <p className="text-xs text-muted-foreground bg-ember-50 dark:bg-ember-950/20 text-ember-600 dark:text-ember-400 p-2 rounded">
                             Uses meta-llama/llama-guard-4-12b via Groq. Optimized for chat safety (Violence, Hate, Sexual Content, etc.).
                         </p>
                     )}

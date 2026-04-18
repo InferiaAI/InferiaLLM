@@ -204,7 +204,7 @@ export default function Sandbox() {
                     const dep = deployments.find((d) => d.id === e.target.value);
                     if (dep) handleDeploymentChange(dep);
                   }}
-                  className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
+                  className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:ring-1 focus:ring-ember-500 outline-none"
                 >
                   {deployments.map((dep) => (
                     <option key={dep.id} value={dep.id}>
@@ -340,10 +340,10 @@ function ChatParamsPanel() {
             onClick={() => updateParam("stream", !params.stream)}
             className={cn(
               "w-10 h-5 rounded-full transition-colors relative",
-              params.stream ? "bg-emerald-500" : "bg-muted"
+              params.stream ? "bg-ember-500" : "bg-muted"
             )}
           >
-            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform", params.stream ? "left-5" : "left-0.5")} />
+            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-card transition-transform", params.stream ? "left-5" : "left-0.5")} />
           </button>
         </div>
       </div>
@@ -532,7 +532,7 @@ function InferencePanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("chat")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "chat" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "chat" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <MessageSquare className="w-4 h-4 inline-block mr-2" />
@@ -542,7 +542,7 @@ function InferencePanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("completions")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "completions" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "completions" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <Bot className="w-4 h-4 inline-block mr-2" />
@@ -577,7 +577,7 @@ function ImagePanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("generate")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "generate" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "generate" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <Sparkles className="w-4 h-4 inline-block mr-2" />
@@ -587,7 +587,7 @@ function ImagePanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("edit")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "edit" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "edit" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <Wand2 className="w-4 h-4 inline-block mr-2" />
@@ -597,7 +597,7 @@ function ImagePanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("variations")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "variations" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "variations" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <Layers className="w-4 h-4 inline-block mr-2" />
@@ -625,7 +625,7 @@ function VideoPanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("generate")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "generate" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "generate" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <Sparkles className="w-4 h-4 inline-block mr-2" />
@@ -635,7 +635,7 @@ function VideoPanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("edit")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "edit" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "edit" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <Wand2 className="w-4 h-4 inline-block mr-2" />
@@ -645,7 +645,7 @@ function VideoPanel({ deployment }: { deployment: Deployment }) {
             onClick={() => setActiveTab("extend")}
             className={cn(
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              activeTab === "extend" ? "border-emerald-500 text-emerald-600" : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === "extend" ? "border-ember-500 text-ember-600" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <RefreshCw className="w-4 h-4 inline-block mr-2" />
@@ -781,13 +781,13 @@ function ChatInterface({ deployment }: { deployment: Deployment }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type your message..."
-            className="flex-1 px-4 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-emerald-500 outline-none"
+            className="flex-1 px-4 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-ember-500 outline-none"
             disabled={isLoading}
           />
           <button
             type="submit"
             disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            className="px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50 transition-colors"
           >
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
@@ -843,7 +843,7 @@ function CompletionsInterface({ deployment }: { deployment: Deployment }) {
         <button
           onClick={handleSubmit}
           disabled={!prompt.trim() || isLoading}
-          className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+          className="w-full px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50 transition-colors"
         >
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate"}
         </button>
@@ -866,14 +866,14 @@ function ChatMessageItem({ message }: { message: ChatMessage }) {
   };
   return (
     <div className={cn("flex gap-3", message.role === "user" ? "flex-row-reverse" : "flex-row")}>
-      <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0", message.role === "user" ? "bg-emerald-100 dark:bg-emerald-900/30" : "bg-slate-100 dark:bg-slate-800")}>
-        {message.role === "user" ? <User className="w-4 h-4 text-emerald-600" /> : <Bot className="w-4 h-4 text-slate-600" />}
+      <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0", message.role === "user" ? "bg-ember-100 dark:bg-ember-900/30" : "bg-muted dark:bg-card")}>
+        {message.role === "user" ? <User className="w-4 h-4 text-ember-600" /> : <Bot className="w-4 h-4 text-muted-foreground" />}
       </div>
-      <div className={cn("flex-1 max-w-[85%] rounded-lg p-3", message.role === "user" ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-muted border border-border")}>
+      <div className={cn("flex-1 max-w-[85%] rounded-lg p-3", message.role === "user" ? "bg-ember-500/10 border border-ember-500/20" : "bg-muted border border-border")}>
         <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         <div className="flex justify-end mt-2">
           <button onClick={handleCopy} className="p-1 hover:bg-accent rounded">
-            {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+            {copied ? <Check className="w-3 h-3 text-ember-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
           </button>
         </div>
       </div>
@@ -923,7 +923,7 @@ function EmbeddingInterface({ deployment }: { deployment: Deployment }) {
       <div className="p-4 border-b space-y-3">
         <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Enter text to embed..." className="w-full h-24 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
         <div className="flex justify-between items-center">
-          <button onClick={handleGenerate} disabled={!input.trim() || isLoading} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+          <button onClick={handleGenerate} disabled={!input.trim() || isLoading} className="px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50">
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Compute"} Embeddings
           </button>
           {embeddings && <span className="text-xs text-muted-foreground">Dimensions: {embeddings.length}</span>}
@@ -992,7 +992,7 @@ function ImageGenerationInterface({ deployment }: { deployment: Deployment }) {
       <div className="p-4 border-b space-y-3">
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the image you want to generate..." className="w-full h-20 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
         <textarea value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} placeholder="Negative prompt (what to avoid)..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
-        <button onClick={handleGenerate} disabled={!prompt.trim() || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2">
+        <button onClick={handleGenerate} disabled={!prompt.trim() || isLoading} className="w-full px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50 flex items-center justify-center gap-2">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Generate
         </button>
       </div>
@@ -1049,7 +1049,7 @@ function ImageEditInterface({ deployment }: { deployment: Deployment }) {
           <label htmlFor="img-edit" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{image ? "Image loaded" : "Upload image"}</p></label>
         </div>
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the edit..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
-        <button onClick={handleGenerate} disabled={!image || !prompt.trim() || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+        <button onClick={handleGenerate} disabled={!image || !prompt.trim() || isLoading} className="w-full px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Edit Image"}
         </button>
       </div>
@@ -1099,7 +1099,7 @@ function ImageVariationInterface({ deployment }: { deployment: Deployment }) {
           <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = () => setImage((r.result as string).split(",")[1]); r.readAsDataURL(f); } }} className="hidden" id="img-var" />
           <label htmlFor="img-var" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{image ? "Image loaded" : "Upload image"}</p></label>
         </div>
-        <button onClick={handleGenerate} disabled={!image || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+        <button onClick={handleGenerate} disabled={!image || isLoading} className="w-full px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create Variation"}
         </button>
       </div>
@@ -1196,7 +1196,7 @@ function VideoGenerationInterface({ deployment }: { deployment: Deployment }) {
       <div className="p-4 border-b space-y-3">
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the video you want to generate..." className="w-full h-20 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
         <input value={imageRef} onChange={(e) => setImageRef(e.target.value)} placeholder="Image URL for image-to-video (optional)..." className="w-full px-3 py-2 rounded-lg border bg-background text-sm" disabled={isLoading} />
-        <button onClick={handleGenerate} disabled={!prompt.trim() || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+        <button onClick={handleGenerate} disabled={!prompt.trim() || isLoading} className="w-full px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate Video"}
         </button>
         {progress && <p className="text-xs text-center text-muted-foreground">{progress}</p>}
@@ -1293,7 +1293,7 @@ function VideoEditInterface({ deployment }: { deployment: Deployment }) {
           <label htmlFor="vid-edit" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{video ? "Video loaded" : "Upload video"}</p></label>
         </div>
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the edit (optional)..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
-        <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+        <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Edit Video"}
         </button>
         {progress && <p className="text-xs text-center text-muted-foreground">{progress}</p>}
@@ -1390,7 +1390,7 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
           <label htmlFor="vid-ext" className="cursor-pointer"><Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" /><p className="text-xs text-muted-foreground">{video ? "Video loaded" : "Upload video to extend"}</p></label>
         </div>
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe how to extend (optional)..." className="w-full h-16 px-3 py-2 rounded-lg border bg-background text-sm resize-none" disabled={isLoading} />
-        <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+        <button onClick={handleGenerate} disabled={!video || isLoading} className="w-full px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Extend Video"}
         </button>
         {progress && <p className="text-xs text-center text-muted-foreground">{progress}</p>}
