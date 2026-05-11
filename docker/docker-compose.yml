@@ -63,8 +63,10 @@ services:
       - LOGSTASH_HOST=${LOGSTASH_HOST:-}
       - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
+      - INFERIA_CONFIG=/etc/inferia/inferia.yaml
     volumes:
       - appdata:/data
+      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
     ports:
       - "8000:8000"
       - "8001:8001"
