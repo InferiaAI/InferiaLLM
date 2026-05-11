@@ -1,8 +1,6 @@
 """Unified configuration loader for InferiaLLM.
 
-Phase 1 module — see docs/superpowers/specs/2026-05-12-unified-config-design.md
-for the design and `package/src/inferia/common/tests/unified_config/` for
-behavior contracts.
+See docs/superpowers/specs/2026-05-12-unified-config-design.md.
 """
 
 from .errors import (
@@ -12,8 +10,10 @@ from .errors import (
     ConfigInterpolationError,
     ConfigValidationError,
 )
+from .schema import InferiaConfig
 
 __all__ = [
+    "InferiaConfig",
     "UnifiedConfigError",
     "ConfigNotFoundError",
     "ConfigParseError",
