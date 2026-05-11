@@ -3,10 +3,11 @@ Configuration management for the Filtration Layer.
 Uses Pydantic Settings for environment-based configuration.
 """
 
-from typing import Literal, Optional, Any, Dict, List
+from typing import ClassVar, Literal, Optional, Any, Dict, List
 import logging
 from pydantic import Field, BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
+from inferia.common.unified_config import UnifiedBaseSettings
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,15 @@ class ProvidersConfig(BaseModel):
 # --- Main Settings ---
 
 
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+class Settings(UnifiedBaseSettings):
+    """Application settings loaded from yaml, env, or defaults.
+
+    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
+    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    """
+
+    _yaml_path: ClassVar[str] = "services.api_gateway"
+
 
     # Application Settings
     app_name: str = "InferiaLLM API Gateway"
