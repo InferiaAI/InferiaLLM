@@ -11,8 +11,10 @@ from .errors import (
     ConfigValidationError,
 )
 from .schema import InferiaConfig
+from .loader import load_unified_config
 
 __all__ = [
+    "load_unified_config",
     "InferiaConfig",
     "UnifiedConfigError",
     "ConfigNotFoundError",

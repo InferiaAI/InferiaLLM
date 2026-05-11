@@ -102,3 +102,66 @@ def test_load_non_mapping_top_level_raises(fixtures_dir):
     """A top-level YAML list or scalar is not a valid config — reject early."""
     with pytest.raises(ConfigParseError, match="must be a mapping"):
         load_yaml(fixtures_dir / "list_top_level.yaml")
+
+
+# ─── validate_schema ──────────────────────────────────────────────────────
+from inferia.common.unified_config.loader import (
+    validate_schema,
+    load_unified_config,
+    _clear_cache,
+)
+from inferia.common.unified_config.errors import (
+    ConfigValidationError,
+    ConfigInterpolationError,
+)
+from inferia.common.unified_config.schema import InferiaConfig
+
+
+def test_validate_schema_returns_inferia_config():
+    cfg = validate_schema({"version": 1, "environment": "development"})
+    assert isinstance(cfg, InferiaConfig)
+    assert cfg.environment == "development"
+
+
+def test_validate_schema_wraps_validation_error():
+    with pytest.raises(ConfigValidationError, match="version"):
+        validate_schema({})
+
+
+# ─── load_unified_config orchestrator ─────────────────────────────────────
+def test_load_unified_config_returns_none_when_no_yaml(tmp_path, monkeypatch, clean_env):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "inferia.common.unified_config.loader._SYSTEM_PATH",
+        tmp_path / "missing.yaml",
+    )
+    _clear_cache()
+    assert load_unified_config() is None
+
+
+def test_load_unified_config_full_path(fixtures_dir, clean_env):
+    _clear_cache()
+    cfg = load_unified_config(path=str(fixtures_dir / "valid.yaml"))
+    assert isinstance(cfg, InferiaConfig)
+    assert cfg.services.api_gateway.enabled is True
+
+
+def test_load_unified_config_interpolation_failure(fixtures_dir, clean_env, monkeypatch):
+    monkeypatch.delenv("SOME_UNSET_REQUIRED_SECRET", raising=False)
+    _clear_cache()
+    with pytest.raises(ConfigInterpolationError):
+        load_unified_config(path=str(fixtures_dir / "unresolved_var.yaml"))
+
+
+def test_load_unified_config_caches_per_path(fixtures_dir, clean_env):
+    _clear_cache()
+    a = load_unified_config(path=str(fixtures_dir / "valid.yaml"))
+    b = load_unified_config(path=str(fixtures_dir / "valid.yaml"))
+    assert a is b
+
+
+def test_load_unified_config_cache_keyed_by_path(fixtures_dir, clean_env):
+    _clear_cache()
+    a = load_unified_config(path=str(fixtures_dir / "valid.yaml"))
+    b = load_unified_config(path=str(fixtures_dir / "minimal.yaml"))
+    assert a is not b

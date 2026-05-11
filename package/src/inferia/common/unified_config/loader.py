@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError as _PydanticValidationError
 
 from .errors import (
     ConfigInterpolationError,
     ConfigNotFoundError,
     ConfigParseError,
+    ConfigValidationError,
 )
+from .schema import InferiaConfig
 
 
 # Matches either:
@@ -204,3 +207,45 @@ def load_yaml(path: Path | str) -> dict:
             f"{p}: top-level YAML must be a mapping, got {type(data).__name__}"
         )
     return data
+
+
+def validate_schema(data: dict) -> InferiaConfig:
+    """Validate an interpolated dict against the InferiaConfig schema.
+
+    Pydantic ValidationError is re-raised as ConfigValidationError so callers
+    can catch the unified-config family without depending on Pydantic.
+    """
+    try:
+        return InferiaConfig.model_validate(data)
+    except _PydanticValidationError as e:
+        raise ConfigValidationError(str(e)) from e
+
+
+# ─── Cache: per-resolved-path (not per-call-arg) ──────────────────────────
+_cache: dict[str, InferiaConfig] = {}
+
+
+def _clear_cache() -> None:
+    """Clear the cache. For tests only."""
+    _cache.clear()
+
+
+def load_unified_config(path: str | None = None) -> InferiaConfig | None:
+    """Find → load → interpolate → validate the unified config.
+
+    Returns None when no yaml was discovered (env+defaults only mode).
+    Subsequent calls with the same resolved path return the cached object.
+    """
+    found = find_config_path(explicit=path)
+    if found is None:
+        return None
+
+    key = str(found.resolve())
+    if key in _cache:
+        return _cache[key]
+
+    raw = load_yaml(found)
+    interpolated = interpolate_env(raw)
+    cfg = validate_schema(interpolated)
+    _cache[key] = cfg
+    return cfg
