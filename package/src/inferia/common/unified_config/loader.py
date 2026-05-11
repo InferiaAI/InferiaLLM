@@ -6,9 +6,16 @@ pydantic-settings; the source/base classes do that.
 import os
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
-from .errors import ConfigInterpolationError
+import yaml
+
+from .errors import (
+    ConfigInterpolationError,
+    ConfigNotFoundError,
+    ConfigParseError,
+)
 
 
 # Matches either:
@@ -130,3 +137,70 @@ def interpolate_env(obj: Any) -> Any:
     if isinstance(obj, list):
         return [interpolate_env(v) for v in obj]
     return obj
+
+
+# System-wide fallback path. Overridable in tests via monkeypatch.
+_SYSTEM_PATH = Path("/etc/inferia/inferia.yaml")
+
+
+def find_config_path(explicit: str | None = None) -> Path | None:
+    """Discover the unified config file.
+
+    Resolution order (Section 7.1 of the spec):
+      1. `explicit` argument (e.g. --config flag value)
+      2. $INFERIA_CONFIG env var
+      3. ./inferia.yaml in current working dir
+      4. /etc/inferia/inferia.yaml
+      5. None  (no yaml; caller should fall back to env+defaults)
+
+    Cases 1 and 2 are explicit — a missing file raises ConfigNotFoundError.
+    Cases 3 and 4 are implicit — a missing file moves on to the next.
+    """
+    if explicit is not None:
+        p = Path(explicit)
+        if not p.exists():
+            raise ConfigNotFoundError(f"config file not found: {p}")
+        return p
+
+    env_path = os.environ.get("INFERIA_CONFIG")
+    if env_path:
+        p = Path(env_path)
+        if not p.exists():
+            raise ConfigNotFoundError(
+                f"INFERIA_CONFIG points to non-existent path: {p}"
+            )
+        return p
+
+    cwd_path = Path.cwd() / "inferia.yaml"
+    if cwd_path.exists():
+        return cwd_path
+
+    if _SYSTEM_PATH.exists():
+        return _SYSTEM_PATH
+
+    return None
+
+
+def load_yaml(path: Path | str) -> dict:
+    """Load and parse a yaml file.
+
+    Empty file → {} (yaml.safe_load returns None for empty input; we coerce).
+    Non-mapping top-level (e.g. a YAML list or bare scalar) → ConfigParseError.
+    Bad syntax → ConfigParseError (wraps yaml.YAMLError with file context).
+    Missing file → ConfigNotFoundError.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise ConfigNotFoundError(f"config file not found: {p}")
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ConfigParseError(f"failed to parse {p}: {e}") from e
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigParseError(
+            f"{p}: top-level YAML must be a mapping, got {type(data).__name__}"
+        )
+    return data
