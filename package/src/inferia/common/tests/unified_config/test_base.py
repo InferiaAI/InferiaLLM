@@ -52,3 +52,42 @@ def test_subclass_without_yaml_path_behaves_like_basesettings(
     _clear_cache()
     s = _NoPath()
     assert s.port == 1234
+
+
+def test_api_gateway_settings_loads_yaml_under_docker_shape(
+    monkeypatch, clean_env, tmp_path
+):
+    """Regression for the Docker smoke: security.allowed_origins is list[str] in yaml
+    but api_gateway.Settings.allowed_origins is a comma-separated str. The
+    field_validator on api_gateway must coerce a list into a comma-joined string
+    instead of raising a Pydantic 'string_type' ValidationError.
+    """
+    yaml_path = tmp_path / "inferia.yaml"
+    yaml_path.write_text(
+        "version: 1\n"
+        "environment: development\n"
+        "log_level: INFO\n"
+        "security:\n"
+        "  allowed_origins:\n"
+        "    - http://yaml-only-origin-a.example.com\n"
+        "    - http://yaml-only-origin-b.example.com\n"
+        "services:\n"
+        "  api_gateway:\n"
+        "    enabled: true\n"
+        "    port: 8000\n"
+    )
+    # Strip any leaked env override so the yaml path actually feeds the field.
+    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    monkeypatch.setenv("INFERIA_CONFIG", str(yaml_path))
+    _clear_cache()
+
+    from inferia.services.api_gateway.config import Settings as ApiGatewaySettings
+
+    # _env_file=None disables the dotenv source so this test isolates the yaml
+    # path. In production both layers coexist with env > .env > yaml precedence.
+    s = ApiGatewaySettings(_env_file=None)
+    assert isinstance(s.allowed_origins, str)
+    assert "yaml-only-origin-a.example.com" in s.allowed_origins
+    assert "yaml-only-origin-b.example.com" in s.allowed_origins
+    # Comma-joined: exactly one separator between two entries.
+    assert s.allowed_origins.count(",") == 1

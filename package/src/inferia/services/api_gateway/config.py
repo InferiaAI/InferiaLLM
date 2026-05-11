@@ -5,7 +5,7 @@ Uses Pydantic Settings for environment-based configuration.
 
 from typing import ClassVar, Literal, Optional, Any, Dict, List
 import logging
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, field_validator
 from pydantic_settings import SettingsConfigDict
 from inferia.common.unified_config import UnifiedBaseSettings
 
@@ -165,6 +165,17 @@ class Settings(UnifiedBaseSettings):
         default=None, min_length=32, validation_alias="INTERNAL_API_KEY"
     )
     allowed_origins: str = "http://localhost:3001,http://localhost:8001,http://localhost:5173"  # Comma-separated list
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def _coerce_allowed_origins(cls, v: Any) -> Any:
+        # yaml provides this as a list (security.allowed_origins: list[str]); the
+        # legacy env-driven path provides a comma-separated string. setup_cors()
+        # consumes a string and splits on ',' — normalize lists here so both
+        # sources work transparently.
+        if isinstance(v, list):
+            return ",".join(str(item).strip() for item in v if str(item).strip())
+        return v
 
     # RBAC Settings
     jwt_secret_key: str = Field(
