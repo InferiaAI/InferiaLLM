@@ -3,9 +3,10 @@ Orchestration Service Configuration
 """
 
 import os
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
+from inferia.common.unified_config import UnifiedBaseSettings
 
 
 class ProviderSettings(BaseSettings):
@@ -55,8 +56,14 @@ class ProviderSettings(BaseSettings):
     )
 
 
-class Settings(BaseSettings):
-    """Application settings."""
+class Settings(UnifiedBaseSettings):
+    """Application settings.
+
+    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
+    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    """
+
+    _yaml_path: ClassVar[str] = "services.orchestration"
 
     # App info
     app_name: str = "Orchestration Service"
@@ -179,10 +186,6 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """Check if running in production environment."""
         return getattr(self, "environment", "development") == "production"
-
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
-    )
 
 
 settings = Settings()
