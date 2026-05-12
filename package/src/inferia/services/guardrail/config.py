@@ -3,15 +3,28 @@ Guardrail Service Configuration.
 """
 
 import logging
-from typing import List, Optional
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Any, ClassVar, List, Optional
+from pydantic import Field, field_validator
+from inferia.common.unified_config import UnifiedBaseSettings
 
 logger = logging.getLogger(__name__)
 
 
-class Settings(BaseSettings):
-    """Guardrail Service Settings."""
+class Settings(UnifiedBaseSettings):
+    """Guardrail Service Settings.
+
+    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
+    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    """
+
+    _yaml_path: ClassVar[str] = "services.guardrail"
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def _coerce_allowed_origins(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return ",".join(str(item).strip() for item in v if str(item).strip())
+        return v
 
     # Application Settings
     app_name: str = "InferiaLLM Guardrail Service"
@@ -86,13 +99,6 @@ class Settings(BaseSettings):
         if not self.banned_substrings:
             return []
         return [s.strip() for s in self.banned_substrings.split(",") if s.strip()]
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
 
 
 settings = Settings()
