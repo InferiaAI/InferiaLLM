@@ -19,6 +19,7 @@ KNOWN_COMMANDS = {
     "init",
     "start",
     "migrate",
+    "write-dashboard-config",
 }
 
 
@@ -451,6 +452,60 @@ def build_sidecar():
         print(f"[inferia:init] Error building sidecar: {e}")
 
 
+def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: str | None = None) -> None:
+    """Write window.__RUNTIME_CONFIG__ = {...}; to the installed dashboard's config.js.
+
+    Resolution order for each URL field:
+      1. services.api_gateway.dashboard.<field> from the unified yaml (if non-null).
+      2. DASHBOARD_<FIELD> environment variable.
+      3. Empty string (matches legacy entrypoint.sh behaviour).
+
+    The function is intentionally import-light and DB-free so it can be called
+    from entrypoint.sh before the database is available.
+    """
+    import json
+    import inferia
+
+    # Resolve the dashboard directory.
+    if dashboard_dir is None:
+        base = inferia.__path__[0]
+        dashboard_dir = os.path.join(base, "dashboard")
+
+    if not os.path.isdir(dashboard_dir):
+        # No bundled dashboard (e.g. headless / server-only installs). No-op.
+        return
+
+    # Load unified config — may return None if no yaml is found.
+    from inferia.common.unified_config.loader import load_unified_config
+
+    cfg = load_unified_config(path=config_path)
+    dash = cfg.services.api_gateway.dashboard if cfg is not None else None
+
+    def _get(yaml_val: str | None, env_key: str) -> str:
+        if yaml_val:
+            return yaml_val
+        return os.environ.get(env_key, "") or ""
+
+    config = {
+        "API_GATEWAY_URL": _get(dash.api_gateway_url if dash else None, "DASHBOARD_API_GATEWAY_URL"),
+        "INFERENCE_URL": _get(dash.inference_url if dash else None, "DASHBOARD_INFERENCE_URL"),
+        "WEB_SOCKET_URL": _get(dash.web_socket_url if dash else None, "DASHBOARD_WEB_SOCKET_URL"),
+        "SIDECAR_URL": _get(dash.sidecar_url if dash else None, "DASHBOARD_SIDECAR_URL"),
+    }
+
+    config_js_path = os.path.join(dashboard_dir, "config.js")
+    with open(config_js_path, "w", encoding="utf-8") as f:
+        f.write("window.__RUNTIME_CONFIG__ = " + json.dumps(config) + ";")
+
+    print(
+        f"[inferiallm write-dashboard-config] wrote {config_js_path} "
+        f"(api_gateway_url={config['API_GATEWAY_URL']!r}, "
+        f"inference_url={config['INFERENCE_URL']!r}, "
+        f"web_socket_url={config['WEB_SOCKET_URL']!r}, "
+        f"sidecar_url={config['SIDECAR_URL']!r})"
+    )
+
+
 def run_migrate():
     """Apply pending database migrations without full init."""
     import asyncio
@@ -644,6 +699,25 @@ def main(argv=None):
              "INFERIA_CONFIG, ./inferia.yaml, or /etc/inferia/inferia.yaml)",
     )
 
+    # --- write-dashboard-config ---
+    wdc_parser = sub.add_parser(
+        "write-dashboard-config",
+        help="Write dashboard runtime config.js from unified yaml (or env fallback)",
+    )
+    wdc_parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to unified YAML config file",
+    )
+    wdc_parser.add_argument(
+        "--dashboard-dir",
+        type=str,
+        default=None,
+        dest="dashboard_dir",
+        help="Override the installed dashboard directory (useful for tests)",
+    )
+
     args, unknown = parser.parse_known_args(argv)
 
     cmd = args.command
@@ -703,6 +777,16 @@ def main(argv=None):
 
         elif cmd == "migrate":
             run_migrate()
+
+        elif cmd == "write-dashboard-config":
+            config_path = getattr(args, "config", None)
+            dashboard_dir = getattr(args, "dashboard_dir", None)
+            if config_path is not None:
+                os.environ["INFERIA_CONFIG"] = config_path
+            run_write_dashboard_config(
+                config_path=config_path,
+                dashboard_dir=dashboard_dir,
+            )
 
         else:
             print(f"Unknown command: {cmd}")

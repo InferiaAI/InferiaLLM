@@ -150,6 +150,12 @@ class TestExtractRowsEmpty:
         result = _extract_rows({})
         assert result == []
 
+    def test_unknown_type_returns_empty(self):
+        """_extract_rows returns [] for any non-model, non-dict input."""
+        assert _extract_rows("not-a-dict") == []
+        assert _extract_rows(42) == []
+        assert _extract_rows([]) == []
+
 
 # ---------------------------------------------------------------------------
 # _extract_rows — cloud.aws
@@ -605,6 +611,132 @@ class TestSeedProvidersFromYamlUnit:
 
         report = await seed_providers_from_yaml("postgresql://x", key, cfg=_FakeCfg())
         assert report.skipped is True
+
+    @pytest.mark.asyncio
+    async def test_db_insert_update_delete_mocked(self, monkeypatch):
+        """Cover the asyncpg transaction block with a mock connection."""
+        from cryptography.fernet import Fernet
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        key = Fernet.generate_key().decode()
+
+        # Build a fake cfg with one credential row.
+        class _FakeProviders:
+            def model_dump(self):
+                return {"cloud": {"aws": {"access_key_id": "AKIA123"}}}
+
+        class _FakeCfg:
+            providers = _FakeProviders()
+
+        # Fake asyncpg connection with a context-manager transaction.
+        class _FakeTransaction:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        mock_conn = MagicMock()
+        mock_conn.transaction.return_value = _FakeTransaction()
+        mock_conn.fetch = AsyncMock(return_value=[])  # no existing rows
+        mock_conn.execute = AsyncMock(return_value="INSERT 0 1")
+        mock_conn.close = AsyncMock()
+
+        with patch(
+            "asyncpg.connect",
+            AsyncMock(return_value=mock_conn),
+        ):
+            report = await seed_providers_from_yaml(
+                "postgresql://test/db", key, cfg=_FakeCfg()
+            )
+
+        assert report.skipped is False
+        assert report.inserted == 1
+        assert report.updated == 0
+        assert report.deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_db_update_and_delete_mocked(self, monkeypatch):
+        """Cover updated-row and delete-row paths in the transaction block."""
+        from cryptography.fernet import Fernet
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        key = Fernet.generate_key().decode()
+
+        # Two desired rows: aws access_key_id (exists) + secret (new).
+        class _FakeProviders:
+            def model_dump(self):
+                return {
+                    "cloud": {
+                        "aws": {
+                            "access_key_id": "AKIA",
+                            "secret_access_key": "sekret",
+                        }
+                    }
+                }
+
+        class _FakeCfg:
+            providers = _FakeProviders()
+
+        class _FakeTransaction:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        # Simulate DB has "aws/default" AND an old "gcp/default" row that is no
+        # longer in yaml (should be deleted).
+        # NOTE: the seeder tracks uniqueness by (provider, name) — both desired
+        # rows share (aws, default), so both are counted as "updated".
+        existing_rows = [
+            {"provider": "aws", "name": "default"},
+            {"provider": "gcp", "name": "default"},  # will be deleted
+        ]
+        mock_conn = MagicMock()
+        mock_conn.transaction.return_value = _FakeTransaction()
+        mock_conn.fetch = AsyncMock(return_value=existing_rows)
+        mock_conn.execute = AsyncMock(return_value="INSERT 0 1")
+        mock_conn.close = AsyncMock()
+
+        with patch(
+            "asyncpg.connect",
+            AsyncMock(return_value=mock_conn),
+        ):
+            report = await seed_providers_from_yaml(
+                "postgresql://test/db", key, cfg=_FakeCfg()
+            )
+
+        assert report.skipped is False
+        # Both desired rows share (aws, default) which already existed → both updated.
+        assert report.updated == 2
+        assert report.inserted == 0
+        # gcp/default was deleted (not in yaml)
+        assert report.deleted == 1
+
+
+class TestLoadConfig:
+    """Coverage for _load_config() helper (lines 220-224)."""
+
+    def test_load_config_returns_none_without_yaml(self, monkeypatch, tmp_path):
+        """When no yaml file exists and INFERIA_CONFIG is unset, returns None."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.chdir(tmp_path)  # ensure no inferia.yaml in CWD
+        from inferia.common.unified_config.loader import _clear_cache
+        _clear_cache()
+        result = _load_config()
+        assert result is None
+
+    def test_load_config_returns_config_with_yaml(self, monkeypatch, tmp_path):
+        """When INFERIA_CONFIG points to a valid yaml, returns InferiaConfig."""
+        yaml_file = tmp_path / "inferia.yaml"
+        yaml_file.write_text("version: 1\n", encoding="utf-8")
+        monkeypatch.setenv("INFERIA_CONFIG", str(yaml_file))
+        from inferia.common.unified_config.loader import _clear_cache
+        _clear_cache()
+        result = _load_config()
+        assert result is not None
+        assert result.version == 1
 
 
 # ---------------------------------------------------------------------------
