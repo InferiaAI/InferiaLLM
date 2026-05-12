@@ -793,3 +793,122 @@ class TestSeedProvidersDB:
             assert val != "super-secret-groq", "Plaintext stored — encryption failed"
             decrypted = fernet.decrypt(val.encode()).decode()
             assert decrypted == "super-secret-groq"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_second_run_produces_no_changes(
+        self, db_fixture, _clean_provider_credentials
+    ):
+        """Running the seeder twice with identical yaml must yield updated counts
+        and zero inserts/deletes on the second pass."""
+        cfg = self._make_cfg(
+            {"guardrails": {"groq": {"api_key": "groq-key"}}}
+        )
+        r1 = await seed_providers_from_yaml(
+            db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
+        )
+        assert r1.inserted == 1
+        assert r1.updated == 0
+
+        r2 = await seed_providers_from_yaml(
+            db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
+        )
+        assert r2.inserted == 0
+        assert r2.updated == 1
+        assert r2.deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_nosana_api_keys_list_synced(
+        self, db_fixture, _clean_provider_credentials
+    ):
+        """Multiple nosana api_keys entries each become a separate DB row."""
+        import asyncpg
+
+        cfg = self._make_cfg(
+            {
+                "depin": {
+                    "nosana": {
+                        "api_keys": [
+                            {"name": "prod", "key": "pk"},
+                            {"name": "staging", "key": "sk"},
+                        ]
+                    }
+                }
+            }
+        )
+        report = await seed_providers_from_yaml(
+            db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
+        )
+        assert report.inserted == 2
+
+        conn = await asyncpg.connect(db_fixture.dsn)
+        try:
+            rows = await conn.fetch(
+                "SELECT name FROM provider_credentials WHERE provider='nosana'"
+            )
+        finally:
+            await conn.close()
+
+        names = {r["name"] for r in rows}
+        assert names == {"prod", "staging"}
+
+    @pytest.mark.asyncio
+    async def test_yaml_empty_providers_section_skips_delete(
+        self, db_fixture, _clean_provider_credentials
+    ):
+        """If yaml.providers has no extractable rows but yaml exists, seeder
+        still performs an upsert cycle (no deletes from nothing, no inserts)."""
+        import asyncpg
+        from cryptography.fernet import Fernet
+
+        # Pre-seed a row manually
+        fernet = Fernet(db_fixture.fernet_key.encode())
+        conn = await asyncpg.connect(db_fixture.dsn)
+        try:
+            await conn.execute(
+                """INSERT INTO provider_credentials
+                   (provider, name, credential_type, credential_value_encrypted)
+                   VALUES ('groq', 'default', 'api_key', $1)""",
+                fernet.encrypt(b"old-key").decode(),
+            )
+        finally:
+            await conn.close()
+
+        # Yaml with an empty providers tree
+        cfg = self._make_cfg({})
+        report = await seed_providers_from_yaml(
+            db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
+        )
+        # All existing rows should be deleted (yaml is authoritative, says nothing)
+        assert report.deleted == 1
+        assert report.inserted == 0
+
+    @pytest.mark.asyncio
+    async def test_is_active_false_preserved_in_db(
+        self, db_fixture, _clean_provider_credentials
+    ):
+        """is_active=False from yaml must land in the DB as false."""
+        import asyncpg
+
+        cfg = self._make_cfg(
+            {
+                "depin": {
+                    "nosana": {
+                        "api_keys": [
+                            {"name": "disabled", "key": "dk", "is_active": False}
+                        ]
+                    }
+                }
+            }
+        )
+        await seed_providers_from_yaml(db_fixture.dsn, db_fixture.fernet_key, cfg=cfg)
+
+        conn = await asyncpg.connect(db_fixture.dsn)
+        try:
+            row = await conn.fetchrow(
+                "SELECT is_active FROM provider_credentials "
+                "WHERE provider='nosana' AND name='disabled'"
+            )
+        finally:
+            await conn.close()
+
+        assert row["is_active"] is False
