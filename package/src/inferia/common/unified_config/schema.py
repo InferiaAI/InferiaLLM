@@ -123,6 +123,14 @@ class ServiceUrlsSection(BaseModel):
     inference: Optional[str] = None
 
 
+class DashboardSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_gateway_url: Optional[str] = None
+    inference_url: Optional[str] = None
+    web_socket_url: Optional[str] = None
+    sidecar_url: Optional[str] = None
+
+
 class ApiGatewayService(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
@@ -139,6 +147,7 @@ class ApiGatewayService(BaseModel):
     http_client: HttpClientSection = Field(default_factory=HttpClientSection)
     ssl: SslSection = Field(default_factory=SslSection)
     service_urls: ServiceUrlsSection = Field(default_factory=ServiceUrlsSection)
+    dashboard: DashboardSection = Field(default_factory=DashboardSection)
 
 
 # ─── inference ────────────────────────────────────────────────────────────
