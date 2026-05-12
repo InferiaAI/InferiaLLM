@@ -141,19 +141,158 @@ class ApiGatewayService(BaseModel):
     service_urls: ServiceUrlsSection = Field(default_factory=ServiceUrlsSection)
 
 
-class PlaceholderService(BaseModel):
-    """Phase-2 services — only the `enabled` toggle is validated for now."""
-    model_config = ConfigDict(extra="allow")
+# ─── inference ────────────────────────────────────────────────────────────
+
+class UpstreamSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    http_timeout_seconds: float = 60.0
+    http_connect_timeout_seconds: float = 10.0
+    video_timeout_seconds: float = 300.0
+    http_max_connections: int = Field(default=500, gt=0)
+    http_max_keepalive_connections: int = Field(default=100, gt=0)
+    global_max_in_flight: int = Field(default=0, ge=0)
+    per_deployment_max_in_flight: int = Field(default=100, ge=0)
+    slot_acquire_timeout_seconds: float = 20.0
+    allowed_internal_hosts: str = ""
+    max_response_bytes: int = Field(default=52_428_800, gt=0)
+
+
+class GatewayClientSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    http_max_connections: int = Field(default=1000, gt=0)
+    http_max_keepalive_connections: int = Field(default=100, gt=0)
+
+
+class ContextCacheSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ttl: int = Field(default=30, ge=0)
+    maxsize: int = Field(default=1000, ge=1)
+
+
+class QuotaCacheSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ttl_seconds: float = Field(default=1.0, ge=0)
+    maxsize: int = Field(default=10000, ge=1)
+
+
+class InferenceService(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = Field(default=8001, gt=0, le=65535)
+    workers: int = Field(default=1, gt=0)
+    reload: bool = False
+    api_gateway_url: str = "http://localhost:8000"
+    external_proxy_url: Optional[str] = None
+    request_timeout: int = Field(default=30, gt=0)
+    verify_ssl: bool = True
+    upstream: UpstreamSection = Field(default_factory=UpstreamSection)
+    gateway_client: GatewayClientSection = Field(default_factory=GatewayClientSection)
+    context_cache: ContextCacheSection = Field(default_factory=ContextCacheSection)
+    quota_cache: QuotaCacheSection = Field(default_factory=QuotaCacheSection)
+
+
+# ─── guardrail ────────────────────────────────────────────────────────────
+
+class GuardrailControlsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enable_guardrails: bool = True
+    enable_toxicity: bool = False
+    enable_prompt_injection: bool = False
+    enable_secrets: bool = False
+    enable_code_scanning: bool = False
+    enable_sensitive_info: bool = False
+    enable_no_refusal: bool = False
+    enable_bias: bool = False
+    enable_relevance: bool = False
+
+
+class GuardrailThresholdsSection(BaseModel):
+    # NOTE: leaf names match the service Settings field names exactly so the
+    # flatten logic in source.py maps them correctly without a prefix collision.
+    model_config = ConfigDict(extra="forbid")
+    toxicity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    prompt_injection_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    bias_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    relevance_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class GuardrailPiiSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    detection_enabled: bool = True
+    anonymize: bool = True
+    entity_types: list[str] = Field(default_factory=list)
+    max_scan_time_seconds: float = Field(default=5.0, gt=0)
+
+
+class GuardrailService(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = Field(default=8002, gt=0, le=65535)
+    reload: bool = False
+    api_gateway_url: str = "http://localhost:8000"
+    default_engine: str = "llm-guard"
+    llama_guard_model_id: str = "meta-llama/llama-guard-4-12b"
+    banned_substrings: str = ""
+    controls: GuardrailControlsSection = Field(default_factory=GuardrailControlsSection)
+    thresholds: GuardrailThresholdsSection = Field(default_factory=GuardrailThresholdsSection)
+    pii: GuardrailPiiSection = Field(default_factory=GuardrailPiiSection)
+
+
+# ─── data ─────────────────────────────────────────────────────────────────
+
+class DataService(BaseModel):
+    # NOTE: max_ingest_documents and max_document_size_bytes are top-level
+    # (no sub-section wrapper) so the flatten produces the exact field names
+    # declared in data/config.py Settings.
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = Field(default=8003, gt=0, le=65535)
+    reload: bool = False
+    api_gateway_url: str = "http://localhost:8000"
+    redis_url: str = "redis://localhost:6379/0"
+    max_ingest_documents: int = Field(default=500, gt=0)
+    max_document_size_bytes: int = Field(default=1_000_000, gt=0)
+
+
+# ─── orchestration ────────────────────────────────────────────────────────
+
+class OrchestrationReadinessSection(BaseModel):
+    # NOTE: leaf names match orchestration/config.py Settings field names.
+    model_config = ConfigDict(extra="forbid")
+    default_readiness_timeout: int = Field(default=300, gt=0)
+    default_polling_interval: int = Field(default=20, gt=0)
+    ephemeral_failure_threshold_minutes: int = Field(default=10, gt=0)
+
+
+class OrchestrationDeploymentLogsSection(BaseModel):
+    # NOTE: leaf names match orchestration/config.py Settings field names.
+    model_config = ConfigDict(extra="forbid")
+    elasticsearch_url: Optional[str] = None
+    deployment_log_buffer_size: int = Field(default=10000, gt=0)
+    deployment_log_flush_interval: int = Field(default=10, gt=0)
+
+
+class OrchestrationService(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    http_port: int = Field(default=8080, gt=0, le=65535)
+    grpc_port: int = Field(default=50051, gt=0, le=65535)
+    nosana_sidecar_url: str = "http://localhost:3000"
+    readiness: OrchestrationReadinessSection = Field(default_factory=OrchestrationReadinessSection)
+    deployment_logs: OrchestrationDeploymentLogsSection = Field(default_factory=OrchestrationDeploymentLogsSection)
 
 
 class ServicesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     api_gateway: ApiGatewayService = Field(default_factory=ApiGatewayService)
-    inference: PlaceholderService = Field(default_factory=PlaceholderService)
-    guardrail: PlaceholderService = Field(default_factory=PlaceholderService)
-    data: PlaceholderService = Field(default_factory=PlaceholderService)
-    orchestration: PlaceholderService = Field(default_factory=PlaceholderService)
+    inference: InferenceService = Field(default_factory=InferenceService)
+    guardrail: GuardrailService = Field(default_factory=GuardrailService)
+    data: DataService = Field(default_factory=DataService)
+    orchestration: OrchestrationService = Field(default_factory=OrchestrationService)
 
 
 # ─── providers (Phase 2 will tighten; for now accept-all) ─────────────────
