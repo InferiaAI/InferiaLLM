@@ -1,24 +1,11 @@
 #!/bin/bash
 set -e
 
-# Generate runtime config for the dashboard from env vars.
-# This allows the pre-built image to work with any endpoint URLs
-# specified at container run time instead of build time.
-# Dashboard runtime config uses DASHBOARD_* prefixed env vars to avoid
-# colliding with backend service URL env vars (e.g. INFERENCE_URL).
-DASHBOARD_DIR=$(python -c "import inferia, os; print(os.path.join(inferia.__path__[0], 'dashboard'))" 2>/dev/null || true)
-if [ -d "$DASHBOARD_DIR" ]; then
-  python3 -c "
-import json, os
-config = {
-    'API_GATEWAY_URL': os.environ.get('DASHBOARD_API_GATEWAY_URL', ''),
-    'INFERENCE_URL': os.environ.get('DASHBOARD_INFERENCE_URL', ''),
-    'WEB_SOCKET_URL': os.environ.get('DASHBOARD_WEB_SOCKET_URL', ''),
-    'SIDECAR_URL': os.environ.get('DASHBOARD_SIDECAR_URL', ''),
-}
-print('window.__RUNTIME_CONFIG__ = ' + json.dumps(config) + ';')
-" > "$DASHBOARD_DIR/config.js"
-fi
+# Generate runtime config for the dashboard. Reads inferia.yaml's
+# services.api_gateway.dashboard.* first, falls back to DASHBOARD_* env vars
+# for any field the yaml leaves null. Safe to call when no dashboard is
+# bundled in the image — exits 0 cleanly.
+inferiallm write-dashboard-config
 
 # SERVICE_TYPE can be: filtration, inference, orchestration, unified
 TYPE=${SERVICE_TYPE:-unified}

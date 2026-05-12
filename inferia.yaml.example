@@ -81,6 +81,11 @@ services:
       data:          http://localhost:8003
       orchestration: http://localhost:8080
       inference:     http://localhost:8001
+    dashboard:
+      api_gateway_url: ${DASHBOARD_API_GATEWAY_URL:-}
+      inference_url:   ${DASHBOARD_INFERENCE_URL:-}
+      web_socket_url:  ${DASHBOARD_WEB_SOCKET_URL:-}
+      sidecar_url:     ${DASHBOARD_SIDECAR_URL:-}
 
   inference:
     enabled: true
