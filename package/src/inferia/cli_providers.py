@@ -3,6 +3,11 @@
 Reads and writes the same `system_settings` JSON blob that the dashboard uses
 (key = "providers_config").  All operations are async, backed by asyncpg.
 
+Persistence note: the dashboard writes/reads via SQLAlchemy with the
+`EncryptedJSON` type decorator at `inferia.services.api_gateway.db.security` —
+the on-disk value is `{"data": "<Fernet-encrypted JSON>"}`. This CLI mirrors
+that contract so the dashboard and CLI see the same view of the data.
+
 Supported providers: aws, gcp, azure, ibm, nosana.
 
 Storage shape (nested, matching api_gateway ProvidersConfig):
@@ -26,6 +31,66 @@ _CLOUD_PROVIDERS = {"aws", "gcp", "azure", "ibm"}
 _ALL_PROVIDERS = _CLOUD_PROVIDERS | {"nosana"}
 
 
+def _fernet():
+    """Return a Fernet instance built from SECRET_ENCRYPTION_KEY, or None.
+
+    Matches the dashboard's encryption layer in
+    `inferia.services.api_gateway.db.security.EncryptionService`. When no key
+    is configured (dev mode) the dashboard stores plain JSON; we mirror that.
+    """
+    key = os.environ.get("SECRET_ENCRYPTION_KEY")
+    if not key:
+        return None
+    try:
+        from cryptography.fernet import Fernet
+
+        return Fernet(key.encode())
+    except Exception as e:  # pragma: no cover — invalid key
+        print(f"[providers] warning: SECRET_ENCRYPTION_KEY rejected by Fernet: {e}", file=sys.stderr)
+        return None
+
+
+def _decrypt_blob(raw: Any) -> dict:
+    """Decode the on-disk blob into the plain provider config dict.
+
+    The dashboard's `EncryptedJSON.process_result_value` does the equivalent:
+    if the row is `{"data": "<ciphertext>"}`, decrypt and json.loads.
+    Otherwise the row is plain JSON — return it as-is.
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if not isinstance(raw, dict):
+        return {}
+    # Encrypted shape: {"data": "<base64 ciphertext>"}
+    if set(raw.keys()) == {"data"} and isinstance(raw["data"], str):
+        f = _fernet()
+        if f is None:
+            return {}
+        try:
+            plaintext = f.decrypt(raw["data"].encode()).decode()
+            return json.loads(plaintext)
+        except Exception as e:
+            print(f"[providers] warning: failed to decrypt providers blob: {e}", file=sys.stderr)
+            return {}
+    # Plain JSON shape (dev mode without encryption key)
+    return raw
+
+
+def _encrypt_blob(cfg: dict) -> dict:
+    """Encode the provider config dict into the on-disk blob shape.
+
+    Matches `EncryptedJSON.process_bind_param`: produce `{"data": "<ciphertext>"}`
+    when an encryption key is configured, else the plain JSON dict.
+    """
+    f = _fernet()
+    if f is None:
+        return cfg
+    ciphertext = f.encrypt(json.dumps(cfg).encode()).decode()
+    return {"data": ciphertext}
+
+
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
@@ -46,20 +111,32 @@ def _build_dsn() -> str:
 
 
 async def _read_config(conn) -> dict:
-    """Read the providers blob from system_settings.  Returns {} if missing."""
+    """Read the providers blob from system_settings.  Returns {} if missing.
+
+    Transparently decrypts the EncryptedJSON wrapper so the rest of the CLI
+    sees the same plain dict shape the dashboard does.
+    """
     row = await conn.fetchrow(
         "SELECT value FROM system_settings WHERE key = $1", _CONFIG_KEY
     )
     if row is None:
         return {}
-    val = row["value"]
-    if isinstance(val, str):
-        return json.loads(val)
-    return dict(val)
+    cfg = _decrypt_blob(row["value"])
+    # The dashboard sometimes stores the full ConfigUpdate shape as
+    # {"providers": {...}} and sometimes the bare providers dict. Normalise.
+    if isinstance(cfg, dict) and "providers" in cfg and len(cfg) == 1:
+        cfg = cfg["providers"]
+    return cfg if isinstance(cfg, dict) else {}
 
 
 async def _write_config(conn, cfg: dict) -> None:
-    """Upsert the providers blob into system_settings."""
+    """Upsert the providers blob into system_settings, matching dashboard encryption.
+
+    The dashboard's `save_config` stores `{"providers": {...}}` wrapped — keep
+    the same shape so the dashboard's read path sees a consistent view.
+    """
+    wrapped = {"providers": cfg}
+    blob = _encrypt_blob(wrapped)
     await conn.execute(
         """
         INSERT INTO system_settings (key, value)
@@ -67,7 +144,7 @@ async def _write_config(conn, cfg: dict) -> None:
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
         """,
         _CONFIG_KEY,
-        json.dumps(cfg),
+        json.dumps(blob),
     )
 
 
