@@ -782,3 +782,60 @@ This PR is complete when, on `feat/issue-243-unified-config`:
 5. `make test` (full suite) is still green
 6. Docker smoke sequence (Section 10) completes without errors
 
+## 14. Phase 2C — yaml-authoritative provider seeding
+
+**Branch:** `feat/issue-243-phase-2-provider-seeding`
+
+### Design decisions (approved)
+
+- **yaml is authoritative**: on every `inferiallm init` and `inferiallm migrate`,
+  after the schema is applied, the seeder runs and brings `public.provider_credentials`
+  into exact alignment with `yaml.providers`.
+- **Upsert + delete**: for each `(provider, name)` pair the yaml mentions, an
+  `INSERT … ON CONFLICT DO UPDATE` lands in DB. Any pair that exists in DB but is
+  absent from yaml is deleted. The entire sync runs in one transaction.
+- **Safe skip**: if `SECRET_ENCRYPTION_KEY` is absent/invalid, or if no yaml was
+  found, the seeder logs and skips — it does NOT delete existing rows. This makes
+  the feature safe to enable in deployments that have not yet adopted
+  yaml-managed providers.
+
+### yaml → DB column mapping
+
+| yaml path | provider | name | credential_type |
+|-----------|----------|------|-----------------|
+| `providers.cloud.aws.access_key_id` | aws | default | access_key_id |
+| `providers.cloud.aws.secret_access_key` | aws | default | secret_access_key |
+| `providers.cloud.gcp.service_account_json` | gcp | default | service_account_json |
+| `providers.vectordb.chroma.api_key` | chroma | default | api_key |
+| `providers.vectordb.chroma.tenant` | chroma | default | tenant |
+| `providers.vectordb.chroma.url` | chroma | default | url |
+| `providers.vectordb.chroma.database` | chroma | default | database |
+| `providers.guardrails.groq.api_key` | groq | default | api_key |
+| `providers.guardrails.lakera.api_key` | lakera | default | api_key |
+| `providers.depin.nosana.wallet_private_key` | nosana | wallet | wallet_private_key |
+| `providers.depin.nosana.api_keys[i].key` | nosana | `api_keys[i].name` | api_key |
+| `providers.depin.akash.mnemonic` | akash | default | mnemonic |
+
+Empty, null, or whitespace-only values are skipped (not inserted).
+
+### Encryption
+
+`credential_value_encrypted` is encrypted with `cryptography.fernet.Fernet`
+using the `SECRET_ENCRYPTION_KEY` env var. The seeder does NOT import
+`inferia.services.api_gateway.db.security` (circular dep); it replicates the
+four-line Fernet pattern locally.
+
+`SECRET_ENCRYPTION_KEY` must be a URL-safe base64-encoded 32-byte random
+string (a valid Fernet key). Generate with:
+```
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+Any other format (raw password, hex, AES key) causes Fernet init to fail and
+the seeder skips with a warning.
+
+### Implementation
+
+- `package/src/inferia/common/unified_config/provider_seeder.py` — seeder module
+- `package/src/inferia/common/tests/unified_config/test_provider_seeder.py` — tests
+- `package/src/inferia/cli_init.py` — hooks in `_init()` and `run_migrations()`
+
