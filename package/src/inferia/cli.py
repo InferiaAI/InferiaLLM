@@ -20,6 +20,7 @@ KNOWN_COMMANDS = {
     "start",
     "migrate",
     "write-dashboard-config",
+    "providers",
 }
 
 
@@ -709,6 +710,45 @@ def main(argv=None):
         help="Override the installed dashboard directory (useful for tests)",
     )
 
+    # --- providers sub-command ---
+    providers_parser = sub.add_parser(
+        "providers",
+        help="Manage provider credentials (DB-backed)",
+    )
+    providers_sub = providers_parser.add_subparsers(
+        dest="providers_action", required=True, help="Action"
+    )
+
+    # list
+    list_p = providers_sub.add_parser("list", help="List provider credentials")
+    list_p.add_argument(
+        "--provider",
+        choices=["aws", "gcp", "azure", "ibm", "nosana"],
+        default=None,
+        help="Filter by provider",
+    )
+
+    # add
+    add_p = providers_sub.add_parser("add", help="Add a provider credential")
+    add_p.add_argument("provider", choices=["aws", "gcp", "azure", "ibm", "nosana"])
+    add_p.add_argument("--name", required=True, help="Credential name (e.g. prod, default)")
+    add_p.add_argument("--type", required=True, dest="type", help="Credential type (e.g. api_key, access_key_id)")
+    add_p.add_argument("--value", required=True, help="Credential value (plaintext)")
+    add_p.add_argument("--active", default="true", help="Is active (true/false, default: true)")
+
+    # remove
+    rm_p = providers_sub.add_parser("remove", help="Remove a provider credential")
+    rm_p.add_argument("provider", choices=["aws", "gcp", "azure", "ibm", "nosana"])
+    rm_p.add_argument("--name", required=True, help="Credential name to remove")
+
+    # update
+    upd_p = providers_sub.add_parser("update", help="Update an existing provider credential")
+    upd_p.add_argument("provider", choices=["aws", "gcp", "azure", "ibm", "nosana"])
+    upd_p.add_argument("--name", required=True, help="Credential name to update")
+    upd_p.add_argument("--type", default=None, dest="type", help="Credential type (required for cloud providers)")
+    upd_p.add_argument("--value", default=None, help="New value")
+    upd_p.add_argument("--active", default=None, help="Set active state (true/false)")
+
     args, unknown = parser.parse_known_args(argv)
 
     cmd = args.command
@@ -778,6 +818,10 @@ def main(argv=None):
                 config_path=config_path,
                 dashboard_dir=dashboard_dir,
             )
+
+        elif cmd == "providers":
+            from inferia.cli_providers import run_providers_command
+            run_providers_command(args)
 
         else:
             print(f"Unknown command: {cmd}")
