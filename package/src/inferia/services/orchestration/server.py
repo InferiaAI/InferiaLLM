@@ -38,6 +38,17 @@ from inferia.services.orchestration.services.inventory_manager.http import (
 from inferia.services.orchestration.services.model_deployment.deployment_server import (
     router as deployment_engine_router,
 )
+from inferia.services.orchestration.api import workers as workers_api
+from inferia.services.orchestration.api import admin_workers as admin_workers_api
+from inferia.services.orchestration.services.worker_controller.auth import (
+    WorkerAuth,
+)
+from inferia.services.orchestration.services.worker_controller.registry import (
+    WorkerRegistry,
+)
+from inferia.services.orchestration.services.worker_controller.controller import (
+    WorkerController,
+)
 
 from inferia.services.orchestration.v1 import (
     compute_pool_pb2_grpc,
@@ -127,6 +138,39 @@ async def serve():
         event_bus=event_bus,
     )
 
+    # ---------------- Worker control plane ----------------
+    # The orchestration service sits behind InternalAuthMiddleware, which is
+    # the trust boundary with the api_gateway. The api_gateway already
+    # enforces user-JWT + RBAC on its admin-API surface, so internal-key-
+    # holding callers can be treated as authorised here. The admin_workers
+    # router accepts an injectable permission factory so we can tighten this
+    # later (e.g. by having the gateway forward a permission claim header).
+    worker_auth = WorkerAuth(
+        secret_key=settings.jwt_secret_key,
+        algorithm=getattr(settings, "jwt_algorithm", "HS256"),
+    )
+    worker_registry = WorkerRegistry()
+    worker_controller = WorkerController(worker_registry)
+
+    def _permit_all(_perm):
+        async def _check(_authorization=None):
+            return True
+        return _check
+
+    workers_api.configure(
+        worker_auth, worker_registry, inventory_repo,
+    )
+    admin_workers_api.configure(
+        worker_auth=worker_auth,
+        worker_registry=worker_registry,
+        inventory_repo=inventory_repo,
+        pool_repo=pool_repo,
+        control_plane_external_url=getattr(
+            settings, "control_plane_external_url", ""
+        ) or os.getenv("CONTROL_PLANE_EXTERNAL_URL", ""),
+        require_permission=_permit_all,
+    )
+
     # ---------------- FastAPI App ----------------
     app = FastAPI(
         title=settings.app_name,
@@ -137,11 +181,18 @@ async def serve():
     # CORS configuration (Standardized)
     setup_cors(app, os.getenv("ALLOWED_ORIGINS", ""), settings.is_development)
 
-    # Add internal authentication middleware
+    # Add internal authentication middleware. The worker control plane
+    # endpoints use their own auth (bootstrap JWT for /register, worker JWT
+    # for the WS channel) so they're skipped here.
     app.add_middleware(
         InternalAuthMiddleware,
         internal_api_key=settings.internal_api_key,
-        skip_paths=["/health", "/deployment/ws"],
+        skip_paths=[
+            "/health",
+            "/deployment/ws",
+            "/v1/workers/register",
+            "/v1/workers/channel",
+        ],
     )
 
     # Register standard exception handlers
@@ -150,6 +201,8 @@ async def serve():
     # Include routers
     app.include_router(inventory_router)
     app.include_router(deployment_engine_router)
+    app.include_router(workers_api.router)
+    app.include_router(admin_workers_api.router)
 
     # Share pool with routes
     app.state.pool = db_pool

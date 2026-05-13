@@ -21,6 +21,9 @@ from inferia.services.orchestration.services.scheduler.service import SchedulerS
 from inferia.services.orchestration.services.model_deployment.runtime_resolver import RuntimeResolver
 from inferia.services.orchestration.services.model_deployment.strategies.vllm import VLLMDeploymentStrategy
 from inferia.services.orchestration.services.model_deployment.strategies.localai import LocalAIDeploymentStrategy
+from inferia.services.orchestration.services.model_deployment.strategies.worker import WorkerDeploymentStrategy
+from inferia.services.orchestration.services.worker_controller.registry import WorkerRegistry
+from inferia.services.orchestration.services.worker_controller.controller import WorkerController
 # from services.vllm_runtime.runtime import VLLMRuntime
 # from services.nosana_runtime.client import NosanaRuntimeClient
 
@@ -150,6 +153,23 @@ async def main():
         scheduler_repo=scheduler_repo,
     )
 
+    # The worker_main process is a separate background worker from the
+    # orchestration HTTP server, so it has its own WorkerRegistry instance.
+    # In production this is acceptable because LoadModel commands flow from
+    # the model_deployment dispatcher *through* the WS the worker holds with
+    # the HTTP server's registry — not this one. The registry here is
+    # essentially a placeholder kept in sync via cross-process signalling
+    # (shared via Redis pub/sub in a follow-up). For MVP, deployments to
+    # worker-kind nodes assume the HTTP server is reachable on the same
+    # cluster.
+    worker_registry = WorkerRegistry()
+    worker_controller = WorkerController(worker_registry)
+
+    worker_strategy = WorkerDeploymentStrategy(
+        scheduler_repo=scheduler_repo,
+        worker_controller=worker_controller,
+    )
+
 
     worker = ModelDeploymentWorker(
         deployment_repo=deployment_repo,
@@ -162,6 +182,7 @@ async def main():
         runtime_strategies={
             "vllm": vllm_strategy,
             "localai": localai_strategy,
+            "worker": worker_strategy,
         },
     )
 

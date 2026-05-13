@@ -1,5 +1,7 @@
 """Tests for WorkerDeploymentStrategy."""
 
+from __future__ import annotations
+
 import pytest
 
 from inferia.services.orchestration.services.model_deployment.strategies.worker import (
@@ -10,51 +12,35 @@ from inferia.services.orchestration.services.worker_controller.protocol import (
 )
 
 
-class FakePlacement:
-    def __init__(self, node_ids):
-        self.node_ids = list(node_ids)
-        self.calls = 0
-
-    async def place_workload(self, **_kw):
-        idx = self.calls
-        self.calls += 1
-        if idx >= len(self.node_ids):
-            raise RuntimeError("ran out of nodes in fake placement")
-
-        class _P:
-            pass
-        p = _P()
-        p.node_id = self.node_ids[idx]
-        return p
-
-
 class FakeScheduler:
-    def __init__(self):
-        self.calls = []
+    def __init__(self, allocate_ok: bool = True, allocate_reason: str = ""):
+        self.allocate_ok = allocate_ok
+        self.allocate_reason = allocate_reason
+        self.allocate_calls: list = []
+        self.release_calls: list = []
 
     async def allocate(self, **kw):
-        self.calls.append(kw)
+        self.allocate_calls.append(kw)
+        return (self.allocate_ok, self.allocate_reason, None)
 
-        class _A:
-            pass
-        a = _A()
-        a.allocation_id = f"alloc-{len(self.calls)}"
-        return a
+    async def release(self, **kw):
+        self.release_calls.append(kw)
 
 
 class FakeWorkerController:
-    def __init__(self, results=None, raise_for=None):
-        self.results = results or {}
-        self.raise_for = raise_for or set()
-        self.load_calls = []
+    def __init__(self, result=None, raises=False):
+        self.result = result or CommandResultBody(
+            in_reply_to="x", status="ok",
+            endpoint_url="http://worker:8080",
+        )
+        self.raises = raises
+        self.calls: list = []
 
     async def load_model(self, *, node_id, spec):
-        self.load_calls.append((node_id, spec))
-        if node_id in self.raise_for:
-            raise RuntimeError(f"fake controller raise for {node_id}")
-        return self.results.get(node_id, CommandResultBody(
-            in_reply_to="x", status="ok", endpoint_url=f"http://{node_id}:8080",
-        ))
+        self.calls.append((node_id, spec))
+        if self.raises:
+            raise RuntimeError("controller boom")
+        return self.result
 
 
 def _model():
@@ -66,101 +52,135 @@ def _model():
 
 
 @pytest.mark.asyncio
-async def test_deploy_single_replica_happy_path():
-    placement = FakePlacement(node_ids=["node-a"])
-    scheduler = FakeScheduler()
+async def test_deploy_happy_path():
+    sched = FakeScheduler()
     ctrl = FakeWorkerController()
-    s = WorkerDeploymentStrategy(placement, scheduler, ctrl)
-
+    s = WorkerDeploymentStrategy(scheduler_repo=sched, worker_controller=ctrl)
     result = await s.deploy(
         deployment_id="dep-1", model=_model(),
-        pool_id="p", replicas=1, gpu_per_replica=1, workload_type="llm",
+        pool_id="p", node_id="node-a", replicas=1,
+        gpu_per_replica=1, vcpu_per_replica=2, ram_gb_per_replica=8,
+        workload_type="llm",
     )
     assert result["runtime"] == "worker"
-    assert result["endpoint"] == "http://node-a:8080"
-    assert len(ctrl.load_calls) == 1
-    assert len(scheduler.calls) == 1
-    assert ctrl.load_calls[0][1]["recipe"] == "vllm"
-    assert ctrl.load_calls[0][1]["model"]["artifact_uri"] == "hf://org/m"
+    assert result["endpoint"] == "http://worker:8080"
+    assert len(sched.allocate_calls) == 1
+    assert sched.allocate_calls[0]["node_id"] == "node-a"
+    assert sched.allocate_calls[0]["gpu"] == 1
 
 
 @pytest.mark.asyncio
-async def test_deploy_multi_replica_records_each_endpoint():
-    placement = FakePlacement(node_ids=["node-a", "node-b", "node-c"])
-    scheduler = FakeScheduler()
-    ctrl = FakeWorkerController()
-    s = WorkerDeploymentStrategy(placement, scheduler, ctrl)
-
-    result = await s.deploy(
-        deployment_id="dep-2", model=_model(),
-        pool_id="p", replicas=3, gpu_per_replica=1, workload_type="llm",
+async def test_deploy_rejects_multireplica():
+    s = WorkerDeploymentStrategy(
+        scheduler_repo=FakeScheduler(), worker_controller=FakeWorkerController(),
     )
-    assert len(result["endpoints"]) == 3
-    assert result["endpoint"] == result["endpoints"][0]
-    assert len(ctrl.load_calls) == 3
+    with pytest.raises(ValueError, match="single-replica"):
+        await s.deploy(
+            deployment_id="d", model=_model(),
+            pool_id="p", node_id="n", replicas=2,
+            gpu_per_replica=1, vcpu_per_replica=2, ram_gb_per_replica=8,
+            workload_type="llm",
+        )
 
 
 @pytest.mark.asyncio
-async def test_deploy_failed_command_result_raises():
-    placement = FakePlacement(node_ids=["node-a"])
-    scheduler = FakeScheduler()
-    ctrl = FakeWorkerController(results={
-        "node-a": CommandResultBody(in_reply_to="x", status="failed", detail="oom"),
-    })
-    s = WorkerDeploymentStrategy(placement, scheduler, ctrl)
+async def test_deploy_releases_on_load_failure():
+    sched = FakeScheduler()
+    ctrl = FakeWorkerController(result=CommandResultBody(
+        in_reply_to="x", status="failed", detail="oom",
+    ))
+    s = WorkerDeploymentStrategy(scheduler_repo=sched, worker_controller=ctrl)
     with pytest.raises(RuntimeError, match="oom"):
         await s.deploy(
             deployment_id="d", model=_model(),
-            pool_id="p", replicas=1, gpu_per_replica=1, workload_type="llm",
+            pool_id="p", node_id="n", replicas=1,
+            gpu_per_replica=1, vcpu_per_replica=2, ram_gb_per_replica=8,
+            workload_type="llm",
         )
+    assert len(sched.release_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_deploy_controller_exception_bubbles():
-    placement = FakePlacement(node_ids=["node-a"])
-    scheduler = FakeScheduler()
-    ctrl = FakeWorkerController(raise_for={"node-a"})
-    s = WorkerDeploymentStrategy(placement, scheduler, ctrl)
+async def test_deploy_releases_on_controller_exception():
+    sched = FakeScheduler()
+    ctrl = FakeWorkerController(raises=True)
+    s = WorkerDeploymentStrategy(scheduler_repo=sched, worker_controller=ctrl)
     with pytest.raises(RuntimeError):
         await s.deploy(
             deployment_id="d", model=_model(),
-            pool_id="p", replicas=1, gpu_per_replica=1, workload_type="llm",
+            pool_id="p", node_id="n", replicas=1,
+            gpu_per_replica=1, vcpu_per_replica=2, ram_gb_per_replica=8,
+            workload_type="llm",
         )
+    assert len(sched.release_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_deploy_uses_backend_field_as_recipe():
-    placement = FakePlacement(node_ids=["node-a"])
+async def test_deploy_rejects_allocation_failure():
+    sched = FakeScheduler(allocate_ok=False, allocate_reason="quota_exceeded")
     ctrl = FakeWorkerController()
-    s = WorkerDeploymentStrategy(placement, FakeScheduler(), ctrl)
+    s = WorkerDeploymentStrategy(scheduler_repo=sched, worker_controller=ctrl)
+    with pytest.raises(RuntimeError, match="quota_exceeded"):
+        await s.deploy(
+            deployment_id="d", model=_model(),
+            pool_id="p", node_id="n", replicas=1,
+            gpu_per_replica=1, vcpu_per_replica=2, ram_gb_per_replica=8,
+            workload_type="llm",
+        )
+    # No controller call — allocation failed first.
+    assert ctrl.calls == []
+    # No release either — never allocated.
+    assert sched.release_calls == []
+
+
+@pytest.mark.asyncio
+async def test_deploy_uses_backend_as_recipe():
+    sched = FakeScheduler()
+    ctrl = FakeWorkerController()
+    s = WorkerDeploymentStrategy(scheduler_repo=sched, worker_controller=ctrl)
     model = _model()
     model["backend"] = "ollama"
     await s.deploy(
         deployment_id="d", model=model,
-        pool_id="p", replicas=1, gpu_per_replica=1, workload_type="llm",
+        pool_id="p", node_id="n", replicas=1,
+        gpu_per_replica=1, vcpu_per_replica=2, ram_gb_per_replica=8,
+        workload_type="llm",
     )
-    assert ctrl.load_calls[0][1]["recipe"] == "ollama"
+    assert ctrl.calls[0][1]["recipe"] == "ollama"
 
 
 @pytest.mark.asyncio
-async def test_deploy_passes_gpu_indices_matching_per_replica():
-    placement = FakePlacement(node_ids=["node-a"])
+async def test_deploy_gpu_indices_match_per_replica():
+    sched = FakeScheduler()
     ctrl = FakeWorkerController()
-    s = WorkerDeploymentStrategy(placement, FakeScheduler(), ctrl)
+    s = WorkerDeploymentStrategy(scheduler_repo=sched, worker_controller=ctrl)
     await s.deploy(
         deployment_id="d", model=_model(),
-        pool_id="p", replicas=1, gpu_per_replica=2, workload_type="llm",
+        pool_id="p", node_id="n", replicas=1,
+        gpu_per_replica=2, vcpu_per_replica=4, ram_gb_per_replica=16,
+        workload_type="llm",
     )
-    assert ctrl.load_calls[0][1]["gpu_indices"] == [0, 1]
+    assert ctrl.calls[0][1]["gpu_indices"] == [0, 1]
 
 
 @pytest.mark.asyncio
-async def test_deploy_records_allocation_ids():
-    placement = FakePlacement(node_ids=["a", "b"])
-    sched = FakeScheduler()
-    s = WorkerDeploymentStrategy(placement, sched, FakeWorkerController())
-    result = await s.deploy(
-        deployment_id="d", model=_model(),
-        pool_id="p", replicas=2, gpu_per_replica=1, workload_type="llm",
-    )
-    assert result["allocations"] == ["alloc-1", "alloc-2"]
+async def test_release_swallows_errors():
+    """If scheduler.release itself raises, the original exception still
+    propagates and the test should not see a different one."""
+
+    class FailingRelease(FakeScheduler):
+        async def release(self, **kw):
+            raise RuntimeError("release boom")
+
+    sched = FailingRelease()
+    ctrl = FakeWorkerController(result=CommandResultBody(
+        in_reply_to="x", status="failed", detail="primary",
+    ))
+    s = WorkerDeploymentStrategy(scheduler_repo=sched, worker_controller=ctrl)
+    with pytest.raises(RuntimeError, match="primary"):
+        await s.deploy(
+            deployment_id="d", model=_model(),
+            pool_id="p", node_id="n", replicas=1,
+            gpu_per_replica=1, vcpu_per_replica=2, ram_gb_per_replica=8,
+            workload_type="llm",
+        )

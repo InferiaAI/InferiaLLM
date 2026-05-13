@@ -315,3 +315,65 @@ class ComputePoolRepository:
         """
         async with self.db.acquire() as conn:
             await conn.execute(query, pool_id, lifecycle_state)
+
+
+# ---------------------------------------------------------------------------
+# Worker-agent extensions (inferia-worker integration).
+# ---------------------------------------------------------------------------
+
+
+async def _get_or_generate_inference_token_impl(self, *, pool_id):
+    """Return the pool's inference_token; generate one on first call.
+
+    Uses ``UPDATE ... SET inference_token = COALESCE(inference_token, $2)
+    RETURNING inference_token`` so concurrent first-callers converge on a
+    single persisted value (whichever transaction wins).
+    """
+    import secrets
+    async with self.db.acquire() as conn:
+        existing = await conn.fetchval(
+            "SELECT inference_token FROM compute_pools WHERE id = $1",
+            pool_id,
+        )
+        if existing:
+            return existing
+
+        # Generate and persist, COALESCE-protecting against a race.
+        proposed = secrets.token_urlsafe(32)
+        return await conn.fetchval(
+            """
+            UPDATE compute_pools
+            SET inference_token = COALESCE(inference_token, $2),
+                updated_at = now()
+            WHERE id = $1
+            RETURNING inference_token
+            """,
+            pool_id, proposed,
+        )
+
+
+async def _rotate_inference_token_impl(self, *, pool_id):
+    """Force-generate a new inference_token for the pool and return it.
+
+    Workers using the old value will fail inference auth after this call —
+    operators are expected to redeploy them with a fresh env_snippet.
+    """
+    import secrets
+    new_value = secrets.token_urlsafe(32)
+    async with self.db.acquire() as conn:
+        return await conn.fetchval(
+            """
+            UPDATE compute_pools
+            SET inference_token = $2,
+                updated_at = now()
+            WHERE id = $1
+            RETURNING inference_token
+            """,
+            pool_id, new_value,
+        )
+
+
+ComputePoolRepository.get_or_generate_inference_token = (
+    _get_or_generate_inference_token_impl
+)
+ComputePoolRepository.rotate_inference_token = _rotate_inference_token_impl

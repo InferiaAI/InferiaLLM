@@ -1,26 +1,33 @@
 """
 Direct-managed GPU worker deployment strategy.
 
-Used when the target compute_inventory row has agent_kind='worker'. Places the
-deployment via the placement engine, reserves resources via the scheduler,
-then delegates the actual container launch to the connected worker over the
-WS control channel.
+Used when the model_deployment service routes a deployment to a node whose
+``agent_kind='worker'``. The caller (ModelDeploymentWorker) has already
+picked ``node_id`` and validated the model spec; this strategy is
+responsible for atomic resource allocation + delegating the actual
+container launch to the connected worker over the WS control channel.
 
-Replaces the now-removed LLMdDeploymentStrategy + llmd_runtime path.
+Mirrors the signature of VLLMDeploymentStrategy so it slots into the same
+``runtime_strategies`` dict in worker_main.py.
 """
 
 from __future__ import annotations
 
+import uuid
+
 
 class WorkerDeploymentStrategy:
-    def __init__(
-        self,
-        placement_engine,
-        scheduler_engine,
-        worker_controller,
-    ):
-        self.placement = placement_engine
-        self.scheduler = scheduler_engine
+    """
+    Worker-pool deployment strategy.
+
+    Guarantees:
+    - Single-replica enforcement (multi-replica routing is the caller's job)
+    - Atomic allocation via scheduler_repo
+    - Rollback of allocation on worker_controller failure
+    """
+
+    def __init__(self, *, scheduler_repo, worker_controller):
+        self.scheduler = scheduler_repo
         self.controller = worker_controller
 
     async def deploy(
@@ -29,41 +36,39 @@ class WorkerDeploymentStrategy:
         deployment_id,
         model,
         pool_id,
+        node_id,
         replicas,
         gpu_per_replica,
+        vcpu_per_replica,
+        ram_gb_per_replica,
         workload_type,
     ):
-        # Place each replica on a worker-kind node.
-        node_ids = []
-        for _ in range(replicas):
-            placement = await self.placement.place_workload(
-                pool_id=pool_id,
-                gpu_required=gpu_per_replica,
-                vcpu_required=2,
-                ram_gb_required=8,
-                workload_type=workload_type,
+        if replicas != 1:
+            raise ValueError(
+                "WorkerDeploymentStrategy supports only single-replica "
+                "deployments; multi-replica is routed by the caller."
             )
-            node_ids.append(placement.node_id)
 
-        allocations = []
-        for node_id in node_ids:
-            alloc = await self.scheduler.allocate(
+        allocation_id = uuid.uuid4()
+        allocated = False
+
+        try:
+            # Atomic allocate on the chosen node.
+            ok, reason, _ = await self.scheduler.allocate(
+                allocation_id=allocation_id,
                 node_id=node_id,
                 gpu=gpu_per_replica,
-                vcpu=2,
-                ram_gb=8,
+                vcpu=vcpu_per_replica,
+                ram_gb=ram_gb_per_replica,
                 priority=1000,
                 owner_type="deployment",
                 owner_id=str(deployment_id),
             )
-            allocations.append(alloc.allocation_id)
+            if not ok:
+                raise RuntimeError(f"worker allocate failed: {reason}")
+            allocated = True
 
-        # MVP: one replica per worker. Multi-replica fan-out is a follow-up.
-        # We pick the first node for the inference endpoint; subsequent
-        # replicas are handled by an external traffic router that already
-        # knows how to fan inference traffic across multiple endpoints.
-        endpoints = []
-        for node_id in node_ids:
+            # Build the worker LoadModel spec.
             spec = {
                 "deployment_id": str(deployment_id),
                 "recipe": model.get("backend", "vllm"),
@@ -76,19 +81,26 @@ class WorkerDeploymentStrategy:
                 "gpu_indices": list(range(gpu_per_replica)),
                 "port": 0,  # let the worker allocate
             }
-            result = await self.controller.load_model(node_id=str(node_id), spec=spec)
+            result = await self.controller.load_model(
+                node_id=str(node_id), spec=spec,
+            )
             if result.status != "ok":
                 raise RuntimeError(
-                    f"worker load_model failed on {node_id}: {result.detail}"
+                    f"worker load_model failed: {result.detail}"
                 )
-            endpoints.append(result.endpoint_url)
 
-        return {
-            "runtime": "worker",
-            "allocations": allocations,
-            "endpoint": endpoints[0],
-            "endpoints": endpoints,
-        }
+            return {
+                "runtime": "worker",
+                "allocation_id": str(allocation_id),
+                "endpoint": result.endpoint_url,
+            }
+        except Exception:
+            if allocated:
+                try:
+                    await self.scheduler.release(allocation_id=allocation_id)
+                except Exception:
+                    pass
+            raise
 
 
 __all__ = ["WorkerDeploymentStrategy"]
