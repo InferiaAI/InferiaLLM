@@ -105,11 +105,12 @@ async def register_worker(
     except DuplicateNodeError as e:
         raise HTTPException(409, str(e))
 
+    node_id_str = str(node["id"])
     worker_jwt = auth.mint_worker_token(
-        node_id=node["id"],
+        node_id=node_id_str,
         pool_id=body.pool_id,
     )
-    return RegisterResponse(node_id=node["id"], worker_jwt=worker_jwt)
+    return RegisterResponse(node_id=node_id_str, worker_jwt=worker_jwt)
 
 
 class DuplicateNodeError(Exception):
@@ -141,8 +142,16 @@ async def worker_channel(
         await ws.close(code=1008, reason="invalid token")
         return
 
+    # Refuse the connection if the node has been revoked (state=terminated).
+    # The worker's JWT remains technically valid until expiry, but this gate
+    # prevents a revoked worker from re-attaching on reconnect.
+    node = await inventory.get_node_by_id(claims.sub)
+    if node and node.get("state") == "terminated":
+        await ws.close(code=1008, reason="node revoked")
+        return
+
     await ws.accept()
-    await inventory.mark_ready(node_id=claims.sub)
+    await inventory.mark_ready_worker(node_id=claims.sub)
 
     conn = WorkerConn(ws=_FastAPIWSAdapter(ws), pool_id=claims.pool_id)
     await registry.attach(claims.sub, conn)
@@ -167,7 +176,7 @@ async def worker_channel(
             if env_type == "Heartbeat":
                 used = body.get("used", {})
                 loaded = body.get("loaded_models", [])
-                await inventory.update_heartbeat(
+                await inventory.update_heartbeat_with_telemetry(
                     node_id=claims.sub,
                     used=used,
                     loaded_models=loaded,

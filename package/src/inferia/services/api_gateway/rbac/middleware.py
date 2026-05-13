@@ -128,6 +128,13 @@ async def auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/deployment/ws"):
         return await call_next(request)
 
+    # Skip user-auth for the inferia-worker control-plane endpoints. Workers
+    # authenticate with their own bootstrap-JWT (POST /v1/workers/register)
+    # and worker-JWT (WS /v1/workers/channel), neither of which match the
+    # user-token shape this middleware enforces.
+    if request.url.path.startswith("/v1/workers/"):
+        return await call_next(request)
+
     # Skip auth for public endpoints
     public_paths = [
         "/",

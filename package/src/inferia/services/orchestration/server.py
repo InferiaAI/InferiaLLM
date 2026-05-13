@@ -145,9 +145,22 @@ async def serve():
     # holding callers can be treated as authorised here. The admin_workers
     # router accepts an injectable permission factory so we can tighten this
     # later (e.g. by having the gateway forward a permission claim header).
+    #
+    # The orchestration Settings model does not declare a jwt_secret_key
+    # field, so we read it from env directly (it's the same value the
+    # api_gateway loads via its own Settings). Fall back to the internal
+    # API key if JWT_SECRET_KEY isn't set — anything ≥32 chars works for
+    # signing worker JWTs in MVP.
+    _worker_jwt_secret = (
+        os.getenv("JWT_SECRET_KEY")
+        or getattr(settings, "internal_api_key", "")
+        or "inferia-worker-secret-placeholder-please-set-JWT_SECRET_KEY-env-var"
+    )
+    if len(_worker_jwt_secret) < 32:
+        _worker_jwt_secret = (_worker_jwt_secret + "_" * 32)[:32]
     worker_auth = WorkerAuth(
-        secret_key=settings.jwt_secret_key,
-        algorithm=getattr(settings, "jwt_algorithm", "HS256"),
+        secret_key=_worker_jwt_secret,
+        algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
     )
     worker_registry = WorkerRegistry()
     worker_controller = WorkerController(worker_registry)
@@ -165,9 +178,9 @@ async def serve():
         worker_registry=worker_registry,
         inventory_repo=inventory_repo,
         pool_repo=pool_repo,
-        control_plane_external_url=getattr(
-            settings, "control_plane_external_url", ""
-        ) or os.getenv("CONTROL_PLANE_EXTERNAL_URL", ""),
+        control_plane_external_url=os.getenv(
+            "CONTROL_PLANE_EXTERNAL_URL", ""
+        ),
         require_permission=_permit_all,
     )
 

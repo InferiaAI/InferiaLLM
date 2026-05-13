@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from inferia.services.orchestration.services.worker_controller.auth import (
@@ -157,6 +157,7 @@ class ListResponse(BaseModel):
 @router.post("/tokens", response_model=MintResponse)
 async def mint_bootstrap_token(
     body: MintRequest,
+    request: Request,
     _granted: bool = Depends(_need_perm("deployment:create")),
 ):
     pool_repo = _pools()
@@ -178,8 +179,13 @@ async def mint_bootstrap_token(
     )
     expires_at = int(time.time()) + body.ttl_hours * 3600
 
+    # Resolve the URL workers will paste into their .env. Configured value
+    # wins; otherwise fall back to the URL the client used to reach us
+    # (X-Forwarded-* via the api_gateway proxy, then the raw Host header).
+    control_plane_url = _deps.control_plane_external_url or _infer_external_url(request)
+
     env_snippet = _render_env_snippet(
-        control_plane_url=_deps.control_plane_external_url,
+        control_plane_url=control_plane_url,
         bootstrap_token=bootstrap_token,
         pool_id=body.pool_id,
         inference_token=inference_token,
@@ -188,7 +194,7 @@ async def mint_bootstrap_token(
         bootstrap_token=bootstrap_token,
         expires_at=expires_at,
         pool_id=body.pool_id,
-        control_plane_url=_deps.control_plane_external_url,
+        control_plane_url=control_plane_url,
         inference_token=inference_token,
         env_snippet=env_snippet,
     )
@@ -234,6 +240,23 @@ async def revoke_worker(
 # ---------------------------------------------------------------------------
 # Helpers.
 # ---------------------------------------------------------------------------
+
+
+def _infer_external_url(request: Request) -> str:
+    """Best-effort: derive an externally-reachable URL from the request the
+    dashboard made. Used when CONTROL_PLANE_EXTERNAL_URL is not set."""
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_host:
+        proto = forwarded_proto or "http"
+        return f"{proto}://{forwarded_host}"
+    host = request.headers.get("host")
+    if host:
+        # request.url.scheme reflects the local connection scheme (likely
+        # http inside docker). If the api_gateway terminates TLS upstream
+        # the operator should set CONTROL_PLANE_EXTERNAL_URL explicitly.
+        return f"{request.url.scheme}://{host}"
+    return ""
 
 
 def _render_env_snippet(

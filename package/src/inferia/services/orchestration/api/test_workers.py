@@ -58,7 +58,19 @@ class FakeInventory:
     async def mark_ready(self, *, node_id):
         self.marked_ready.append(node_id)
 
+    async def mark_ready_worker(self, *, node_id):
+        self.marked_ready.append(node_id)
+
+    async def get_node_by_id(self, node_id):
+        # No revoked-node check in these tests; return a non-terminated row
+        # for any id that's already been "registered" (i.e. attempts to
+        # mark_ready_worker). Otherwise return None to mirror real behaviour.
+        return {"id": node_id, "state": "ready"}
+
     async def update_heartbeat(self, *, node_id, used, loaded_models):
+        self.heartbeats.append({"node_id": node_id, "used": used, "loaded_models": loaded_models})
+
+    async def update_heartbeat_with_telemetry(self, *, node_id, used, loaded_models):
         self.heartbeats.append({"node_id": node_id, "used": used, "loaded_models": loaded_models})
 
 

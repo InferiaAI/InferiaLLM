@@ -24,6 +24,12 @@ ADD COLUMN IF NOT EXISTS agent_kind node_agent_kind NOT NULL DEFAULT 'unknown';
 ALTER TABLE compute_inventory
 ADD COLUMN IF NOT EXISTS node_name text;
 
+-- The URL the control plane uses to reach this worker for inference traffic
+-- (worker pastes WORKER_ADVERTISE_URL into its .env). Distinct from
+-- expose_url, which on DePIN-provider rows is set by the provider itself.
+ALTER TABLE compute_inventory
+ADD COLUMN IF NOT EXISTS advertise_url text;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_compute_inventory_pool_node_name
     ON compute_inventory (pool_id, node_name)
     WHERE agent_kind = 'worker' AND node_name IS NOT NULL;

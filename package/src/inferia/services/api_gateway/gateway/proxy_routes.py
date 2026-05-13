@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Proxy API"])
 
+# Separate router (no prefix) for inferia-worker passthrough endpoints. The
+# worker hits the api_gateway at `/v1/workers/...` exactly, so we cannot
+# share the `/api/v1` prefix here. Mounted on the FastAPI app at root.
+worker_passthrough_router = APIRouter(tags=["Worker Passthrough"])
+
 ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
 
 
@@ -347,6 +352,113 @@ async def proxy_deployment(
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
     )
+
+
+async def _proxy_unauthenticated(
+    method: str, path: str, request: Request
+) -> Response:
+    """HTTP proxy that does NOT inject user-context headers.
+
+    Used for the worker-facing /v1/workers/register endpoint where the
+    caller carries its own bootstrap JWT (verified by orchestration), not
+    a user JWT.
+    """
+    url = f"{ORCHESTRATION_URL}/{path}"
+    headers = dict(request.headers)
+    headers.pop("X-Internal-API-Key", None)
+    # Still set the internal API key so orchestration's InternalAuthMiddleware
+    # accepts the request — the bootstrap JWT is the additional auth layer
+    # that orchestration's /v1/workers/register handler enforces.
+    headers["X-Internal-API-Key"] = settings.internal_api_key
+    headers["X-Gateway-Request"] = "true"
+    content = await request.body()
+    try:
+        client = gateway_http_client.get_proxy_client()
+        response = await client.request(
+            method=method, url=url, headers=headers,
+            content=content, params=request.query_params,
+        )
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
+    except httpx.RequestError as e:
+        logger.error(f"Worker proxy request failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Service unavailable: {e}")
+
+
+@worker_passthrough_router.api_route("/v1/workers/{path:path}", methods=["GET", "POST"])
+async def proxy_worker_endpoints(request: Request, path: str):
+    """Proxy worker control-plane HTTP endpoints to the orchestration service.
+    Workers authenticate with their own bootstrap-JWT / worker-JWT — the
+    api_gateway user-auth middleware is skipped upstream of this route."""
+    return await _proxy_unauthenticated(
+        method=request.method, path=f"v1/workers/{path}", request=request,
+    )
+
+
+@worker_passthrough_router.websocket("/v1/workers/channel")
+async def proxy_worker_channel(websocket: WebSocket):
+    """Proxy the worker WS control channel to orchestration. The worker
+    presents its own ``Authorization: Bearer <worker_jwt>`` header which
+    orchestration verifies; we forward it unchanged."""
+    auth = websocket.headers.get("authorization", "")
+    if not auth:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+
+    upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace(
+        "https://", "wss://"
+    )
+    upstream_ws_url = f"{upstream_base.rstrip('/')}/v1/workers/channel"
+    upstream_headers = {
+        "Authorization": auth,
+        "X-Internal-API-Key": settings.internal_api_key,
+        "X-Gateway-Request": "true",
+    }
+    try:
+        async with websockets.connect(
+            upstream_ws_url,
+            additional_headers=upstream_headers,
+        ) as upstream:
+            async def client_to_upstream():
+                while True:
+                    payload = await websocket.receive()
+                    if payload.get("type") == "websocket.disconnect":
+                        break
+                    if payload.get("text") is not None:
+                        await upstream.send(payload["text"])
+                    elif payload.get("bytes") is not None:
+                        await upstream.send(payload["bytes"])
+
+            async def upstream_to_client():
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            tasks = {
+                asyncio.create_task(client_to_upstream()),
+                asyncio.create_task(upstream_to_client()),
+            }
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+    except WebSocketDisconnect:
+        logger.info("Worker WS disconnected")
+    except Exception as e:
+        logger.warning(f"Worker WS proxy error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.api_route(
