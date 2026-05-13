@@ -64,35 +64,9 @@ class TestModelRegistryAbortReturn:
         ctx.abort.assert_called_once()
 
 
-# ── ComputeNodeService ────────────────────────────────────────────
-
-
-from inferia.services.orchestration.services.compute_node.service import (
-    ComputeNodeService,
-)
-
-
-class TestComputeNodeAbortReturn:
-    @pytest.mark.asyncio
-    async def test_heartbeat_node_not_found_does_not_crash(self):
-        """After aborting for node not found, must not access None['state']."""
-        inventory_repo = AsyncMock()
-        inventory_repo.get = AsyncMock(return_value=None)
-        svc = ComputeNodeService(inventory_repo)
-
-        request = MagicMock()
-        request.node_id = str(uuid4())
-        request.used = {}
-
-        ctx = make_non_raising_context()
-        # Should NOT raise TypeError from None["state"]
-        await svc.Heartbeat(request, ctx)
-
-        ctx.abort.assert_called_once()
-        inventory_repo.mark_ready.assert_not_called()
-        inventory_repo.update_heartbeat.assert_not_called()
-        inventory_repo.update_usage.assert_not_called()
-
+# ── ComputeNodeService removed: the gRPC compute_node service has been
+#    replaced by the WS-based worker_controller. The original abort-return
+#    test for it is no longer applicable.
 
 # ── InventoryManagerService ───────────────────────────────────────
 
