@@ -636,6 +636,13 @@ def main(argv=None):
         default="production",
         help="Environment to run in (default: production)",
     )
+    start_parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to unified YAML config file (default: auto-discover via "
+             "INFERIA_CONFIG, ./inferia.yaml, or /etc/inferia/inferia.yaml)",
+    )
 
     args, unknown = parser.parse_known_args(argv)
 
@@ -652,6 +659,10 @@ def main(argv=None):
         if cmd == "start":
             service = getattr(args, "service", "all")
             env = getattr(args, "env", "production")
+
+            config_path = getattr(args, "config", None)
+            if config_path is not None:
+                os.environ["INFERIA_CONFIG"] = config_path
 
             if service == "all":
                 if wants_help(flags):

@@ -1,0 +1,118 @@
+# inferia.yaml — InferiaLLM unified configuration (Phase 1 — api_gateway)
+#
+# Discovery:
+#   1. inferiallm start --config /path/to/inferia.yaml
+#   2. INFERIA_CONFIG env var
+#   3. ./inferia.yaml in CWD
+#   4. /etc/inferia/inferia.yaml
+#
+# Secrets MUST come from env via ${VAR} interpolation. Plain secrets in this
+# file are rejected by the schema validator.
+#
+# Precedence (highest → lowest): CLI args > env > .env > this file > defaults
+version: 1
+
+environment: development
+log_level: INFO
+
+# ─── Shared infrastructure ──────────────────────────────────────────────
+infra:
+  database:
+    url: ${DATABASE_URL:-postgresql+asyncpg://inferia:inferia@localhost:5432/inferia}
+    ssl: false
+  redis:
+    host: ${REDIS_HOST:-localhost}
+    port: 6379
+    db: "0"
+    username: ${REDIS_USERNAME:-}
+    password: ${REDIS_PASSWORD:-}
+    ssl: false
+  logstash:
+    host: ${LOGSTASH_HOST:-}
+    port: 5959
+
+# ─── Shared security ────────────────────────────────────────────────────
+# Secrets MUST come from env. Defaults shown here are non-secret strings
+# long enough to pass schema validation in dev; the schema rejects known
+# placeholder strings, so swap these for `${VAR}` in production.
+security:
+  jwt_secret_key: ${JWT_SECRET_KEY:-dev-jwt-secret-thirty-two-bytes-min}
+  jwt_algorithm: HS256
+  internal_api_key: ${INTERNAL_API_KEY:-dev-internal-api-key-thirty-two-bytes}
+  secret_encryption_key: ${SECRET_ENCRYPTION_KEY:-}
+  log_encryption_key: ${LOG_ENCRYPTION_KEY:-}
+  allowed_origins:
+    - http://localhost:3000
+    - http://localhost:5173
+    - http://localhost:8001
+
+# ─── Per-service ────────────────────────────────────────────────────────
+services:
+  api_gateway:
+    enabled: true
+    host: 0.0.0.0
+    port: 8000
+    workers: 1
+    reload: false
+    proxy_headers: true
+    default_org_name: "Default Organization"
+    auth:
+      provider: local
+    superadmin:
+      email: ${SUPERADMIN_EMAIL:-}
+      password: ${SUPERADMIN_PASSWORD:-}
+    rate_limit:
+      enabled: false
+      requests_per_minute: 10000
+      burst_size: 1000
+      use_redis: false
+    http_client:
+      service_timeout_seconds: 10.0
+      service_connect_timeout_seconds: 3.0
+      service_max_connections: 500
+      service_max_keepalive: 100
+      proxy_timeout_seconds: 300.0
+      proxy_max_connections: 500
+      proxy_max_keepalive: 100
+    ssl:
+      verify: true
+    service_urls:
+      guardrail:     http://localhost:8002
+      data:          http://localhost:8003
+      orchestration: http://localhost:8080
+      inference:     http://localhost:8001
+
+  # Phase 2+ — full schemas land in follow-up PRs.
+  inference:     { enabled: true }
+  guardrail:     { enabled: true }
+  data:          { enabled: true }
+  orchestration: { enabled: true }
+
+# ─── Providers ──────────────────────────────────────────────────────────
+# Phase 1 accepts arbitrary keys here (Phase 2 will tighten).
+providers:
+  cloud:
+    aws:
+      access_key_id: ${AWS_ACCESS_KEY_ID:-}
+      secret_access_key: ${AWS_SECRET_ACCESS_KEY:-}
+      region: ap-south-1
+  vectordb:
+    chroma:
+      api_key: ${CHROMA_API_KEY:-}
+      tenant:  ${CHROMA_TENANT:-}
+      url:     ${CHROMA_URL:-}
+      is_local: true
+  guardrails:
+    groq:
+      api_key: ${GROQ_API_KEY:-}
+    lakera:
+      api_key: ${LAKERA_API_KEY:-}
+  depin:
+    nosana:
+      wallet_private_key: ${NOSANA_WALLET_KEY:-}
+      api_keys:
+        - name: prod
+          key:  ${NOSANA_PROD_KEY:-}
+          is_active: true
+    akash:
+      mnemonic: ${AKASH_MNEMONIC:-}

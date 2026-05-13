@@ -3,10 +3,11 @@ Configuration management for the Filtration Layer.
 Uses Pydantic Settings for environment-based configuration.
 """
 
-from typing import Literal, Optional, Any, Dict, List
+from typing import ClassVar, Literal, Optional, Any, Dict, List
 import logging
-from pydantic import Field, BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, BaseModel, field_validator
+from pydantic_settings import SettingsConfigDict
+from inferia.common.unified_config import UnifiedBaseSettings
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,15 @@ class ProvidersConfig(BaseModel):
 # --- Main Settings ---
 
 
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+class Settings(UnifiedBaseSettings):
+    """Application settings loaded from yaml, env, or defaults.
+
+    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
+    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    """
+
+    _yaml_path: ClassVar[str] = "services.api_gateway"
+
 
     # Application Settings
     app_name: str = "InferiaLLM API Gateway"
@@ -157,6 +165,17 @@ class Settings(BaseSettings):
         default=None, min_length=32, validation_alias="INTERNAL_API_KEY"
     )
     allowed_origins: str = "http://localhost:3001,http://localhost:8001,http://localhost:5173"  # Comma-separated list
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def _coerce_allowed_origins(cls, v: Any) -> Any:
+        # yaml provides this as a list (security.allowed_origins: list[str]); the
+        # legacy env-driven path provides a comma-separated string. setup_cors()
+        # consumes a string and splits on ',' — normalize lists here so both
+        # sources work transparently.
+        if isinstance(v, list):
+            return ",".join(str(item).strip() for item in v if str(item).strip())
+        return v
 
     # RBAC Settings
     jwt_secret_key: str = Field(

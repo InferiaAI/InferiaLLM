@@ -57,6 +57,7 @@ dependencies = [
 
   # Config
   "python-dotenv",
+  "PyYAML>=6.0,<7.0",
 
   # Misc infra
   "cachetools",

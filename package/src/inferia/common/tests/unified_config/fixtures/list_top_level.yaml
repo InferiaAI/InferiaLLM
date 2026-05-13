@@ -1,0 +1,3 @@
+- this is a yaml list
+- not a mapping
+- should be rejected
