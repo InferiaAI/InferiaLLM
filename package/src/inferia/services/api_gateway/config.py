@@ -1,5 +1,5 @@
 """
-Configuration management for the Filtration Layer.
+Configuration management for the API Gateway.
 Uses Pydantic Settings for environment-based configuration.
 """
 
@@ -8,17 +8,77 @@ import logging
 from pydantic import Field, BaseModel, field_validator
 from pydantic_settings import SettingsConfigDict
 from inferia.common.unified_config import UnifiedBaseSettings
-from inferia.common.unified_config.schema import (
-    ProvidersConfig,
-    AWSProvider,
-    GCPProvider,
-    AzureProvider,
-    IBMProvider,
-    NosanaProvider,
-    NosanaApiKeyEntry,
-)
 
 logger = logging.getLogger(__name__)
+
+# --- Nested Provider Configuration Models ---
+
+
+class AWSConfig(BaseModel):
+    access_key_id: Optional[str] = None
+    secret_access_key: Optional[str] = None
+    region: str = "us-east-1"
+
+
+class GCPConfig(BaseModel):
+    project_id: Optional[str] = None
+    region: str = "us-central1"
+    service_account_json: Optional[str] = None
+
+
+class AzureConfig(BaseModel):
+    subscription_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    region: str = "eastus"
+
+
+class IBMConfig(BaseModel):
+    api_key: Optional[str] = None
+    region: str = "us-south"
+    resource_group_id: Optional[str] = None
+
+
+class CloudConfig(BaseModel):
+    aws: AWSConfig = Field(default_factory=AWSConfig)
+    gcp: GCPConfig = Field(default_factory=GCPConfig)
+    azure: AzureConfig = Field(default_factory=AzureConfig)
+    ibm: IBMConfig = Field(default_factory=IBMConfig)
+
+
+class ChromaConfig(BaseModel):
+    api_key: Optional[str] = None
+    tenant: Optional[str] = None
+    url: Optional[str] = None
+    is_local: bool = True
+    database: Optional[str] = None
+
+
+class VectorDBConfig(BaseModel):
+    chroma: ChromaConfig = Field(default_factory=ChromaConfig)
+
+
+class NosanaApiKeyEntry(BaseModel):
+    name: str
+    key: str
+    is_active: bool = True
+
+
+class NosanaConfig(BaseModel):
+    wallet_private_key: Optional[str] = None
+    api_keys: list[NosanaApiKeyEntry] = Field(default_factory=list)
+
+
+class DePINConfig(BaseModel):
+    nosana: NosanaConfig = Field(default_factory=NosanaConfig)
+
+
+class ProvidersConfig(BaseModel):
+    cloud: CloudConfig = Field(default_factory=CloudConfig)
+    vectordb: VectorDBConfig = Field(default_factory=VectorDBConfig)
+    depin: DePINConfig = Field(default_factory=DePINConfig)
+
 
 # --- Provider Credential Model ---
 
