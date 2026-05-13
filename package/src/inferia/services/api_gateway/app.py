@@ -62,6 +62,32 @@ async def lifespan(app: FastAPI):
         f"Rate limiting: {'enabled' if settings.rate_limit_enabled else 'disabled'}"
     )
 
+    # Hydrate settings.providers from yaml (if a yaml config is present).
+    # This ensures the dashboard credential endpoints reflect yaml-declared keys
+    # before the DB-based config_manager layer runs its first poll.
+    try:
+        from inferia.common.unified_config import load_unified_config
+        from inferia.common.config_manager import update_pydantic_model
+
+        _yaml_cfg = load_unified_config()
+        if _yaml_cfg is not None:
+            update_pydantic_model(settings.providers, _yaml_cfg.providers.model_dump())
+            logger.info(
+                "Hydrated settings.providers from yaml: "
+                "aws=%s, gcp=%s, azure=%s, ibm=%s, nosana_api_keys=%d",
+                bool(settings.providers.aws.access_key_id),
+                bool(settings.providers.gcp.project_id),
+                bool(settings.providers.azure.subscription_id),
+                bool(settings.providers.ibm.api_key),
+                len(settings.providers.nosana.api_keys),
+            )
+    except Exception as _hydrate_exc:
+        logger.warning(
+            "Could not hydrate settings.providers from yaml: %s — "
+            "continuing with env/DB config only",
+            _hydrate_exc,
+        )
+
     # Initialize Default Org & Superadmin
     from inferia.services.api_gateway.db.database import AsyncSessionLocal
     from inferia.services.api_gateway.rbac.initialization import initialize_default_org
