@@ -2,9 +2,9 @@
 Data Service Configuration.
 """
 
-from typing import Optional
-from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Any, ClassVar, Optional
+from pydantic import BaseModel, Field, field_validator
+from inferia.common.unified_config import UnifiedBaseSettings
 
 
 class ChromaConfig(BaseModel):
@@ -23,8 +23,21 @@ class ProvidersConfig(BaseModel):
     vectordb: VectorDBConfig = Field(default_factory=VectorDBConfig)
 
 
-class Settings(BaseSettings):
-    """Data Service Settings."""
+class Settings(UnifiedBaseSettings):
+    """Data Service Settings.
+
+    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
+    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    """
+
+    _yaml_path: ClassVar[str] = "services.data"
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def _coerce_allowed_origins(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return ",".join(str(item).strip() for item in v if str(item).strip())
+        return v
 
     # Application Settings
     app_name: str = "InferiaLLM Data Service"
@@ -75,13 +88,6 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
 
 
 settings = Settings()
