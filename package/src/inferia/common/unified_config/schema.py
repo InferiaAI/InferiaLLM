@@ -219,7 +219,7 @@ class OrchestrationReadinessSection(BaseModel):
 class OrchestrationDeploymentLogsSection(BaseModel):
     # NOTE: leaf names match orchestration/config.py Settings field names.
     model_config = ConfigDict(extra="forbid")
-    elasticsearch_url: Optional[str] = None
+    # elasticsearch_url → env only (URL)
     deployment_log_buffer_size: int = Field(default=10000, gt=0)
     deployment_log_flush_interval: int = Field(default=10, gt=0)
 
@@ -228,8 +228,7 @@ class OrchestrationService(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     # host, http_port, grpc_port → env only
-    # api_gateway_database_url → env only (URL)
-    nosana_sidecar_url: str = "http://localhost:3000"
+    # api_gateway_database_url, nosana_sidecar_url → env only (URLs)
     readiness: OrchestrationReadinessSection = Field(default_factory=OrchestrationReadinessSection)
     deployment_logs: OrchestrationDeploymentLogsSection = Field(default_factory=OrchestrationDeploymentLogsSection)
 
@@ -243,7 +242,7 @@ class ServicesConfig(BaseModel):
     orchestration: OrchestrationService = Field(default_factory=OrchestrationService)
 
 
-# ─── providers (Phase 2 will tighten; for now accept-all) ─────────────────
+# ─── providers (accept-all; schema may tighten in a follow-up) ────────────
 class ProvidersConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 

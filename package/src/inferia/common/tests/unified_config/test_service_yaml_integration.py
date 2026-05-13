@@ -1,4 +1,4 @@
-"""Integration tests: each Phase-2 service Settings loads correctly from
+"""Integration tests: each migrated service Settings loads correctly from
 inferia.yaml.example via INFERIA_CONFIG.
 
 These tests assert that the yaml → YamlConfigSettingsSource → service Settings

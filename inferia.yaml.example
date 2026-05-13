@@ -1,4 +1,10 @@
-# inferia.yaml — InferiaLLM unified configuration (Phase 1 — api_gateway)
+# inferia.yaml — InferiaLLM unified configuration
+#
+# SPLIT RULE: yaml owns application behavior only.
+# Hosting (host, port, workers, reload), networking (proxy_headers,
+# forwarded_allow_ips), URLs (api_gateway_url, service_urls, dashboard,
+# database/redis URLs), SSL settings, and connection credentials live in
+# env vars and are NOT configured here.
 #
 # Discovery:
 #   1. inferiallm start --config /path/to/inferia.yaml
@@ -14,22 +20,6 @@ version: 1
 
 environment: development
 log_level: INFO
-
-# ─── Shared infrastructure ──────────────────────────────────────────────
-infra:
-  database:
-    url: ${DATABASE_URL:-postgresql+asyncpg://inferia:inferia@localhost:5432/inferia}
-    ssl: false
-  redis:
-    host: ${REDIS_HOST:-localhost}
-    port: 6379
-    db: "0"
-    username: ${REDIS_USERNAME:-}
-    password: ${REDIS_PASSWORD:-}
-    ssl: false
-  logstash:
-    host: ${LOGSTASH_HOST:-}
-    port: 5959
 
 # ─── Shared security ────────────────────────────────────────────────────
 # Secrets MUST come from env. Defaults shown here are non-secret strings
@@ -50,11 +40,6 @@ security:
 services:
   api_gateway:
     enabled: true
-    host: 0.0.0.0
-    port: 8000
-    workers: 1
-    reload: false
-    proxy_headers: true
     default_org_name: "Default Organization"
     auth:
       provider: local
@@ -74,27 +59,9 @@ services:
       proxy_timeout_seconds: 300.0
       proxy_max_connections: 500
       proxy_max_keepalive: 100
-    ssl:
-      verify: true
-    service_urls:
-      guardrail:     http://localhost:8002
-      data:          http://localhost:8003
-      orchestration: http://localhost:8080
-      inference:     http://localhost:8001
-    dashboard:
-      api_gateway_url: ${DASHBOARD_API_GATEWAY_URL:-}
-      inference_url:   ${DASHBOARD_INFERENCE_URL:-}
-      web_socket_url:  ${DASHBOARD_WEB_SOCKET_URL:-}
-      sidecar_url:     ${DASHBOARD_SIDECAR_URL:-}
 
   inference:
     enabled: true
-    host: 0.0.0.0
-    port: 8001
-    workers: 1
-    reload: false
-    api_gateway_url: ${API_GATEWAY_URL:-http://localhost:8000}
-    external_proxy_url: ${EXTERNAL_PROXY_URL:-}
     request_timeout: 30
     verify_ssl: true
     upstream:
@@ -120,11 +87,7 @@ services:
 
   guardrail:
     enabled: true
-    host: 0.0.0.0
-    port: 8002
-    reload: false
-    api_gateway_url: ${API_GATEWAY_URL:-http://localhost:8000}
-    default_engine: llm-guard
+    default_guardrail_engine: llm-guard
     llama_guard_model_id: meta-llama/llama-guard-4-12b
     banned_substrings: ""
     controls:
@@ -150,31 +113,21 @@ services:
 
   data:
     enabled: true
-    host: 0.0.0.0
-    port: 8003
-    reload: false
-    api_gateway_url: ${API_GATEWAY_URL:-http://localhost:8000}
-    redis_url: ${REDIS_URL:-redis://localhost:6379/0}
     max_ingest_documents: 500
     max_document_size_bytes: 1000000
 
   orchestration:
     enabled: true
-    host: 0.0.0.0
-    http_port: 8080
-    grpc_port: 50051
-    nosana_sidecar_url: ${NOSANA_SIDECAR_URL:-http://localhost:3000}
     readiness:
       default_readiness_timeout: 300
       default_polling_interval: 20
       ephemeral_failure_threshold_minutes: 10
     deployment_logs:
-      elasticsearch_url: ${ELASTICSEARCH_URL:-}
       deployment_log_buffer_size: 10000
       deployment_log_flush_interval: 10
 
 # ─── Providers ──────────────────────────────────────────────────────────
-# Phase 1 accepts arbitrary keys here (Phase 2 will tighten).
+# Schema is accept-all here today; may tighten in a follow-up.
 providers:
   cloud:
     aws:
