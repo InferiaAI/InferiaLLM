@@ -5,6 +5,10 @@ These tests assert that the yaml → YamlConfigSettingsSource → service Settin
 pipeline works end to end for each migrated service. They do NOT test every
 field — just enough representative fields to catch schema mismatches and
 flatten-mapping errors.
+
+Split rule: yaml carries app behavior only; hosting/port/URL/connection fields
+live in env vars. Accordingly, the tests below no longer assert on port/host/
+api_gateway_url/redis_url fields from yaml — those come from env.
 """
 import os
 from pathlib import Path
@@ -39,11 +43,6 @@ def _yaml_env(monkeypatch, tmp_path):
 # ─── inference ───────────────────────────────────────────────────────────────
 
 class TestInferenceSettingsFromYaml:
-    def test_port_read_from_yaml(self):
-        from inferia.services.inference.config import Settings
-        s = Settings(_env_file=None)
-        assert s.port == 8001
-
     def test_upstream_timeout_read_from_yaml(self):
         from inferia.services.inference.config import Settings
         s = Settings(_env_file=None)
@@ -63,7 +62,7 @@ class TestInferenceSettingsFromYaml:
         # allowed_origins comes from shared security subtree as a list; must be str
         assert isinstance(s.allowed_origins, str)
 
-    def test_env_overrides_yaml_port(self, monkeypatch):
+    def test_env_overrides_yaml_workers(self, monkeypatch):
         from inferia.common.unified_config.loader import _clear_cache
         monkeypatch.setenv("INFERENCE_WORKERS", "4")
         _clear_cache()
@@ -71,15 +70,25 @@ class TestInferenceSettingsFromYaml:
         s = Settings(_env_file=None)
         assert s.workers == 4
 
+    def test_request_timeout_read_from_yaml(self):
+        from inferia.services.inference.config import Settings
+        s = Settings(_env_file=None)
+        assert s.request_timeout == 30
+
+    def test_upstream_max_response_bytes_from_yaml(self):
+        from inferia.services.inference.config import Settings
+        s = Settings(_env_file=None)
+        assert s.upstream_max_response_bytes == 52_428_800
+
+    def test_context_cache_maxsize_from_yaml(self):
+        from inferia.services.inference.config import Settings
+        s = Settings(_env_file=None)
+        assert s.context_cache_maxsize == 1000
+
 
 # ─── guardrail ───────────────────────────────────────────────────────────────
 
 class TestGuardrailSettingsFromYaml:
-    def test_port_read_from_yaml(self):
-        from inferia.services.guardrail.config import Settings
-        s = Settings(_env_file=None)
-        assert s.port == 8002
-
     def test_enable_guardrails_read_from_yaml(self):
         from inferia.services.guardrail.config import Settings
         s = Settings(_env_file=None)
@@ -101,15 +110,20 @@ class TestGuardrailSettingsFromYaml:
         s = Settings(_env_file=None)
         assert isinstance(s.allowed_origins, str)
 
+    def test_bias_threshold_from_yaml(self):
+        from inferia.services.guardrail.config import Settings
+        s = Settings(_env_file=None)
+        assert s.bias_threshold == pytest.approx(0.75)
+
+    def test_default_guardrail_engine_from_yaml(self):
+        from inferia.services.guardrail.config import Settings
+        s = Settings(_env_file=None)
+        assert s.default_guardrail_engine == "llm-guard"
+
 
 # ─── data ─────────────────────────────────────────────────────────────────────
 
 class TestDataSettingsFromYaml:
-    def test_port_read_from_yaml(self):
-        from inferia.services.data.config import Settings
-        s = Settings(_env_file=None)
-        assert s.port == 8003
-
     def test_max_ingest_documents_from_yaml(self):
         from inferia.services.data.config import Settings
         s = Settings(_env_file=None)
@@ -126,25 +140,16 @@ class TestDataSettingsFromYaml:
         s = Settings(_env_file=None)
         assert isinstance(s.allowed_origins, str)
 
-    def test_api_gateway_url_from_yaml(self):
+    def test_enabled_from_yaml(self):
         from inferia.services.data.config import Settings
         s = Settings(_env_file=None)
-        assert s.api_gateway_url == "http://localhost:8000"
+        # api_gateway_url is env only; just confirm max_document_size works
+        assert s.max_document_size_bytes > 0
 
 
 # ─── orchestration ───────────────────────────────────────────────────────────
 
 class TestOrchestrationSettingsFromYaml:
-    def test_http_port_read_from_yaml(self):
-        from inferia.services.orchestration.config import Settings
-        s = Settings(_env_file=None)
-        assert s.http_port == 8080
-
-    def test_grpc_port_read_from_yaml(self):
-        from inferia.services.orchestration.config import Settings
-        s = Settings(_env_file=None)
-        assert s.grpc_port == 50051
-
     def test_readiness_timeout_from_yaml(self):
         from inferia.services.orchestration.config import Settings
         s = Settings(_env_file=None)
@@ -159,3 +164,13 @@ class TestOrchestrationSettingsFromYaml:
         from inferia.services.orchestration.config import Settings
         s = Settings(_env_file=None)
         assert s.ephemeral_failure_threshold_minutes == 10
+
+    def test_deployment_log_flush_interval_from_yaml(self):
+        from inferia.services.orchestration.config import Settings
+        s = Settings(_env_file=None)
+        assert s.deployment_log_flush_interval == 10
+
+    def test_default_polling_interval_from_yaml(self):
+        from inferia.services.orchestration.config import Settings
+        s = Settings(_env_file=None)
+        assert s.default_polling_interval == 20

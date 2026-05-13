@@ -83,10 +83,12 @@ def test_service_enabled_must_be_bool():
         )
 
 
-def test_service_port_must_be_positive():
+def test_service_port_no_longer_in_schema():
+    """port is a hosting field → env only. Yaml schema ignores it (extra='ignore' at root,
+    but api_gateway has extra='forbid', so supplying port now raises ValidationError."""
     with pytest.raises(ValidationError):
         InferiaConfig.model_validate(
-            _base_dict(services={"api_gateway": {"port": -1}})
+            _base_dict(services={"api_gateway": {"port": 8000}})
         )
 
 

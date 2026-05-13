@@ -10,7 +10,7 @@ from .errors import (
     ConfigInterpolationError,
     ConfigValidationError,
 )
-from .schema import InferiaConfig, DashboardSection
+from .schema import InferiaConfig
 from .source import YamlConfigSettingsSource
 from .base import UnifiedBaseSettings
 from .loader import load_unified_config
@@ -18,7 +18,6 @@ from .loader import load_unified_config
 __all__ = [
     "load_unified_config",
     "InferiaConfig",
-    "DashboardSection",
     "YamlConfigSettingsSource",
     "UnifiedBaseSettings",
     "UnifiedConfigError",

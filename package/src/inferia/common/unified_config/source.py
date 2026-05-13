@@ -75,8 +75,8 @@ class YamlConfigSettingsSource(PydanticBaseSettingsSource):
             return {}
 
         # Shared sub-trees first; service-specific overlays on top.
+        # Note: infra sub-tree was removed from yaml schema (hosting/URL → env only).
         merged: dict[str, Any] = {}
-        merged.update(self._flatten(cfg.infra))
         merged.update(self._flatten(cfg.security))
         merged.update(self._flatten(service_node))
 

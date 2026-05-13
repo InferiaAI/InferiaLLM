@@ -1,7 +1,12 @@
-"""Pydantic models for the unified yaml schema (Sections 6 and 7.4 of the spec).
+"""Pydantic models for the unified yaml schema.
 
-Forward-compat fields (inference, guardrail, data, orchestration, providers)
-accept anything as a placeholder; Phase 2+ will tighten them.
+Split rule: yaml carries **application behavior** only.
+Hosting (host, port, workers, reload), networking (proxy_headers, forwarded_allow_ips),
+URLs (service URLs, database URL, Redis URL, dashboard URLs), SSL settings, and
+connection credentials all live in env vars — they do NOT belong in this schema.
+
+Services' Settings classes still read those values from env via validation_alias;
+removing them from yaml schema does not change env-var behaviour.
 """
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -33,36 +38,6 @@ def _secret_validator(v: Optional[str]) -> Optional[str]:
     return v
 
 
-# ─── infra ────────────────────────────────────────────────────────────────
-class DatabaseConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    url: Optional[str] = None
-    ssl: bool = True
-
-
-class RedisConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    host: str = "localhost"
-    port: int = Field(default=6379, gt=0, le=65535)
-    db: str = "0"
-    username: Optional[str] = None
-    password: Optional[str] = None
-    ssl: bool = False
-
-
-class LogstashConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    host: Optional[str] = None
-    port: int = Field(default=5959, gt=0, le=65535)
-
-
-class InfraConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    redis: RedisConfig = Field(default_factory=RedisConfig)
-    logstash: LogstashConfig = Field(default_factory=LogstashConfig)
-
-
 # ─── security ─────────────────────────────────────────────────────────────
 class SecurityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -81,7 +56,7 @@ class SecurityConfig(BaseModel):
 class AuthSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: Literal["local", "external"] = "local"
-    external_url: Optional[str] = None
+    # external_url is a URL → env only; removed from yaml schema
 
 
 class SuperadminSection(BaseModel):
@@ -109,45 +84,16 @@ class HttpClientSection(BaseModel):
     proxy_max_keepalive: int = Field(default=100, gt=0)
 
 
-class SslSection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    verify: bool = True
-    ca_bundle: Optional[str] = None
-
-
-class ServiceUrlsSection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    guardrail: Optional[str] = None
-    data: Optional[str] = None
-    orchestration: Optional[str] = None
-    inference: Optional[str] = None
-
-
-class DashboardSection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    api_gateway_url: Optional[str] = None
-    inference_url: Optional[str] = None
-    web_socket_url: Optional[str] = None
-    sidecar_url: Optional[str] = None
-
-
 class ApiGatewayService(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
-    host: str = "0.0.0.0"
-    port: int = Field(default=8000, gt=0, le=65535)
-    workers: int = Field(default=1, gt=0)
-    reload: bool = False
-    proxy_headers: bool = True
-    forwarded_allow_ips: Optional[str] = None
+    # host, port, workers, reload, proxy_headers, forwarded_allow_ips → env only
+    # ssl, service_urls, dashboard → env only (URLs and network config)
     default_org_name: str = "Default Organization"
     auth: AuthSection = Field(default_factory=AuthSection)
     superadmin: SuperadminSection = Field(default_factory=SuperadminSection)
     rate_limit: RateLimitSection = Field(default_factory=RateLimitSection)
     http_client: HttpClientSection = Field(default_factory=HttpClientSection)
-    ssl: SslSection = Field(default_factory=SslSection)
-    service_urls: ServiceUrlsSection = Field(default_factory=ServiceUrlsSection)
-    dashboard: DashboardSection = Field(default_factory=DashboardSection)
 
 
 # ─── inference ────────────────────────────────────────────────────────────
@@ -187,12 +133,9 @@ class QuotaCacheSection(BaseModel):
 class InferenceService(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
-    host: str = "0.0.0.0"
-    port: int = Field(default=8001, gt=0, le=65535)
-    workers: int = Field(default=1, gt=0)
-    reload: bool = False
-    api_gateway_url: str = "http://localhost:8000"
-    external_proxy_url: Optional[str] = None
+    # host, port, workers, reload → env only
+    # api_gateway_url, external_proxy_url → env only (URLs)
+    # ssl, allowed_origins → env only (connection/network config)
     request_timeout: int = Field(default=30, gt=0)
     verify_ssl: bool = True
     upstream: UpstreamSection = Field(default_factory=UpstreamSection)
@@ -237,11 +180,11 @@ class GuardrailPiiSection(BaseModel):
 class GuardrailService(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
-    host: str = "0.0.0.0"
-    port: int = Field(default=8002, gt=0, le=65535)
-    reload: bool = False
-    api_gateway_url: str = "http://localhost:8000"
-    default_engine: str = "llm-guard"
+    # host, port, reload → env only
+    # api_gateway_url, allowed_origins → env only (URLs/network)
+    # NOTE: leaf name matches guardrail/config.py Settings field name exactly
+    # so the flatten logic maps it without a prefix collision.
+    default_guardrail_engine: str = "llm-guard"
     llama_guard_model_id: str = "meta-llama/llama-guard-4-12b"
     banned_substrings: str = ""
     controls: GuardrailControlsSection = Field(default_factory=GuardrailControlsSection)
@@ -257,11 +200,8 @@ class DataService(BaseModel):
     # declared in data/config.py Settings.
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
-    host: str = "0.0.0.0"
-    port: int = Field(default=8003, gt=0, le=65535)
-    reload: bool = False
-    api_gateway_url: str = "http://localhost:8000"
-    redis_url: str = "redis://localhost:6379/0"
+    # host, port, reload → env only
+    # api_gateway_url, redis_url, allowed_origins → env only (URLs/network)
     max_ingest_documents: int = Field(default=500, gt=0)
     max_document_size_bytes: int = Field(default=1_000_000, gt=0)
 
@@ -287,9 +227,8 @@ class OrchestrationDeploymentLogsSection(BaseModel):
 class OrchestrationService(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
-    host: str = "0.0.0.0"
-    http_port: int = Field(default=8080, gt=0, le=65535)
-    grpc_port: int = Field(default=50051, gt=0, le=65535)
+    # host, http_port, grpc_port → env only
+    # api_gateway_database_url → env only (URL)
     nosana_sidecar_url: str = "http://localhost:3000"
     readiness: OrchestrationReadinessSection = Field(default_factory=OrchestrationReadinessSection)
     deployment_logs: OrchestrationDeploymentLogsSection = Field(default_factory=OrchestrationDeploymentLogsSection)
@@ -312,14 +251,18 @@ class ProvidersConfig(BaseModel):
 # ─── root ─────────────────────────────────────────────────────────────────
 class InferiaConfig(BaseModel):
     """Root of the unified config. Unknown top-level keys are *allowed* but ignored
-    (forward-compat); unknown keys inside known sub-trees are rejected (typo guard)."""
+    (forward-compat); unknown keys inside known sub-trees are rejected (typo guard).
+
+    Split rule: yaml owns application behavior; env owns hosting/port/URL/connection.
+    See Section 15 of the design spec for rationale.
+    """
     model_config = ConfigDict(extra="ignore")
 
     version: int = Field(..., description="Schema major; only 1 is supported")
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
-    infra: InfraConfig = Field(default_factory=InfraConfig)
+    # infra (database, redis, logstash) → env only; no longer in yaml schema
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)

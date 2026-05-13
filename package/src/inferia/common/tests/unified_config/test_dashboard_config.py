@@ -1,138 +1,28 @@
-"""Tests for the dashboard sub-section in unified_config (Phase 2 PR D, issue #243).
+"""Tests for write-dashboard-config CLI subcommand (issue #243).
+
+Dashboard URLs are env-only after the yaml schema refactor:
+  - services.api_gateway.dashboard is removed from the yaml schema.
+  - write-dashboard-config reads all four URLs purely from env.
+  - The --config flag is unused for this subcommand; tests verify env-only behaviour.
 
 Covers:
-  - Schema-level: DashboardSection reads and rejects unknown fields.
-  - write-dashboard-config: CLI subcommand writes config.js correctly.
-  - Legacy fallback: yaml nulls + env DASHBOARD_* vars.
-  - No yaml at all: all fields empty string.
+  - Env vars written to config.js correctly.
+  - Missing env vars → empty string (legacy fallback preserved).
   - No dashboard directory installed: exits 0 cleanly.
+  - config.js format: valid JS assignment.
+  - Summary line printed to stdout.
 """
 import json
 import os
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from inferia.common.unified_config.schema import InferiaConfig, DashboardSection
 from inferia import cli as cli_module
 from inferia.common.unified_config.loader import _clear_cache
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
-
-def _base_dict(**overrides):
-    """Minimum valid InferiaConfig input."""
-    base = {"version": 1, "environment": "development", "log_level": "INFO"}
-    base.update(overrides)
-    return base
-
-
-def _write_yaml(path: Path, content: str) -> Path:
-    path.write_text(content, encoding="utf-8")
-    return path
-
-
-# ─── Schema-level tests ────────────────────────────────────────────────────────
-
-class TestDashboardSectionSchema:
-    def test_defaults_are_all_none(self):
-        d = DashboardSection()
-        assert d.api_gateway_url is None
-        assert d.inference_url is None
-        assert d.web_socket_url is None
-        assert d.sidecar_url is None
-
-    def test_all_fields_set(self):
-        d = DashboardSection(
-            api_gateway_url="http://gw:8000",
-            inference_url="http://inf:8001",
-            web_socket_url="ws://gw:8000",
-            sidecar_url="http://side:3000",
-        )
-        assert d.api_gateway_url == "http://gw:8000"
-        assert d.inference_url == "http://inf:8001"
-        assert d.web_socket_url == "ws://gw:8000"
-        assert d.sidecar_url == "http://side:3000"
-
-    def test_extra_field_rejected(self):
-        with pytest.raises(ValidationError, match="extra_unknown_field"):
-            DashboardSection(extra_unknown_field="bad")
-
-    def test_nested_in_api_gateway(self):
-        cfg = InferiaConfig.model_validate(
-            _base_dict(
-                services={
-                    "api_gateway": {
-                        "dashboard": {
-                            "api_gateway_url": "http://gw:8000",
-                            "inference_url": "http://inf:8001",
-                            "web_socket_url": "ws://gw:8000",
-                            "sidecar_url": "http://side:3000",
-                        }
-                    }
-                }
-            )
-        )
-        d = cfg.services.api_gateway.dashboard
-        assert d.api_gateway_url == "http://gw:8000"
-        assert d.inference_url == "http://inf:8001"
-        assert d.web_socket_url == "ws://gw:8000"
-        assert d.sidecar_url == "http://side:3000"
-
-    def test_unknown_field_inside_api_gateway_dashboard_fails(self):
-        with pytest.raises(ValidationError, match="bogus_key"):
-            InferiaConfig.model_validate(
-                _base_dict(
-                    services={
-                        "api_gateway": {
-                            "dashboard": {"bogus_key": "oops"}
-                        }
-                    }
-                )
-            )
-
-    def test_api_gateway_defaults_have_dashboard_section(self):
-        cfg = InferiaConfig.model_validate(_base_dict())
-        assert isinstance(cfg.services.api_gateway.dashboard, DashboardSection)
-        assert cfg.services.api_gateway.dashboard.api_gateway_url is None
-
-    def test_partial_dashboard_fields_allowed(self):
-        cfg = InferiaConfig.model_validate(
-            _base_dict(
-                services={
-                    "api_gateway": {
-                        "dashboard": {"api_gateway_url": "http://gw:8000"}
-                    }
-                }
-            )
-        )
-        d = cfg.services.api_gateway.dashboard
-        assert d.api_gateway_url == "http://gw:8000"
-        assert d.inference_url is None
-        assert d.web_socket_url is None
-        assert d.sidecar_url is None
-
-    def test_null_fields_pass_schema(self):
-        cfg = InferiaConfig.model_validate(
-            _base_dict(
-                services={
-                    "api_gateway": {
-                        "dashboard": {
-                            "api_gateway_url": None,
-                            "inference_url": None,
-                            "web_socket_url": None,
-                            "sidecar_url": None,
-                        }
-                    }
-                }
-            )
-        )
-        d = cfg.services.api_gateway.dashboard
-        assert d.api_gateway_url is None
-
-
-# ─── CLI subcommand tests ──────────────────────────────────────────────────────
 
 def _read_config_js(dashboard_dir: Path) -> dict:
     """Read config.js and return the parsed JSON object."""
@@ -153,40 +43,23 @@ def clear_loader_cache():
     _clear_cache()
 
 
-class TestWriteDashboardConfig:
-    def test_yaml_values_written_to_config_js(self, tmp_path, monkeypatch):
-        """Yaml dashboard block → config.js contains those values."""
-        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
-        # Remove any legacy DASHBOARD_* env vars that might leak
-        for var in (
-            "DASHBOARD_API_GATEWAY_URL",
-            "DASHBOARD_INFERENCE_URL",
-            "DASHBOARD_WEB_SOCKET_URL",
-            "DASHBOARD_SIDECAR_URL",
-        ):
-            monkeypatch.delenv(var, raising=False)
+# ─── CLI subcommand tests ──────────────────────────────────────────────────────
 
-        yaml_file = _write_yaml(
-            tmp_path / "inferia.yaml",
-            """\
-version: 1
-services:
-  api_gateway:
-    dashboard:
-      api_gateway_url: http://gw:8000
-      inference_url: http://inf:8001
-      web_socket_url: ws://gw:8000
-      sidecar_url: http://side:3000
-""",
-        )
+class TestWriteDashboardConfig:
+    def test_env_values_written_to_config_js(self, tmp_path, monkeypatch):
+        """DASHBOARD_* env vars → config.js contains those values."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("DASHBOARD_API_GATEWAY_URL", "http://gw:8000")
+        monkeypatch.setenv("DASHBOARD_INFERENCE_URL", "http://inf:8001")
+        monkeypatch.setenv("DASHBOARD_WEB_SOCKET_URL", "ws://gw:8000")
+        monkeypatch.setenv("DASHBOARD_SIDECAR_URL", "http://side:3000")
+
         dashboard_dir = tmp_path / "dashboard"
         dashboard_dir.mkdir()
 
         cli_module.main(
             [
                 "write-dashboard-config",
-                "--config",
-                str(yaml_file),
                 "--dashboard-dir",
                 str(dashboard_dir),
             ]
@@ -198,47 +71,8 @@ services:
         assert obj["WEB_SOCKET_URL"] == "ws://gw:8000"
         assert obj["SIDECAR_URL"] == "http://side:3000"
 
-    def test_legacy_fallback_when_yaml_fields_are_null(self, tmp_path, monkeypatch):
-        """Yaml leaves all dashboard fields null → fall back to DASHBOARD_* env vars."""
-        monkeypatch.setenv("DASHBOARD_API_GATEWAY_URL", "http://env-gw:8000")
-        monkeypatch.delenv("DASHBOARD_INFERENCE_URL", raising=False)
-        monkeypatch.delenv("DASHBOARD_WEB_SOCKET_URL", raising=False)
-        monkeypatch.delenv("DASHBOARD_SIDECAR_URL", raising=False)
-
-        yaml_file = _write_yaml(
-            tmp_path / "inferia.yaml",
-            """\
-version: 1
-services:
-  api_gateway:
-    dashboard:
-      api_gateway_url:
-      inference_url:
-      web_socket_url:
-      sidecar_url:
-""",
-        )
-        dashboard_dir = tmp_path / "dashboard"
-        dashboard_dir.mkdir()
-
-        cli_module.main(
-            [
-                "write-dashboard-config",
-                "--config",
-                str(yaml_file),
-                "--dashboard-dir",
-                str(dashboard_dir),
-            ]
-        )
-
-        obj = _read_config_js(dashboard_dir)
-        assert obj["API_GATEWAY_URL"] == "http://env-gw:8000"
-        assert obj["INFERENCE_URL"] == ""
-        assert obj["WEB_SOCKET_URL"] == ""
-        assert obj["SIDECAR_URL"] == ""
-
-    def test_no_yaml_all_empty_strings(self, tmp_path, monkeypatch):
-        """No yaml file, no DASHBOARD_* env vars → all four fields are empty string."""
+    def test_missing_env_vars_produce_empty_strings(self, tmp_path, monkeypatch):
+        """No DASHBOARD_* env vars → all four fields are empty string."""
         monkeypatch.delenv("INFERIA_CONFIG", raising=False)
         for var in (
             "DASHBOARD_API_GATEWAY_URL",
@@ -261,6 +95,31 @@ services:
 
         obj = _read_config_js(dashboard_dir)
         assert obj["API_GATEWAY_URL"] == ""
+        assert obj["INFERENCE_URL"] == ""
+        assert obj["WEB_SOCKET_URL"] == ""
+        assert obj["SIDECAR_URL"] == ""
+
+    def test_partial_env_vars(self, tmp_path, monkeypatch):
+        """Only some DASHBOARD_* vars set → set ones appear, rest are empty string."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("DASHBOARD_API_GATEWAY_URL", "http://env-gw:8000")
+        monkeypatch.delenv("DASHBOARD_INFERENCE_URL", raising=False)
+        monkeypatch.delenv("DASHBOARD_WEB_SOCKET_URL", raising=False)
+        monkeypatch.delenv("DASHBOARD_SIDECAR_URL", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+
+        cli_module.main(
+            [
+                "write-dashboard-config",
+                "--dashboard-dir",
+                str(dashboard_dir),
+            ]
+        )
+
+        obj = _read_config_js(dashboard_dir)
+        assert obj["API_GATEWAY_URL"] == "http://env-gw:8000"
         assert obj["INFERENCE_URL"] == ""
         assert obj["WEB_SOCKET_URL"] == ""
         assert obj["SIDECAR_URL"] == ""
@@ -303,43 +162,6 @@ services:
         assert content.startswith("window.__RUNTIME_CONFIG__ = {")
         assert content.endswith("};")
 
-    def test_yaml_env_interpolation_for_dashboard_urls(self, tmp_path, monkeypatch):
-        """${VAR:-} in yaml is expanded via env before the value is used."""
-        monkeypatch.setenv("DASHBOARD_API_GATEWAY_URL", "http://from-env:8000")
-        monkeypatch.delenv("DASHBOARD_INFERENCE_URL", raising=False)
-        monkeypatch.delenv("DASHBOARD_WEB_SOCKET_URL", raising=False)
-        monkeypatch.delenv("DASHBOARD_SIDECAR_URL", raising=False)
-
-        yaml_file = _write_yaml(
-            tmp_path / "inferia.yaml",
-            """\
-version: 1
-services:
-  api_gateway:
-    dashboard:
-      api_gateway_url: ${DASHBOARD_API_GATEWAY_URL:-}
-      inference_url: ${DASHBOARD_INFERENCE_URL:-}
-      web_socket_url: ${DASHBOARD_WEB_SOCKET_URL:-}
-      sidecar_url: ${DASHBOARD_SIDECAR_URL:-}
-""",
-        )
-        dashboard_dir = tmp_path / "dashboard"
-        dashboard_dir.mkdir()
-
-        cli_module.main(
-            [
-                "write-dashboard-config",
-                "--config",
-                str(yaml_file),
-                "--dashboard-dir",
-                str(dashboard_dir),
-            ]
-        )
-
-        obj = _read_config_js(dashboard_dir)
-        assert obj["API_GATEWAY_URL"] == "http://from-env:8000"
-        assert obj["INFERENCE_URL"] == ""
-
     def test_prints_summary_line(self, tmp_path, monkeypatch, capsys):
         """Subcommand prints a one-line summary to stdout."""
         monkeypatch.delenv("INFERIA_CONFIG", raising=False)
@@ -362,23 +184,23 @@ services:
         assert "[inferiallm write-dashboard-config]" in captured.out
         assert "wrote" in captured.out
 
-    def test_yaml_wins_over_env_when_not_null(self, tmp_path, monkeypatch):
-        """Explicit yaml value takes precedence over DASHBOARD_* env var."""
-        monkeypatch.setenv("DASHBOARD_API_GATEWAY_URL", "http://env-gw:9999")
-        monkeypatch.delenv("DASHBOARD_INFERENCE_URL", raising=False)
-        monkeypatch.delenv("DASHBOARD_WEB_SOCKET_URL", raising=False)
-        monkeypatch.delenv("DASHBOARD_SIDECAR_URL", raising=False)
+    def test_config_flag_ignored_safely(self, tmp_path, monkeypatch):
+        """--config flag is accepted but does not affect env-only URL resolution."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("DASHBOARD_API_GATEWAY_URL", "http://env-only:8000")
+        for var in (
+            "DASHBOARD_INFERENCE_URL",
+            "DASHBOARD_WEB_SOCKET_URL",
+            "DASHBOARD_SIDECAR_URL",
+        ):
+            monkeypatch.delenv(var, raising=False)
 
-        yaml_file = _write_yaml(
-            tmp_path / "inferia.yaml",
-            """\
-version: 1
-services:
-  api_gateway:
-    dashboard:
-      api_gateway_url: http://yaml-gw:8000
-""",
-        )
+        # Write a yaml that would have had a dashboard block in the old schema
+        # (now irrelevant — schema no longer has that block, but --config still
+        # accepted for forward-compat with scripts that pass it)
+        yaml_file = tmp_path / "inferia.yaml"
+        yaml_file.write_text("version: 1\n", encoding="utf-8")
+
         dashboard_dir = tmp_path / "dashboard"
         dashboard_dir.mkdir()
 
@@ -393,5 +215,6 @@ services:
         )
 
         obj = _read_config_js(dashboard_dir)
-        # yaml value wins; env value is NOT used for api_gateway_url
-        assert obj["API_GATEWAY_URL"] == "http://yaml-gw:8000"
+        # Value comes purely from env, not from yaml
+        assert obj["API_GATEWAY_URL"] == "http://env-only:8000"
+        assert obj["INFERENCE_URL"] == ""
