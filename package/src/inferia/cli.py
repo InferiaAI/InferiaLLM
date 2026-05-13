@@ -455,10 +455,12 @@ def build_sidecar():
 def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: str | None = None) -> None:
     """Write window.__RUNTIME_CONFIG__ = {...}; to the installed dashboard's config.js.
 
-    Resolution order for each URL field:
-      1. services.api_gateway.dashboard.<field> from the unified yaml (if non-null).
-      2. DASHBOARD_<FIELD> environment variable.
-      3. Empty string (matches legacy entrypoint.sh behaviour).
+    Dashboard URLs are env-only: DASHBOARD_API_GATEWAY_URL, DASHBOARD_INFERENCE_URL,
+    DASHBOARD_WEB_SOCKET_URL, DASHBOARD_SIDECAR_URL. If a var is unset or empty,
+    the field is written as an empty string (matching legacy entrypoint.sh behaviour).
+
+    The --config / config_path argument is accepted for forward-compat with existing
+    scripts but is not used — yaml no longer carries dashboard URLs.
 
     The function is intentionally import-light and DB-free so it can be called
     from entrypoint.sh before the database is available.
@@ -475,22 +477,11 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
         # No bundled dashboard (e.g. headless / server-only installs). No-op.
         return
 
-    # Load unified config — may return None if no yaml is found.
-    from inferia.common.unified_config.loader import load_unified_config
-
-    cfg = load_unified_config(path=config_path)
-    dash = cfg.services.api_gateway.dashboard if cfg is not None else None
-
-    def _get(yaml_val: str | None, env_key: str) -> str:
-        if yaml_val:
-            return yaml_val
-        return os.environ.get(env_key, "") or ""
-
     config = {
-        "API_GATEWAY_URL": _get(dash.api_gateway_url if dash else None, "DASHBOARD_API_GATEWAY_URL"),
-        "INFERENCE_URL": _get(dash.inference_url if dash else None, "DASHBOARD_INFERENCE_URL"),
-        "WEB_SOCKET_URL": _get(dash.web_socket_url if dash else None, "DASHBOARD_WEB_SOCKET_URL"),
-        "SIDECAR_URL": _get(dash.sidecar_url if dash else None, "DASHBOARD_SIDECAR_URL"),
+        "API_GATEWAY_URL": os.environ.get("DASHBOARD_API_GATEWAY_URL", "") or "",
+        "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "",
+        "WEB_SOCKET_URL": os.environ.get("DASHBOARD_WEB_SOCKET_URL", "") or "",
+        "SIDECAR_URL": os.environ.get("DASHBOARD_SIDECAR_URL", "") or "",
     }
 
     config_js_path = os.path.join(dashboard_dir, "config.js")
@@ -702,13 +693,13 @@ def main(argv=None):
     # --- write-dashboard-config ---
     wdc_parser = sub.add_parser(
         "write-dashboard-config",
-        help="Write dashboard runtime config.js from unified yaml (or env fallback)",
+        help="Write dashboard runtime config.js from DASHBOARD_* env vars",
     )
     wdc_parser.add_argument(
         "--config",
         type=str,
         default=None,
-        help="Path to unified YAML config file",
+        help="Accepted for forward-compat but unused; dashboard URLs are env-only",
     )
     wdc_parser.add_argument(
         "--dashboard-dir",
