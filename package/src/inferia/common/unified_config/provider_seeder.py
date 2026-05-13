@@ -63,26 +63,26 @@ def _extract_rows(providers_obj: Any) -> list[ProviderRow]:
     """Convert the providers section of InferiaConfig into ProviderRow list.
 
     The mapping is:
-      providers.cloud.aws.access_key_id         → (aws, default, access_key_id)
-      providers.cloud.aws.secret_access_key     → (aws, default, secret_access_key)
-      providers.cloud.gcp.service_account_json  → (gcp, default, service_account_json)
-      providers.vectordb.chroma.api_key         → (chroma, default, api_key)
-      providers.vectordb.chroma.tenant          → (chroma, default, tenant)
-      providers.vectordb.chroma.url             → (chroma, default, url)
-      providers.vectordb.chroma.database        → (chroma, default, database)
-      providers.guardrails.groq.api_key         → (groq, default, api_key)
-      providers.guardrails.lakera.api_key       → (lakera, default, api_key)
-      providers.depin.nosana.wallet_private_key → (nosana, wallet, wallet_private_key)
-      providers.depin.nosana.api_keys[i].key    → (nosana, api_keys[i].name, api_key)
-      providers.depin.akash.mnemonic            → (akash, default, mnemonic)
+      providers.aws.access_key_id          → (aws, default, access_key_id)
+      providers.aws.secret_access_key      → (aws, default, secret_access_key)
+      providers.gcp.project_id             → (gcp, default, project_id)
+      providers.gcp.service_account_json   → (gcp, default, service_account_json)
+      providers.azure.subscription_id      → (azure, default, subscription_id)
+      providers.azure.tenant_id            → (azure, default, tenant_id)
+      providers.azure.client_id            → (azure, default, client_id)
+      providers.azure.client_secret        → (azure, default, client_secret)
+      providers.ibm.api_key                → (ibm, default, api_key)
+      providers.ibm.resource_group_id      → (ibm, default, resource_group_id)
+      providers.nosana.wallet_private_key  → (nosana, wallet, wallet_private_key)
+      providers.nosana.api_keys[i].key     → (nosana, api_keys[i].name, api_key)
 
+    Region fields are configuration, not credentials — they are not seeded.
     Empty / null / whitespace-only values are skipped.
     """
     if providers_obj is None:
         return []
 
-    # providers_obj is a Pydantic model with extra="allow".
-    # Convert to plain dict for uniform traversal.
+    # providers_obj is a Pydantic model. Convert to plain dict for uniform traversal.
     if hasattr(providers_obj, "model_dump"):
         data: dict = providers_obj.model_dump()
     elif isinstance(providers_obj, dict):
@@ -92,40 +92,30 @@ def _extract_rows(providers_obj: Any) -> list[ProviderRow]:
 
     rows: list[ProviderRow] = []
 
-    # ── cloud ──────────────────────────────────────────────────────────────
-    cloud = data.get("cloud") or {}
-
-    # AWS
-    aws = cloud.get("aws") or {}
+    # ── aws ────────────────────────────────────────────────────────────────
+    aws = data.get("aws") or {}
     _maybe_row(rows, aws, "access_key_id", "aws", "default", "access_key_id")
     _maybe_row(rows, aws, "secret_access_key", "aws", "default", "secret_access_key")
 
-    # GCP
-    gcp = cloud.get("gcp") or {}
+    # ── gcp ────────────────────────────────────────────────────────────────
+    gcp = data.get("gcp") or {}
+    _maybe_row(rows, gcp, "project_id", "gcp", "default", "project_id")
     _maybe_row(rows, gcp, "service_account_json", "gcp", "default", "service_account_json")
 
-    # ── vectordb ───────────────────────────────────────────────────────────
-    vectordb = data.get("vectordb") or {}
+    # ── azure ──────────────────────────────────────────────────────────────
+    azure = data.get("azure") or {}
+    _maybe_row(rows, azure, "subscription_id", "azure", "default", "subscription_id")
+    _maybe_row(rows, azure, "tenant_id", "azure", "default", "tenant_id")
+    _maybe_row(rows, azure, "client_id", "azure", "default", "client_id")
+    _maybe_row(rows, azure, "client_secret", "azure", "default", "client_secret")
 
-    chroma = vectordb.get("chroma") or {}
-    _maybe_row(rows, chroma, "api_key", "chroma", "default", "api_key")
-    _maybe_row(rows, chroma, "tenant", "chroma", "default", "tenant")
-    _maybe_row(rows, chroma, "url", "chroma", "default", "url")
-    _maybe_row(rows, chroma, "database", "chroma", "default", "database")
+    # ── ibm ────────────────────────────────────────────────────────────────
+    ibm = data.get("ibm") or {}
+    _maybe_row(rows, ibm, "api_key", "ibm", "default", "api_key")
+    _maybe_row(rows, ibm, "resource_group_id", "ibm", "default", "resource_group_id")
 
-    # ── guardrails ─────────────────────────────────────────────────────────
-    guardrails = data.get("guardrails") or {}
-
-    groq = guardrails.get("groq") or {}
-    _maybe_row(rows, groq, "api_key", "groq", "default", "api_key")
-
-    lakera = guardrails.get("lakera") or {}
-    _maybe_row(rows, lakera, "api_key", "lakera", "default", "api_key")
-
-    # ── depin ──────────────────────────────────────────────────────────────
-    depin = data.get("depin") or {}
-
-    nosana = depin.get("nosana") or {}
+    # ── nosana ─────────────────────────────────────────────────────────────
+    nosana = data.get("nosana") or {}
     _maybe_row(rows, nosana, "wallet_private_key", "nosana", "wallet", "wallet_private_key")
 
     # nosana.api_keys is a list of {name, key, is_active?} entries
@@ -148,9 +138,6 @@ def _extract_rows(providers_obj: Any) -> list[ProviderRow]:
                     is_active=is_active,
                 )
             )
-
-    akash = depin.get("akash") or {}
-    _maybe_row(rows, akash, "mnemonic", "akash", "default", "mnemonic")
 
     return rows
 

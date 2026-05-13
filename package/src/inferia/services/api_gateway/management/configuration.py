@@ -41,17 +41,8 @@ import os
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.config import (
     ProvidersConfig,
-    AWSConfig,
-    ChromaConfig,
-    GroqConfig,
-    LakeraConfig,
-    NosanaConfig,
     ProviderCredential,
-    AkashConfig,
-    CloudConfig,
-    VectorDBConfig,
-    GuardrailsConfig,
-    DePINConfig,
+    NosanaApiKeyEntry,
 )
 
 router = APIRouter(tags=["Configuration"])
@@ -79,43 +70,34 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     # Create a copy to mask
     masked = config.model_copy(deep=True)
 
-    # Cloud - AWS
-    if masked.cloud.aws.secret_access_key:
-        masked.cloud.aws.secret_access_key = "********"
-    if masked.cloud.aws.access_key_id:
-        masked.cloud.aws.access_key_id = _mask_secret(masked.cloud.aws.access_key_id)
+    # AWS
+    if masked.aws.secret_access_key:
+        masked.aws.secret_access_key = "********"
+    if masked.aws.access_key_id:
+        masked.aws.access_key_id = _mask_secret(masked.aws.access_key_id)
 
-    # Cloud - GCP
-    if masked.cloud.gcp.service_account_json:
-        masked.cloud.gcp.service_account_json = "********"
+    # GCP
+    if masked.gcp.service_account_json:
+        masked.gcp.service_account_json = "********"
 
-    # VectorDB
-    if masked.vectordb.chroma.api_key:
-        masked.vectordb.chroma.api_key = _mask_secret(masked.vectordb.chroma.api_key)
+    # Azure
+    if masked.azure.client_secret:
+        masked.azure.client_secret = "********"
 
-    # Guardrails
-    if masked.guardrails.groq.api_key:
-        masked.guardrails.groq.api_key = _mask_secret(masked.guardrails.groq.api_key)
-    if masked.guardrails.lakera.api_key:
-        masked.guardrails.lakera.api_key = _mask_secret(
-            masked.guardrails.lakera.api_key
-        )
+    # IBM
+    if masked.ibm.api_key:
+        masked.ibm.api_key = _mask_secret(masked.ibm.api_key)
 
-    # DePIN
-    if masked.depin.nosana.wallet_private_key:
-        masked.depin.nosana.wallet_private_key = "********"
-    if masked.depin.nosana.api_key:
-        masked.depin.nosana.api_key = _mask_secret(masked.depin.nosana.api_key)
-    # Mask named credentials in api_keys list
-    for i, entry in enumerate(masked.depin.nosana.api_keys):
+    # Nosana
+    if masked.nosana.wallet_private_key:
+        masked.nosana.wallet_private_key = "********"
+    for entry in masked.nosana.api_keys:
         if isinstance(entry, dict):
             if entry.get("key"):
                 entry["key"] = _mask_secret(entry["key"])
         else:
             if entry.key:
                 entry.key = _mask_secret(entry.key)
-    if masked.depin.akash.mnemonic:
-        masked.depin.akash.mnemonic = "********"
 
     return masked
 
@@ -179,13 +161,10 @@ async def update_provider_config(
     try:
         await config_manager.save_config(db, db_config)
 
-        # Log update status for guardrails
-        if "guardrails" in new_data:
-            groq_new = new_data["guardrails"].get("groq", {}).get("api_key")
-            if groq_new:
-                logger.info(
-                    "Config Update: New Groq API Key received: %s...", groq_new[:6]
-                )
+        # Log update status for providers (debug aid)
+        for prov in ("aws", "gcp", "azure", "ibm", "nosana"):
+            if prov in new_data:
+                logger.debug("Config Update: provider '%s' data received", prov)
     except Exception as e:
         logger.error("Failed to write config: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to save config: {e}")
@@ -387,37 +366,40 @@ def _mask_credential(value: str) -> str:
     return f"{value[:4]}****{value[-4:]}"
 
 
-# Legacy migration: Convert old nosana config to new credential system
+# Extract nosana credentials from the typed in-memory settings
 def _get_nosana_credentials_from_config() -> List[ProviderCredential]:
-    """Extract nosana credentials from legacy config for migration."""
+    """Extract nosana credentials from settings.providers.nosana."""
     credentials = []
-    nosana_config = settings.providers.depin.nosana
+    nosana = settings.providers.nosana
 
-    # Migrate legacy api_key
-    if nosana_config.api_key:
+    if nosana.wallet_private_key:
         credentials.append(
             ProviderCredential(
                 provider="nosana",
-                name="default",
-                credential_type="api_key",
-                value=nosana_config.api_key,
+                name="wallet",
+                credential_type="wallet_private_key",
+                value=nosana.wallet_private_key,
                 is_active=True,
             )
         )
 
-    # Migrate api_keys list from config (using raw dict access for backward compatibility)
-    raw_config = settings.providers.model_dump()
-    api_keys = raw_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
-    for api_key_entry in api_keys:
-        # Check if this key is not the legacy one already added
-        if api_key_entry.get("key") != nosana_config.api_key:
+    for entry in nosana.api_keys:
+        if isinstance(entry, dict):
+            key_val = entry.get("key", "")
+            key_name = entry.get("name", "unnamed")
+            is_active = entry.get("is_active", True)
+        else:
+            key_val = entry.key
+            key_name = entry.name
+            is_active = entry.is_active
+        if key_val:
             credentials.append(
                 ProviderCredential(
                     provider="nosana",
-                    name=api_key_entry.get("name", "unnamed"),
+                    name=key_name,
                     credential_type="api_key",
-                    value=api_key_entry.get("key", ""),
-                    is_active=api_key_entry.get("is_active", True),
+                    value=key_val,
+                    is_active=is_active,
                 )
             )
 
@@ -447,19 +429,66 @@ async def list_provider_credentials(
 
     if provider == "nosana":
         credentials = _get_nosana_credentials_from_config()
-    elif provider == "akash":
-        # Check for legacy mnemonic
-        mnemonic = settings.providers.depin.akash.mnemonic
-        if mnemonic:
-            credentials.append(
-                ProviderCredential(
-                    provider="akash",
-                    name="default",
-                    credential_type="mnemonic",
-                    value=mnemonic,
-                    is_active=True,
-                )
-            )
+    elif provider == "aws":
+        aws = settings.providers.aws
+        if aws.access_key_id:
+            credentials.append(ProviderCredential(
+                provider="aws", name="default", credential_type="access_key_id",
+                value=aws.access_key_id, is_active=True,
+            ))
+        if aws.secret_access_key:
+            credentials.append(ProviderCredential(
+                provider="aws", name="default", credential_type="secret_access_key",
+                value=aws.secret_access_key, is_active=True,
+            ))
+    elif provider == "gcp":
+        gcp = settings.providers.gcp
+        if gcp.project_id:
+            credentials.append(ProviderCredential(
+                provider="gcp", name="default", credential_type="project_id",
+                value=gcp.project_id, is_active=True,
+            ))
+        if gcp.service_account_json:
+            credentials.append(ProviderCredential(
+                provider="gcp", name="default", credential_type="service_account_json",
+                value=gcp.service_account_json, is_active=True,
+            ))
+    elif provider == "azure":
+        az = settings.providers.azure
+        if az.subscription_id:
+            credentials.append(ProviderCredential(
+                provider="azure", name="default", credential_type="subscription_id",
+                value=az.subscription_id, is_active=True,
+            ))
+        if az.tenant_id:
+            credentials.append(ProviderCredential(
+                provider="azure", name="default", credential_type="tenant_id",
+                value=az.tenant_id, is_active=True,
+            ))
+        if az.client_id:
+            credentials.append(ProviderCredential(
+                provider="azure", name="default", credential_type="client_id",
+                value=az.client_id, is_active=True,
+            ))
+        if az.client_secret:
+            credentials.append(ProviderCredential(
+                provider="azure", name="default", credential_type="client_secret",
+                value=az.client_secret, is_active=True,
+            ))
+    elif provider == "ibm":
+        ibm = settings.providers.ibm
+        if ibm.api_key:
+            credentials.append(ProviderCredential(
+                provider="ibm", name="default", credential_type="api_key",
+                value=ibm.api_key, is_active=True,
+            ))
+        if ibm.resource_group_id:
+            credentials.append(ProviderCredential(
+                provider="ibm", name="default", credential_type="resource_group_id",
+                value=ibm.resource_group_id, is_active=True,
+            ))
+    # akash is no longer a supported provider in the unified tree
+    # Unknown providers return an empty list
 
     return ProviderCredentialListResponse(
         credentials=[
@@ -510,16 +539,14 @@ async def add_provider_credential(
 
     # Store based on provider type
     if provider == "nosana":
-        if "depin" not in current_config:
-            current_config["depin"] = {}
-        if "nosana" not in current_config["depin"]:
-            current_config["depin"]["nosana"] = {}
-        if "api_keys" not in current_config["depin"]["nosana"]:
-            current_config["depin"]["nosana"]["api_keys"] = []
+        if "nosana" not in current_config:
+            current_config["nosana"] = {}
+        if "api_keys" not in current_config["nosana"]:
+            current_config["nosana"]["api_keys"] = []
 
         # Check for duplicate names
         existing_names = {
-            k["name"] for k in current_config["depin"]["nosana"]["api_keys"]
+            k["name"] for k in current_config["nosana"]["api_keys"]
         }
         if credential_data.name in existing_names:
             raise HTTPException(
@@ -527,27 +554,10 @@ async def add_provider_credential(
                 detail=f"Credential with name '{credential_data.name}' already exists for {provider}",
             )
 
-        current_config["depin"]["nosana"]["api_keys"].append(
+        current_config["nosana"]["api_keys"].append(
             {
                 "name": new_credential.name,
                 "key": new_credential.value,
-                "is_active": new_credential.is_active,
-            }
-        )
-    elif provider == "akash":
-        # For akash, we might store in a different structure
-        # This shows how easy it is to extend to new providers
-        if "depin" not in current_config:
-            current_config["depin"] = {}
-        if "akash" not in current_config["depin"]:
-            current_config["depin"]["akash"] = {}
-        if "wallets" not in current_config["depin"]["akash"]:
-            current_config["depin"]["akash"]["wallets"] = []
-
-        current_config["depin"]["akash"]["wallets"].append(
-            {
-                "name": new_credential.name,
-                "mnemonic": new_credential.value,
                 "is_active": new_credential.is_active,
             }
         )
@@ -608,23 +618,13 @@ async def update_provider_credential(
     updated = False
 
     if provider == "nosana":
-        api_keys = current_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
+        api_keys = current_config.get("nosana", {}).get("api_keys", [])
         for key_config in api_keys:
             if key_config["name"] == credential_name:
                 if credential_data.value is not None:
                     key_config["key"] = credential_data.value
                 if credential_data.is_active is not None:
                     key_config["is_active"] = credential_data.is_active
-                updated = True
-                break
-    elif provider == "akash":
-        wallets = current_config.get("depin", {}).get("akash", {}).get("wallets", [])
-        for wallet_config in wallets:
-            if wallet_config["name"] == credential_name:
-                if credential_data.value is not None:
-                    wallet_config["mnemonic"] = credential_data.value
-                if credential_data.is_active is not None:
-                    wallet_config["is_active"] = credential_data.is_active
                 updated = True
                 break
 
@@ -690,17 +690,10 @@ async def delete_provider_credential(
     deleted = False
 
     if provider == "nosana":
-        api_keys = current_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
+        api_keys = current_config.get("nosana", {}).get("api_keys", [])
         for i, key_config in enumerate(api_keys):
             if key_config["name"] == credential_name:
                 api_keys.pop(i)
-                deleted = True
-                break
-    elif provider == "akash":
-        wallets = current_config.get("depin", {}).get("akash", {}).get("wallets", [])
-        for i, wallet_config in enumerate(wallets):
-            if wallet_config["name"] == credential_name:
-                wallets.pop(i)
                 deleted = True
                 break
 
@@ -782,7 +775,7 @@ async def delete_nosana_api_key(
 
     # Find and remove the key from raw config
     current_config = settings.providers.model_dump()
-    api_keys = current_config.get("depin", {}).get("nosana", {}).get("api_keys", [])
+    api_keys = current_config.get("nosana", {}).get("api_keys", [])
     key_index = None
     for i, k in enumerate(api_keys):
         if k.get("name") == key_name:

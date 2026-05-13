@@ -242,9 +242,57 @@ class ServicesConfig(BaseModel):
     orchestration: OrchestrationService = Field(default_factory=OrchestrationService)
 
 
-# ─── providers (accept-all; schema may tighten in a follow-up) ────────────
+# ─── providers ────────────────────────────────────────────────────────────
+class AWSProvider(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    access_key_id: Optional[str] = None
+    secret_access_key: Optional[str] = None
+    region: str = "us-east-1"
+
+
+class GCPProvider(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: Optional[str] = None
+    region: str = "us-central1"
+    service_account_json: Optional[str] = None
+
+
+class AzureProvider(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    subscription_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    region: str = "eastus"
+
+
+class IBMProvider(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: Optional[str] = None
+    region: str = "us-south"
+    resource_group_id: Optional[str] = None
+
+
+class NosanaApiKeyEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    key: str
+    is_active: bool = True
+
+
+class NosanaProvider(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wallet_private_key: Optional[str] = None
+    api_keys: list[NosanaApiKeyEntry] = Field(default_factory=list)
+
+
 class ProvidersConfig(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
+    aws: AWSProvider = Field(default_factory=AWSProvider)
+    gcp: GCPProvider = Field(default_factory=GCPProvider)
+    azure: AzureProvider = Field(default_factory=AzureProvider)
+    ibm: IBMProvider = Field(default_factory=IBMProvider)
+    nosana: NosanaProvider = Field(default_factory=NosanaProvider)
 
 
 # ─── root ─────────────────────────────────────────────────────────────────

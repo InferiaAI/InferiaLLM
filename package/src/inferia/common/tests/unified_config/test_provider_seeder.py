@@ -124,13 +124,11 @@ class TestExtractRowsEmpty:
     def test_providers_all_empty_strings(self):
         p = _providers_from_dict(
             {
-                "cloud": {"aws": {"access_key_id": "", "secret_access_key": ""}},
-                "vectordb": {"chroma": {"api_key": "", "tenant": "", "url": ""}},
-                "guardrails": {"groq": {"api_key": ""}, "lakera": {"api_key": ""}},
-                "depin": {
-                    "nosana": {"wallet_private_key": "", "api_keys": []},
-                    "akash": {"mnemonic": ""},
-                },
+                "aws": {"access_key_id": "", "secret_access_key": ""},
+                "gcp": {"project_id": "", "service_account_json": ""},
+                "azure": {"subscription_id": "", "tenant_id": "", "client_id": "", "client_secret": ""},
+                "ibm": {"api_key": "", "resource_group_id": ""},
+                "nosana": {"wallet_private_key": "", "api_keys": []},
             }
         )
         assert _extract_rows(p) == []
@@ -138,9 +136,11 @@ class TestExtractRowsEmpty:
     def test_providers_all_none_values(self):
         p = _providers_from_dict(
             {
-                "cloud": {"aws": {"access_key_id": None, "secret_access_key": None}},
-                "guardrails": {"groq": {"api_key": None}},
-                "depin": {"akash": {"mnemonic": None}},
+                "aws": {"access_key_id": None, "secret_access_key": None},
+                "gcp": {"project_id": None},
+                "azure": {"client_secret": None},
+                "ibm": {"api_key": None},
+                "nosana": {"wallet_private_key": None},
             }
         )
         assert _extract_rows(p) == []
@@ -158,12 +158,12 @@ class TestExtractRowsEmpty:
 
 
 # ---------------------------------------------------------------------------
-# _extract_rows — cloud.aws
+# _extract_rows — aws
 # ---------------------------------------------------------------------------
 
 class TestExtractRowsAws:
     def test_access_key_id(self):
-        p = _providers_from_dict({"cloud": {"aws": {"access_key_id": "AKIAIOSFODNN"}}})
+        p = _providers_from_dict({"aws": {"access_key_id": "AKIAIOSFODNN"}})
         rows = _extract_rows(p)
         assert len(rows) == 1
         r = rows[0]
@@ -174,7 +174,7 @@ class TestExtractRowsAws:
 
     def test_secret_access_key(self):
         p = _providers_from_dict(
-            {"cloud": {"aws": {"secret_access_key": "wJalrXUtnFEMI"}}}
+            {"aws": {"secret_access_key": "wJalrXUtnFEMI"}}
         )
         rows = _extract_rows(p)
         assert len(rows) == 1
@@ -183,11 +183,9 @@ class TestExtractRowsAws:
     def test_both_aws_fields(self):
         p = _providers_from_dict(
             {
-                "cloud": {
-                    "aws": {
-                        "access_key_id": "AKIAIOSFODNN",
-                        "secret_access_key": "secret",
-                    }
+                "aws": {
+                    "access_key_id": "AKIAIOSFODNN",
+                    "secret_access_key": "secret",
                 }
             }
         )
@@ -196,97 +194,164 @@ class TestExtractRowsAws:
         types = {r.credential_type for r in rows}
         assert types == {"access_key_id", "secret_access_key"}
 
+    def test_region_not_seeded(self):
+        """Region is config, not a credential — must not appear as a row."""
+        p = _providers_from_dict({"aws": {"access_key_id": "AKIA", "region": "us-east-1"}})
+        rows = _extract_rows(p)
+        cred_types = {r.credential_type for r in rows}
+        assert "region" not in cred_types
+
 
 # ---------------------------------------------------------------------------
-# _extract_rows — cloud.gcp
+# _extract_rows — gcp
 # ---------------------------------------------------------------------------
 
 class TestExtractRowsGcp:
     def test_service_account_json(self):
         p = _providers_from_dict(
-            {"cloud": {"gcp": {"service_account_json": '{"type":"service_account"}'}}}
+            {"gcp": {"service_account_json": '{"type":"service_account"}'}}
         )
         rows = _extract_rows(p)
         assert len(rows) == 1
         assert rows[0].provider == "gcp"
         assert rows[0].credential_type == "service_account_json"
 
+    def test_project_id(self):
+        p = _providers_from_dict({"gcp": {"project_id": "my-gcp-project"}})
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].credential_type == "project_id"
 
-# ---------------------------------------------------------------------------
-# _extract_rows — vectordb.chroma
-# ---------------------------------------------------------------------------
-
-class TestExtractRowsChroma:
-    def test_all_chroma_fields(self):
+    def test_both_gcp_fields(self):
         p = _providers_from_dict(
             {
-                "vectordb": {
-                    "chroma": {
-                        "api_key": "ck-key",
-                        "tenant": "my-tenant",
-                        "url": "https://chroma.example.com",
-                        "database": "mydb",
-                    }
-                }
-            }
-        )
-        rows = _extract_rows(p)
-        assert len(rows) == 4
-        cred_types = {r.credential_type for r in rows}
-        assert cred_types == {"api_key", "tenant", "url", "database"}
-
-    def test_partial_chroma(self):
-        p = _providers_from_dict(
-            {"vectordb": {"chroma": {"api_key": "ck-key", "tenant": ""}}}
-        )
-        rows = _extract_rows(p)
-        assert len(rows) == 1
-        assert rows[0].credential_type == "api_key"
-
-
-# ---------------------------------------------------------------------------
-# _extract_rows — guardrails
-# ---------------------------------------------------------------------------
-
-class TestExtractRowsGuardrails:
-    def test_groq_api_key(self):
-        p = _providers_from_dict({"guardrails": {"groq": {"api_key": "groq-secret"}}})
-        rows = _extract_rows(p)
-        assert len(rows) == 1
-        assert rows[0].provider == "groq"
-        assert rows[0].credential_type == "api_key"
-
-    def test_lakera_api_key(self):
-        p = _providers_from_dict(
-            {"guardrails": {"lakera": {"api_key": "lakera-key"}}}
-        )
-        rows = _extract_rows(p)
-        assert len(rows) == 1
-        assert rows[0].provider == "lakera"
-
-    def test_both_guardrail_providers(self):
-        p = _providers_from_dict(
-            {
-                "guardrails": {
-                    "groq": {"api_key": "g"},
-                    "lakera": {"api_key": "l"},
+                "gcp": {
+                    "project_id": "proj-123",
+                    "service_account_json": '{"type":"service_account"}',
                 }
             }
         )
         rows = _extract_rows(p)
         assert len(rows) == 2
-        providers = {r.provider for r in rows}
-        assert providers == {"groq", "lakera"}
+        types = {r.credential_type for r in rows}
+        assert types == {"project_id", "service_account_json"}
+
+    def test_region_not_seeded(self):
+        p = _providers_from_dict({"gcp": {"project_id": "p", "region": "us-central1"}})
+        rows = _extract_rows(p)
+        cred_types = {r.credential_type for r in rows}
+        assert "region" not in cred_types
 
 
 # ---------------------------------------------------------------------------
-# _extract_rows — depin.nosana (wallet + api_keys list)
+# _extract_rows — azure
+# ---------------------------------------------------------------------------
+
+class TestExtractRowsAzure:
+    def test_subscription_id(self):
+        p = _providers_from_dict({"azure": {"subscription_id": "sub-abc-123"}})
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].provider == "azure"
+        assert rows[0].credential_type == "subscription_id"
+        assert rows[0].name == "default"
+
+    def test_tenant_id(self):
+        p = _providers_from_dict({"azure": {"tenant_id": "tenant-xyz"}})
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].credential_type == "tenant_id"
+
+    def test_client_id(self):
+        p = _providers_from_dict({"azure": {"client_id": "client-id-here"}})
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].credential_type == "client_id"
+
+    def test_client_secret(self):
+        p = _providers_from_dict({"azure": {"client_secret": "my-client-secret"}})
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].credential_type == "client_secret"
+
+    def test_all_azure_fields(self):
+        p = _providers_from_dict(
+            {
+                "azure": {
+                    "subscription_id": "sub",
+                    "tenant_id": "ten",
+                    "client_id": "cid",
+                    "client_secret": "csec",
+                }
+            }
+        )
+        rows = _extract_rows(p)
+        assert len(rows) == 4
+        types = {r.credential_type for r in rows}
+        assert types == {"subscription_id", "tenant_id", "client_id", "client_secret"}
+
+    def test_partial_azure(self):
+        p = _providers_from_dict(
+            {"azure": {"subscription_id": "sub", "tenant_id": ""}}
+        )
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].credential_type == "subscription_id"
+
+    def test_region_not_seeded(self):
+        p = _providers_from_dict({"azure": {"subscription_id": "s", "region": "eastus"}})
+        rows = _extract_rows(p)
+        cred_types = {r.credential_type for r in rows}
+        assert "region" not in cred_types
+
+
+# ---------------------------------------------------------------------------
+# _extract_rows — ibm
+# ---------------------------------------------------------------------------
+
+class TestExtractRowsIbm:
+    def test_api_key(self):
+        p = _providers_from_dict({"ibm": {"api_key": "ibm-api-key-value"}})
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].provider == "ibm"
+        assert rows[0].credential_type == "api_key"
+        assert rows[0].name == "default"
+
+    def test_resource_group_id(self):
+        p = _providers_from_dict({"ibm": {"resource_group_id": "rg-123"}})
+        rows = _extract_rows(p)
+        assert len(rows) == 1
+        assert rows[0].credential_type == "resource_group_id"
+
+    def test_both_ibm_fields(self):
+        p = _providers_from_dict(
+            {"ibm": {"api_key": "key", "resource_group_id": "rg"}}
+        )
+        rows = _extract_rows(p)
+        assert len(rows) == 2
+        types = {r.credential_type for r in rows}
+        assert types == {"api_key", "resource_group_id"}
+
+    def test_region_not_seeded(self):
+        p = _providers_from_dict({"ibm": {"api_key": "k", "region": "us-south"}})
+        rows = _extract_rows(p)
+        cred_types = {r.credential_type for r in rows}
+        assert "region" not in cred_types
+
+    def test_empty_ibm_skipped(self):
+        p = _providers_from_dict({"ibm": {"api_key": "", "resource_group_id": ""}})
+        assert _extract_rows(p) == []
+
+
+# ---------------------------------------------------------------------------
+# _extract_rows — nosana (wallet + api_keys list)
 # ---------------------------------------------------------------------------
 
 class TestExtractRowsNosana:
     def test_wallet_private_key(self):
         p = _providers_from_dict(
-            {"depin": {"nosana": {"wallet_private_key": "abc123"}}}
+            {"nosana": {"wallet_private_key": "abc123"}}
         )
         rows = _extract_rows(p)
         assert len(rows) == 1
@@ -297,10 +362,8 @@ class TestExtractRowsNosana:
     def test_single_api_key(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [{"name": "prod", "key": "prod-key"}]
-                    }
+                "nosana": {
+                    "api_keys": [{"name": "prod", "key": "prod-key"}]
                 }
             }
         )
@@ -313,14 +376,12 @@ class TestExtractRowsNosana:
     def test_multiple_api_keys(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [
-                            {"name": "prod", "key": "prod-key"},
-                            {"name": "staging", "key": "staging-key"},
-                            {"name": "dev", "key": "dev-key"},
-                        ]
-                    }
+                "nosana": {
+                    "api_keys": [
+                        {"name": "prod", "key": "prod-key"},
+                        {"name": "staging", "key": "staging-key"},
+                        {"name": "dev", "key": "dev-key"},
+                    ]
                 }
             }
         )
@@ -334,12 +395,10 @@ class TestExtractRowsNosana:
     def test_api_key_is_active_false(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [
-                            {"name": "disabled", "key": "some-key", "is_active": False}
-                        ]
-                    }
+                "nosana": {
+                    "api_keys": [
+                        {"name": "disabled", "key": "some-key", "is_active": False}
+                    ]
                 }
             }
         )
@@ -350,10 +409,8 @@ class TestExtractRowsNosana:
     def test_api_key_is_active_defaults_true(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [{"name": "nostate", "key": "k"}]
-                    }
+                "nosana": {
+                    "api_keys": [{"name": "nostate", "key": "k"}]
                 }
             }
         )
@@ -363,13 +420,11 @@ class TestExtractRowsNosana:
     def test_api_keys_entry_missing_name_skipped(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [
-                            {"key": "orphan-key"},  # no name
-                            {"name": "ok", "key": "good-key"},
-                        ]
-                    }
+                "nosana": {
+                    "api_keys": [
+                        {"key": "orphan-key"},  # no name
+                        {"name": "ok", "key": "good-key"},
+                    ]
                 }
             }
         )
@@ -380,12 +435,10 @@ class TestExtractRowsNosana:
     def test_api_keys_entry_missing_key_skipped(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [
-                            {"name": "novalue"},  # no key
-                        ]
-                    }
+                "nosana": {
+                    "api_keys": [
+                        {"name": "novalue"},  # no key
+                    ]
                 }
             }
         )
@@ -395,10 +448,8 @@ class TestExtractRowsNosana:
     def test_api_keys_entry_empty_key_skipped(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [{"name": "x", "key": ""}]
-                    }
+                "nosana": {
+                    "api_keys": [{"name": "x", "key": ""}]
                 }
             }
         )
@@ -408,10 +459,8 @@ class TestExtractRowsNosana:
     def test_api_keys_non_dict_entry_skipped(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": ["not-a-dict", {"name": "good", "key": "v"}]
-                    }
+                "nosana": {
+                    "api_keys": ["not-a-dict", {"name": "good", "key": "v"}]
                 }
             }
         )
@@ -421,13 +470,11 @@ class TestExtractRowsNosana:
     def test_wallet_and_api_keys_combined(self):
         p = _providers_from_dict(
             {
-                "depin": {
-                    "nosana": {
-                        "wallet_private_key": "wallet-secret",
-                        "api_keys": [
-                            {"name": "prod", "key": "prod-key"},
-                        ],
-                    }
+                "nosana": {
+                    "wallet_private_key": "wallet-secret",
+                    "api_keys": [
+                        {"name": "prod", "key": "prod-key"},
+                    ],
                 }
             }
         )
@@ -438,68 +485,59 @@ class TestExtractRowsNosana:
 
 
 # ---------------------------------------------------------------------------
-# _extract_rows — depin.akash
-# ---------------------------------------------------------------------------
-
-class TestExtractRowsAkash:
-    def test_mnemonic(self):
-        p = _providers_from_dict(
-            {"depin": {"akash": {"mnemonic": "word1 word2 word3"}}}
-        )
-        rows = _extract_rows(p)
-        assert len(rows) == 1
-        assert rows[0].provider == "akash"
-        assert rows[0].name == "default"
-        assert rows[0].credential_type == "mnemonic"
-
-    def test_whitespace_mnemonic_skipped(self):
-        p = _providers_from_dict({"depin": {"akash": {"mnemonic": "   "}}})
-        assert _extract_rows(p) == []
-
-
-# ---------------------------------------------------------------------------
-# _extract_rows — full tree
+# _extract_rows — full tree (all 5 providers)
 # ---------------------------------------------------------------------------
 
 class TestExtractRowsFullTree:
     def test_all_branches(self):
         p = _providers_from_dict(
             {
-                "cloud": {
-                    "aws": {
-                        "access_key_id": "AKIA",
-                        "secret_access_key": "secret",
-                    },
-                    "gcp": {"service_account_json": "{}"},
+                "aws": {
+                    "access_key_id": "AKIA",
+                    "secret_access_key": "secret",
                 },
-                "vectordb": {
-                    "chroma": {
-                        "api_key": "ck",
-                        "tenant": "t",
-                        "url": "http://localhost",
-                        "database": "db",
-                    }
+                "gcp": {
+                    "project_id": "proj",
+                    "service_account_json": "{}",
                 },
-                "guardrails": {
-                    "groq": {"api_key": "groq"},
-                    "lakera": {"api_key": "lakera"},
+                "azure": {
+                    "subscription_id": "sub",
+                    "tenant_id": "ten",
+                    "client_id": "cid",
+                    "client_secret": "csec",
                 },
-                "depin": {
-                    "nosana": {
-                        "wallet_private_key": "wallet",
-                        "api_keys": [
-                            {"name": "prod", "key": "pk"},
-                            {"name": "staging", "key": "sk"},
-                        ],
-                    },
-                    "akash": {"mnemonic": "w1 w2"},
+                "ibm": {
+                    "api_key": "ibmkey",
+                    "resource_group_id": "rg",
+                },
+                "nosana": {
+                    "wallet_private_key": "wallet",
+                    "api_keys": [
+                        {"name": "prod", "key": "pk"},
+                        {"name": "staging", "key": "sk"},
+                    ],
                 },
             }
         )
         rows = _extract_rows(p)
-        # 2 (aws) + 1 (gcp) + 4 (chroma) + 1 (groq) + 1 (lakera) +
-        # 1 (wallet) + 2 (api_keys) + 1 (akash) = 13
+        # 2 (aws) + 2 (gcp) + 4 (azure) + 2 (ibm) + 1 (wallet) + 2 (api_keys) = 13
         assert len(rows) == 13
+
+    def test_providers_not_in_tree_ignored(self):
+        """Old providers (akash, chroma, groq, lakera) that no longer exist produce no rows."""
+        p = _providers_from_dict(
+            {
+                "aws": {"access_key_id": "AKIA"},
+                # These old keys must be silently ignored
+                "depin": {"akash": {"mnemonic": "word1 word2"}},
+                "guardrails": {"groq": {"api_key": "groq-key"}},
+                "vectordb": {"chroma": {"api_key": "ck-key"}},
+            }
+        )
+        rows = _extract_rows(p)
+        # Only aws/access_key_id should produce a row
+        assert len(rows) == 1
+        assert rows[0].provider == "aws"
 
 
 # ---------------------------------------------------------------------------
@@ -620,10 +658,10 @@ class TestSeedProvidersFromYamlUnit:
 
         key = Fernet.generate_key().decode()
 
-        # Build a fake cfg with one credential row.
+        # Build a fake cfg with one credential row (flat aws).
         class _FakeProviders:
             def model_dump(self):
-                return {"cloud": {"aws": {"access_key_id": "AKIA123"}}}
+                return {"aws": {"access_key_id": "AKIA123"}}
 
         class _FakeCfg:
             providers = _FakeProviders()
@@ -667,11 +705,9 @@ class TestSeedProvidersFromYamlUnit:
         class _FakeProviders:
             def model_dump(self):
                 return {
-                    "cloud": {
-                        "aws": {
-                            "access_key_id": "AKIA",
-                            "secret_access_key": "sekret",
-                        }
+                    "aws": {
+                        "access_key_id": "AKIA",
+                        "secret_access_key": "sekret",
                     }
                 }
 
@@ -823,15 +859,15 @@ class TestSeedProvidersDB:
     async def test_empty_db_inserts_rows(self, db_fixture, _clean_provider_credentials):
         cfg = self._make_cfg(
             {
-                "cloud": {"aws": {"access_key_id": "AKIA", "secret_access_key": "S"}},
-                "guardrails": {"groq": {"api_key": "groq-key"}},
+                "aws": {"access_key_id": "AKIA", "secret_access_key": "S"},
+                "ibm": {"api_key": "ibm-key"},
             }
         )
         report = await seed_providers_from_yaml(
             db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
         )
         assert report.skipped is False
-        assert report.inserted == 3  # access_key_id + secret_access_key + groq
+        assert report.inserted == 3  # access_key_id + secret_access_key + ibm.api_key
         assert report.updated == 0
         assert report.deleted == 0
 
@@ -854,8 +890,8 @@ class TestSeedProvidersDB:
         finally:
             await conn.close()
 
-        # Yaml only has groq; old-provider should be deleted
-        cfg = self._make_cfg({"guardrails": {"groq": {"api_key": "g"}}})
+        # Yaml only has ibm; old-provider should be deleted
+        cfg = self._make_cfg({"ibm": {"api_key": "ibm-key"}})
         report = await seed_providers_from_yaml(
             db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
         )
@@ -873,13 +909,13 @@ class TestSeedProvidersDB:
             await conn.execute(
                 """INSERT INTO provider_credentials
                    (provider, name, credential_type, credential_value_encrypted)
-                   VALUES ('groq', 'default', 'api_key', $1)""",
+                   VALUES ('ibm', 'default', 'api_key', $1)""",
                 fernet.encrypt(b"old-key").decode(),
             )
         finally:
             await conn.close()
 
-        cfg = self._make_cfg({"guardrails": {"groq": {"api_key": "new-groq-key"}}})
+        cfg = self._make_cfg({"ibm": {"api_key": "new-ibm-key"}})
         report = await seed_providers_from_yaml(
             db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
         )
@@ -891,15 +927,15 @@ class TestSeedProvidersDB:
         try:
             row = await conn.fetchrow(
                 "SELECT credential_value_encrypted FROM provider_credentials "
-                "WHERE provider='groq' AND name='default'"
+                "WHERE provider='ibm' AND name='default'"
             )
         finally:
             await conn.close()
 
         stored = row["credential_value_encrypted"]
-        assert stored != "new-groq-key", "Value must be stored encrypted"
+        assert stored != "new-ibm-key", "Value must be stored encrypted"
         decrypted = fernet.decrypt(stored.encode()).decode()
-        assert decrypted == "new-groq-key"
+        assert decrypted == "new-ibm-key"
 
     @pytest.mark.asyncio
     async def test_stored_values_are_not_plaintext(
@@ -909,7 +945,7 @@ class TestSeedProvidersDB:
         from cryptography.fernet import Fernet
 
         cfg = self._make_cfg(
-            {"guardrails": {"groq": {"api_key": "super-secret-groq"}}}
+            {"azure": {"client_secret": "super-secret-azure"}}
         )
         await seed_providers_from_yaml(db_fixture.dsn, db_fixture.fernet_key, cfg=cfg)
 
@@ -922,9 +958,9 @@ class TestSeedProvidersDB:
         fernet = Fernet(db_fixture.fernet_key.encode())
         for row in rows:
             val = row["credential_value_encrypted"]
-            assert val != "super-secret-groq", "Plaintext stored — encryption failed"
+            assert val != "super-secret-azure", "Plaintext stored — encryption failed"
             decrypted = fernet.decrypt(val.encode()).decode()
-            assert decrypted == "super-secret-groq"
+            assert decrypted == "super-secret-azure"
 
     @pytest.mark.asyncio
     async def test_idempotent_second_run_produces_no_changes(
@@ -933,7 +969,7 @@ class TestSeedProvidersDB:
         """Running the seeder twice with identical yaml must yield updated counts
         and zero inserts/deletes on the second pass."""
         cfg = self._make_cfg(
-            {"guardrails": {"groq": {"api_key": "groq-key"}}}
+            {"ibm": {"api_key": "ibm-key"}}
         )
         r1 = await seed_providers_from_yaml(
             db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
@@ -957,13 +993,11 @@ class TestSeedProvidersDB:
 
         cfg = self._make_cfg(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [
-                            {"name": "prod", "key": "pk"},
-                            {"name": "staging", "key": "sk"},
-                        ]
-                    }
+                "nosana": {
+                    "api_keys": [
+                        {"name": "prod", "key": "pk"},
+                        {"name": "staging", "key": "sk"},
+                    ]
                 }
             }
         )
@@ -984,6 +1018,39 @@ class TestSeedProvidersDB:
         assert names == {"prod", "staging"}
 
     @pytest.mark.asyncio
+    async def test_azure_credentials_synced(
+        self, db_fixture, _clean_provider_credentials
+    ):
+        """Azure credentials are all seeded correctly."""
+        import asyncpg
+
+        cfg = self._make_cfg(
+            {
+                "azure": {
+                    "subscription_id": "sub-123",
+                    "tenant_id": "tenant-xyz",
+                    "client_id": "client-abc",
+                    "client_secret": "secret-qwerty",
+                }
+            }
+        )
+        report = await seed_providers_from_yaml(
+            db_fixture.dsn, db_fixture.fernet_key, cfg=cfg
+        )
+        assert report.inserted == 4
+
+        conn = await asyncpg.connect(db_fixture.dsn)
+        try:
+            rows = await conn.fetch(
+                "SELECT credential_type FROM provider_credentials WHERE provider='azure'"
+            )
+        finally:
+            await conn.close()
+
+        cred_types = {r["credential_type"] for r in rows}
+        assert cred_types == {"subscription_id", "tenant_id", "client_id", "client_secret"}
+
+    @pytest.mark.asyncio
     async def test_yaml_empty_providers_section_skips_delete(
         self, db_fixture, _clean_provider_credentials
     ):
@@ -999,7 +1066,7 @@ class TestSeedProvidersDB:
             await conn.execute(
                 """INSERT INTO provider_credentials
                    (provider, name, credential_type, credential_value_encrypted)
-                   VALUES ('groq', 'default', 'api_key', $1)""",
+                   VALUES ('ibm', 'default', 'api_key', $1)""",
                 fernet.encrypt(b"old-key").decode(),
             )
         finally:
@@ -1023,12 +1090,10 @@ class TestSeedProvidersDB:
 
         cfg = self._make_cfg(
             {
-                "depin": {
-                    "nosana": {
-                        "api_keys": [
-                            {"name": "disabled", "key": "dk", "is_active": False}
-                        ]
-                    }
+                "nosana": {
+                    "api_keys": [
+                        {"name": "disabled", "key": "dk", "is_active": False}
+                    ]
                 }
             }
         )

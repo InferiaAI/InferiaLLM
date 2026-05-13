@@ -127,30 +127,31 @@ services:
       deployment_log_flush_interval: 10
 
 # ─── Providers ──────────────────────────────────────────────────────────
-# Schema is accept-all here today; may tighten in a follow-up.
+# Compute/inference providers. All values can be env-interpolated. The
+# yaml-authoritative seeder syncs these into the provider_credentials
+# table on every `inferiallm init` / `inferiallm migrate`.
 providers:
-  cloud:
-    aws:
-      access_key_id: ${AWS_ACCESS_KEY_ID:-}
-      secret_access_key: ${AWS_SECRET_ACCESS_KEY:-}
-      region: ap-south-1
-  vectordb:
-    chroma:
-      api_key: ${CHROMA_API_KEY:-}
-      tenant:  ${CHROMA_TENANT:-}
-      url:     ${CHROMA_URL:-}
-      is_local: true
-  guardrails:
-    groq:
-      api_key: ${GROQ_API_KEY:-}
-    lakera:
-      api_key: ${LAKERA_API_KEY:-}
-  depin:
-    nosana:
-      wallet_private_key: ${NOSANA_WALLET_KEY:-}
-      api_keys:
-        - name: prod
-          key:  ${NOSANA_PROD_KEY:-}
-          is_active: true
-    akash:
-      mnemonic: ${AKASH_MNEMONIC:-}
+  aws:
+    access_key_id:     ${AWS_ACCESS_KEY_ID:-}
+    secret_access_key: ${AWS_SECRET_ACCESS_KEY:-}
+    region: us-east-1
+  gcp:
+    project_id:           ${GCP_PROJECT_ID:-}
+    region: us-central1
+    service_account_json: ${GCP_SERVICE_ACCOUNT_JSON:-}
+  azure:
+    subscription_id: ${AZURE_SUBSCRIPTION_ID:-}
+    tenant_id:       ${AZURE_TENANT_ID:-}
+    client_id:       ${AZURE_CLIENT_ID:-}
+    client_secret:   ${AZURE_CLIENT_SECRET:-}
+    region: eastus
+  ibm:
+    api_key:           ${IBM_API_KEY:-}
+    region: us-south
+    resource_group_id: ${IBM_RESOURCE_GROUP_ID:-}
+  nosana:
+    wallet_private_key: ${NOSANA_WALLET_KEY:-}
+    api_keys:
+      - name: prod
+        key: ${NOSANA_PROD_KEY:-}
+        is_active: true

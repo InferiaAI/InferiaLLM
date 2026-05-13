@@ -5,6 +5,13 @@ from pydantic import ValidationError
 from inferia.common.unified_config.schema import (
     InferiaConfig,
     KNOWN_PLACEHOLDER_SECRETS,
+    ProvidersConfig,
+    AWSProvider,
+    GCPProvider,
+    AzureProvider,
+    IBMProvider,
+    NosanaProvider,
+    NosanaApiKeyEntry,
 )
 
 
@@ -119,3 +126,150 @@ def test_unknown_top_level_key_does_not_fail():
     cfg = InferiaConfig.model_validate(_base_dict(weird_future_key=1))
     # No exception; entry just isn't kept on the model.
     assert not hasattr(cfg, "weird_future_key")
+
+
+# ─── providers schema ─────────────────────────────────────────────────────
+class TestProvidersSchema:
+    """ProvidersConfig is now a typed flat schema (extra='forbid')."""
+
+    def test_default_providers_all_none(self):
+        cfg = InferiaConfig.model_validate(_base_dict())
+        p = cfg.providers
+        assert p.aws.access_key_id is None
+        assert p.gcp.project_id is None
+        assert p.azure.subscription_id is None
+        assert p.ibm.api_key is None
+        assert p.nosana.wallet_private_key is None
+        assert p.nosana.api_keys == []
+
+    def test_aws_fields_load(self):
+        cfg = InferiaConfig.model_validate(
+            _base_dict(
+                providers={
+                    "aws": {
+                        "access_key_id": "AKIAIOSFODNN",
+                        "secret_access_key": "wJalrXUtnFEMI",
+                        "region": "eu-west-1",
+                    }
+                }
+            )
+        )
+        assert cfg.providers.aws.access_key_id == "AKIAIOSFODNN"
+        assert cfg.providers.aws.secret_access_key == "wJalrXUtnFEMI"
+        assert cfg.providers.aws.region == "eu-west-1"
+
+    def test_aws_unknown_field_fails(self):
+        with pytest.raises(ValidationError):
+            InferiaConfig.model_validate(
+                _base_dict(providers={"aws": {"unknown_field": "oops"}})
+            )
+
+    def test_gcp_fields_load(self):
+        cfg = InferiaConfig.model_validate(
+            _base_dict(
+                providers={
+                    "gcp": {
+                        "project_id": "my-project",
+                        "service_account_json": '{"type":"service_account"}',
+                        "region": "us-central1",
+                    }
+                }
+            )
+        )
+        assert cfg.providers.gcp.project_id == "my-project"
+        assert cfg.providers.gcp.region == "us-central1"
+
+    def test_azure_fields_load(self):
+        cfg = InferiaConfig.model_validate(
+            _base_dict(
+                providers={
+                    "azure": {
+                        "subscription_id": "sub-abc",
+                        "tenant_id": "ten-xyz",
+                        "client_id": "cid",
+                        "client_secret": "csec",
+                        "region": "eastus",
+                    }
+                }
+            )
+        )
+        p = cfg.providers.azure
+        assert p.subscription_id == "sub-abc"
+        assert p.tenant_id == "ten-xyz"
+        assert p.client_id == "cid"
+        assert p.client_secret == "csec"
+
+    def test_azure_unknown_field_fails(self):
+        with pytest.raises(ValidationError):
+            InferiaConfig.model_validate(
+                _base_dict(providers={"azure": {"bad_field": "x"}})
+            )
+
+    def test_ibm_fields_load(self):
+        cfg = InferiaConfig.model_validate(
+            _base_dict(
+                providers={
+                    "ibm": {
+                        "api_key": "ibm-api-key",
+                        "region": "us-south",
+                        "resource_group_id": "rg-123",
+                    }
+                }
+            )
+        )
+        assert cfg.providers.ibm.api_key == "ibm-api-key"
+        assert cfg.providers.ibm.resource_group_id == "rg-123"
+
+    def test_ibm_unknown_field_fails(self):
+        with pytest.raises(ValidationError):
+            InferiaConfig.model_validate(
+                _base_dict(providers={"ibm": {"nonexistent": "x"}})
+            )
+
+    def test_nosana_wallet_and_api_keys_load(self):
+        cfg = InferiaConfig.model_validate(
+            _base_dict(
+                providers={
+                    "nosana": {
+                        "wallet_private_key": "wallet-secret",
+                        "api_keys": [
+                            {"name": "prod", "key": "pk", "is_active": True},
+                            {"name": "staging", "key": "sk"},
+                        ],
+                    }
+                }
+            )
+        )
+        n = cfg.providers.nosana
+        assert n.wallet_private_key == "wallet-secret"
+        assert len(n.api_keys) == 2
+        assert n.api_keys[0].name == "prod"
+        assert n.api_keys[1].name == "staging"
+
+    def test_nosana_api_key_entry_requires_name_and_key(self):
+        with pytest.raises(ValidationError):
+            NosanaApiKeyEntry.model_validate({"key": "only-key"})  # missing name
+
+    def test_nosana_unknown_field_fails(self):
+        with pytest.raises(ValidationError):
+            InferiaConfig.model_validate(
+                _base_dict(providers={"nosana": {"bad_field": "x"}})
+            )
+
+    def test_providers_unknown_provider_fails(self):
+        """extra='forbid' means an unrecognised provider key should raise."""
+        with pytest.raises(ValidationError):
+            InferiaConfig.model_validate(
+                _base_dict(providers={"akash": {"mnemonic": "word1 word2"}})
+            )
+
+    def test_providers_defaults_have_correct_regions(self):
+        cfg = InferiaConfig.model_validate(_base_dict())
+        assert cfg.providers.aws.region == "us-east-1"
+        assert cfg.providers.gcp.region == "us-central1"
+        assert cfg.providers.azure.region == "eastus"
+        assert cfg.providers.ibm.region == "us-south"
+
+    def test_nosana_api_key_entry_default_is_active_true(self):
+        entry = NosanaApiKeyEntry.model_validate({"name": "prod", "key": "k"})
+        assert entry.is_active is True
