@@ -6,11 +6,22 @@ import {
   Trash2,
   ChevronRight,
   ExternalLink,
+  Plus,
+  ServerCog,
+  XCircle,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { computeApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import {
+  listWorkers,
+  revokeWorker,
+  type WorkerView,
+} from "@/services/workerService";
+import AddWorkerModal from "@/components/workers/AddWorkerModal";
 
 type PoolLifecycleState = "running" | "terminating" | "terminated";
 
@@ -30,7 +41,9 @@ export default function InstanceDetail() {
   const canStopPool =
     hasPermission("deployment:update") || hasPermission("deployment:delete");
   const canDeletePool = hasPermission("deployment:delete");
-  const [activeTab, setActiveTab] = useState<"overview" | "nodes">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "nodes" | "workers">(
+    "overview",
+  );
 
   const [nodes, setNodes] = useState<any[]>([]);
   const [poolDetails, setPoolDetails] = useState<PoolDetails | null>(null);
@@ -38,6 +51,64 @@ export default function InstanceDetail() {
   const [poolId, setPoolId] = useState(id || "");
   const [isStopping, setIsStopping] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Workers tab state
+  const [workers, setWorkers] = useState<WorkerView[]>([]);
+  const [workersLoading, setWorkersLoading] = useState(false);
+  const [addWorkerOpen, setAddWorkerOpen] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const canAddWorker = hasPermission("deployment:create");
+  const canRevokeWorker = hasPermission("deployment:delete");
+
+  const fetchWorkers = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!id) return;
+      if (!options?.silent) setWorkersLoading(true);
+      try {
+        const rows = await listWorkers(id);
+        setWorkers(rows);
+      } catch (e) {
+        if (!options?.silent) {
+          console.error("listWorkers failed:", e);
+          toast.error("Failed to load workers");
+        }
+      } finally {
+        if (!options?.silent) setWorkersLoading(false);
+      }
+    },
+    [id],
+  );
+
+  // Initial load + 10s polling while the Workers tab is active.
+  useEffect(() => {
+    if (activeTab !== "workers" || !id) return;
+    void fetchWorkers();
+    const interval = window.setInterval(() => {
+      void fetchWorkers({ silent: true });
+    }, 10_000);
+    return () => window.clearInterval(interval);
+  }, [activeTab, id, fetchWorkers]);
+
+  const handleRevokeWorker = useCallback(
+    async (nodeId: string) => {
+      if (!window.confirm("Revoke this worker? Its WS will be closed and its state marked terminated.")) {
+        return;
+      }
+      setRevokingId(nodeId);
+      try {
+        await revokeWorker(nodeId);
+        toast.success("Worker revoked");
+        await fetchWorkers({ silent: true });
+      } catch (e: unknown) {
+        const detail =
+          (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        toast.error(detail || "Revoke failed");
+      } finally {
+        setRevokingId(null);
+      }
+    },
+    [fetchWorkers],
+  );
 
   const fetchInventory = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -253,6 +324,7 @@ export default function InstanceDetail() {
         {[
           { label: "Overview", value: "overview" as const },
           { label: "Nodes", value: "nodes" as const },
+          { label: "Workers", value: "workers" as const },
         ].map(
           (tab) => (
             <button
@@ -388,8 +460,183 @@ export default function InstanceDetail() {
           </div>
         )}
 
+        {activeTab === "workers" && (
+          <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-mono text-sm font-semibold text-foreground dark:text-cream">
+                  Workers ({workers.length})
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Direct-managed GPU hosts running inferia-worker. Connection
+                  state refreshes every 10s.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="h-8 px-3 inline-flex items-center gap-2 border rounded-md hover:bg-muted text-xs font-medium"
+                  onClick={() => fetchWorkers()}
+                  disabled={workersLoading}
+                >
+                  <RefreshCw
+                    className={cn("w-3.5 h-3.5", workersLoading && "animate-spin")}
+                  />
+                  Refresh
+                </button>
+                {canAddWorker && (
+                  <button
+                    onClick={() => setAddWorkerOpen(true)}
+                    className="h-8 px-3 inline-flex items-center gap-2 bg-ember-600 hover:bg-ember-700 text-white rounded-md text-xs font-medium"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Worker
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs text-muted-foreground uppercase tracking-wider">
+                  <tr>
+                    <th className="px-6 py-3 text-left font-mono">Node</th>
+                    <th className="px-6 py-3 text-left font-mono">Connection</th>
+                    <th className="px-6 py-3 text-left font-mono">State</th>
+                    <th className="px-6 py-3 text-left font-mono">CPU%</th>
+                    <th className="px-6 py-3 text-left font-mono">Loaded Models</th>
+                    <th className="px-6 py-3 text-left font-mono">Advertise URL</th>
+                    <th className="px-6 py-3 text-left font-mono">Last Heartbeat</th>
+                    <th className="px-6 py-3 text-right font-mono">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {workers.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={8}
+                        className="px-6 py-12 text-center text-muted-foreground"
+                      >
+                        <div className="flex flex-col items-center gap-2">
+                          <ServerCog className="w-6 h-6 opacity-50" />
+                          <div>No workers in this pool yet.</div>
+                          {canAddWorker && (
+                            <button
+                              onClick={() => setAddWorkerOpen(true)}
+                              className="mt-2 text-xs text-ember-600 hover:text-ember-700 underline"
+                            >
+                              Add the first one
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    workers.map((w) => (
+                      <tr
+                        key={w.node_id}
+                        className="bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors"
+                      >
+                        <td
+                          className="px-6 py-4 font-mono text-ember-600 truncate max-w-[180px]"
+                          title={`${w.node_name || w.node_id}\n${w.node_id}`}
+                        >
+                          <div className="font-medium">{w.node_name || w.node_id}</div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {w.node_id}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {w.connected ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10">
+                              <Wifi className="w-3 h-3" /> Live
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium border border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10">
+                              <WifiOff className="w-3 h-3" /> Offline
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={cn(
+                              "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium",
+                              w.state === "ready"
+                                ? "border border-ember-500/20 text-ember-600 dark:text-ember-400 bg-ember-500/10"
+                                : w.state === "terminated"
+                                ? "border border-red-500/20 text-red-600 dark:text-red-400 bg-red-500/10"
+                                : "border border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
+                            )}
+                          >
+                            {w.state}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs">
+                          {w.used.cpu_pct ?? "-"}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs">
+                          {w.loaded_models.length}
+                        </td>
+                        <td className="px-6 py-4">
+                          {w.advertise_url ? (
+                            <a
+                              href={w.advertise_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-ember-600 hover:text-ember-800 flex items-center gap-1 font-mono text-xs truncate max-w-[200px]"
+                              title={w.advertise_url}
+                            >
+                              <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                              {w.advertise_url}
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground font-mono text-xs">
+                              -
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs text-muted-foreground">
+                          {w.last_heartbeat
+                            ? new Date(w.last_heartbeat).toLocaleString()
+                            : "-"}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {canRevokeWorker && w.state !== "terminated" && (
+                            <button
+                              onClick={() => handleRevokeWorker(w.node_id)}
+                              disabled={revokingId === w.node_id}
+                              className={cn(
+                                "inline-flex items-center gap-1 px-2 py-1 rounded text-xs",
+                                revokingId === w.node_id
+                                  ? "text-muted-foreground cursor-wait"
+                                  : "text-red-600 hover:text-red-700 hover:bg-red-500/10",
+                              )}
+                              title="Revoke worker"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              Revoke
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Placeholder Logs/Events tabs if needed */}
       </div>
+
+      {addWorkerOpen && (
+        <AddWorkerModal
+          poolId={poolId || id || ""}
+          poolName={poolDetails?.pool_name}
+          onClose={() => {
+            setAddWorkerOpen(false);
+            void fetchWorkers({ silent: true });
+          }}
+        />
+      )}
     </div>
   );
 }

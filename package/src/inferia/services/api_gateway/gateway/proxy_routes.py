@@ -347,3 +347,38 @@ async def proxy_deployment(
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
     )
+
+
+@router.api_route(
+    "/admin/workers/{path:path}",
+    methods=["GET", "POST", "DELETE"],
+)
+async def proxy_admin_workers(
+    request: Request,
+    path: str,
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy inferia-worker admin operations to the orchestration service.
+
+    The orchestration side's ``/v1/admin/workers/...`` router treats the
+    request as authorised (it trusts the api_gateway proxy boundary). RBAC
+    is enforced here:
+
+    * ``GET``    → ``DEPLOYMENT_LIST``   — view workers in a pool
+    * ``POST``   → ``DEPLOYMENT_CREATE`` — mint a bootstrap token
+    * ``DELETE`` → ``DEPLOYMENT_DELETE`` — revoke a worker
+    """
+    method = request.method.upper()
+    if method == "GET":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    elif method == "POST":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+    elif method == "DELETE":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
+    return await proxy_request(
+        method=request.method,
+        path=f"v1/admin/workers/{path}",
+        request=request,
+        target_url=ORCHESTRATION_URL,
+        user_context=user_context,
+    )
