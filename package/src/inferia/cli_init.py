@@ -185,27 +185,6 @@ def _bootstrap_api_gateway(database_url: str):
     )
 
 
-async def _seed_providers(dsn: str) -> None:
-    """Seed public.provider_credentials from yaml.providers (best-effort).
-
-    Obtains the Fernet key from SECRET_ENCRYPTION_KEY.  If the key is absent
-    or invalid, the seeder logs a warning and skips gracefully — it does NOT
-    abort init or migrate.
-    """
-    from inferia.common.unified_config.provider_seeder import seed_providers_from_yaml
-
-    encryption_key = os.environ.get("SECRET_ENCRYPTION_KEY")
-    report = await seed_providers_from_yaml(dsn, encryption_key)
-    if report.skipped:
-        print(f"[inferia:providers] skipped — {report.reason}")
-    else:
-        print(
-            f"[inferia:providers] sync complete — "
-            f"inserted={report.inserted} updated={report.updated} "
-            f"deleted={report.deleted}"
-        )
-
-
 async def _init():
     admin_user = _require_env("PG_ADMIN_USER")
     admin_password = _require_env("PG_ADMIN_PASSWORD", allow_empty=True)
@@ -323,11 +302,6 @@ async def _init():
 
     _bootstrap_api_gateway(api_gateway_dsn_alchemy)
 
-    # --------------------------------------------------
-    # Seed provider_credentials from yaml.providers
-    # --------------------------------------------------
-    await _seed_providers(inferia_dsn)
-
     print("\n[inferia:init] Bootstrap complete")
 
 
@@ -348,5 +322,4 @@ async def run_migrations():
         f"@{pg_host}:{pg_port}/{inferia_db}"
     )
     await _apply_migrations(dsn)
-    await _seed_providers(dsn)
     print("[inferia:migrate] Done")

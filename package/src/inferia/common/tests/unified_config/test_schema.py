@@ -83,10 +83,12 @@ def test_service_enabled_must_be_bool():
         )
 
 
-def test_service_port_must_be_positive():
+def test_service_port_no_longer_in_schema():
+    """port is a hosting field → env only. Yaml schema ignores it (extra='ignore' at root,
+    but api_gateway has extra='forbid', so supplying port now raises ValidationError."""
     with pytest.raises(ValidationError):
         InferiaConfig.model_validate(
-            _base_dict(services={"api_gateway": {"port": -1}})
+            _base_dict(services={"api_gateway": {"port": 8000}})
         )
 
 
@@ -117,3 +119,22 @@ def test_unknown_top_level_key_does_not_fail():
     cfg = InferiaConfig.model_validate(_base_dict(weird_future_key=1))
     # No exception; entry just isn't kept on the model.
     assert not hasattr(cfg, "weird_future_key")
+
+
+# ─── providers are DB-managed — no providers field on InferiaConfig ───────────
+class TestProvidersNotInSchema:
+    """providers: block is no longer in the yaml schema.
+    The field must not exist on InferiaConfig; unknown top-level keys are
+    silently ignored (extra='ignore' on the root model).
+    """
+
+    def test_providers_field_absent_from_inferia_config(self):
+        assert "providers" not in InferiaConfig.model_fields
+
+    def test_providers_block_in_yaml_is_silently_ignored(self):
+        """A yaml file that still has a providers: block must not fail validation."""
+        cfg = InferiaConfig.model_validate(
+            _base_dict(providers={"aws": {"access_key_id": "AKIA"}})
+        )
+        # Root model has extra='ignore', so it is just dropped — no exception.
+        assert not hasattr(cfg, "providers")

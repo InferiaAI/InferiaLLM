@@ -31,9 +31,11 @@ def test_service_field_read_from_yaml(fixtures_dir, monkeypatch, clean_env):
     _clear_cache()
     source = YamlConfigSettingsSource(_Demo)
     out = source()
-    assert out["port"] == 8000           # from services.api_gateway.port
+    # port is no longer in yaml (hosting → env only); not present in output
+    assert "port" not in out
     assert out["jwt_secret_key"]         # from security.jwt_secret_key (merged)
-    assert out["redis_host"] == "localhost"  # from infra.redis.host (merged + flattened)
+    # redis_host was in infra.redis (infra → env only); not present in output
+    assert "redis_host" not in out
 
 
 def test_unknown_yaml_path_returns_empty(fixtures_dir, monkeypatch, clean_env):
@@ -74,19 +76,21 @@ def test_top_level_scalars_environment_and_log_level(fixtures_dir, monkeypatch, 
 
 
 def test_get_field_value_present_field(fixtures_dir, monkeypatch, clean_env):
-    """Line 95-96: get_field_value returns value, name, False for a known field."""
+    """get_field_value returns value, name, False for a known field present in yaml.
+    jwt_secret_key is in security (merged) and valid.yaml has it set, so it resolves.
+    """
     monkeypatch.setenv("INFERIA_CONFIG", str(fixtures_dir / "valid.yaml"))
     _clear_cache()
     source = YamlConfigSettingsSource(_Demo)
-    field_info = _Demo.model_fields["port"]
-    value, name, is_complex = source.get_field_value(field_info, "port")
-    assert value == 8000
-    assert name == "port"
+    field_info = _Demo.model_fields["jwt_secret_key"]
+    value, name, is_complex = source.get_field_value(field_info, "jwt_secret_key")
+    assert value == "this-is-a-thirty-two-byte-test-secret-key"
+    assert name == "jwt_secret_key"
     assert is_complex is False
 
 
 def test_get_field_value_absent_field(fixtures_dir, monkeypatch, clean_env):
-    """Line 97: get_field_value returns None, name, False for an unknown field."""
+    """get_field_value returns None, name, False for an unknown field."""
     monkeypatch.setenv("INFERIA_CONFIG", str(fixtures_dir / "valid.yaml"))
     _clear_cache()
     source = YamlConfigSettingsSource(_Demo)

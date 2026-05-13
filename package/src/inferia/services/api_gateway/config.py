@@ -1,5 +1,5 @@
 """
-Configuration management for the Filtration Layer.
+Configuration management for the API Gateway.
 Uses Pydantic Settings for environment-based configuration.
 """
 
@@ -11,19 +11,40 @@ from inferia.common.unified_config import UnifiedBaseSettings
 
 logger = logging.getLogger(__name__)
 
-# --- Nested Configuration Models ---
+# --- Nested Provider Configuration Models ---
 
 
 class AWSConfig(BaseModel):
     access_key_id: Optional[str] = None
     secret_access_key: Optional[str] = None
-    region: str = "ap-south-1"
+    region: str = "us-east-1"
 
 
 class GCPConfig(BaseModel):
     project_id: Optional[str] = None
     region: str = "us-central1"
     service_account_json: Optional[str] = None
+
+
+class AzureConfig(BaseModel):
+    subscription_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    region: str = "eastus"
+
+
+class IBMConfig(BaseModel):
+    api_key: Optional[str] = None
+    region: str = "us-south"
+    resource_group_id: Optional[str] = None
+
+
+class CloudConfig(BaseModel):
+    aws: AWSConfig = Field(default_factory=AWSConfig)
+    gcp: GCPConfig = Field(default_factory=GCPConfig)
+    azure: AzureConfig = Field(default_factory=AzureConfig)
+    ibm: IBMConfig = Field(default_factory=IBMConfig)
 
 
 class ChromaConfig(BaseModel):
@@ -34,32 +55,11 @@ class ChromaConfig(BaseModel):
     database: Optional[str] = None
 
 
-class GroqConfig(BaseModel):
-    api_key: Optional[str] = None
-
-
-class LakeraConfig(BaseModel):
-    api_key: Optional[str] = None
-
-
-class ProviderCredential(BaseModel):
-    """Generic provider credential that works for any provider (nosana, akash, etc.)
-
-    Examples:
-    - provider="nosana", credential_type="api_key", name="Piyush"
-    - provider="akash", credential_type="mnemonic", name="Main Wallet"
-    - provider="aws", credential_type="access_key", name="Production"
-    """
-
-    provider: str  # e.g., 'nosana', 'akash', 'aws'
-    name: str
-    credential_type: str  # e.g., 'api_key', 'wallet', 'mnemonic', 'access_key'
-    value: str
-    is_active: bool = True
+class VectorDBConfig(BaseModel):
+    chroma: ChromaConfig = Field(default_factory=ChromaConfig)
 
 
 class NosanaApiKeyEntry(BaseModel):
-    """A single named Nosana API key credential."""
     name: str
     key: str
     is_active: bool = True
@@ -67,39 +67,36 @@ class NosanaApiKeyEntry(BaseModel):
 
 class NosanaConfig(BaseModel):
     wallet_private_key: Optional[str] = None
-    api_key: Optional[str] = None  # Deprecated: kept for migration
-    api_keys: List[NosanaApiKeyEntry] = Field(default_factory=list)  # Named credentials
-
-
-
-class AkashConfig(BaseModel):
-    mnemonic: Optional[str] = None
-
-
-class CloudConfig(BaseModel):
-    aws: AWSConfig = Field(default_factory=AWSConfig)
-    gcp: GCPConfig = Field(default_factory=GCPConfig)
-
-
-class VectorDBConfig(BaseModel):
-    chroma: ChromaConfig = Field(default_factory=ChromaConfig)
-
-
-class GuardrailsConfig(BaseModel):
-    groq: GroqConfig = Field(default_factory=GroqConfig)
-    lakera: LakeraConfig = Field(default_factory=LakeraConfig)
+    api_keys: list[NosanaApiKeyEntry] = Field(default_factory=list)
 
 
 class DePINConfig(BaseModel):
     nosana: NosanaConfig = Field(default_factory=NosanaConfig)
-    akash: AkashConfig = Field(default_factory=AkashConfig)
 
 
 class ProvidersConfig(BaseModel):
     cloud: CloudConfig = Field(default_factory=CloudConfig)
     vectordb: VectorDBConfig = Field(default_factory=VectorDBConfig)
-    guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
     depin: DePINConfig = Field(default_factory=DePINConfig)
+
+
+# --- Provider Credential Model ---
+
+
+class ProviderCredential(BaseModel):
+    """Generic provider credential that works for any provider.
+
+    Examples:
+    - provider="nosana", credential_type="api_key", name="prod"
+    - provider="aws", credential_type="access_key_id", name="default"
+    - provider="gcp", credential_type="service_account_json", name="default"
+    """
+
+    provider: str  # e.g., 'nosana', 'aws', 'gcp', 'azure', 'ibm'
+    name: str
+    credential_type: str  # e.g., 'api_key', 'wallet_private_key', 'access_key_id'
+    value: str
+    is_active: bool = True
 
 
 # --- Main Settings ---

@@ -30,8 +30,11 @@ def test_yaml_wins_over_default(fixtures_dir, monkeypatch, clean_env):
     monkeypatch.setenv("INFERIA_CONFIG", str(fixtures_dir / "valid.yaml"))
     _clear_cache()
     s = _Demo()
-    assert s.port == 8000   # yaml beats default
-    assert s.redis_host == "localhost"
+    # port is a hosting field → env only; no longer in yaml. Falls to default.
+    assert s.port == 9999        # default (yaml has no port field any more)
+    # redis_host is a connection field → env only (infra.redis removed from yaml).
+    # Its value may come from .env file in the repo; just assert it's a string.
+    assert isinstance(s.redis_host, str)
 
 
 def test_env_wins_over_yaml(fixtures_dir, monkeypatch, clean_env):
@@ -61,6 +64,7 @@ def test_api_gateway_settings_loads_yaml_under_docker_shape(
     but api_gateway.Settings.allowed_origins is a comma-separated str. The
     field_validator on api_gateway must coerce a list into a comma-joined string
     instead of raising a Pydantic 'string_type' ValidationError.
+    Note: port is a hosting field and must NOT appear in yaml.
     """
     yaml_path = tmp_path / "inferia.yaml"
     yaml_path.write_text(
@@ -74,7 +78,6 @@ def test_api_gateway_settings_loads_yaml_under_docker_shape(
         "services:\n"
         "  api_gateway:\n"
         "    enabled: true\n"
-        "    port: 8000\n"
     )
     # Strip any leaked env override so the yaml path actually feeds the field.
     monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)

@@ -59,6 +59,10 @@ services:
     env_file: .env
     environment:
       - SERVICE_TYPE=unified
+      # Unified config — when the inferia.yaml below is mounted, this points
+      # the loader at it. If the file is absent the loader falls back to env
+      # + pydantic defaults, so the stack still boots on env-only deployments.
+      - INFERIA_CONFIG=/etc/inferia/inferia.yaml
       # Dashboard frontend URLs (DASHBOARD_ prefix avoids colliding with
       # backend service URL env vars like INFERENCE_URL used by Pydantic config)
       - DASHBOARD_API_GATEWAY_URL=${DASHBOARD_API_GATEWAY_URL:-}
@@ -70,6 +74,9 @@ services:
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
     volumes:
       - appdata:/data
+      # Unified config yaml — mounted read-only. Edit the host file to change
+      # operational parameters; restart the container to apply.
+      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
     ports:
       - "8000:8000"   # Filtration Gateway (external API)
       - "8001:8001"   # Inference Gateway (external API)

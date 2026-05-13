@@ -19,6 +19,8 @@ KNOWN_COMMANDS = {
     "init",
     "start",
     "migrate",
+    "write-dashboard-config",
+    "providers",
 }
 
 
@@ -451,6 +453,51 @@ def build_sidecar():
         print(f"[inferia:init] Error building sidecar: {e}")
 
 
+def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: str | None = None) -> None:
+    """Write window.__RUNTIME_CONFIG__ = {...}; to the installed dashboard's config.js.
+
+    Dashboard URLs are env-only: DASHBOARD_API_GATEWAY_URL, DASHBOARD_INFERENCE_URL,
+    DASHBOARD_WEB_SOCKET_URL, DASHBOARD_SIDECAR_URL. If a var is unset or empty,
+    the field is written as an empty string (matching legacy entrypoint.sh behaviour).
+
+    The --config / config_path argument is accepted for forward-compat with existing
+    scripts but is not used — yaml no longer carries dashboard URLs.
+
+    The function is intentionally import-light and DB-free so it can be called
+    from entrypoint.sh before the database is available.
+    """
+    import json
+    import inferia
+
+    # Resolve the dashboard directory.
+    if dashboard_dir is None:
+        base = inferia.__path__[0]
+        dashboard_dir = os.path.join(base, "dashboard")
+
+    if not os.path.isdir(dashboard_dir):
+        # No bundled dashboard (e.g. headless / server-only installs). No-op.
+        return
+
+    config = {
+        "API_GATEWAY_URL": os.environ.get("DASHBOARD_API_GATEWAY_URL", "") or "",
+        "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "",
+        "WEB_SOCKET_URL": os.environ.get("DASHBOARD_WEB_SOCKET_URL", "") or "",
+        "SIDECAR_URL": os.environ.get("DASHBOARD_SIDECAR_URL", "") or "",
+    }
+
+    config_js_path = os.path.join(dashboard_dir, "config.js")
+    with open(config_js_path, "w", encoding="utf-8") as f:
+        f.write("window.__RUNTIME_CONFIG__ = " + json.dumps(config) + ";")
+
+    print(
+        f"[inferiallm write-dashboard-config] wrote {config_js_path} "
+        f"(api_gateway_url={config['API_GATEWAY_URL']!r}, "
+        f"inference_url={config['INFERENCE_URL']!r}, "
+        f"web_socket_url={config['WEB_SOCKET_URL']!r}, "
+        f"sidecar_url={config['SIDECAR_URL']!r})"
+    )
+
+
 def run_migrate():
     """Apply pending database migrations without full init."""
     import asyncio
@@ -644,6 +691,64 @@ def main(argv=None):
              "INFERIA_CONFIG, ./inferia.yaml, or /etc/inferia/inferia.yaml)",
     )
 
+    # --- write-dashboard-config ---
+    wdc_parser = sub.add_parser(
+        "write-dashboard-config",
+        help="Write dashboard runtime config.js from DASHBOARD_* env vars",
+    )
+    wdc_parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Accepted for forward-compat but unused; dashboard URLs are env-only",
+    )
+    wdc_parser.add_argument(
+        "--dashboard-dir",
+        type=str,
+        default=None,
+        dest="dashboard_dir",
+        help="Override the installed dashboard directory (useful for tests)",
+    )
+
+    # --- providers sub-command ---
+    providers_parser = sub.add_parser(
+        "providers",
+        help="Manage provider credentials (DB-backed)",
+    )
+    providers_sub = providers_parser.add_subparsers(
+        dest="providers_action", required=True, help="Action"
+    )
+
+    # list
+    list_p = providers_sub.add_parser("list", help="List provider credentials")
+    list_p.add_argument(
+        "--provider",
+        choices=["aws", "gcp", "azure", "ibm", "nosana"],
+        default=None,
+        help="Filter by provider",
+    )
+
+    # add
+    add_p = providers_sub.add_parser("add", help="Add a provider credential")
+    add_p.add_argument("provider", choices=["aws", "gcp", "azure", "ibm", "nosana"])
+    add_p.add_argument("--name", required=True, help="Credential name (e.g. prod, default)")
+    add_p.add_argument("--type", required=True, dest="type", help="Credential type (e.g. api_key, access_key_id)")
+    add_p.add_argument("--value", required=True, help="Credential value (plaintext)")
+    add_p.add_argument("--active", default="true", help="Is active (true/false, default: true)")
+
+    # remove
+    rm_p = providers_sub.add_parser("remove", help="Remove a provider credential")
+    rm_p.add_argument("provider", choices=["aws", "gcp", "azure", "ibm", "nosana"])
+    rm_p.add_argument("--name", required=True, help="Credential name to remove")
+
+    # update
+    upd_p = providers_sub.add_parser("update", help="Update an existing provider credential")
+    upd_p.add_argument("provider", choices=["aws", "gcp", "azure", "ibm", "nosana"])
+    upd_p.add_argument("--name", required=True, help="Credential name to update")
+    upd_p.add_argument("--type", default=None, dest="type", help="Credential type (required for cloud providers)")
+    upd_p.add_argument("--value", default=None, help="New value")
+    upd_p.add_argument("--active", default=None, help="Set active state (true/false)")
+
     args, unknown = parser.parse_known_args(argv)
 
     cmd = args.command
@@ -703,6 +808,20 @@ def main(argv=None):
 
         elif cmd == "migrate":
             run_migrate()
+
+        elif cmd == "write-dashboard-config":
+            config_path = getattr(args, "config", None)
+            dashboard_dir = getattr(args, "dashboard_dir", None)
+            if config_path is not None:
+                os.environ["INFERIA_CONFIG"] = config_path
+            run_write_dashboard_config(
+                config_path=config_path,
+                dashboard_dir=dashboard_dir,
+            )
+
+        elif cmd == "providers":
+            from inferia.cli_providers import run_providers_command
+            run_providers_command(args)
 
         else:
             print(f"Unknown command: {cmd}")

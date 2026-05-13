@@ -34,8 +34,8 @@ operational state of the platform. This blocks:
 ## 3. Non-goals
 
 - Hot reload on file change (startup-only; restart applies new state).
-- Replacing the dashboard's DB-driven provider edit UX (Phase 2 will replace it;
-  this phase only loads providers from yaml at startup — but yaml is authoritative).
+- Replacing the dashboard's DB-driven provider edit UX (A follow-up will replace it;
+  this PR only loads providers from yaml at startup — but yaml is authoritative).
 - Per-feature flag rollouts (existing feature flags stay in their current places).
 
 ## 4. Decisions (from brainstorming Q&A)
@@ -49,7 +49,7 @@ operational state of the platform. This blocks:
 | Hot reload         | No — restart to apply                                            |
 | Service toggle     | `services.<name>.enabled: bool` selects which services run       |
 | Provider creds     | YAML is authoritative; overwrites DB on every start              |
-| Rollout            | Phase 1: loader + schema + `api_gateway` only. Other services in follow-up PRs. |
+| Rollout            | First PR: loader + schema + `api_gateway`. Other services land in follow-up PRs. |
 | Implementation     | Approach A: Pydantic Settings v2 `customise_sources`             |
 
 ## 5. Architecture
@@ -94,7 +94,7 @@ operational state of the platform. This blocks:
    ▼                             ▼                             ▼
  api_gateway/                  inference/                  data/guardrail/
   config.py                    config.py                  orchestration/
-  Settings(UnifiedBase…)       Settings(UnifiedBase…)     (Phase 2+)
+  Settings(UnifiedBase…)       Settings(UnifiedBase…)     (follow-up PRs)
 ```
 
 ### Module boundaries
@@ -114,7 +114,7 @@ operational state of the platform. This blocks:
 - **Per-service `config.py`** — only change: inherit from `UnifiedBaseSettings`
   and set `_yaml_path`. All existing fields, imports, and call sites stay the same.
 
-### Phase 1 scope (this PR)
+### Initial scope (this PR)
 
 - All four modules above
 - `api_gateway` migrated to `UnifiedBaseSettings`
@@ -126,15 +126,15 @@ operational state of the platform. This blocks:
 - Unit tests ≥95% coverage on loader + source + base
 - Docker smoke test: build unified image, run with example yaml, hit `/health`
 
-Out of scope (Phase 2+): inference, guardrail, data, orchestration migrations;
+Out of scope (follow-up PRs): inference, guardrail, data, orchestration migrations;
 dashboard runtime config; provider seeding into DB.
 
 ## 6. YAML schema shape
 
 The yaml mirrors the conceptual layout (services / providers / infra), not the
-Python class layout. Phase 1 wires only the `services.api_gateway` and `infra.*`
+Python class layout. The initial PR wires only the `services.api_gateway` and `infra.*`
 subtrees; other branches are defined in the schema for forward-compat but
-unused until Phase 2.
+unused until follow-up PRs.
 
 ```yaml
 # inferia.yaml — schema version 1
@@ -209,7 +209,7 @@ services:
       orchestration: http://localhost:8080
       inference:     http://localhost:8001
 
-  inference:        { enabled: true }        # detailed fields land in Phase 2
+  inference:        { enabled: true }        # detailed fields land in follow-ups
   guardrail:        { enabled: true }
   data:             { enabled: true }
   orchestration:    { enabled: true }
@@ -740,7 +740,7 @@ This is the user-facing gate: each step inspected *before* any signed commit.
 
 ## 11. Rollout & commits
 
-Phase 1 PR is a small chain of commits, each individually reviewable.
+The initial PR is a small chain of commits, each individually reviewable.
 **The user reviews each diff before it is signed and committed**:
 
 1. `docs: spec for unified config (#243)`
@@ -753,7 +753,7 @@ Phase 1 PR is a small chain of commits, each individually reviewable.
 
 No commit body credits Claude — per global CLAUDE.md.
 
-**Phase 2+ (separate PRs, not this work):** inference, guardrail, data,
+**Out of scope here, in follow-up PRs:** inference, guardrail, data,
 orchestration migrations; provider-seeding into DB; dashboard runtime config.
 
 ## 12. Mistakes log additions (CLAUDE.md)
@@ -775,16 +775,14 @@ CLAUDE.md Mistakes Log gains:
 
 This PR is complete when, on `feat/issue-243-unified-config`:
 
-1. All Phase 1 modules exist and import cleanly
+1. All Initial modules exist and import cleanly
 2. `api_gateway` starts and runs with yaml-driven config in Docker
 3. `api_gateway` still starts in env-only mode with no yaml present
 4. `pytest --cov=inferia.common.unified_config` ≥95%
 5. `make test` (full suite) is still green
 6. Docker smoke sequence (Section 10) completes without errors
 
-## 14. Phase 2C — yaml-authoritative provider seeding
-
-**Branch:** `feat/issue-243-phase-2-provider-seeding`
+## 14. yaml-authoritative provider seeding
 
 ### Design decisions (approved)
 
@@ -838,4 +836,50 @@ the seeder skips with a warning.
 - `package/src/inferia/common/unified_config/provider_seeder.py` — seeder module
 - `package/src/inferia/common/tests/unified_config/test_provider_seeder.py` — tests
 - `package/src/inferia/cli_init.py` — hooks in `_init()` and `run_migrations()`
+
+## 15. Env-vs-yaml split (refactor)
+
+### Rule
+
+**Hosting / port / URL / connection → env only. Everything else → yaml.**
+
+| Category | Where it lives | Examples |
+|----------|---------------|---------|
+| Hosting & process placement | env | `HOST`, `PORT`, `WORKERS`, `RELOAD`, `PROXY_HEADERS`, `FORWARDED_ALLOW_IPS` |
+| Service URLs | env | `API_GATEWAY_URL`, `SERVICE_URLS_*`, `REDIS_URL`, `DATABASE_URL`, `DASHBOARD_*_URL` |
+| SSL & TLS | env | `SSL_VERIFY`, `SSL_CA_BUNDLE`, `DATABASE_SSL`, `REDIS_SSL` |
+| Connection credentials | env | `REDIS_USERNAME`, `REDIS_PASSWORD` |
+| Infrastructure addresses | env | `REDIS_HOST`, `REDIS_PORT`, `DATABASE_URL`, `LOGSTASH_HOST` |
+| Application tuning | yaml | timeouts, pool sizes, buffer counts, cache TTLs, in-flight limits |
+| Feature flags | yaml | `enabled`, `enable_guardrails`, `enable_toxicity`, `use_redis` |
+| Business config | yaml | `default_org_name`, `requests_per_minute`, `max_ingest_documents` |
+| Auth policy | yaml | `auth.provider` (Literal["local","external"]), `rate_limit.*` |
+| CORS policy | yaml | `security.allowed_origins` (CORS is app policy, not a URL to connect to) |
+| Secrets via interpolation | yaml (refs only) | `${JWT_SECRET_KEY:-}` — the actual values stay in env |
+| Provider credentials | yaml (via `${VAR}`) | `providers.*` — all yaml-authoritative provider config |
+
+### Rationale
+
+The [12-factor app](https://12factor.net/config) principle: **store in env everything
+that varies between deployments** (dev / staging / prod), and store in a config file
+everything that is the same across all replicas in one deployment.
+
+- *Hosting / URLs* vary by environment and by the network topology of each deployment
+  — they belong in env.
+- *Application policy* (tuning knobs, feature flags, business rules) is the same on
+  every node in a given deployment — it belongs in yaml, where it can be diffed,
+  versioned, and reviewed like code.
+
+### What changed
+
+- `DatabaseConfig`, `RedisConfig`, `LogstashConfig`, `InfraConfig` deleted from schema.
+- `SslSection`, `ServiceUrlsSection`, `DashboardSection` deleted from schema.
+- All `host`, `port`, `http_port`, `grpc_port`, `workers`, `reload`, `proxy_headers`,
+  `forwarded_allow_ips`, `ssl`, `service_urls`, `dashboard`, `api_gateway_url`,
+  `external_proxy_url`, and `redis_url` fields removed from every service model.
+- `infra:` block removed from `inferia.yaml.example`.
+- `write-dashboard-config` CLI subcommand simplified to read `DASHBOARD_*` env vars
+  directly; yaml no longer carries dashboard URLs.
+- `test_yaml_no_hosting_or_ports.py` added to pin the contract: loading
+  `inferia.yaml.example` must produce a model with no `host`/`port`/`url` attributes.
 

@@ -1,4 +1,4 @@
-"""Unified config loader — Phase 1.
+"""Unified config loader.
 
 This module is pure-function and import-light. It does NOT touch
 pydantic-settings; the source/base classes do that.
