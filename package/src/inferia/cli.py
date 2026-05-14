@@ -21,6 +21,7 @@ KNOWN_COMMANDS = {
     "migrate",
     "write-dashboard-config",
     "providers",
+    "worker",
 }
 
 
@@ -749,6 +750,95 @@ def main(argv=None):
     upd_p.add_argument("--value", default=None, help="New value")
     upd_p.add_argument("--active", default=None, help="Set active state (true/false)")
 
+    # --- worker sub-command -------------------------------------------------
+    worker_parser = sub.add_parser(
+        "worker",
+        help="Incubate an inferia-worker node (mint bootstrap token, scaffold compose)",
+    )
+    worker_sub = worker_parser.add_subparsers(
+        dest="worker_action", required=True, help="Action",
+    )
+
+    # worker token — mint and print
+    tok_p = worker_sub.add_parser(
+        "token",
+        help="Mint a bootstrap token for a pool and print a .env snippet",
+    )
+    tok_p.add_argument("--pool-id", required=True, help="UUID of the target compute pool")
+    tok_p.add_argument(
+        "--ttl-hours", type=int, default=1,
+        help="Token lifetime in hours (1-24, default 1)",
+    )
+    tok_p.add_argument(
+        "--orchestration-url",
+        default=None,
+        help="Orchestration service URL (default: http://localhost:8080)",
+    )
+    tok_p.add_argument(
+        "--internal-api-key",
+        default=None,
+        help="Internal API key (default: INTERNAL_API_KEY env var)",
+    )
+
+    # worker compose — scaffold a ready-to-run docker-compose directory
+    cmp_p = worker_sub.add_parser(
+        "compose",
+        help="Scaffold an inferia-worker compose dir for a fresh GPU host",
+    )
+    cmp_p.add_argument("--pool-id", required=True, help="UUID of the target compute pool")
+    cmp_p.add_argument(
+        "--node-name", required=True,
+        help="Stable node name unique within the pool",
+    )
+    cmp_p.add_argument(
+        "--advertise-url", required=True,
+        help="URL the control plane will use to reach this worker's inference port",
+    )
+    cmp_p.add_argument(
+        "--out-dir", default="./inferia-worker-deploy",
+        help="Directory to write .env + docker-compose.yml into",
+    )
+    cmp_p.add_argument(
+        "--ttl-hours", type=int, default=1,
+        help="Bootstrap token lifetime in hours (1-24, default 1)",
+    )
+    cmp_p.add_argument(
+        "--worker-image",
+        default="ghcr.io/inferia/inferia-worker:latest",
+        help="Worker container image tag",
+    )
+    cmp_p.add_argument(
+        "--inference-port", type=int, default=8080,
+        help="Host port to publish the worker's inference endpoint on",
+    )
+    cmp_p.add_argument(
+        "--orchestration-url",
+        default=None,
+        help="Orchestration service URL (default: http://localhost:8080)",
+    )
+    cmp_p.add_argument(
+        "--internal-api-key",
+        default=None,
+        help="Internal API key (default: INTERNAL_API_KEY env var)",
+    )
+
+    # worker list — show workers in a pool
+    list_w = worker_sub.add_parser(
+        "list",
+        help="List inferia-worker rows in a pool",
+    )
+    list_w.add_argument("--pool-id", required=True, help="UUID of the target compute pool")
+    list_w.add_argument(
+        "--orchestration-url",
+        default=None,
+        help="Orchestration service URL (default: http://localhost:8080)",
+    )
+    list_w.add_argument(
+        "--internal-api-key",
+        default=None,
+        help="Internal API key (default: INTERNAL_API_KEY env var)",
+    )
+
     args, unknown = parser.parse_known_args(argv)
 
     cmd = args.command
@@ -822,6 +912,10 @@ def main(argv=None):
         elif cmd == "providers":
             from inferia.cli_providers import run_providers_command
             run_providers_command(args)
+
+        elif cmd == "worker":
+            from inferia.cli_worker import run_worker_command
+            run_worker_command(args)
 
         else:
             print(f"Unknown command: {cmd}")

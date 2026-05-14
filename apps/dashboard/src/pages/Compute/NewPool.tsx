@@ -245,23 +245,37 @@ export default function NewPool() {
             ]
         }
 
-        const apiList = Object.entries(providersData).map(([id, data]: [string, any]) => ({
-            id,
-            name: `${id.charAt(0).toUpperCase() + id.slice(1)} Network`,
-            description: providerDescriptions[id] || `${id} compute provider`,
-            icon: providerIcons[id] || Server,
-            color: providerColors[id] || "text-muted-foreground bg-muted-foreground/10",
-            category: data.adapter_type || "cloud",
-            configPath: `/dashboard/settings/providers/${data.adapter_type || 'cloud'}/${id}`,
-            capabilities: data.capabilities,
-            clusterMode: data.capabilities?.supports_cluster_mode || false,
-            recommended: data.adapter_type === 'depin' && id === 'nosana',
-        }));
-        // Always prepend the self-hosted (inferia-worker) option. The
-        // provider registry on the backend doesn't enumerate it because it
-        // has no SDK adapter — it's just a pool that workers attach to.
-        const hasWorker = apiList.some((p) => p.id === "worker");
-        if (!hasWorker) {
+        // Build from the API list, but:
+        //  * skip 'on_prem' — it's only a server-side adapter alias for
+        //    'worker' so createpool accepts the DB enum value; the UI must
+        //    never show it as a separate card.
+        //  * keep 'worker' overrides (name + description + icon) so the
+        //    card matches the static fallback ("Self-hosted (inferia-worker)")
+        //    rather than the generic "Worker Network" auto-title.
+        const apiList = Object.entries(providersData)
+            .filter(([id]) => id !== "on_prem")
+            .map(([id, data]: [string, any]) => {
+                const isWorker = id === "worker";
+                return {
+                    id,
+                    name: isWorker
+                        ? "Self-hosted (inferia-worker)"
+                        : `${id.charAt(0).toUpperCase() + id.slice(1)} Network`,
+                    description: providerDescriptions[id] || `${id} compute provider`,
+                    icon: providerIcons[id] || Server,
+                    color: providerColors[id] || "text-muted-foreground bg-muted-foreground/10",
+                    category: isWorker ? "self_hosted" : (data.adapter_type || "cloud"),
+                    // Worker pools never use the credentials-editor page.
+                    configPath: isWorker
+                        ? ""
+                        : `/dashboard/settings/providers/${data.adapter_type || 'cloud'}/${id}`,
+                    capabilities: data.capabilities,
+                    clusterMode: data.capabilities?.supports_cluster_mode || false,
+                    recommended: isWorker || (data.adapter_type === 'depin' && id === 'nosana'),
+                };
+            });
+        // Ensure worker is present even when the backend hides it.
+        if (!apiList.some((p) => p.id === "worker")) {
             apiList.unshift({
                 id: "worker",
                 name: "Self-hosted (inferia-worker)",
@@ -295,9 +309,12 @@ export default function NewPool() {
             case "k8s":
                 return true;
             case "worker":
+            case "on_prem":
                 // The self-hosted (inferia-worker) provider has no credentials
                 // to configure — workers register themselves with a bootstrap
                 // token issued from the pool detail page after creation.
+                // 'on_prem' is a server-side alias we strip from the list
+                // above, but include it here for defence-in-depth.
                 return true;
             default:
                 return !!(depin[pid] || cloud[pid]);
