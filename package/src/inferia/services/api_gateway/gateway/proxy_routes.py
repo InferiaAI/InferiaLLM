@@ -51,10 +51,23 @@ def _require_proxy_permission(
 
     if normalized_method == "POST":
         # Deployment RPC-style endpoints use POST for non-create actions.
-        # Pool-create / pool-delete / pool-stop have been removed in the
-        # node-centric refactor — the only remaining POST under
-        # /deployment/ is /deployment/deploy.
-        if normalized_path.startswith("deployment/deploy"):
+        # Map those explicitly to update/delete permissions. The rich
+        # "Add Node" page in the UI keeps using the original /createpool
+        # / /stoppool / /deletepool surface; the node-centric refactor
+        # added /v1/nodes/* alongside without retiring the originals.
+        if normalized_path.startswith("deployment/deletepool"):
+            authz_service.require_permission(
+                user_context, PermissionEnum.DEPLOYMENT_DELETE
+            )
+            return
+        if normalized_path.startswith("deployment/stoppool"):
+            authz_service.require_permission(
+                user_context, PermissionEnum.DEPLOYMENT_DELETE
+            )
+            return
+        if normalized_path.startswith(
+            "deployment/deploy"
+        ) or normalized_path.startswith("deployment/createpool"):
             authz_service.require_permission(
                 user_context, PermissionEnum.DEPLOYMENT_CREATE
             )
