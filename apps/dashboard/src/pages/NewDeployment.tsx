@@ -635,25 +635,36 @@ export default function NewDeployment() {
 
   useEffect(() => {
     if (mode === "managed" && step === 3) {
-      const fetchPools = async () => {
+      // Node-centric refactor: surface ready/provisioning nodes as the picker
+      // options. The pool concept is hidden from the public API, so the
+      // 'pool' shape we feed the existing reducer is a thin wrapper that
+      // preserves pool_id (derived from each node's pool_id) for backwards
+      // compatibility with the existing deployment payload.
+      const fetchNodes = async () => {
         dispatch({ type: 'SET_POOLS_LOADING', payload: true });
         try {
-          const targetOrgId = user?.org_id || organizations?.[0]?.id;
-          if (!targetOrgId) return;
-          const res = await computeApi.get(`/deployment/listPools/${targetOrgId}`, {
-            params: { limit: 200, offset: 0 },
-          })
-          if (res.data?.pools) {
-            dispatch({ type: 'INIT_POOLS', payload: res.data.pools });
-          }
+          const res = await computeApi.get(`/nodes/`)
+          const nodes = res.data?.nodes || []
+          const poolish = nodes
+            .filter((n: any) => n.state !== "terminated")
+            .map((n: any) => ({
+              pool_id: n.pool_id,
+              pool_name: n.node_name || n.id.slice(0, 8),
+              provider: n.provider || n.agent_kind || "node",
+              is_active: true,
+              node_id: n.id,
+              labels: n.labels || {},
+              state: n.state,
+            }))
+          dispatch({ type: 'INIT_POOLS', payload: poolish });
         } catch (e) {
-          console.error("Failed to fetch pools", e)
-          toast.error("Failed to list compute pools")
+          console.error("Failed to fetch nodes", e)
+          toast.error("Failed to list compute nodes")
         } finally {
           dispatch({ type: 'SET_POOLS_LOADING', payload: false });
         }
       }
-      fetchPools()
+      fetchNodes()
     }
   }, [mode, step, user, organizations])
 
