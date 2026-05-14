@@ -593,17 +593,19 @@ def _validate_labels(add: dict, remove: list[str]) -> None:
 async def _list_nodes_impl(self, *, org_id, selector=None):
     """All non-terminated compute_inventory rows attached to a pool owned by
     org_id, optionally filtered by a label selector (AND across keys)."""
+    # Filter on owner_id only so we catch both canonical
+    # owner_type='organization' rows and the legacy createpool path which
+    # writes owner_type='user' with owner_id set to the org's UUID anyway.
     sql = (
         "SELECT i.id, i.pool_id, i.node_name, i.agent_kind, i.state,"
         "       i.advertise_url, i.expose_url, i.gpu_total, i.gpu_allocated,"
         "       i.vcpu_total, i.vcpu_allocated, i.ram_gb_total,"
         "       i.ram_gb_allocated, i.last_heartbeat, i.labels,"
         "       i.metadata, i.provider, i.provider_instance_id,"
-        "       i.created_at, i.updated_at "
+        "       i.hostname, i.created_at, i.updated_at "
         "FROM compute_inventory i "
         "JOIN compute_pools p ON p.id = i.pool_id "
-        "WHERE p.owner_type = 'organization' "
-        "  AND p.owner_id = $1 "
+        "WHERE p.owner_id = $1 "
         "  AND i.state IS DISTINCT FROM 'terminated' "
     )
     args: list = [org_id]

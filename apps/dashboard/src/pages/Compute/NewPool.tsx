@@ -1,5 +1,5 @@
-import { useReducer, useEffect, useMemo } from "react"
-import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud, HardDrive } from "lucide-react"
+import { useReducer, useEffect, useMemo, useState } from "react"
+import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud, HardDrive, Copy, CheckCircle2, X } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext"
 import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
 import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
+import { addWorkerNode, type AddWorkerNodeResponse } from "@/services/nodeService"
 
 // Provider icons mapping
 const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -148,6 +149,7 @@ export default function NewPool() {
     const navigate = useNavigate()
     const { user, organizations } = useAuth()
     const [state, dispatch] = useReducer(poolReducer, initialState);
+    const [workerResult, setWorkerResult] = useState<AddWorkerNodeResponse | null>(null);
     const {
         step,
         selectedProvider,
@@ -420,6 +422,20 @@ export default function NewPool() {
         dispatch({ type: "SET_CREATING", payload: true })
 
         try {
+            // Self-hosted (inferia-worker) takes the node-centric path: the
+            // node is added to the org's hidden default pool and the
+            // endpoint returns the bootstrap env_snippet to paste into a
+            // GPU host's compose file.
+            if (selectedProvider === "worker") {
+                const r = await addWorkerNode({
+                    node_name: poolName,
+                    labels: {},
+                });
+                setWorkerResult(r);
+                toast.success("Worker node created — copy the .env snippet below.");
+                return;
+            }
+
             // Build payload based on provider type
             const isWorkerPool = selectedProvider === "worker";
             const payload: any = {
@@ -468,15 +484,15 @@ export default function NewPool() {
                 toast.success("Worker pool created — open the Workers tab and click 'Add Worker' to register a host.");
                 navigate(
                     newPoolId
-                        ? `/dashboard/compute/pools/${newPoolId}?tab=workers`
-                        : "/dashboard/compute/pools",
+                        ? `/dashboard/compute/nodes/${newPoolId}?tab=workers`
+                        : "/dashboard/compute/nodes",
                 );
             } else if (isClusterProvider) {
                 toast.success(`Pool created! GPU cluster provisioning in ${selectedRegion}...`)
-                navigate("/dashboard/compute/pools")
+                navigate("/dashboard/compute/nodes")
             } else {
-                toast.success("Compute Pool created successfully!")
-                navigate("/dashboard/compute/pools")
+                toast.success("Compute Node created successfully!")
+                navigate("/dashboard/compute/nodes")
             }
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message
@@ -514,9 +530,9 @@ export default function NewPool() {
     return (
         <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 font-sans text-foreground">
             <div>
-                <h2 className="text-3xl font-bold tracking-tight">Create New Compute Pool</h2>
+                <h2 className="text-3xl font-bold tracking-tight">Create New Compute Node</h2>
                 <p className="text-muted-foreground mt-2">
-                    Create a pool of compute resources to deploy your models on.
+                    Add a compute node so deployments can land on it. Each provider registers exactly one node per submission.
                 </p>
             </div>
 
@@ -871,8 +887,97 @@ export default function NewPool() {
                     </div>
                 </div>
             )}
+
+            {workerResult && (
+                <WorkerResultModal
+                    result={workerResult}
+                    onClose={() => {
+                        setWorkerResult(null);
+                        navigate("/dashboard/compute/nodes");
+                    }}
+                />
+            )}
         </div>
     )
+}
+
+function WorkerResultModal({
+    result,
+    onClose,
+}: {
+    result: AddWorkerNodeResponse;
+    onClose: () => void;
+}) {
+    const copy = async (text: string, label: string) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            toast.success(`${label} copied`);
+        } catch {
+            toast.error("Clipboard unavailable; select and copy manually");
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="w-full max-w-2xl rounded-xl border bg-background shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="flex items-start gap-3">
+                        <div className="mt-0.5 rounded-full bg-emerald-500/10 p-2">
+                            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-semibold">Worker node created</h3>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                Paste this <span className="font-mono">.env</span> into the GPU
+                                host's <span className="font-mono">inferia-worker</span> deploy and run{" "}
+                                <span className="font-mono">docker compose up -d</span>. The node
+                                appears in the Compute Nodes list as soon as the worker registers.
+                            </p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+                        <X className="h-5 w-5" />
+                    </button>
+                </div>
+
+                <div className="text-xs text-muted-foreground mb-3">
+                    Token expires{" "}
+                    <span className="font-mono">
+                        {new Date(result.expires_at * 1000).toLocaleString()}
+                    </span>.
+                </div>
+
+                <div className="mb-4">
+                    <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-sm font-medium">Worker .env</label>
+                        <button
+                            onClick={() => copy(result.env_snippet, ".env snippet")}
+                            className="text-xs inline-flex items-center gap-1.5 text-ember-600 hover:text-ember-700"
+                        >
+                            <Copy className="h-3.5 w-3.5" /> Copy
+                        </button>
+                    </div>
+                    <pre className="rounded-md border bg-muted/30 p-3 text-xs font-mono whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
+                        {result.env_snippet}
+                    </pre>
+                </div>
+
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400 mb-4">
+                    Treat the bootstrap token as a secret. Anyone with the resulting
+                    worker JWT can serve inference on behalf of this organisation.
+                </div>
+
+                <div className="flex justify-end">
+                    <button
+                        onClick={onClose}
+                        className="px-3 py-1.5 text-sm rounded-md bg-ember-600 hover:bg-ember-700 text-white"
+                    >
+                        Done
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 }
 
 function StepProgress({ currentStep }: { currentStep: number }) {
@@ -930,7 +1035,7 @@ function ProviderCard({ provider: p, onSelect }: { provider: any, onSelect: (id:
             </div>
             <div>
                 <h3 className="font-bold text-lg mb-1 text-muted-foreground">{p.name}</h3>
-                <p className="text-xs text-muted-foreground">Configuration required to create pools on this network.</p>
+                <p className="text-xs text-muted-foreground">Configuration required to add nodes on this network.</p>
             </div>
             <div className="mt-auto flex items-center gap-1.5 text-ember-600 dark:text-ember-400 text-xs font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
                 Connect Provider <ArrowRight className="w-3 h-3" />

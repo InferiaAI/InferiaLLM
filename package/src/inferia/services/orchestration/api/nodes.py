@@ -405,7 +405,7 @@ def _to_view(row: dict) -> NodeView:
     return NodeView(
         id=str(row["id"]),
         pool_id=str(row.get("pool_id")) if row.get("pool_id") else None,
-        node_name=row.get("node_name"),
+        node_name=row.get("node_name") or row.get("hostname"),
         agent_kind=row.get("agent_kind"),
         provider=row.get("provider"),
         state=row.get("state") or "unknown",

@@ -1049,6 +1049,62 @@ async def create_pool(req: CreatePoolRequest):
                 raise HTTPException(status_code=409, detail=e.details())
             raise HTTPException(status_code=500, detail=e.details())
 
+    # Node-centric refactor: insert a placeholder compute_inventory row so the
+    # newly-created provider pool shows up in the Compute Nodes list right
+    # away. For DePIN providers (nosana, akash) the row stays in
+    # state='provisioning' until a deployment materialises the real resource;
+    # for cluster providers (gcp/aws/etc.) we still write a row so the user
+    # sees confirmation that the pool exists. For the on_prem placeholder
+    # path (used by the legacy "Self-hosted" pool option) we skip — the new
+    # /v1/nodes/add/worker endpoint already writes its own row.
+    try:
+        if req.provider in ("nosana", "akash", "gcp", "aws", "azure", "lambda", "runpod", "k8s"):
+            from uuid import UUID as _UUID
+            import asyncpg as _asyncpg
+            import os as _os
+            dsn = (
+                _os.getenv("POSTGRES_DSN")
+                or (_os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
+                or "postgresql://inferia:inferia@postgres:5432/inferia"
+            )
+            conn = await _asyncpg.connect(dsn=dsn, timeout=5)
+            try:
+                gpu_type = (req.allowed_gpu_types[0] if req.allowed_gpu_types else "any")
+                await conn.execute(
+                    """
+                    INSERT INTO compute_inventory (
+                        pool_id, provider, provider_instance_id, hostname,
+                        gpu_total, vcpu_total, ram_gb_total, state,
+                        node_class, metadata, labels
+                    )
+                    VALUES (
+                        $1::uuid, $2::provider_type, $3, $4,
+                        $5, $6, $7, 'provisioning',
+                        'on_demand', $8::jsonb, '{}'::jsonb
+                    )
+                    """,
+                    resp.pool_id,
+                    req.provider,
+                    f"placeholder:{resp.pool_id}",
+                    req.pool_name,
+                    req.gpu_count or 1,
+                    0, 0,
+                    __import__("json").dumps({
+                        "gpu_type": gpu_type,
+                        "provider_pool_id": req.provider_pool_id,
+                        "placeholder": True,
+                    }),
+                )
+            finally:
+                await conn.close()
+    except Exception as e:
+        # Non-fatal: pool creation already succeeded. Log and continue so the
+        # request remains a 200 even if the placeholder insert hiccups.
+        import logging as _logging
+        _logging.getLogger("deployment-server").warning(
+            "createpool: placeholder inventory insert failed: %s", e,
+        )
+
     return {
         "pool_id": resp.pool_id,
         "status": "CREATED",
