@@ -22,6 +22,7 @@ KNOWN_COMMANDS = {
     "write-dashboard-config",
     "providers",
     "worker",
+    "node",
 }
 
 
@@ -839,6 +840,87 @@ def main(argv=None):
         help="Internal API key (default: INTERNAL_API_KEY env var)",
     )
 
+    # --- node sub-command (node-centric API) -------------------------------
+    node_parser = sub.add_parser(
+        "node",
+        help="Manage compute nodes (add, list, label, remove)",
+    )
+    node_sub = node_parser.add_subparsers(
+        dest="node_action", required=True, help="Action",
+    )
+
+    # node add ...
+    node_add = node_sub.add_parser("add", help="Add a node to a pool")
+    node_add_sub = node_add.add_subparsers(
+        dest="node_add_provider", required=True, help="Provider",
+    )
+
+    def _add_common_flags(p):
+        p.add_argument("--name", required=True, help="Node name")
+        p.add_argument(
+            "--label",
+            action="append",
+            default=[],
+            help="Label key=value (repeat for multiple)",
+        )
+        p.add_argument("--org-id", default=None, help="Organization id (or INFERIA_ORG_ID env)")
+        p.add_argument("--orchestration-url", default=None,
+                       help="Orchestration URL (default: http://localhost:8080)")
+        p.add_argument("--internal-api-key", default=None,
+                       help="Internal API key (default: INTERNAL_API_KEY env)")
+
+    nw = node_add_sub.add_parser("worker", help="Add a self-hosted inferia-worker node")
+    _add_common_flags(nw)
+    nw.add_argument("--advertise-url", default=None,
+                    help="URL the control plane should use to reach this worker (operator can fill later)")
+
+    nn = node_add_sub.add_parser("nosana", help="Add a Nosana node")
+    _add_common_flags(nn)
+    nn.add_argument("--gpu-type", required=True)
+    nn.add_argument("--market-address", required=True)
+    nn.add_argument("--credential-name", default="default")
+
+    na = node_add_sub.add_parser("akash", help="Add an Akash node")
+    _add_common_flags(na)
+    na.add_argument("--gpu-type", required=True)
+    na.add_argument("--credential-name", default="default")
+
+    # node list
+    nl = node_sub.add_parser("list", help="List nodes (optionally filter by labels)")
+    nl.add_argument("--label", action="append", default=[], help="Filter by label key=value (AND)")
+    nl.add_argument("--org-id", default=None)
+    nl.add_argument("--orchestration-url", default=None)
+    nl.add_argument("--internal-api-key", default=None)
+
+    # node labels {set,del,get}
+    nl_labels = node_sub.add_parser("labels", help="Manage node labels")
+    nl_lab_sub = nl_labels.add_subparsers(
+        dest="labels_action", required=True, help="Action",
+    )
+
+    nl_set = nl_lab_sub.add_parser("set", help="Upsert labels on a node")
+    nl_set.add_argument("node_id")
+    nl_set.add_argument("kv", nargs="+", help="key=value pairs")
+    nl_set.add_argument("--orchestration-url", default=None)
+    nl_set.add_argument("--internal-api-key", default=None)
+
+    nl_del = nl_lab_sub.add_parser("del", help="Remove labels from a node")
+    nl_del.add_argument("node_id")
+    nl_del.add_argument("keys", nargs="+", help="label keys to remove")
+    nl_del.add_argument("--orchestration-url", default=None)
+    nl_del.add_argument("--internal-api-key", default=None)
+
+    nl_get = nl_lab_sub.add_parser("get", help="Print a node's labels as JSON")
+    nl_get.add_argument("node_id")
+    nl_get.add_argument("--orchestration-url", default=None)
+    nl_get.add_argument("--internal-api-key", default=None)
+
+    # node rm
+    n_rm = node_sub.add_parser("rm", help="Soft-delete a node")
+    n_rm.add_argument("node_id")
+    n_rm.add_argument("--orchestration-url", default=None)
+    n_rm.add_argument("--internal-api-key", default=None)
+
     args, unknown = parser.parse_known_args(argv)
 
     cmd = args.command
@@ -916,6 +998,10 @@ def main(argv=None):
         elif cmd == "worker":
             from inferia.cli_worker import run_worker_command
             run_worker_command(args)
+
+        elif cmd == "node":
+            from inferia.cli_node import run_node_command
+            run_node_command(args)
 
         else:
             print(f"Unknown command: {cmd}")

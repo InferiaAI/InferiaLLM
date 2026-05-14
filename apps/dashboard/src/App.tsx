@@ -114,12 +114,21 @@ const router = createBrowserRouter([
                 element: <DeploymentDetail />,
               },
               {
-                path: "compute/pools",
+                path: "compute/nodes",
                 element: <Instances />,
               },
               {
-                path: "compute/pools/:id",
+                path: "compute/nodes/:id",
                 element: <InstanceDetail />,
+              },
+              // Legacy redirects so bookmarked /pools URLs still land somewhere.
+              {
+                path: "compute/pools",
+                element: <Navigate to="/dashboard/compute/nodes" replace />,
+              },
+              {
+                path: "compute/pools/:id",
+                element: <Navigate to="/dashboard/compute/nodes" replace />,
               },
             ]
           },
@@ -135,8 +144,12 @@ const router = createBrowserRouter([
                 element: <NewDeployment />,
               },
               {
-                path: "compute/pools/new",
+                path: "compute/nodes/new",
                 element: <NewPool />,
+              },
+              {
+                path: "compute/pools/new",
+                element: <Navigate to="/dashboard/compute/nodes/new" replace />,
               },
             ]
           },

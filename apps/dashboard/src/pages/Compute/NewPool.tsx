@@ -1,1066 +1,482 @@
-import { useReducer, useEffect, useMemo } from "react"
-import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud, HardDrive } from "lucide-react"
-import { toast } from "sonner"
-import { useNavigate, Link } from "react-router-dom"
-import { cn } from "@/lib/utils"
-import { useAuth } from "@/context/AuthContext"
-import { computeApi } from "@/lib/api"
-import { useQuery } from "@tanstack/react-query"
-import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  HardDrive, Globe, Cpu, ArrowRight, Loader2, Copy, X, CheckCircle2, Plus,
+} from "lucide-react";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import {
+  addWorkerNode, addProviderNode,
+  type AddWorkerNodeResponse,
+} from "@/services/nodeService";
 
-// Provider icons mapping
-const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-    nosana: Globe,
-    akash: Cpu,
-    aws: Server,
-    gcp: Cloud,
-    k8s: Server,
-    skypilot: Server,
-    worker: HardDrive,
-}
+type Provider = "worker" | "nosana" | "akash";
 
-// Provider color mapping
-const providerColors: Record<string, string> = {
-    nosana: "text-green-500 bg-green-500/10",
-    akash: "text-purple-500 bg-purple-500/10",
-    aws: "text-ember-500 bg-ember-500/10",
-    gcp: "text-blue-500 bg-blue-500/10",
-    k8s: "text-orange-500 bg-orange-500/10",
-    skypilot: "text-cyan-500 bg-cyan-500/10",
-    worker: "text-ember-500 bg-ember-500/10",
-}
+const PROVIDER_CARDS: Array<{
+  id: Provider;
+  name: string;
+  description: string;
+  icon: typeof HardDrive;
+  color: string;
+}> = [
+  {
+    id: "worker",
+    name: "Self-hosted (inferia-worker)",
+    description:
+      "A GPU host you control: bare-metal, your own server, or a cloud VM you spin up. " +
+      "We mint a bootstrap token; you paste it into the worker's .env and run `docker compose up`.",
+    icon: HardDrive,
+    color: "text-ember-500 bg-ember-500/10",
+  },
+  {
+    id: "nosana",
+    name: "Nosana Network",
+    description:
+      "Decentralized GPU compute grid. Submit one Nosana job to add a single node.",
+    icon: Globe,
+    color: "text-green-500 bg-green-500/10",
+  },
+  {
+    id: "akash",
+    name: "Akash Network",
+    description:
+      "Decentralized cloud compute. Submit one Akash deployment to add a single node.",
+    icon: Cpu,
+    color: "text-purple-500 bg-purple-500/10",
+  },
+];
 
-// Provider descriptions
-const providerDescriptions: Record<string, string> = {
-    nosana: "Decentralized GPU Compute grid. Cheapest and fastest for inference.",
-    akash: "Decentralized cloud compute. Open-source marketplace for GPUs.",
-    aws: "Managed EC2 instances. High reliability, higher cost.",
-    gcp: "Google Cloud Platform with SkyPilot. Unified multi-cloud orchestration.",
-    k8s: "On-premises Kubernetes cluster. Full control and privacy.",
-    skypilot: "Multi-cloud orchestration. Unified interface for AWS/GCP/Azure.",
-    worker: "Self-hosted GPU hosts running the inferia-worker agent. Bare-metal, your own server, or a cloud VM you spin up. After creating the pool, click 'Add Worker' to register hosts.",
-}
+export default function NewNode() {
+  const navigate = useNavigate();
+  const [step, setStep] = useState<"pick" | "form">("pick");
+  const [provider, setProvider] = useState<Provider | null>(null);
 
-// GCP regions for SkyPilot
-const gcpRegions = [
-    { id: "us-central1", name: "Iowa (us-central1)", available: true },
-    { id: "us-east1", name: "South Carolina (us-east1)", available: true },
-    { id: "us-west1", name: "Oregon (us-west1)", available: true },
-    { id: "europe-west1", name: "Belgium (europe-west1)", available: true },
-    { id: "europe-west4", name: "Netherlands (europe-west4)", available: true },
-    { id: "asia-east1", name: "Taiwan (asia-east1)", available: true },
-    { id: "asia-southeast1", name: "Singapore (asia-southeast1)", available: true },
-]
+  return (
+    <div className="space-y-6 max-w-5xl mx-auto">
+      <div>
+        <h2 className="text-3xl font-bold tracking-tight">Add Node</h2>
+        <p className="text-muted-foreground mt-2">
+          Nodes are the unit of compute in InferiaLLM. Pick a provider; each registers
+          exactly one node which then shows up in <span className="font-mono">Compute Nodes</span>.
+        </p>
+      </div>
 
-// GPU types for GCP/SkyPilot
-const gcpGpuTypes = [
-    { gpu_type: "H100", gpu_memory_gb: 80, vcpu: 26, ram_gb: 200, description: "NVIDIA H100 80GB" },
-    { gpu_type: "A100", gpu_memory_gb: 80, vcpu: 12, ram_gb: 85, description: "NVIDIA A100 80GB" },
-    { gpu_type: "L4", gpu_memory_gb: 24, vcpu: 8, ram_gb: 32, description: "NVIDIA L4" },
-    { gpu_type: "T4", gpu_memory_gb: 16, vcpu: 4, ram_gb: 16, description: "NVIDIA T4" },
-    { gpu_type: "V100", gpu_memory_gb: 16, vcpu: 8, ram_gb: 61, description: "NVIDIA V100 16GB" },
-]
-
-interface NewPoolState {
-    step: number;
-    selectedProvider: string;
-    selectedResource: any;
-    poolName: string;
-    isCreating: boolean;
-    availableResources: any[];
-    loadingResources: boolean;
-    searchQuery: string;
-    minVram: number;
-    sortBy: "price_asc" | "price_desc" | "memory";
-    providerCredentials: NosanaApiKeyResponse[];
-    selectedCredential: string;
-    loadingCredentials: boolean;
-    // New fields for SkyPilot/GCP
-    selectedRegion: string;
-    useSpot: boolean;
-    isClusterProvider: boolean;
-    gpuCount: number;
-}
-
-type NewPoolAction =
-    | { type: "SET_STEP"; payload: number }
-    | { type: "SET_PROVIDER"; payload: string }
-    | { type: "SET_RESOURCE"; payload: any }
-    | { type: "SET_POOL_NAME"; payload: string }
-    | { type: "SET_CREATING"; payload: boolean }
-    | { type: "SET_RESOURCES"; payload: any[] }
-    | { type: "SET_LOADING_RESOURCES"; payload: boolean }
-    | { type: "SET_SEARCH"; payload: string }
-    | { type: "SET_VRAM"; payload: number }
-    | { type: "SET_SORT"; payload: "price_asc" | "price_desc" | "memory" }
-    | { type: "SET_CREDENTIALS"; payload: NosanaApiKeyResponse[] }
-    | { type: "SET_SELECTED_CREDENTIAL"; payload: string }
-    | { type: "SET_LOADING_CREDENTIALS"; payload: boolean }
-    | { type: "SET_REGION"; payload: string }
-    | { type: "SET_USE_SPOT"; payload: boolean }
-    | { type: "SET_CLUSTER_PROVIDER"; payload: boolean }
-    | { type: "SET_GPU_COUNT"; payload: number };
-
-const initialState: NewPoolState = {
-    step: 1,
-    selectedProvider: "",
-    selectedResource: null,
-    poolName: "",
-    isCreating: false,
-    availableResources: [],
-    loadingResources: false,
-    searchQuery: "",
-    minVram: 0,
-    sortBy: "price_asc",
-    providerCredentials: [],
-    selectedCredential: "",
-    loadingCredentials: false,
-    selectedRegion: "",
-    useSpot: false,
-    isClusterProvider: false,
-    gpuCount: 1,
-};
-
-function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
-    switch (action.type) {
-        case "SET_STEP": return { ...state, step: action.payload };
-        case "SET_PROVIDER": return { ...state, selectedProvider: action.payload, selectedResource: null };
-        case "SET_RESOURCE": return { ...state, selectedResource: action.payload };
-        case "SET_POOL_NAME": return { ...state, poolName: action.payload };
-        case "SET_CREATING": return { ...state, isCreating: action.payload };
-        case "SET_RESOURCES": return { ...state, availableResources: action.payload };
-        case "SET_LOADING_RESOURCES": return { ...state, loadingResources: action.payload };
-        case "SET_SEARCH": return { ...state, searchQuery: action.payload };
-        case "SET_VRAM": return { ...state, minVram: action.payload };
-        case "SET_SORT": return { ...state, sortBy: action.payload };
-        case "SET_CREDENTIALS": return { ...state, providerCredentials: action.payload };
-        case "SET_SELECTED_CREDENTIAL": return { ...state, selectedCredential: action.payload };
-        case "SET_LOADING_CREDENTIALS": return { ...state, loadingCredentials: action.payload };
-        case "SET_REGION": return { ...state, selectedRegion: action.payload };
-        case "SET_USE_SPOT": return { ...state, useSpot: action.payload };
-        case "SET_CLUSTER_PROVIDER": return { ...state, isClusterProvider: action.payload };
-        case "SET_GPU_COUNT": return { ...state, gpuCount: action.payload };
-        default: return state;
-    }
-}
-
-export default function NewPool() {
-    const navigate = useNavigate()
-    const { user, organizations } = useAuth()
-    const [state, dispatch] = useReducer(poolReducer, initialState);
-    const {
-        step,
-        selectedProvider,
-        selectedResource,
-        poolName,
-        isCreating,
-        availableResources,
-        loadingResources,
-        searchQuery,
-        minVram,
-        sortBy,
-        providerCredentials,
-        selectedCredential,
-        loadingCredentials,
-        selectedRegion,
-        useSpot,
-        isClusterProvider,
-        gpuCount,
-    } = state;
-
-    // Fetch provider configuration
-    const { data: config, isLoading: loadingConfig } = useQuery({
-        queryKey: ["providerConfig"],
-        queryFn: () => ConfigService.getProviderConfig()
-    })
-
-    // NEW: Fetch registered providers dynamically from API
-    const { data: providersData, isLoading: loadingProviders } = useQuery({
-        queryKey: ["registeredProviders"],
-        queryFn: async () => {
-            try {
-                const res = await computeApi.get('/inventory/providers')
-                return res.data.providers
-            } catch (error) {
-                console.error("Failed to fetch providers:", error)
-                return null
-            }
-        },
-        staleTime: 5 * 60 * 1000,
-    })
-
-    const providerMeta = useMemo(() => {
-        if (!providersData) {
-            return [
-                {
-                    id: "worker",
-                    name: "Self-hosted (inferia-worker)",
-                    description: providerDescriptions.worker,
-                    icon: providerIcons.worker,
-                    color: providerColors.worker,
-                    recommended: true,
-                    category: "self_hosted",
-                    configPath: "",
-                    capabilities: undefined,
-                    clusterMode: false,
-                },
-                {
-                    id: "nosana",
-                    name: "Nosana Network",
-                    description: providerDescriptions.nosana,
-                    icon: providerIcons.nosana,
-                    color: providerColors.nosana,
-                    category: "depin",
-                    configPath: "/dashboard/settings/providers/depin/nosana"
-                },
-                {
-                    id: "gcp",
-                    name: "Google Cloud (GCP)",
-                    description: providerDescriptions.gcp,
-                    icon: providerIcons.gcp,
-                    color: providerColors.gcp,
-                    category: "cloud",
-                    clusterMode: true,
-                    configPath: "/dashboard/settings/providers/cloud/gcp"
-                },
-                {
-                    id: "akash",
-                    name: "Akash Network",
-                    description: providerDescriptions.akash,
-                    icon: providerIcons.akash,
-                    color: providerColors.akash,
-                    category: "depin",
-                    configPath: "/dashboard/settings/providers/depin/akash"
-                },
-                {
-                    id: "aws",
-                    name: "AWS / Cloud",
-                    description: providerDescriptions.aws,
-                    icon: providerIcons.aws,
-                    color: providerColors.aws,
-                    disabled: true,
-                    category: "cloud",
-                    configPath: "/dashboard/settings/providers/cloud/aws"
-                }
-            ]
-        }
-
-        // Build from the API list, but:
-        //  * skip 'on_prem' — it's only a server-side adapter alias for
-        //    'worker' so createpool accepts the DB enum value; the UI must
-        //    never show it as a separate card.
-        //  * keep 'worker' overrides (name + description + icon) so the
-        //    card matches the static fallback ("Self-hosted (inferia-worker)")
-        //    rather than the generic "Worker Network" auto-title.
-        const apiList = Object.entries(providersData)
-            .filter(([id]) => id !== "on_prem")
-            .map(([id, data]: [string, any]) => {
-                const isWorker = id === "worker";
-                return {
-                    id,
-                    name: isWorker
-                        ? "Self-hosted (inferia-worker)"
-                        : `${id.charAt(0).toUpperCase() + id.slice(1)} Network`,
-                    description: providerDescriptions[id] || `${id} compute provider`,
-                    icon: providerIcons[id] || Server,
-                    color: providerColors[id] || "text-muted-foreground bg-muted-foreground/10",
-                    category: isWorker ? "self_hosted" : (data.adapter_type || "cloud"),
-                    // Worker pools never use the credentials-editor page.
-                    configPath: isWorker
-                        ? ""
-                        : `/dashboard/settings/providers/${data.adapter_type || 'cloud'}/${id}`,
-                    capabilities: data.capabilities,
-                    clusterMode: data.capabilities?.supports_cluster_mode || false,
-                    recommended: isWorker || (data.adapter_type === 'depin' && id === 'nosana'),
-                };
-            });
-        // Ensure worker is present even when the backend hides it.
-        if (!apiList.some((p) => p.id === "worker")) {
-            apiList.unshift({
-                id: "worker",
-                name: "Self-hosted (inferia-worker)",
-                description: providerDescriptions.worker,
-                icon: providerIcons.worker,
-                color: providerColors.worker,
-                category: "self_hosted",
-                configPath: "",
-                capabilities: undefined,
-                clusterMode: false,
-                recommended: true,
-            });
-        }
-        return apiList;
-    }, [providersData]);
-
-    const isProviderConfigured = (pid: string) => {
-        if (!config) return false;
-        const depin = config.depin || {};
-        const cloud = config.cloud || {};
-
-        switch (pid) {
-            case "nosana":
-                return !!(depin.nosana?.wallet_private_key || depin.nosana?.api_key || (depin.nosana?.api_keys && depin.nosana.api_keys.length > 0));
-            case "akash":
-                return !!depin.akash?.mnemonic;
-            case "gcp":
-                return !!(cloud.gcp?.project_id || cloud.gcp?.service_account_json);
-            case "aws":
-                return !!cloud.aws?.access_key_id;
-            case "k8s":
-                return true;
-            case "worker":
-            case "on_prem":
-                // The self-hosted (inferia-worker) provider has no credentials
-                // to configure — workers register themselves with a bootstrap
-                // token issued from the pool detail page after creation.
-                // 'on_prem' is a server-side alias we strip from the list
-                // above, but include it here for defence-in-depth.
-                return true;
-            default:
-                return !!(depin[pid] || cloud[pid]);
-        }
-    };
-
-    const providers = useMemo(() => providerMeta.map(p => ({
-        ...p,
-        isConfigured: isProviderConfigured(p.id)
-    })), [providerMeta, config]);
-
-    // Determine if selected provider is a cluster-based provider
-    useEffect(() => {
-        if (selectedProvider) {
-            const provider = providers.find(p => p.id === selectedProvider);
-            const isCluster = provider?.clusterMode || 
-                provider?.capabilities?.supports_cluster_mode ||
-                ["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider);
-            dispatch({ type: "SET_CLUSTER_PROVIDER", payload: isCluster });
-        }
-    }, [selectedProvider, providers]);
-
-    useEffect(() => {
-        if (selectedProvider && step === 2) {
-            // Self-hosted (inferia-worker) pools have no DePIN/cloud
-            // resources to enumerate — the GPU comes from the worker itself
-            // at registration time.
-            if (selectedProvider === "worker") {
-                dispatch({ type: "SET_RESOURCES", payload: [] });
-                dispatch({ type: "SET_LOADING_RESOURCES", payload: false });
-                return;
-            }
-            const fetchResources = async () => {
-                dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
-                try {
-                    // For cluster providers, use predefined GPU types (no API call needed)
-                    if (["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider)) {
-                        dispatch({ type: "SET_RESOURCES", payload: [] })
-                    } else {
-                        const res = await computeApi.get(`/deployment/provider/resources?provider=${selectedProvider}`)
-                        dispatch({ type: "SET_RESOURCES", payload: res.data.resources || [] })
-                    }
-                } catch (error) {
-                    toast.error("Failed to load compute resources")
-                    console.error(error)
-                } finally {
-                    dispatch({ type: "SET_LOADING_RESOURCES", payload: false })
-                }
-            }
-
-            const loadProviderCredentials = async () => {
-                try {
-                    dispatch({ type: "SET_LOADING_CREDENTIALS", payload: true })
-                    const credentials = await ConfigService.listProviderCredentials(selectedProvider)
-                    const mapped = credentials.map(c => ({
-                        name: c.name,
-                        is_active: c.is_active,
-                        created_at: c.created_at
-                    }))
-                    dispatch({ type: "SET_CREDENTIALS", payload: mapped })
-                    const active = mapped.find(k => k.is_active)
-                    if (active) {
-                        dispatch({ type: "SET_SELECTED_CREDENTIAL", payload: active.name })
-                    }
-                } catch (error) {
-                    console.error(`Failed to load ${selectedProvider} credentials:`, error)
-                } finally {
-                    dispatch({ type: "SET_LOADING_CREDENTIALS", payload: false })
-                }
-            }
-
-            void fetchResources()
-            if (["nosana", "akash", "gcp", "skypilot"].includes(selectedProvider)) {
-                void loadProviderCredentials()
-            }
-        }
-    }, [selectedProvider, step])
-
-    const handleCreate = async () => {
-        if (!poolName) {
-            toast.error("Please give your pool a name")
-            return
-        }
-
-        // For cluster providers, validate region selection
-        if (isClusterProvider && !selectedRegion) {
-            toast.error("Please select a region")
-            return
-        }
-
-        // For cluster providers, validate GPU selection
-        if (isClusterProvider && !selectedResource) {
-            toast.error("Please select a GPU type")
-            return
-        }
-
-        const targetOrgId = user?.org_id || organizations?.[0]?.id;
-        if (!targetOrgId) {
-            toast.error("Organization context missing. Please reload.")
-            return
-        }
-
-        dispatch({ type: "SET_CREATING", payload: true })
-
-        try {
-            // Build payload based on provider type
-            const isWorkerPool = selectedProvider === "worker";
-            const payload: any = {
-                pool_name: poolName,
-                owner_type: "user",
-                owner_id: targetOrgId,
-                // Self-hosted pools map to the existing 'on_prem' provider
-                // enum in compute_pools; the agent_kind='worker' column on
-                // compute_inventory is what distinguishes worker nodes.
-                provider: isWorkerPool ? "on_prem" : selectedProvider,
-                is_dedicated: false,
-                scheduling_policy_json: JSON.stringify({ strategy: "best_fit" })
-            }
-
-            if (isWorkerPool) {
-                // No pre-selected resource: workers contribute their GPU at
-                // registration time. Send an "any-GPU" hint so other parts
-                // of the system don't reject this pool for missing fields.
-                payload.allowed_gpu_types = ["any"];
-                payload.max_cost_per_hour = 0;
-                payload.provider_pool_id = `worker:${poolName}`;
-            } else if (isClusterProvider) {
-                // Cluster-based provider (GCP/SkyPilot) - include region and spot settings
-                payload.allowed_gpu_types = [selectedResource.gpu_type];
-                payload.region_constraint = [selectedRegion];
-                payload.use_spot = useSpot;
-                payload.gpu_count = gpuCount;
-                // Estimate cost (for GCP, we don't have real-time pricing without API call)
-                payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
-                payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
-            } else {
-                // Job-based provider (Nosana, Akash)
-                payload.allowed_gpu_types = [selectedResource.gpu_type];
-                payload.max_cost_per_hour = selectedResource.price_per_hour;
-                payload.provider_pool_id = selectedResource.metadata?.market_address || selectedResource.provider_resource_id;
-            }
-
-            if (selectedCredential) {
-                payload.provider_credential_name = selectedCredential
-            }
-
-            const createRes = await computeApi.post("/deployment/createpool", payload)
-            const newPoolId = createRes?.data?.pool_id || createRes?.data?.id;
-
-            if (isWorkerPool) {
-                toast.success("Worker pool created — open the Workers tab and click 'Add Worker' to register a host.");
-                navigate(
-                    newPoolId
-                        ? `/dashboard/compute/pools/${newPoolId}?tab=workers`
-                        : "/dashboard/compute/pools",
-                );
-            } else if (isClusterProvider) {
-                toast.success(`Pool created! GPU cluster provisioning in ${selectedRegion}...`)
-                navigate("/dashboard/compute/pools")
-            } else {
-                toast.success("Compute Pool created successfully!")
-                navigate("/dashboard/compute/pools")
-            }
-        } catch (error: any) {
-            const errorDetail = error.response?.data?.detail || error.message
-            toast.error(errorDetail)
-            console.error(error)
-        } finally {
-            dispatch({ type: "SET_CREATING", payload: false })
-        }
-    }
-
-    // Estimate GCP cost (rough approximation)
-    const estimateGcpCost = (gpuType: string, isSpot: boolean): number => {
-        const baseCosts: Record<string, number> = {
-            "A100": 3.67,    // per hour
-            "A10G": 0.77,
-            "T4": 0.35,
-            "L4": 0.55,
-            "V100": 2.48,
-            "H100": 4.50,
-        };
-        const base = baseCosts[gpuType] || 1.0;
-        // Spot instances are ~60% cheaper
-        return isSpot ? base * 0.4 : base;
-    }
-
-    if (loadingConfig || loadingProviders) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[400px]">
-                <Cpu className="w-12 h-12 text-primary/20 animate-pulse mb-4" />
-                <p className="text-muted-foreground animate-pulse">Checking providers...</p>
-            </div>
-        )
-    }
-
-    return (
-        <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 font-sans text-foreground">
-            <div>
-                <h2 className="text-3xl font-bold tracking-tight">Create New Compute Pool</h2>
-                <p className="text-muted-foreground mt-2">
-                    Create a pool of compute resources to deploy your models on.
-                </p>
-            </div>
-
-            {/* Progress Steps */}
-            <StepProgress currentStep={step} />
-
-            {/* Step 1: Provider Selection */}
-            {step === 1 && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {providers.map((p) => (
-                        <ProviderCard
-                            key={p.id}
-                            provider={p}
-                            onSelect={(id) => {
-                                dispatch({ type: "SET_PROVIDER", payload: id });
-                                dispatch({ type: "SET_STEP", payload: 2 });
-                            }}
-                        />
-                    ))}
-                </div>
-            )}
-
-            {/* Step 2: Self-hosted (inferia-worker) — just name the pool. */}
-            {step === 2 && selectedProvider === "worker" && (
-                <div className="space-y-6">
-                    <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border">
-                        <h3 className="text-lg font-semibold mb-1 flex items-center gap-2">
-                            <HardDrive className="w-5 h-5 text-ember-500" />
-                            Self-hosted (inferia-worker) pool
-                        </h3>
-                        <p className="text-sm text-muted-foreground mb-6">
-                            Workers contribute their own GPU at registration time, so this
-                            step only asks for a pool name. After the pool is created
-                            you'll land on the Workers tab where you can generate an
-                            <span className="font-mono"> .env </span> snippet for each GPU
-                            host and run <span className="font-mono">docker compose up</span>.
-                        </p>
-
-                        <div className="space-y-2">
-                            <label htmlFor="worker-pool-name" className="text-sm font-medium">
-                                Pool name
-                            </label>
-                            <input
-                                id="worker-pool-name"
-                                type="text"
-                                placeholder="e.g. dc1-gpus, lab-h100s"
-                                value={poolName}
-                                onChange={(e) => dispatch({ type: "SET_POOL_NAME", payload: e.target.value })}
-                                className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500"
-                                autoComplete="off"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                Letters, digits, dashes, underscores. Visible to operators in the
-                                pool list.
-                            </p>
-                        </div>
-
-                        <div className="mt-6 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
-                            Make sure your GPU host has Docker + (if you want GPU) the NVIDIA
-                            Container Toolkit installed before clicking <span className="font-mono">Add Worker</span>.
-                            Pool credentials are not needed — each worker registers with a
-                            short-lived bootstrap token you mint from the pool's Workers tab.
-                        </div>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                        <button
-                            onClick={() => dispatch({ type: "SET_STEP", payload: 1 })}
-                            className="px-4 py-2 text-sm rounded-md border hover:bg-muted"
-                        >
-                            Back
-                        </button>
-                        <button
-                            onClick={handleCreate}
-                            disabled={isCreating || !poolName}
-                            className={cn(
-                                "px-4 py-2 text-sm rounded-md text-white inline-flex items-center gap-2",
-                                isCreating || !poolName
-                                    ? "bg-ember-600/60 cursor-not-allowed"
-                                    : "bg-ember-600 hover:bg-ember-700",
-                            )}
-                        >
-                            {isCreating ? "Creating…" : "Create pool"}
-                            {!isCreating && <ArrowRight className="w-4 h-4" />}
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Step 2: Configure Compute - Cluster Providers (GCP/SkyPilot) */}
-            {step === 2 && isClusterProvider && (
-                <div className="space-y-6">
-                    <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                            <Cloud className="w-5 h-5" />
-                            {selectedProvider === 'gcp' ? 'Google Cloud Platform' : 'SkyPilot'} Configuration
-                        </h3>
-                        
-                        {/* Region Selection */}
-                        <div className="mb-6">
-                            <label className="text-sm font-medium mb-2 block">Select Region</label>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                {gcpRegions.map((region) => (
-                                    <button
-                                        key={region.id}
-                                        onClick={() => dispatch({ type: "SET_REGION", payload: region.id })}
-                                        className={cn(
-                                            "p-3 rounded-lg border text-left text-sm transition-colors",
-                                            selectedRegion === region.id
-                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
-                                                : "border-border hover:border-ember-400"
-                                        )}
-                                    >
-                                        <div className="font-medium">{region.name}</div>
-                                        <div className="text-xs text-muted-foreground">{region.id}</div>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* GPU Selection */}
-                        <div className="mb-6">
-                            <label className="text-sm font-medium mb-2 block">Select GPU Type</label>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                {gcpGpuTypes.map((gpu) => (
-                                    <button
-                                        key={gpu.gpu_type}
-                                        onClick={() => dispatch({ type: "SET_RESOURCE", payload: { gpu_type: gpu.gpu_type, gpu_memory_gb: gpu.gpu_memory_gb, vcpu: gpu.vcpu, ram_gb: gpu.ram_gb, price_per_hour: estimateGcpCost(gpu.gpu_type, useSpot) }})}
-                                        className={cn(
-                                            "p-3 rounded-lg border text-left transition-colors",
-                                            selectedResource?.gpu_type === gpu.gpu_type
-                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
-                                                : "border-border hover:border-ember-400"
-                                        )}
-                                    >
-                                        <div className="font-bold">{gpu.gpu_type}</div>
-                                        <div className="text-xs text-muted-foreground">{gpu.gpu_memory_gb}GB VRAM</div>
-                                        <div className="text-xs text-muted-foreground">{gpu.vcpu} vCPU</div>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* GPU Count Selection */}
-                        <div className="mb-6">
-                            <label className="text-sm font-medium mb-2 block">Number of GPUs</label>
-                            <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
-                                {[1, 2, 4, 8].map((count) => (
-                                    <button
-                                        key={count}
-                                        onClick={() => dispatch({ type: "SET_GPU_COUNT", payload: count })}
-                                        className={cn(
-                                            "p-3 rounded-lg border text-center font-bold transition-colors",
-                                            gpuCount === count
-                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
-                                                : "border-border hover:border-ember-400"
-                                        )}
-                                    >
-                                        {count}x
-                                    </button>
-                                ))}
-                            </div>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                {gpuCount > 1
-                                    ? `${gpuCount} GPUs will be provisioned on a single node (multi-GPU).`
-                                    : "Single GPU per node."}
-                            </p>
-                        </div>
-
-                        {/* Spot Toggle */}
-                        <div className="p-4 rounded-lg border border-border bg-card">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <div className="font-medium">Use Spot Instances</div>
-                                    <div className="text-xs text-muted-foreground">Up to 60% cheaper, but may be interrupted</div>
-                                </div>
-                                <button
-                                    onClick={() => dispatch({ type: "SET_USE_SPOT", payload: !useSpot })}
-                                    className={cn(
-                                        "relative w-12 h-6 rounded-full transition-colors",
-                                        useSpot ? "bg-ember-600" : "bg-muted dark:bg-card"
-                                    )}
-                                >
-                                    <div className={cn(
-                                        "absolute top-1 w-4 h-4 bg-card rounded-full transition-transform",
-                                        useSpot ? "translate-x-7" : "translate-x-1"
-                                    )} />
-                                </button>
-                            </div>
-                            {useSpot && (
-                                <div className="mt-2 text-xs text-ember-600">
-                                    Estimated cost: ~${(estimateGcpCost(selectedResource?.gpu_type || 'A100', true) * gpuCount).toFixed(2)}/hr (60% savings)
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Summary */}
-                        {selectedRegion && selectedResource && (
-                            <div className="mt-4 p-4 rounded-lg bg-ember-50 dark:bg-ember-900/20 border border-ember-200 dark:border-ember-800">
-                                <div className="text-sm font-medium text-ember-800 dark:text-ember-200">
-                                    Summary: {gpuCount}x {selectedResource.gpu_type} in {selectedRegion}
-                                    {useSpot && " (Spot)"}
-                                </div>
-                                <div className="text-xs text-ember-600 dark:text-ember-400">
-                                    Estimated: ${(estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount).toFixed(2)}/hr
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="flex justify-between pt-6">
-                        <button
-                            onClick={() => dispatch({ type: "SET_STEP", payload: 1 })}
-                            className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground dark:hover:text-cream/85"
-                        >
-                            Back
-                        </button>
-                        <button
-                            onClick={() => selectedRegion && selectedResource && dispatch({ type: "SET_STEP", payload: 3 })}
-                            disabled={!selectedRegion || !selectedResource}
-                            className="px-6 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            Continue
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Step 2: Configure Compute - Job Providers (Nosana, Akash) */}
-            {step === 2 && !isClusterProvider && selectedProvider !== "worker" && (
-                <div className="space-y-6">
-                    <ResourceFilter
-                        searchQuery={searchQuery}
-                        setSearchQuery={(q) => dispatch({ type: "SET_SEARCH", payload: q })}
-                        minVram={minVram}
-                        setMinVram={(v) => dispatch({ type: "SET_VRAM", payload: v })}
-                        sortBy={sortBy}
-                        setSortBy={(s) => dispatch({ type: "SET_SORT", payload: s })}
-                    />
-
-                    {loadingResources ? (
-                        <div className="text-center py-12 text-muted-foreground">Loading available resources...</div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {availableResources
-                                .filter(res => {
-                                    const matchesSearch = res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase());
-                                    const matchesVram = res.gpu_memory_gb >= minVram;
-                                    return matchesSearch && matchesVram;
-                                })
-                                .sort((a, b) => {
-                                    if (sortBy === "price_asc") return a.price_per_hour - b.price_per_hour;
-                                    if (sortBy === "price_desc") return b.price_per_hour - a.price_per_hour;
-                                    if (sortBy === "memory") return b.gpu_memory_gb - a.gpu_memory_gb;
-                                    return 0;
-                                })
-                                .map((res: any) => (
-                                    <ResourceCard
-                                        key={res.provider_resource_id}
-                                        resource={res}
-                                        isSelected={selectedResource?.provider_resource_id === res.provider_resource_id}
-                                        onSelect={(r) => dispatch({ type: "SET_RESOURCE", payload: r })}
-                                    />
-                                ))}
-                        </div>
-                    )}
-
-                    <div className="flex justify-between pt-6">
-                        <button
-                            onClick={() => dispatch({ type: "SET_STEP", payload: 1 })}
-                            className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground dark:hover:text-cream/85"
-                        >
-                            Back
-                        </button>
-                        <button
-                            onClick={() => selectedResource && dispatch({ type: "SET_STEP", payload: 3 })}
-                            disabled={!selectedResource}
-                            className="px-6 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            Continue
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Step 3: Review */}
-            {step === 3 && (
-                <div className="max-w-xl mx-auto space-y-6">
-                    <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border space-y-4">
-                        <div className="space-y-2">
-                            <label htmlFor="pool-name" className="text-sm font-medium">Pool Name</label>
-                            <input
-                                id="pool-name"
-                                className="w-full px-3 py-2 border rounded-md bg-card dark:border-border focus:ring-2 focus:ring-ember-500/20 outline-none dark:text-cream"
-                                placeholder={isClusterProvider ? "e.g. My GCP Production Pool" : "e.g. My Nosana Pool"}
-                                value={poolName}
-                                onChange={(e) => dispatch({ type: "SET_POOL_NAME", payload: e.target.value })}
-                            />
-                        </div>
-
-                        <PoolDetails
-                            providerName={providers.find(p => p.id === selectedProvider)?.name}
-                            resource={selectedResource}
-                            isClusterProvider={isClusterProvider}
-                            region={selectedRegion}
-                            useSpot={useSpot}
-                        />
-
-                        {/* Cluster-specific info */}
-                        {isClusterProvider && (
-                            <div className="pt-4 border-t border-border/60 dark:border-border/60">
-                                <div className="flex items-center gap-2 text-sm text-ember-600 dark:text-ember-400">
-                                    <Cloud className="w-4 h-4" />
-                                    <span className="font-medium">Cluster-based provisioning</span>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    A persistent GPU cluster will be created. Deployments run on the cluster and can be started/stopped without recreating infrastructure.
-                                </p>
-                            </div>
-                        )}
-
-                        {providerCredentials.length > 0 && (
-                            <CredentialSelection
-                                provider={selectedProvider}
-                                credentials={providerCredentials}
-                                selectedCredential={selectedCredential}
-                                setSelectedCredential={(c) => dispatch({ type: "SET_SELECTED_CREDENTIAL", payload: c })}
-                                loading={loadingCredentials}
-                            />
-                        )}
-                    </div>
-
-                    <div className="flex gap-3">
-                        <button
-                            onClick={() => dispatch({ type: "SET_STEP", payload: 2 })}
-                            className="flex-1 px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted dark:hover:bg-card text-fg-secondary dark:text-cream/70 bg-card dark:border-border"
-                        >
-                            Back
-                        </button>
-                        <button
-                            onClick={handleCreate}
-                            disabled={isCreating || !poolName}
-                            className="flex-[2] px-6 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                            {isCreating ? (
-                                <>Creating Pool...</>
-                            ) : (
-                                <>{isClusterProvider ? <><Cloud className="w-4 h-4" /> Create GPU Cluster</> : <><Zap className="w-4 h-4" /> Create Pool</>}</>
-                            )}
-                        </button>
-                    </div>
-                </div>
-            )}
-        </div>
-    )
-}
-
-function StepProgress({ currentStep }: { currentStep: number }) {
-    return (
-        <div className="flex items-center gap-4 text-sm font-medium text-muted-foreground border-b dark:border-border pb-4">
-            {[1, 2, 3].map((s, i) => (
-                <div key={s} className="flex items-center gap-4">
-                    <div className={cn("flex items-center gap-2", currentStep >= s && "text-ember-600 dark:text-ember-400")}>
-                        <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors", currentStep >= s ? "bg-ember-600 text-white border-ember-600 dark:border-ember-500 dark:bg-ember-600" : "border-border bg-card")}>{s}</div>
-                        {s === 1 ? "Select Provider" : s === 2 ? "Compute Config" : "Review & Create"}
-                    </div>
-                    {i < 2 && <div className="h-px w-8 bg-muted dark:bg-card" />}
-                </div>
-            ))}
-        </div>
-    )
-}
-
-function ProviderCard({ provider: p, onSelect }: { provider: any, onSelect: (id: string) => void }) {
-    if (p.isConfigured || p.disabled) {
-        return (
+      {step === "pick" && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {PROVIDER_CARDS.map((p) => (
             <button
-                disabled={p.disabled}
-                onClick={() => onSelect(p.id)}
-                className={cn(
-                    "text-left group relative p-6 rounded-xl border bg-card dark:border-border hover:border-ember-500/50 dark:hover:border-ember-500/50 transition-colors hover:shadow-md flex flex-col gap-4",
-                    p.disabled && "opacity-50 cursor-not-allowed hover:border-border dark:hover:border-border hover:shadow-none bg-muted dark:bg-card/50"
-                )}
+              key={p.id}
+              onClick={() => {
+                setProvider(p.id);
+                setStep("form");
+              }}
+              className="text-left group relative p-6 rounded-xl border bg-card dark:border-border hover:border-ember-500/50 dark:hover:border-ember-500/50 transition-colors hover:shadow-md flex flex-col gap-4"
             >
-                <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center transition-colors", p.color)}>
-                    <p.icon className="w-6 h-6" />
-                </div>
-                <div>
-                    <h3 className="font-bold text-lg mb-1 group-hover:text-ember-600 dark:group-hover:text-ember-400 transition-colors uppercase tracing-tight text-xs">{p.name}</h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{p.description}</p>
-                    {p.capabilities && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                            {p.capabilities.is_ephemeral && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Ephemeral</span>}
-                            {p.capabilities.pricing_model !== 'fixed' && <span className="text-[10px] bg-ember-100 text-ember-700 px-1.5 py-0.5 rounded capitalize">{p.capabilities.pricing_model}</span>}
-                        </div>
-                    )}
-                </div>
-                {p.recommended && <span className="absolute top-4 right-4 text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 px-2 py-1 rounded">Recommended</span>}
-            </button>
-        )
-    }
-
-    return (
-        <Link
-            to={p.configPath}
-            className="text-left group relative p-6 rounded-xl border border-dashed border-border bg-muted/30 dark:bg-card/20 hover:border-border dark:hover:border-border transition-colors flex flex-col gap-4"
-        >
-            <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center opacity-40 grayscale", p.color)}>
+              <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center transition-colors", p.color)}>
                 <p.icon className="w-6 h-6" />
-            </div>
-            <div>
-                <h3 className="font-bold text-lg mb-1 text-muted-foreground">{p.name}</h3>
-                <p className="text-xs text-muted-foreground">Configuration required to create pools on this network.</p>
-            </div>
-            <div className="mt-auto flex items-center gap-1.5 text-ember-600 dark:text-ember-400 text-xs font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
-                Connect Provider <ArrowRight className="w-3 h-3" />
-            </div>
-        </Link>
-    )
-}
-
-function ResourceFilter({ searchQuery, setSearchQuery, minVram, setMinVram, sortBy, setSortBy }: any) {
-    return (
-        <div className="flex flex-col md:flex-row gap-3">
-            <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                    name="gpuSearch"
-                    placeholder="Search GPUs (v100, t4, a100)…"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    autoComplete="off"
-                    className="w-full pl-10 pr-4 py-2 bg-card border dark:border-border rounded-lg outline-none focus:ring-2 focus:ring-ember-500/20 transition-colors text-sm"
-                />
-            </div>
-            <select value={minVram} onChange={(e) => setMinVram(Number(e.target.value))} className="px-3 py-2 bg-card border dark:border-border rounded-lg text-sm outline-none focus:ring-2 focus:ring-ember-500/20">
-                <option value={0}>All Memory</option>
-                <option value={8}>8GB+ VRAM</option>
-                <option value={16}>16GB+ VRAM</option>
-                <option value={24}>24GB+ VRAM</option>
-                <option value={40}>40GB+ VRAM</option>
-                <option value={80}>80GB+ VRAM</option>
-            </select>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="px-3 py-2 bg-card border dark:border-border rounded-lg text-sm outline-none focus:ring-2 focus:ring-ember-500/20">
-                <option value="price_asc">Price: Low to High</option>
-                <option value="price_desc">Price: High to Low</option>
-                <option value="memory">Memory: High to Low</option>
-            </select>
+              </div>
+              <div>
+                <h3 className="font-bold text-lg mb-1 group-hover:text-ember-600 dark:group-hover:text-ember-400 transition-colors">
+                  {p.name}
+                </h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{p.description}</p>
+              </div>
+              <span className="absolute top-4 right-4 text-muted-foreground group-hover:text-ember-500">
+                <ArrowRight className="w-4 h-4" />
+              </span>
+            </button>
+          ))}
         </div>
-    )
+      )}
+
+      {step === "form" && provider === "worker" && (
+        <WorkerForm onBack={() => setStep("pick")} onDone={() => navigate("/dashboard/compute/nodes")} />
+      )}
+      {step === "form" && provider === "nosana" && (
+        <DePINForm
+          provider="nosana"
+          onBack={() => setStep("pick")}
+          onDone={(id) => navigate(`/dashboard/compute/nodes/${id}`)}
+        />
+      )}
+      {step === "form" && provider === "akash" && (
+        <DePINForm
+          provider="akash"
+          onBack={() => setStep("pick")}
+          onDone={(id) => navigate(`/dashboard/compute/nodes/${id}`)}
+        />
+      )}
+    </div>
+  );
 }
 
-function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, isSelected: boolean, onSelect: (r: any) => void }) {
+
+// ---------------------------------------------------------------------------
+// Self-hosted form.
+// ---------------------------------------------------------------------------
+
+
+function WorkerForm({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [advertiseUrl, setAdvertiseUrl] = useState("");
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [draftK, setDraftK] = useState("");
+  const [draftV, setDraftV] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<AddWorkerNodeResponse | null>(null);
+
+  const addLabel = () => {
+    const k = draftK.trim();
+    const v = draftV.trim();
+    if (!k) {
+      toast.error("label key required");
+      return;
+    }
+    setLabels({ ...labels, [k]: v });
+    setDraftK("");
+    setDraftV("");
+  };
+  const removeLabel = (k: string) => {
+    const { [k]: _, ...rest } = labels;
+    setLabels(rest);
+  };
+
+  const handleSubmit = async () => {
+    if (!name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    setLoading(true);
+    try {
+      const r = await addWorkerNode({
+        node_name: name.trim(),
+        advertise_url: advertiseUrl.trim() || undefined,
+        labels,
+      });
+      setResult(r);
+    } catch (e: unknown) {
+      const detail =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail || "Failed to add worker");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error("Clipboard unavailable");
+    }
+  };
+
+  if (result) {
     return (
-        <button
-            type="button"
-            aria-pressed={isSelected}
-            onClick={() => onSelect(res)}
-            className={cn(
-                "w-full cursor-pointer p-4 rounded-xl border bg-card dark:border-border transition-colors relative text-left",
-                isSelected ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-sm" : "hover:border-ember-400/30 dark:hover:border-ember-600/30"
-            )}
-        >
-            <div className="flex justify-between items-start mb-2">
-                <div className="p-2 bg-muted dark:bg-card rounded-md"><Cpu className="w-5 h-5 text-fg-secondary dark:text-cream/85" /></div>
-                <span className="font-bold text-green-600 dark:text-green-400">${res.price_per_hour}/hr</span>
-            </div>
-            <h4 className="font-bold">{res.provider_resource_id}</h4>
-            <p className="text-sm text-muted-foreground">{res.gpu_type} ({res.gpu_memory_gb}GB VRAM)</p>
-            <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
-                <span>{res.vcpu} vCPU</span> • <span>{res.ram_gb}GB RAM</span>
-            </div>
-            {res.pricing_model && res.pricing_model !== 'fixed' && <div className="mt-1"><span className="text-[10px] bg-ember-100 text-ember-700 px-1.5 py-0.5 rounded capitalize">{res.pricing_model}</span></div>}
-            {isSelected && <div className="absolute top-4 right-4 w-5 h-5 bg-ember-600 text-white rounded-full flex items-center justify-center"><Check className="w-3 h-3" /></div>}
+      <div className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="w-4 h-4" />
+          Token issued. Expires{" "}
+          <span className="font-mono">{new Date(result.expires_at * 1000).toLocaleString()}</span>.
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-sm font-medium">.env (paste into the worker host)</label>
+            <button
+              onClick={() => copy(result.env_snippet, ".env")}
+              className="text-xs inline-flex items-center gap-1.5 text-ember-600 hover:text-ember-700"
+            >
+              <Copy className="w-3.5 h-3.5" /> Copy
+            </button>
+          </div>
+          <pre className="rounded-md border bg-muted/30 p-3 text-xs font-mono whitespace-pre-wrap break-all max-h-72 overflow-y-auto">
+            {result.env_snippet}
+          </pre>
+        </div>
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
+          Treat the bootstrap token as a secret. After pasting the .env, run{" "}
+          <span className="font-mono">docker compose up -d</span> on the worker host. The
+          new node appears in this list as soon as the worker registers.
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={onDone}
+            className="px-3 py-1.5 text-sm rounded-md bg-ember-600 hover:bg-ember-700 text-white"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-6 space-y-5">
+      <h3 className="text-lg font-semibold inline-flex items-center gap-2">
+        <HardDrive className="w-5 h-5 text-ember-500" /> Self-hosted (inferia-worker)
+      </h3>
+      <p className="text-sm text-muted-foreground">
+        Workers self-register, so this only takes a name. After submit you'll get the .env to
+        paste into the GPU host's <span className="font-mono">inferia-worker</span> deploy.
+      </p>
+
+      <Field label="Node name">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="dc1-gpu-01"
+          className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500"
+        />
+      </Field>
+
+      <Field label="Advertise URL (optional)">
+        <input
+          value={advertiseUrl}
+          onChange={(e) => setAdvertiseUrl(e.target.value)}
+          placeholder="https://gpu-host.example.com:8080"
+          className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          The control plane will use this URL to send inference traffic. You can fill it in the
+          worker's .env later if you'd rather.
+        </p>
+      </Field>
+
+      <Field label="Labels">
+        <LabelBuilder
+          labels={labels}
+          draftK={draftK} setDraftK={setDraftK}
+          draftV={draftV} setDraftV={setDraftV}
+          onAdd={addLabel} onRemove={removeLabel}
+        />
+      </Field>
+
+      <div className="flex items-center justify-between pt-2">
+        <button onClick={onBack} className="px-4 py-2 text-sm rounded-md border hover:bg-muted">
+          Back
         </button>
-    )
+        <button
+          onClick={handleSubmit}
+          disabled={loading || !name.trim()}
+          className={cn(
+            "px-4 py-2 text-sm rounded-md text-white inline-flex items-center gap-2",
+            loading || !name.trim() ? "bg-ember-600/60 cursor-not-allowed" : "bg-ember-600 hover:bg-ember-700",
+          )}
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+          {loading ? "Issuing token…" : "Generate token"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
-function PoolDetails({ providerName, resource, isClusterProvider, region, useSpot }: { 
-    providerName?: string, 
-    resource: any,
-    isClusterProvider?: boolean,
-    region?: string,
-    useSpot?: boolean
+
+// ---------------------------------------------------------------------------
+// DePIN (Nosana / Akash) form.
+// ---------------------------------------------------------------------------
+
+
+function DePINForm({
+  provider, onBack, onDone,
+}: { provider: "nosana" | "akash"; onBack: () => void; onDone: (nodeId: string) => void }) {
+  const [name, setName] = useState("");
+  const [gpuType, setGpuType] = useState("");
+  const [marketAddress, setMarketAddress] = useState("");
+  const [credential, setCredential] = useState("default");
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [draftK, setDraftK] = useState("");
+  const [draftV, setDraftV] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const addLabel = () => {
+    if (!draftK.trim()) return;
+    setLabels({ ...labels, [draftK.trim()]: draftV.trim() });
+    setDraftK("");
+    setDraftV("");
+  };
+  const removeLabel = (k: string) => {
+    const { [k]: _, ...rest } = labels;
+    setLabels(rest);
+  };
+
+  const handleSubmit = async () => {
+    if (!gpuType.trim()) {
+      toast.error("GPU type is required");
+      return;
+    }
+    if (provider === "nosana" && !marketAddress.trim()) {
+      toast.error("Market address is required for Nosana");
+      return;
+    }
+    setLoading(true);
+    try {
+      const r = await addProviderNode(provider, {
+        node_name: name.trim() || undefined,
+        labels,
+        credential_name: credential || undefined,
+        spec: {
+          gpu_type: gpuType.trim(),
+          ...(provider === "nosana" ? { market_address: marketAddress.trim() } : {}),
+        },
+      });
+      toast.success(`${provider} node submitted (${r.state})`);
+      onDone(r.node_id);
+    } catch (e: unknown) {
+      const detail =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail || `Failed to add ${provider} node`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border bg-card p-6 space-y-5">
+      <h3 className="text-lg font-semibold capitalize">{provider} node</h3>
+      <p className="text-sm text-muted-foreground">
+        We'll submit one {provider} {provider === "nosana" ? "job" : "deployment"} and persist
+        it as a node in this org's inventory. Use labels to group it later (e.g.{" "}
+        <span className="font-mono">env=staging</span>).
+      </p>
+
+      <Field label="Node name (optional)">
+        <input
+          value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="nosana-eu-01"
+          className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500"
+        />
+      </Field>
+
+      <Field label="GPU type">
+        <input
+          value={gpuType} onChange={(e) => setGpuType(e.target.value)}
+          placeholder="RTX 4090"
+          className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500"
+        />
+      </Field>
+
+      {provider === "nosana" && (
+        <Field label="Market address">
+          <input
+            value={marketAddress} onChange={(e) => setMarketAddress(e.target.value)}
+            placeholder="ABCDEF…"
+            className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500 font-mono"
+          />
+        </Field>
+      )}
+
+      <Field label="Credential name">
+        <input
+          value={credential} onChange={(e) => setCredential(e.target.value)}
+          placeholder="default"
+          className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          Provider credential to use (configured under Settings → Providers).
+        </p>
+      </Field>
+
+      <Field label="Labels">
+        <LabelBuilder
+          labels={labels}
+          draftK={draftK} setDraftK={setDraftK}
+          draftV={draftV} setDraftV={setDraftV}
+          onAdd={addLabel} onRemove={removeLabel}
+        />
+      </Field>
+
+      <div className="flex items-center justify-between pt-2">
+        <button onClick={onBack} className="px-4 py-2 text-sm rounded-md border hover:bg-muted">
+          Back
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={loading}
+          className={cn(
+            "px-4 py-2 text-sm rounded-md text-white inline-flex items-center gap-2",
+            loading ? "bg-ember-600/60 cursor-not-allowed" : "bg-ember-600 hover:bg-ember-700",
+          )}
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+          {loading ? "Submitting…" : "Add node"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Shared helpers.
+// ---------------------------------------------------------------------------
+
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-medium">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+
+function LabelBuilder({
+  labels, draftK, draftV, setDraftK, setDraftV, onAdd, onRemove,
+}: {
+  labels: Record<string, string>;
+  draftK: string; draftV: string;
+  setDraftK: (s: string) => void; setDraftV: (s: string) => void;
+  onAdd: () => void; onRemove: (k: string) => void;
 }) {
-    return (
-        <div className="pt-4 border-t border-border/60 dark:border-border/60 space-y-3">
-            <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Provider</span>
-                <span className="font-medium capitalize">{providerName}</span>
-            </div>
-            
-            {isClusterProvider ? (
-                <>
-                    <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Region</span>
-                        <span className="font-medium">{region || 'N/A'}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">GPU Type</span>
-                        <span className="font-medium">{resource?.gpu_type || 'N/A'}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Instance Type</span>
-                        <span className="font-medium capitalize">{useSpot ? 'Spot' : 'On-demand'}</span>
-                    </div>
-                </>
-            ) : (
-                <>
-                    <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">GPU Type</span>
-                        <span className="font-medium">{resource?.gpu_type}</span>
-                    </div>
-                    {resource?.pricing_model && resource?.pricing_model !== 'fixed' && (
-                        <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Pricing Model</span>
-                            <span className="font-medium capitalize">{resource?.pricing_model}</span>
-                        </div>
-                    )}
-                </>
-            )}
-            
-            <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Est. Cost per Hour</span>
-                <span className="font-medium">${resource?.price_per_hour || '0.00'}</span>
-            </div>
-        </div>
-    )
-}
-
-function CredentialSelection({ provider, credentials, selectedCredential, setSelectedCredential, loading }: any) {
-    return (
-        <div className="pt-4 border-t border-border/60 dark:border-border/60 space-y-3">
-            <div className="space-y-2">
-                <label htmlFor="credential-select" className="text-sm font-medium flex items-center gap-2"><Key className="w-4 h-4" /> {provider === "nosana" ? "Nosana API Key" : provider === "akash" ? "Akash Wallet" : "Provider Credential"}</label>
-                {loading ? <div className="text-sm text-muted-foreground">Loading credentials...</div> : (
-                    <select id="credential-select" value={selectedCredential} onChange={(e) => setSelectedCredential(e.target.value)} className="w-full px-3 py-2 border rounded-md bg-card dark:border-border focus:ring-2 focus:ring-ember-500/20 outline-none dark:text-cream text-sm">
-                        <option value="">Select a credential…</option>
-                        {credentials.filter((key: any) => key.is_active).map((key: any) => <option key={key.name} value={key.name}>{key.name}</option>)}
-                    </select>
-                )}
-                <p className="text-xs text-muted-foreground">Choose which credential to use for this pool</p>
-            </div>
-        </div>
-    )
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2 min-h-[28px]">
+        {Object.entries(labels).map(([k, v]) => (
+          <span
+            key={k}
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded border bg-muted/30 text-xs font-mono"
+          >
+            {k}={v}
+            <button
+              onClick={() => onRemove(k)}
+              className="opacity-60 hover:opacity-100"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        {Object.keys(labels).length === 0 && (
+          <span className="text-xs text-muted-foreground">No labels yet.</span>
+        )}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          value={draftK} onChange={(e) => setDraftK(e.target.value)}
+          placeholder="key"
+          className="h-9 w-40 rounded-md border bg-card px-3 text-sm font-mono outline-none focus:ring-1 focus:ring-ember-500"
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onAdd(); } }}
+        />
+        <span className="text-muted-foreground">=</span>
+        <input
+          value={draftV} onChange={(e) => setDraftV(e.target.value)}
+          placeholder="value"
+          className="h-9 w-40 rounded-md border bg-card px-3 text-sm font-mono outline-none focus:ring-1 focus:ring-ember-500"
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onAdd(); } }}
+        />
+        <button
+          onClick={onAdd}
+          disabled={!draftK.trim()}
+          className={cn(
+            "h-9 px-3 inline-flex items-center gap-1 text-sm rounded-md text-white",
+            !draftK.trim() ? "bg-ember-600/60 cursor-not-allowed" : "bg-ember-600 hover:bg-ember-700",
+          )}
+        >
+          <Plus className="w-3.5 h-3.5" /> Add
+        </button>
+      </div>
+    </div>
+  );
 }
