@@ -1,5 +1,5 @@
 import { useReducer, useEffect, useMemo } from "react"
-import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud } from "lucide-react"
+import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud, HardDrive } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
@@ -16,6 +16,7 @@ const providerIcons: Record<string, React.ComponentType<{ className?: string }>>
     gcp: Cloud,
     k8s: Server,
     skypilot: Server,
+    worker: HardDrive,
 }
 
 // Provider color mapping
@@ -26,6 +27,7 @@ const providerColors: Record<string, string> = {
     gcp: "text-blue-500 bg-blue-500/10",
     k8s: "text-orange-500 bg-orange-500/10",
     skypilot: "text-cyan-500 bg-cyan-500/10",
+    worker: "text-ember-500 bg-ember-500/10",
 }
 
 // Provider descriptions
@@ -36,6 +38,7 @@ const providerDescriptions: Record<string, string> = {
     gcp: "Google Cloud Platform with SkyPilot. Unified multi-cloud orchestration.",
     k8s: "On-premises Kubernetes cluster. Full control and privacy.",
     skypilot: "Multi-cloud orchestration. Unified interface for AWS/GCP/Azure.",
+    worker: "Self-hosted GPU hosts running the inferia-worker agent. Bare-metal, your own server, or a cloud VM you spin up. After creating the pool, click 'Add Worker' to register hosts.",
 }
 
 // GCP regions for SkyPilot
@@ -190,12 +193,23 @@ export default function NewPool() {
         if (!providersData) {
             return [
                 {
+                    id: "worker",
+                    name: "Self-hosted (inferia-worker)",
+                    description: providerDescriptions.worker,
+                    icon: providerIcons.worker,
+                    color: providerColors.worker,
+                    recommended: true,
+                    category: "self_hosted",
+                    configPath: "",
+                    capabilities: undefined,
+                    clusterMode: false,
+                },
+                {
                     id: "nosana",
                     name: "Nosana Network",
                     description: providerDescriptions.nosana,
                     icon: providerIcons.nosana,
                     color: providerColors.nosana,
-                    recommended: true,
                     category: "depin",
                     configPath: "/dashboard/settings/providers/depin/nosana"
                 },
@@ -231,7 +245,7 @@ export default function NewPool() {
             ]
         }
 
-        return Object.entries(providersData).map(([id, data]: [string, any]) => ({
+        const apiList = Object.entries(providersData).map(([id, data]: [string, any]) => ({
             id,
             name: `${id.charAt(0).toUpperCase() + id.slice(1)} Network`,
             description: providerDescriptions[id] || `${id} compute provider`,
@@ -242,7 +256,26 @@ export default function NewPool() {
             capabilities: data.capabilities,
             clusterMode: data.capabilities?.supports_cluster_mode || false,
             recommended: data.adapter_type === 'depin' && id === 'nosana',
-        }))
+        }));
+        // Always prepend the self-hosted (inferia-worker) option. The
+        // provider registry on the backend doesn't enumerate it because it
+        // has no SDK adapter — it's just a pool that workers attach to.
+        const hasWorker = apiList.some((p) => p.id === "worker");
+        if (!hasWorker) {
+            apiList.unshift({
+                id: "worker",
+                name: "Self-hosted (inferia-worker)",
+                description: providerDescriptions.worker,
+                icon: providerIcons.worker,
+                color: providerColors.worker,
+                category: "self_hosted",
+                configPath: "",
+                capabilities: undefined,
+                clusterMode: false,
+                recommended: true,
+            });
+        }
+        return apiList;
     }, [providersData]);
 
     const isProviderConfigured = (pid: string) => {
@@ -260,6 +293,11 @@ export default function NewPool() {
             case "aws":
                 return !!cloud.aws?.access_key_id;
             case "k8s":
+                return true;
+            case "worker":
+                // The self-hosted (inferia-worker) provider has no credentials
+                // to configure — workers register themselves with a bootstrap
+                // token issued from the pool detail page after creation.
                 return true;
             default:
                 return !!(depin[pid] || cloud[pid]);
@@ -284,6 +322,14 @@ export default function NewPool() {
 
     useEffect(() => {
         if (selectedProvider && step === 2) {
+            // Self-hosted (inferia-worker) pools have no DePIN/cloud
+            // resources to enumerate — the GPU comes from the worker itself
+            // at registration time.
+            if (selectedProvider === "worker") {
+                dispatch({ type: "SET_RESOURCES", payload: [] });
+                dispatch({ type: "SET_LOADING_RESOURCES", payload: false });
+                return;
+            }
             const fetchResources = async () => {
                 dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
                 try {
@@ -358,16 +404,27 @@ export default function NewPool() {
 
         try {
             // Build payload based on provider type
+            const isWorkerPool = selectedProvider === "worker";
             const payload: any = {
                 pool_name: poolName,
                 owner_type: "user",
                 owner_id: targetOrgId,
-                provider: selectedProvider,
+                // Self-hosted pools map to the existing 'on_prem' provider
+                // enum in compute_pools; the agent_kind='worker' column on
+                // compute_inventory is what distinguishes worker nodes.
+                provider: isWorkerPool ? "on_prem" : selectedProvider,
                 is_dedicated: false,
                 scheduling_policy_json: JSON.stringify({ strategy: "best_fit" })
             }
 
-            if (isClusterProvider) {
+            if (isWorkerPool) {
+                // No pre-selected resource: workers contribute their GPU at
+                // registration time. Send an "any-GPU" hint so other parts
+                // of the system don't reject this pool for missing fields.
+                payload.allowed_gpu_types = ["any"];
+                payload.max_cost_per_hour = 0;
+                payload.provider_pool_id = `worker:${poolName}`;
+            } else if (isClusterProvider) {
                 // Cluster-based provider (GCP/SkyPilot) - include region and spot settings
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
                 payload.region_constraint = [selectedRegion];
@@ -387,15 +444,23 @@ export default function NewPool() {
                 payload.provider_credential_name = selectedCredential
             }
 
-            await computeApi.post("/deployment/createpool", payload)
-            
-            // For cluster providers, show different success message
-            if (isClusterProvider) {
+            const createRes = await computeApi.post("/deployment/createpool", payload)
+            const newPoolId = createRes?.data?.pool_id || createRes?.data?.id;
+
+            if (isWorkerPool) {
+                toast.success("Worker pool created — open the Workers tab and click 'Add Worker' to register a host.");
+                navigate(
+                    newPoolId
+                        ? `/dashboard/compute/pools/${newPoolId}?tab=workers`
+                        : "/dashboard/compute/pools",
+                );
+            } else if (isClusterProvider) {
                 toast.success(`Pool created! GPU cluster provisioning in ${selectedRegion}...`)
+                navigate("/dashboard/compute/pools")
             } else {
                 toast.success("Compute Pool created successfully!")
+                navigate("/dashboard/compute/pools")
             }
-            navigate("/dashboard/compute/pools")
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message
             toast.error(errorDetail)
@@ -454,6 +519,73 @@ export default function NewPool() {
                             }}
                         />
                     ))}
+                </div>
+            )}
+
+            {/* Step 2: Self-hosted (inferia-worker) — just name the pool. */}
+            {step === 2 && selectedProvider === "worker" && (
+                <div className="space-y-6">
+                    <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border">
+                        <h3 className="text-lg font-semibold mb-1 flex items-center gap-2">
+                            <HardDrive className="w-5 h-5 text-ember-500" />
+                            Self-hosted (inferia-worker) pool
+                        </h3>
+                        <p className="text-sm text-muted-foreground mb-6">
+                            Workers contribute their own GPU at registration time, so this
+                            step only asks for a pool name. After the pool is created
+                            you'll land on the Workers tab where you can generate an
+                            <span className="font-mono"> .env </span> snippet for each GPU
+                            host and run <span className="font-mono">docker compose up</span>.
+                        </p>
+
+                        <div className="space-y-2">
+                            <label htmlFor="worker-pool-name" className="text-sm font-medium">
+                                Pool name
+                            </label>
+                            <input
+                                id="worker-pool-name"
+                                type="text"
+                                placeholder="e.g. dc1-gpus, lab-h100s"
+                                value={poolName}
+                                onChange={(e) => dispatch({ type: "SET_POOL_NAME", payload: e.target.value })}
+                                className="h-10 w-full max-w-md rounded-md border bg-card px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500"
+                                autoComplete="off"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Letters, digits, dashes, underscores. Visible to operators in the
+                                pool list.
+                            </p>
+                        </div>
+
+                        <div className="mt-6 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
+                            Make sure your GPU host has Docker + (if you want GPU) the NVIDIA
+                            Container Toolkit installed before clicking <span className="font-mono">Add Worker</span>.
+                            Pool credentials are not needed — each worker registers with a
+                            short-lived bootstrap token you mint from the pool's Workers tab.
+                        </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                        <button
+                            onClick={() => dispatch({ type: "SET_STEP", payload: 1 })}
+                            className="px-4 py-2 text-sm rounded-md border hover:bg-muted"
+                        >
+                            Back
+                        </button>
+                        <button
+                            onClick={handleCreate}
+                            disabled={isCreating || !poolName}
+                            className={cn(
+                                "px-4 py-2 text-sm rounded-md text-white inline-flex items-center gap-2",
+                                isCreating || !poolName
+                                    ? "bg-ember-600/60 cursor-not-allowed"
+                                    : "bg-ember-600 hover:bg-ember-700",
+                            )}
+                        >
+                            {isCreating ? "Creating…" : "Create pool"}
+                            {!isCreating && <ArrowRight className="w-4 h-4" />}
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -597,7 +729,7 @@ export default function NewPool() {
             )}
 
             {/* Step 2: Configure Compute - Job Providers (Nosana, Akash) */}
-            {step === 2 && !isClusterProvider && (
+            {step === 2 && !isClusterProvider && selectedProvider !== "worker" && (
                 <div className="space-y-6">
                     <ResourceFilter
                         searchQuery={searchQuery}

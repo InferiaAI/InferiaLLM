@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   RefreshCw,
   Square,
@@ -41,8 +41,15 @@ export default function InstanceDetail() {
   const canStopPool =
     hasPermission("deployment:update") || hasPermission("deployment:delete");
   const canDeletePool = hasPermission("deployment:delete");
+  const [searchParams] = useSearchParams();
+  const initialTab: "overview" | "nodes" | "workers" =
+    searchParams.get("tab") === "workers"
+      ? "workers"
+      : searchParams.get("tab") === "nodes"
+      ? "nodes"
+      : "overview";
   const [activeTab, setActiveTab] = useState<"overview" | "nodes" | "workers">(
-    "overview",
+    initialTab,
   );
 
   const [nodes, setNodes] = useState<any[]>([]);
