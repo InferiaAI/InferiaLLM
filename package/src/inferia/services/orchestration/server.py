@@ -40,6 +40,10 @@ from inferia.services.orchestration.services.model_deployment.deployment_server 
 )
 from inferia.services.orchestration.api import workers as workers_api
 from inferia.services.orchestration.api import admin_workers as admin_workers_api
+from inferia.services.orchestration.api import nodes as nodes_api
+from inferia.services.orchestration.services.adapter_engine.registry import (
+    ADAPTER_REGISTRY,
+)
 from inferia.services.orchestration.services.worker_controller.auth import (
     WorkerAuth,
 )
@@ -184,6 +188,28 @@ async def serve():
         require_permission=_permit_all,
     )
 
+    # /v1/nodes/* — the new node-centric API. Wires only those adapters that
+    # implement provision_single_node (Nosana, Akash); the worker adapter is
+    # special-cased by the dedicated /add/worker route. k8s adapter is left
+    # absent from this map until its single-node path lands.
+    nodes_adapters = {}
+    for name in ("nosana", "akash"):
+        cls = ADAPTER_REGISTRY.get(name)
+        if cls is None:
+            continue
+        try:
+            nodes_adapters[name] = cls()
+        except Exception as e:
+            logger.warning("could not instantiate %s adapter for /v1/nodes: %s", name, e)
+    nodes_api.configure(
+        inventory_repo=inventory_repo,
+        pool_repo=pool_repo,
+        worker_auth=worker_auth,
+        control_plane_external_url=os.getenv("CONTROL_PLANE_EXTERNAL_URL", ""),
+        adapters=nodes_adapters,
+        require_permission=_permit_all,
+    )
+
     # ---------------- FastAPI App ----------------
     app = FastAPI(
         title=settings.app_name,
@@ -216,6 +242,7 @@ async def serve():
     app.include_router(deployment_engine_router)
     app.include_router(workers_api.router)
     app.include_router(admin_workers_api.router)
+    app.include_router(nodes_api.router)
 
     # Share pool with routes
     app.state.pool = db_pool

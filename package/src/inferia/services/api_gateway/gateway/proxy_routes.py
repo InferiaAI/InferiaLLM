@@ -51,20 +51,10 @@ def _require_proxy_permission(
 
     if normalized_method == "POST":
         # Deployment RPC-style endpoints use POST for non-create actions.
-        # Map those explicitly to update/delete permissions.
-        if normalized_path.startswith("deployment/deletepool"):
-            authz_service.require_permission(
-                user_context, PermissionEnum.DEPLOYMENT_DELETE
-            )
-            return
-        if normalized_path.startswith("deployment/stoppool"):
-            authz_service.require_permission(
-                user_context, PermissionEnum.DEPLOYMENT_DELETE
-            )
-            return
-        if normalized_path.startswith(
-            "deployment/deploy"
-        ) or normalized_path.startswith("deployment/createpool"):
+        # Pool-create / pool-delete / pool-stop have been removed in the
+        # node-centric refactor — the only remaining POST under
+        # /deployment/ is /deployment/deploy.
+        if normalized_path.startswith("deployment/deploy"):
             authz_service.require_permission(
                 user_context, PermissionEnum.DEPLOYMENT_CREATE
             )
@@ -265,24 +255,39 @@ async def proxy_deployments(
 
 
 @router.api_route(
-    "/pools/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
+    "/nodes/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
 )
-async def proxy_pools(
+async def proxy_nodes(
     request: Request,
     path: str,
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
-    """Proxy compute pool operations to orchestration service."""
-    _require_proxy_permission(user_context, request.method, f"pools/{path}")
+    """Proxy node-centric operations to the orchestration service.
+
+    Method-aware RBAC:
+      GET             → DEPLOYMENT_LIST
+      POST / PATCH    → DEPLOYMENT_CREATE / DEPLOYMENT_UPDATE
+      DELETE          → DEPLOYMENT_DELETE
+    """
+    m = request.method.upper()
+    if m == "GET":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    elif m == "POST":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+    elif m == "PATCH" or m == "PUT":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_UPDATE)
+    elif m == "DELETE":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
     return await proxy_request(
         method=request.method,
-        path=f"listPools/{path}".replace("listPools/", "")
-        if "listPools" in str(request.url)
-        else f"pools/{path}",
+        path=f"v1/nodes/{path}",
         request=request,
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
     )
+
+
+# /pools/* proxy removed in the node-centric refactor (2026-05-14).
 
 
 @router.api_route("/logs/{path:path}", methods=["GET"])

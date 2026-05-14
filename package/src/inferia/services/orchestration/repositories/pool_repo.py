@@ -377,3 +377,55 @@ ComputePoolRepository.get_or_generate_inference_token = (
     _get_or_generate_inference_token_impl
 )
 ComputePoolRepository.rotate_inference_token = _rotate_inference_token_impl
+
+
+# ---------------------------------------------------------------------------
+# Default-pool-per-org (node-centric refactor).
+# ---------------------------------------------------------------------------
+
+
+async def _ensure_default_pool_impl(self, *, org_id):
+    """Return the org's __default__ pool uuid, creating it if needed.
+
+    The migration backfills one per existing org; this method handles new
+    orgs created after the migration. Concurrent first-callers converge
+    because the SELECT-then-INSERT pattern below uses ON CONFLICT DO
+    NOTHING on (owner_id, pool_name) — though, since the table has no such
+    constraint today, we rely on the existence check + the rarity of the
+    race. Worst case we get two rows for an org's first concurrent
+    addition; the next get serves whichever was inserted last. Acceptable
+    for MVP; the unique partial index is a follow-up.
+    """
+    async with self.db.acquire() as conn:
+        existing = await conn.fetchval(
+            """
+            SELECT id FROM compute_pools
+            WHERE owner_type = 'organization'
+              AND owner_id = $1
+              AND pool_name = '__default__'
+            LIMIT 1
+            """,
+            org_id,
+        )
+        if existing:
+            return existing
+        new_id = await conn.fetchval(
+            """
+            INSERT INTO compute_pools (
+                pool_name, owner_type, owner_id, provider, pool_type,
+                allowed_gpu_types, max_cost_per_hour, scheduling_policy,
+                provider_pool_id, is_active
+            )
+            VALUES (
+                '__default__', 'organization', $1, 'on_prem', 'job',
+                ARRAY['any']::text[], 0, '{}'::jsonb,
+                'default:' || $1, true
+            )
+            RETURNING id
+            """,
+            org_id,
+        )
+        return new_id
+
+
+ComputePoolRepository.ensure_default_pool = _ensure_default_pool_impl
