@@ -5,17 +5,32 @@ Protected by the existing user-JWT + RBAC system. The dashboard (or any
 operator HTTP client) uses these endpoints to:
 
 * mint a one-shot bootstrap token + ready-to-paste env snippet,
-* list workers in a pool with their live connection state, and
-* revoke a worker (close its WS + mark its inventory row terminated).
+* list workers in a pool with their live connection state,
+* revoke a worker (close its WS + mark its inventory row terminated),
+* and proxy live logs / interactive shell WebSockets to the worker.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import time
 from typing import Any, Callable
+from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+import websockets
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from inferia.services.orchestration.services.worker_controller.auth import (
@@ -24,6 +39,8 @@ from inferia.services.orchestration.services.worker_controller.auth import (
 from inferia.services.orchestration.services.worker_controller.registry import (
     WorkerRegistry,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/admin/workers")
 
@@ -236,6 +253,159 @@ async def revoke_worker(
             pass
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Live logs / interactive shell WS proxies.
+# ---------------------------------------------------------------------------
+#
+# The dashboard opens ws://<gateway>/api/v1/admin/workers/{node_id}/logs (and
+# /shell) over its existing user-JWT auth. The gateway proxies WS frames to
+# orchestration's /v1/admin/workers/{node_id}/logs, and this endpoint then
+# forwards them to the worker's own ws://<worker>/v1/logs endpoint, which is
+# authenticated with the worker pool's INFERENCE_TOKEN. The dashboard never
+# sees that token — it stays server-side.
+
+
+async def _resolve_worker_ws_base(node_id: str) -> tuple[str, str]:
+    """Return (ws_base_url, inference_token) for the worker that owns node_id.
+
+    Raises HTTPException if the node doesn't exist or has no reachable URL.
+    The advertise_url may legitimately be http://localhost:8080 in a
+    same-host dev setup; from inside the orchestration container that
+    resolves to orchestration itself, so we substitute with the worker
+    compose service name `inferia-worker:8080` when localhost is detected.
+    Operators in production should set WORKER_ADVERTISE_URL to a routable
+    URL that the orchestration container can resolve.
+    """
+    node = await _inventory().get_node_by_id(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="node not found")
+    if node.get("agent_kind") != "worker":
+        raise HTTPException(status_code=400, detail="not a worker node")
+
+    raw = node.get("advertise_url") or ""
+    if not raw:
+        raise HTTPException(
+            status_code=409,
+            detail="worker has no advertise_url; logs/shell are unavailable",
+        )
+
+    parts = urlsplit(raw)
+    host = parts.hostname or ""
+    port = parts.port or 8080
+    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
+        # Dev fallback — see docstring. Without this every same-host docker
+        # compose user would have to manually rewrite their .env.
+        host = os.getenv("WORKER_LOCAL_FALLBACK_HOST", "inferia-worker")
+
+    scheme = "wss" if parts.scheme == "https" else "ws"
+    ws_base = urlunsplit((scheme, f"{host}:{port}", "", "", ""))
+
+    pool_id = node.get("pool_id")
+    if not pool_id:
+        raise HTTPException(status_code=500, detail="worker missing pool_id")
+    pool_repo = _deps.pool_repo
+    if pool_repo is None:
+        raise HTTPException(503, "pool repo not configured")
+    token = await pool_repo.get_or_generate_inference_token(pool_id=str(pool_id))
+    return ws_base, token
+
+
+async def _proxy_ws_text(client_ws: WebSocket, upstream_url: str, headers: dict[str, str]) -> None:
+    """Bi-directional text/binary WebSocket relay.
+
+    Closes both sides on first disconnect. Used by /logs and /shell.
+    """
+    try:
+        upstream = await websockets.connect(upstream_url, additional_headers=headers)
+    except Exception as e:
+        await client_ws.send_json({"type": "error", "message": f"upstream connect failed: {e}"})
+        await client_ws.close()
+        return
+
+    async def c2u():
+        try:
+            while True:
+                msg = await client_ws.receive()
+                t = msg.get("type")
+                if t == "websocket.disconnect":
+                    break
+                if msg.get("text") is not None:
+                    await upstream.send(msg["text"])
+                elif msg.get("bytes") is not None:
+                    await upstream.send(msg["bytes"])
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.warning("c2u relay error: %s", e)
+        finally:
+            await upstream.close()
+
+    async def u2c():
+        try:
+            async for frame in upstream:
+                if isinstance(frame, bytes):
+                    await client_ws.send_bytes(frame)
+                else:
+                    await client_ws.send_text(frame)
+        except Exception as e:
+            logger.warning("u2c relay error: %s", e)
+        finally:
+            try:
+                await client_ws.close()
+            except Exception:
+                pass
+
+    await asyncio.gather(c2u(), u2c(), return_exceptions=True)
+
+
+@router.websocket("/{node_id}/logs")
+async def proxy_worker_logs(ws: WebSocket, node_id: str):
+    """Forward the dashboard's /logs WebSocket through to the worker."""
+    await ws.accept()
+    try:
+        ws_base, token = await _resolve_worker_ws_base(node_id)
+    except HTTPException as e:
+        await ws.send_json({"type": "error", "message": e.detail})
+        await ws.close()
+        return
+
+    deployment = ws.query_params.get("deployment") or ""
+    container = ws.query_params.get("container") or ""
+    q = []
+    if deployment:
+        q.append(f"deployment={deployment}")
+    if container:
+        q.append(f"container={container}")
+    qs = ("?" + "&".join(q)) if q else ""
+    upstream_url = f"{ws_base}/v1/logs{qs}"
+    headers = {"Authorization": f"Bearer {token}"}
+    await _proxy_ws_text(ws, upstream_url, headers)
+
+
+@router.websocket("/{node_id}/shell")
+async def proxy_worker_shell(ws: WebSocket, node_id: str):
+    """Forward the dashboard's /shell WebSocket through to the worker."""
+    await ws.accept()
+    try:
+        ws_base, token = await _resolve_worker_ws_base(node_id)
+    except HTTPException as e:
+        await ws.send_json({"type": "error", "message": e.detail})
+        await ws.close()
+        return
+
+    deployment = ws.query_params.get("deployment") or ""
+    container = ws.query_params.get("container") or ""
+    q = []
+    if deployment:
+        q.append(f"deployment={deployment}")
+    if container:
+        q.append(f"container={container}")
+    qs = ("?" + "&".join(q)) if q else ""
+    upstream_url = f"{ws_base}/v1/shell{qs}"
+    headers = {"Authorization": f"Bearer {token}"}
+    await _proxy_ws_text(ws, upstream_url, headers)
 
 
 # ---------------------------------------------------------------------------

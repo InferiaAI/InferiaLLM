@@ -8,6 +8,8 @@ import {
   Wifi,
   WifiOff,
   Tag,
+  Terminal,
+  ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -19,8 +21,15 @@ import {
   type NodeView,
 } from "@/services/nodeService";
 import LabelEditor from "@/components/nodes/LabelEditor";
+import NodeLogs from "@/components/nodes/NodeLogs";
+import NodeShell from "@/components/nodes/NodeShell";
 
-type Tab = "overview" | "labels";
+type Tab = "overview" | "labels" | "logs" | "shell";
+
+function parseTab(s: string | null): Tab {
+  if (s === "labels" || s === "logs" || s === "shell") return s;
+  return "overview";
+}
 
 export default function InstanceDetail() {
   const { id } = useParams();
@@ -30,7 +39,7 @@ export default function InstanceDetail() {
   const canDelete = hasPermission("deployment:delete");
 
   const [searchParams] = useSearchParams();
-  const initialTab: Tab = searchParams.get("tab") === "labels" ? "labels" : "overview";
+  const initialTab: Tab = parseTab(searchParams.get("tab"));
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
 
   const [node, setNode] = useState<NodeView | null>(null);
@@ -185,20 +194,32 @@ export default function InstanceDetail() {
       </div>
 
       <div className="flex items-center gap-1 mb-6">
-        {[
-          { label: "Overview", value: "overview" as const },
-          { label: "Labels", value: "labels" as const },
-        ].map((t) => (
+        {([
+          { label: "Overview", value: "overview" as const, icon: null },
+          { label: "Labels", value: "labels" as const, icon: Tag },
+          // Logs + Shell only make sense for nodes the control plane can
+          // reach via a WS proxy. Workers always qualify (advertise_url +
+          // inference_token are set during /v1/nodes/add/worker). Other
+          // providers (Nosana, Akash placeholders) hide these tabs until
+          // they have a per-deployment terminal log surface.
+          ...(isWorker
+            ? [
+                { label: "Logs", value: "logs" as const, icon: ScrollText },
+                { label: "Shell", value: "shell" as const, icon: Terminal },
+              ]
+            : []),
+        ] as { label: string; value: Tab; icon: React.ComponentType<{ className?: string }> | null }[]).map((t) => (
           <button
             key={t.value}
             onClick={() => setActiveTab(t.value)}
             className={cn(
-              "px-4 py-1.5 rounded-md text-sm font-medium transition-colors",
+              "px-4 py-1.5 rounded-md text-sm font-medium transition-colors inline-flex items-center gap-2",
               activeTab === t.value
                 ? "bg-muted text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
             )}
           >
+            {t.icon && <t.icon className="w-4 h-4" />}
             {t.label}
           </button>
         ))}
@@ -271,6 +292,28 @@ export default function InstanceDetail() {
               onRemove={handleRemoveLabel}
               disabled={!canEdit || node.state === "terminated"}
             />
+          </div>
+        )}
+
+        {activeTab === "logs" && isWorker && (
+          <div className="space-y-3">
+            <div className="text-xs text-muted-foreground">
+              Live tail of the most recent model container managed by this worker. If
+              no deployment is loaded yet, the stream waits for one to start.
+            </div>
+            <NodeLogs nodeId={node.id} />
+          </div>
+        )}
+
+        {activeTab === "shell" && isWorker && (
+          <div className="space-y-3">
+            <div className="text-xs text-muted-foreground">
+              Interactive shell inside the most recent model container. Type
+              commands and press <kbd className="px-1 py-0.5 rounded border bg-muted text-[10px]">Enter</kbd>;
+              press <kbd className="px-1 py-0.5 rounded border bg-muted text-[10px]">Ctrl</kbd>+
+              <kbd className="px-1 py-0.5 rounded border bg-muted text-[10px]">C</kbd> to interrupt.
+            </div>
+            <NodeShell nodeId={node.id} />
           </div>
         )}
       </div>

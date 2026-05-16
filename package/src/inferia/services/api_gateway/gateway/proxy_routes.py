@@ -479,6 +479,98 @@ async def proxy_worker_channel(websocket: WebSocket):
             pass
 
 
+@router.websocket("/admin/workers/{node_id}/logs")
+async def proxy_admin_workers_logs(websocket: WebSocket, node_id: str):
+    """Proxy live worker-container log streams to the dashboard.
+
+    The dashboard supplies ?access_token=<jwt> on the WS URL because
+    browsers can't attach Authorization headers to WebSocket upgrades.
+    We validate the JWT + DEPLOYMENT_LIST permission, then relay frames
+    to orchestration's /v1/admin/workers/{node_id}/logs.
+    """
+    await _proxy_admin_workers_ws(websocket, node_id, subpath="logs",
+                                   permission=PermissionEnum.DEPLOYMENT_LIST)
+
+
+@router.websocket("/admin/workers/{node_id}/shell")
+async def proxy_admin_workers_shell(websocket: WebSocket, node_id: str):
+    """Proxy interactive shell WS to the dashboard.
+
+    Same auth pattern as /logs but requires DEPLOYMENT_UPDATE — a shell
+    can mutate the running container, so we gate it more tightly.
+    """
+    await _proxy_admin_workers_ws(websocket, node_id, subpath="shell",
+                                   permission=PermissionEnum.DEPLOYMENT_UPDATE)
+
+
+async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath: str, permission):
+    token = websocket.query_params.get("access_token") or websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    try:
+        user_context = await _get_ws_user_context(token)
+        authz_service.require_permission(user_context, permission)
+    except Exception as e:
+        logger.warning(f"Rejected admin workers WS: {e}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+
+    # Carry the upstream query string forward (deployment=… / container=…)
+    # but drop the access_token — orchestration uses the internal API key,
+    # and we don't want the user JWT travelling further than necessary.
+    upstream_qs = "&".join(
+        f"{k}={v}" for k, v in websocket.query_params.items()
+        if k not in ("access_token", "token")
+    )
+    upstream_qs = f"?{upstream_qs}" if upstream_qs else ""
+
+    upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace("https://", "wss://")
+    upstream_url = f"{upstream_base.rstrip('/')}/v1/admin/workers/{node_id}/{subpath}{upstream_qs}"
+    upstream_headers = {
+        "X-Internal-API-Key": settings.internal_api_key,
+        "X-Gateway-Request": "true",
+        "X-User-ID": str(user_context.user_id),
+        "X-Organization-ID": str(user_context.org_id or ""),
+    }
+
+    try:
+        async with websockets.connect(upstream_url, additional_headers=upstream_headers) as upstream:
+            async def c2u():
+                while True:
+                    payload = await websocket.receive()
+                    et = payload.get("type")
+                    if et == "websocket.disconnect":
+                        break
+                    if payload.get("text") is not None:
+                        await upstream.send(payload["text"])
+                    elif payload.get("bytes") is not None:
+                        await upstream.send(payload["bytes"])
+
+            async def u2c():
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            tasks = {asyncio.create_task(c2u()), asyncio.create_task(u2c())}
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"admin workers WS proxy error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 @router.api_route(
     "/admin/workers/{path:path}",
     methods=["GET", "POST", "DELETE"],
