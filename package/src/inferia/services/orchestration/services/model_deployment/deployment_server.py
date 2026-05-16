@@ -996,7 +996,7 @@ async def delete_deployment(deployment_id: str):
 
 
 @router.post("/createpool")
-async def create_pool(req: CreatePoolRequest):
+async def create_pool(req: CreatePoolRequest, request: Request):
     # Validate provider exists before creating pool
     try:
         adapter = get_adapter(req.provider)
@@ -1005,6 +1005,16 @@ async def create_pool(req: CreatePoolRequest):
         raise HTTPException(
             status_code=400, detail=f"Invalid provider '{req.provider}'. {str(e)}"
         )
+
+    # The api_gateway forwards the caller's resolved org via X-Organization-ID.
+    # That value is authoritative for which org list-nodes will query later,
+    # so we override req.owner_id with it when present. Without this, a
+    # multi-org user whose JWT claim differs from their gateway-resolved
+    # org context can create pools that never show up in their list view.
+    hdr_org = request.headers.get("x-organization-id")
+    if hdr_org and req.owner_type == "user":
+        req.owner_id = hdr_org
+        req.owner_type = "organization"
 
     async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)

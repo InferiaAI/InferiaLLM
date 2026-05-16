@@ -997,50 +997,42 @@ function StepProgress({ currentStep }: { currentStep: number }) {
 }
 
 function ProviderCard({ provider: p, onSelect }: { provider: any, onSelect: (id: string) => void }) {
-    if (p.isConfigured || p.disabled) {
-        return (
-            <button
-                disabled={p.disabled}
-                onClick={() => onSelect(p.id)}
-                className={cn(
-                    "text-left group relative p-6 rounded-xl border bg-card dark:border-border hover:border-ember-500/50 dark:hover:border-ember-500/50 transition-colors hover:shadow-md flex flex-col gap-4",
-                    p.disabled && "opacity-50 cursor-not-allowed hover:border-border dark:hover:border-border hover:shadow-none bg-muted dark:bg-card/50"
-                )}
-            >
-                <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center transition-colors", p.color)}>
-                    <p.icon className="w-6 h-6" />
-                </div>
-                <div>
-                    <h3 className="font-bold text-lg mb-1 group-hover:text-ember-600 dark:group-hover:text-ember-400 transition-colors uppercase tracing-tight text-xs">{p.name}</h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{p.description}</p>
-                    {p.capabilities && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                            {p.capabilities.is_ephemeral && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Ephemeral</span>}
-                            {p.capabilities.pricing_model !== 'fixed' && <span className="text-[10px] bg-ember-100 text-ember-700 px-1.5 py-0.5 rounded capitalize">{p.capabilities.pricing_model}</span>}
-                        </div>
-                    )}
-                </div>
-                {p.recommended && <span className="absolute top-4 right-4 text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 px-2 py-1 rounded">Recommended</span>}
-            </button>
-        )
-    }
-
+    // Always allow click-through to Step 2. Step 2's credential dropdown
+    // surfaces existing creds (and shows a banner + a link to the providers
+    // settings page if none are configured). This avoids a race where
+    // /management/config/providers hasn't returned by the time the user
+    // clicks, which used to silently redirect them to the credentials
+    // editor even though a credential was set.
     return (
-        <Link
-            to={p.configPath}
-            className="text-left group relative p-6 rounded-xl border border-dashed border-border bg-muted/30 dark:bg-card/20 hover:border-border dark:hover:border-border transition-colors flex flex-col gap-4"
+        <button
+            disabled={p.disabled}
+            onClick={() => !p.disabled && onSelect(p.id)}
+            className={cn(
+                "text-left group relative p-6 rounded-xl border bg-card dark:border-border hover:border-ember-500/50 dark:hover:border-ember-500/50 transition-colors hover:shadow-md flex flex-col gap-4",
+                p.disabled && "opacity-50 cursor-not-allowed hover:border-border dark:hover:border-border hover:shadow-none bg-muted dark:bg-card/50",
+                !p.isConfigured && !p.disabled && "border-dashed",
+            )}
         >
-            <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center opacity-40 grayscale", p.color)}>
+            <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center transition-colors", p.color, !p.isConfigured && !p.disabled && "opacity-70")}>
                 <p.icon className="w-6 h-6" />
             </div>
             <div>
-                <h3 className="font-bold text-lg mb-1 text-muted-foreground">{p.name}</h3>
-                <p className="text-xs text-muted-foreground">Configuration required to add nodes on this network.</p>
+                <h3 className="font-bold text-lg mb-1 group-hover:text-ember-600 dark:group-hover:text-ember-400 transition-colors uppercase tracking-tight text-xs">{p.name}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{p.description}</p>
+                {p.capabilities && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                        {p.capabilities.is_ephemeral && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Ephemeral</span>}
+                        {p.capabilities.pricing_model !== 'fixed' && <span className="text-[10px] bg-ember-100 text-ember-700 px-1.5 py-0.5 rounded capitalize">{p.capabilities.pricing_model}</span>}
+                    </div>
+                )}
+                {!p.isConfigured && !p.disabled && p.id !== "worker" && (
+                    <div className="mt-2 text-[11px] text-amber-700 dark:text-amber-400">
+                        Tip: add a credential under <span className="font-mono">Settings → Providers</span> if you haven't already.
+                    </div>
+                )}
             </div>
-            <div className="mt-auto flex items-center gap-1.5 text-ember-600 dark:text-ember-400 text-xs font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
-                Connect Provider <ArrowRight className="w-3 h-3" />
-            </div>
-        </Link>
+            {p.recommended && <span className="absolute top-4 right-4 text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 px-2 py-1 rounded">Recommended</span>}
+        </button>
     )
 }
 
