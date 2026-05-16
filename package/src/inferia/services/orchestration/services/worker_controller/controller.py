@@ -63,6 +63,14 @@ class WorkerController:
         if self.registry.get(node_id) is None:
             raise NodeUnreachableError(f"node {node_id} not connected")
 
+        import logging as _logging
+        _log = _logging.getLogger("inferia.services.orchestration.worker_controller")
+        _log.info(
+            "load_model: sending node=%s deployment=%s recipe=%s uri=%s",
+            node_id, spec.get("deployment_id"), spec.get("recipe"),
+            spec.get("model", {}).get("artifact_uri"),
+        )
+
         body = LoadModelBody(
             deployment_id=spec["deployment_id"],
             recipe=spec["recipe"],

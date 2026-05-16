@@ -29,6 +29,7 @@ class PlacementRepository:
             ci.id AS node_id,
             ci.provider,
             ci.state,
+            ci.agent_kind,
             (ci.gpu_total - ci.gpu_allocated) AS gpu_free,
             (ci.vcpu_total - ci.vcpu_allocated) AS vcpu_free,
             (ci.ram_gb_total - ci.ram_gb_allocated) AS ram_free,

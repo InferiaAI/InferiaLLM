@@ -143,6 +143,26 @@ def run_worker(queue=None):
     try:
         if queue:
             queue.put(ServiceStarting("Orchestration Worker"))
+
+        # When the orchestration HTTP server runs the deployment dispatcher
+        # in-process (the default — see server.py), this standalone worker
+        # process would compete for the same Redis stream messages and
+        # additionally cannot reach the in-process WorkerRegistry. So we
+        # short-circuit to an idle loop here.
+        if os.environ.get("INFERIA_INPROC_DEPLOYMENT_WORKER", "1") != "0":
+            import time
+
+            if queue:
+                queue.put(
+                    ServiceStarted(
+                        "Orchestration Worker",
+                        detail="Idle (dispatcher co-located in HTTP server)",
+                    )
+                )
+            while True:
+                time.sleep(3600)
+            return
+
         import asyncio
         from inferia.services.orchestration.services.model_deployment.worker_main import (
             main,

@@ -876,7 +876,7 @@ export default function NewDeployment() {
 
   const handleManagedLaunch = async () => {
     if (!instanceName) return toast.error("Please name your deployment")
-    if (!selectedPool) return toast.error("Select a compute pool")
+    if (!selectedPool) return toast.error("Select a compute node")
     const targetOrgId = user?.org_id || organizations?.[0]?.id;
     if (!targetOrgId) return toast.error("Organization context missing. Please reload.")
 
@@ -892,7 +892,7 @@ export default function NewDeployment() {
     if (!preflightOk) return;
 
     const payload = {
-      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
+      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, node_id: selectedPool.node_id || undefined, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config
     }
@@ -969,7 +969,7 @@ function ManagedFlow({ state, dispatch, onLaunch, isPending, externalRegistry }:
         <div className="h-px w-8 bg-muted dark:bg-card" />
         <StepIndicator step={step} current={2} label="Engine" />
         <div className="h-px w-8 bg-muted dark:bg-card" />
-        <StepIndicator step={step} current={3} label="Pool" />
+        <StepIndicator step={step} current={3} label="Node" />
         <div className="h-px w-8 bg-muted dark:bg-card" />
         <StepIndicator step={step} current={4} label="Config" />
       </div>
@@ -1044,32 +1044,34 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
         <div className="flex items-center justify-center py-12">
           <div className="flex flex-col items-center gap-3">
             <div className="w-8 h-8 border-4 border-ember-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-muted-foreground">Loading compute pools...</p>
+            <p className="text-sm text-muted-foreground">Loading compute nodes...</p>
           </div>
         </div>
       ) : userPools.length === 0 ? (
         <div className="text-center py-12 bg-muted dark:bg-card/50 rounded-xl border border-dashed dark:border-border flex flex-col items-center">
           <Server className="w-12 h-12 text-cream/70 dark:text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium text-foreground dark:text-cream">No Compute Pools Found</h3>
-          <p className="text-muted-foreground mt-1 mb-6 max-w-sm">You need active compute resources to deploy this model.</p>
-          <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium text-fg-secondary dark:text-cream/70 hover:bg-muted dark:hover:bg-card shadow-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500" /> Create New Pool</Link>
+          <h3 className="text-lg font-medium text-foreground dark:text-cream">No Compute Nodes Found</h3>
+          <p className="text-muted-foreground mt-1 mb-6 max-w-sm">You need at least one compute node to deploy this model.</p>
+          <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium text-fg-secondary dark:text-cream/70 hover:bg-muted dark:hover:bg-card shadow-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500" /> Create New Node</Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {userPools.filter(pool => pool.lifecycle_state === "running").length === 0 && (
+          {userPools.filter(pool => pool.state === "ready").length === 0 && (
             <div className="col-span-full text-center py-8 text-muted-foreground">
-              <p className="text-sm">No ready pools available. Pools may still be provisioning.</p>
-              <Link to="/dashboard/compute/pools/new" className="text-ember-600 text-sm font-medium mt-2 inline-block hover:underline">Create New Pool</Link>
+              <p className="text-sm">No ready nodes available. Nodes may still be provisioning.</p>
+              <Link to="/dashboard/compute/pools/new" className="text-ember-600 text-sm font-medium mt-2 inline-block hover:underline">Create New Node</Link>
             </div>
           )}
           {userPools.map(pool => {
-            const isReady = pool.lifecycle_state === "running" && pool.is_active;
-            const isProvisioning = pool.lifecycle_state === "provisioning" || (!pool.cluster_id && pool.pool_type === "cluster");
+            const isReady = pool.state === "ready" || pool.state === "active" || pool.state === "idle";
+            const isProvisioning = pool.state === "provisioning" || pool.state === "pending";
+            const isTerminated = pool.state === "terminated" || pool.state === "failed";
+            const selectable = !isTerminated;
             return (
-            <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} disabled={!isReady} onClick={() => isReady && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-card dark:border-border relative transition-colors outline-none text-left focus:ring-2 focus:ring-ember-500/40", !isReady && "opacity-50 cursor-not-allowed", selectedPool?.pool_id === pool.pool_id ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700")}>
+            <button type="button" key={pool.node_id || pool.pool_id} aria-pressed={selectedPool?.node_id === pool.node_id} disabled={!selectable} onClick={() => selectable && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-card dark:border-border relative transition-colors outline-none text-left focus:ring-2 focus:ring-ember-500/40", !selectable && "opacity-50 cursor-not-allowed", selectedPool?.node_id === pool.node_id ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700")}>
               <div className="flex items-start justify-between">
-                <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-muted-foreground font-mono mt-1">{pool.provider}{pool.gpu_count > 1 ? ` (${pool.gpu_count}x GPU)` : ''}</div></div>
-                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", isProvisioning ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-900/50" : isReady ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-muted text-muted-foreground border-border dark:bg-card dark:text-muted-foreground dark:border-border")}>{isProvisioning ? "Provisioning..." : isReady ? "Ready" : "Inactive"}</div>
+                <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-muted-foreground font-mono mt-1">{pool.provider}</div></div>
+                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", isProvisioning ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-900/50" : isReady ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-muted text-muted-foreground border-border dark:bg-card dark:text-muted-foreground dark:border-border")}>{isProvisioning ? "Provisioning..." : isReady ? "Ready" : (pool.state || "Inactive")}</div>
               </div>
             </button>
             );
