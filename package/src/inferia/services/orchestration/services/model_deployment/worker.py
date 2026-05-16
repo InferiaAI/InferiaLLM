@@ -301,11 +301,24 @@ class ModelDeploymentWorker:
                         "expose": [{"port": 9000, "type": "http"}],
                     }
 
-                # 3. Last Resort / Error Check
+                # 3. Last Resort / Error Check.
+                # The provider adapter (e.g. Nosana) resolves the docker
+                # image and cmd from the engine + model_id via job_builder
+                # when those fields are present, so don't gate on the raw
+                # legacy "image" / "cmd" keys when we already have enough
+                # to build a spec.
+                has_engine_or_model = bool(
+                    metadata.get("engine")
+                    or metadata.get("model_id")
+                    or metadata.get("model_name")
+                    or d.get("engine")
+                    or d.get("inference_model")
+                )
                 if (
                     not metadata.get("image")
                     and not metadata.get("cmd")
                     and metadata.get("workload_type") != "training"
+                    and not has_engine_or_model
                 ):
                     log.error(f"Missing job definition for deployment {deployment_id}")
                     await self.deployments.update_state(

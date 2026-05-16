@@ -362,6 +362,28 @@ export class NosanaService {
     }
 
     /**
+     * Best-effort check that a market has online nodes before we submit a
+     * deployment. The /api/markets endpoint is public (no auth) and returns
+     * each market's currently-connected nodes list. Returns true when the
+     * market has at least one online node, false when not, and true (skip
+     * check) when the API call itself fails — we don't want a flaky markets
+     * endpoint to block deploys.
+     */
+    private async marketHasOnlineNodes(marketAddress: string): Promise<boolean> {
+        try {
+            const url = `${NOSANA_API_BASE_URL}/markets`;
+            const r = await fetch(url);
+            if (!r.ok) return true;
+            const markets = await r.json() as any[];
+            const m = markets.find((mm) => mm.address === marketAddress);
+            if (!m) return true;
+            return Array.isArray(m.nodes) && m.nodes.length > 0;
+        } catch {
+            return true;
+        }
+    }
+
+    /**
      * Get jobs for a deployment
      * GET /api/deployments/{deployment}/jobs
      */
@@ -487,6 +509,17 @@ export class NosanaService {
             if (this.authMode === 'api') {
                 console.log(`[Launch] Creating deployment via API in market: ${marketAddress} (confidential: ${isConfidential})`);
 
+                // Preflight: fail fast when the target market has no online
+                // node operators. The deployment would otherwise transition
+                // DRAFT → STARTING → ERROR within a second or two with no
+                // diagnostic detail.
+                if (!(await this.marketHasOnlineNodes(marketAddress))) {
+                    throw new Error(
+                        `Nosana market ${marketAddress} has 0 online nodes. ` +
+                        `Pick a different market or retry when operators come back online.`
+                    );
+                }
+
                 // Step 1: Create deployment (returns in DRAFT state)
                 console.log(`[Launch] Step 1: POST /api/deployments/create...`);
                 const deployment = await this.apiRequest<DeploymentResponse>('/deployments/create', {
@@ -545,7 +578,38 @@ export class NosanaService {
                     }
 
                     if (status.status === 'ERROR' || status.status === 'STOPPED') {
-                        throw new Error(`Deployment ${deploymentId} failed with status: ${status.status}`);
+                        // Nosana's deployment response does not carry an
+                        // error field when status=ERROR — most ERROR
+                        // transitions actually mean "scheduler couldn't
+                        // assign any matching node within the time budget."
+                        // Log the full object so future debugging has the
+                        // raw shape; surface the most likely cause + any
+                        // diagnostic fields the API does return.
+                        console.error(`[Launch] Deployment ${deploymentId} ERROR — full response:`, JSON.stringify(status));
+                        const sAny = status as any;
+                        let detail = `status=${status.status}`;
+                        detail += ` (active_jobs=${sAny.active_jobs ?? '?'}, no node assigned — likely no online node operators in market ${marketAddress})`;
+                        if (sAny.error) detail += ` error=${typeof sAny.error === 'string' ? sAny.error : JSON.stringify(sAny.error)}`;
+                        if (sAny.reason) detail += ` reason=${sAny.reason}`;
+                        if (sAny.last_status_message) detail += ` last_status_message=${sAny.last_status_message}`;
+                        try {
+                            const jobs = await this.getDeploymentJobs(deploymentId);
+                            if (jobs.jobs && jobs.jobs.length > 0) {
+                                const j = jobs.jobs[0];
+                                detail += ` job=${j.job} job_state=${j.state}`;
+                                try {
+                                    const jobDetail = await this.getDeploymentJob(deploymentId, j.job);
+                                    const jr: any = jobDetail.jobResult;
+                                    if (jr) {
+                                        detail += ` jobResult=${typeof jr === 'string' ? jr : JSON.stringify(jr)}`;
+                                    }
+                                    if (jobDetail.jobStatus) {
+                                        detail += ` jobStatus=${jobDetail.jobStatus}`;
+                                    }
+                                } catch {/* best-effort */}
+                            }
+                        } catch {/* best-effort */}
+                        throw new Error(`Deployment ${deploymentId} failed: ${detail}`);
                     }
 
                     if (status.status === 'INSUFFICIENT_FUNDS') {
