@@ -1061,12 +1061,14 @@ async def create_pool(req: CreatePoolRequest, request: Request):
 
     # Node-centric refactor: insert a placeholder compute_inventory row so the
     # newly-created provider pool shows up in the Compute Nodes list right
-    # away. For DePIN providers (nosana, akash) the row stays in
-    # state='provisioning' until a deployment materialises the real resource;
-    # for cluster providers (gcp/aws/etc.) we still write a row so the user
-    # sees confirmation that the pool exists. For the on_prem placeholder
-    # path (used by the legacy "Self-hosted" pool option) we skip — the new
-    # /v1/nodes/add/worker endpoint already writes its own row.
+    # away. For DePIN providers (nosana, akash) and cluster providers
+    # (gcp/aws/etc.) we write a placeholder row marked state='ready' —
+    # there is no real provisioning lifecycle to track on the placeholder
+    # itself; the actual node is created lazily at deploy time. Placement
+    # filters out rows whose provider_instance_id starts with 'placeholder:'
+    # so they're advertised in the UI as available without competing for
+    # real scheduling decisions. For the on_prem path (legacy "Self-hosted"
+    # pool option) we skip — /v1/nodes/add/worker writes its own row.
     try:
         if req.provider in ("nosana", "akash", "gcp", "aws", "azure", "lambda", "runpod", "k8s"):
             from uuid import UUID as _UUID
@@ -1089,7 +1091,7 @@ async def create_pool(req: CreatePoolRequest, request: Request):
                     )
                     VALUES (
                         $1::uuid, $2::provider_type, $3, $4,
-                        $5, $6, $7, 'provisioning',
+                        $5, $6, $7, 'ready',
                         'on_demand', $8::jsonb, '{}'::jsonb
                     )
                     """,
