@@ -120,6 +120,9 @@ jobs:
             package/src/inferia/services/inference/tests/test_quota_cache_race.py \
             package/src/inferia/services/orchestration/test/test_skypilot_terminate.py \
             package/src/inferia/services/orchestration/test/test_k8s_nonblocking.py \
+            package/src/inferia/services/orchestration/api/test_admin_workers_ws_proxy.py \
+            package/src/inferia/services/orchestration/test/placement_test/test_placement_placeholder.py \
+            package/src/inferia/services/orchestration/test/model_deployment/test_engine_only_gate.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
             --cov=package/src/inferia \
