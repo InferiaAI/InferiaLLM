@@ -371,14 +371,13 @@ async def proxy_worker_logs(ws: WebSocket, node_id: str):
         await ws.close()
         return
 
-    deployment = ws.query_params.get("deployment") or ""
-    container = ws.query_params.get("container") or ""
-    q = []
-    if deployment:
-        q.append(f"deployment={deployment}")
-    if container:
-        q.append(f"container={container}")
-    qs = ("?" + "&".join(q)) if q else ""
+    # Forward every query param the dashboard sent through to the worker —
+    # `deployment` / `container` pick the target, `shell` / `user` are
+    # exec knobs honoured by the worker's /v1/shell handler, and any
+    # future query params (e.g. `cwd`) survive automatically without
+    # touching this proxy.
+    qs_pairs = [(k, v) for k, v in ws.query_params.items()]
+    qs = ("?" + "&".join(f"{k}={v}" for k, v in qs_pairs)) if qs_pairs else ""
     upstream_url = f"{ws_base}/v1/logs{qs}"
     headers = {"Authorization": f"Bearer {token}"}
     await _proxy_ws_text(ws, upstream_url, headers)
@@ -395,14 +394,13 @@ async def proxy_worker_shell(ws: WebSocket, node_id: str):
         await ws.close()
         return
 
-    deployment = ws.query_params.get("deployment") or ""
-    container = ws.query_params.get("container") or ""
-    q = []
-    if deployment:
-        q.append(f"deployment={deployment}")
-    if container:
-        q.append(f"container={container}")
-    qs = ("?" + "&".join(q)) if q else ""
+    # Forward every query param the dashboard sent through to the worker —
+    # `deployment` / `container` pick the target, `shell` / `user` are
+    # exec knobs honoured by the worker's /v1/shell handler, and any
+    # future query params (e.g. `cwd`) survive automatically without
+    # touching this proxy.
+    qs_pairs = [(k, v) for k, v in ws.query_params.items()]
+    qs = ("?" + "&".join(f"{k}={v}" for k, v in qs_pairs)) if qs_pairs else ""
     upstream_url = f"{ws_base}/v1/shell{qs}"
     headers = {"Authorization": f"Bearer {token}"}
     await _proxy_ws_text(ws, upstream_url, headers)
