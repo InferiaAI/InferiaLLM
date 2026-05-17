@@ -125,6 +125,10 @@ class NosanaAdapter(ProviderAdapter):
                         raw_price = m.get("usd_reward_per_hour")
                         price = float(raw_price) if raw_price else 0.0
                         vram = m.get("lowest_vram") or 0
+                        # nodes is a list of currently-online operators; UI
+                        # uses this to flag markets where a deploy will fail
+                        # the scheduler-assignment step.
+                        online_nodes = len(m.get("nodes") or [])
 
                         resources.append(
                             {
@@ -138,9 +142,11 @@ class NosanaAdapter(ProviderAdapter):
                                 "region": "global",
                                 "pricing_model": self.CAPABILITIES.pricing_model.value,
                                 "price_per_hour": price,
+                                "online_nodes": online_nodes,
                                 "metadata": {
                                     "market_address": m["address"],
                                     "mode": "real",
+                                    "online_nodes": online_nodes,
                                 },
                             }
                         )

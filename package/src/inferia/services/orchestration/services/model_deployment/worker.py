@@ -301,11 +301,24 @@ class ModelDeploymentWorker:
                         "expose": [{"port": 9000, "type": "http"}],
                     }
 
-                # 3. Last Resort / Error Check
+                # 3. Last Resort / Error Check.
+                # The provider adapter (e.g. Nosana) resolves the docker
+                # image and cmd from the engine + model_id via job_builder
+                # when those fields are present, so don't gate on the raw
+                # legacy "image" / "cmd" keys when we already have enough
+                # to build a spec.
+                has_engine_or_model = bool(
+                    metadata.get("engine")
+                    or metadata.get("model_id")
+                    or metadata.get("model_name")
+                    or d.get("engine")
+                    or d.get("inference_model")
+                )
                 if (
                     not metadata.get("image")
                     and not metadata.get("cmd")
                     and metadata.get("workload_type") != "training"
+                    and not has_engine_or_model
                 ):
                     log.error(f"Missing job definition for deployment {deployment_id}")
                     await self.deployments.update_state(
@@ -423,6 +436,9 @@ class ModelDeploymentWorker:
 
             best_node = min(candidates, key=score_node)
             node_id = UUID(str(best_node["node_id"]))
+            best_agent_kind = best_node.get("agent_kind") if isinstance(best_node, dict) else (
+                best_node["agent_kind"] if "agent_kind" in best_node.keys() else None
+            )
 
             await self.deployments.update_state(deployment_id, "SCHEDULING")
             await self.deployments.update_state(deployment_id, "DEPLOYING")
@@ -432,7 +448,36 @@ class ModelDeploymentWorker:
                 gpu_per_replica=d["gpu_per_replica"],
                 engine=d.get("engine"),
                 model_type=d.get("model_type"),
+                agent_kind=best_agent_kind,
             )
+
+            # Synthesize a model dict for engine-only deployments (no model registry row).
+            if model is None:
+                import json as _json
+                cfg = d.get("configuration") or {}
+                if isinstance(cfg, str):
+                    try:
+                        cfg = _json.loads(cfg)
+                    except Exception:
+                        cfg = {}
+                raw_uri = (
+                    d.get("inference_model")
+                    or (cfg.get("model_id") if isinstance(cfg, dict) else None)
+                    or d.get("model_name")
+                    or ""
+                )
+                # Worker controller validates artifact_uri as scheme://path.
+                # Bare HF IDs ("org/model") need the hf:// scheme.
+                if raw_uri and "://" not in raw_uri:
+                    artifact_uri = f"hf://{raw_uri}"
+                else:
+                    artifact_uri = raw_uri
+                model = {
+                    "artifact_uri": artifact_uri,
+                    "backend": d.get("engine") or "vllm",
+                    "format": "hf",
+                    "config": cfg if isinstance(cfg, dict) else {},
+                }
 
             strategy = self.strategies.get(runtime)
             if not strategy:

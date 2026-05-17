@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Proxy API"])
 
+# Separate router (no prefix) for inferia-worker passthrough endpoints. The
+# worker hits the api_gateway at `/v1/workers/...` exactly, so we cannot
+# share the `/api/v1` prefix here. Mounted on the FastAPI app at root.
+worker_passthrough_router = APIRouter(tags=["Worker Passthrough"])
+
 ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
 
 
@@ -46,7 +51,10 @@ def _require_proxy_permission(
 
     if normalized_method == "POST":
         # Deployment RPC-style endpoints use POST for non-create actions.
-        # Map those explicitly to update/delete permissions.
+        # Map those explicitly to update/delete permissions. The rich
+        # "Add Node" page in the UI keeps using the original /createpool
+        # / /stoppool / /deletepool surface; the node-centric refactor
+        # added /v1/nodes/* alongside without retiring the originals.
         if normalized_path.startswith("deployment/deletepool"):
             authz_service.require_permission(
                 user_context, PermissionEnum.DEPLOYMENT_DELETE
@@ -260,24 +268,39 @@ async def proxy_deployments(
 
 
 @router.api_route(
-    "/pools/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"]
+    "/nodes/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
 )
-async def proxy_pools(
+async def proxy_nodes(
     request: Request,
     path: str,
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
-    """Proxy compute pool operations to orchestration service."""
-    _require_proxy_permission(user_context, request.method, f"pools/{path}")
+    """Proxy node-centric operations to the orchestration service.
+
+    Method-aware RBAC:
+      GET             → DEPLOYMENT_LIST
+      POST / PATCH    → DEPLOYMENT_CREATE / DEPLOYMENT_UPDATE
+      DELETE          → DEPLOYMENT_DELETE
+    """
+    m = request.method.upper()
+    if m == "GET":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    elif m == "POST":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+    elif m == "PATCH" or m == "PUT":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_UPDATE)
+    elif m == "DELETE":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
     return await proxy_request(
         method=request.method,
-        path=f"listPools/{path}".replace("listPools/", "")
-        if "listPools" in str(request.url)
-        else f"pools/{path}",
+        path=f"v1/nodes/{path}",
         request=request,
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
     )
+
+
+# /pools/* proxy removed in the node-centric refactor (2026-05-14).
 
 
 @router.api_route("/logs/{path:path}", methods=["GET"])
@@ -343,6 +366,240 @@ async def proxy_deployment(
     return await proxy_request(
         method=request.method,
         path=f"deployment/{path}",
+        request=request,
+        target_url=ORCHESTRATION_URL,
+        user_context=user_context,
+    )
+
+
+async def _proxy_unauthenticated(
+    method: str, path: str, request: Request
+) -> Response:
+    """HTTP proxy that does NOT inject user-context headers.
+
+    Used for the worker-facing /v1/workers/register endpoint where the
+    caller carries its own bootstrap JWT (verified by orchestration), not
+    a user JWT.
+    """
+    url = f"{ORCHESTRATION_URL}/{path}"
+    headers = dict(request.headers)
+    headers.pop("X-Internal-API-Key", None)
+    # Still set the internal API key so orchestration's InternalAuthMiddleware
+    # accepts the request — the bootstrap JWT is the additional auth layer
+    # that orchestration's /v1/workers/register handler enforces.
+    headers["X-Internal-API-Key"] = settings.internal_api_key
+    headers["X-Gateway-Request"] = "true"
+    content = await request.body()
+    try:
+        client = gateway_http_client.get_proxy_client()
+        response = await client.request(
+            method=method, url=url, headers=headers,
+            content=content, params=request.query_params,
+        )
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
+    except httpx.RequestError as e:
+        logger.error(f"Worker proxy request failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Service unavailable: {e}")
+
+
+@worker_passthrough_router.api_route("/v1/workers/{path:path}", methods=["GET", "POST"])
+async def proxy_worker_endpoints(request: Request, path: str):
+    """Proxy worker control-plane HTTP endpoints to the orchestration service.
+    Workers authenticate with their own bootstrap-JWT / worker-JWT — the
+    api_gateway user-auth middleware is skipped upstream of this route."""
+    return await _proxy_unauthenticated(
+        method=request.method, path=f"v1/workers/{path}", request=request,
+    )
+
+
+@worker_passthrough_router.websocket("/v1/workers/channel")
+async def proxy_worker_channel(websocket: WebSocket):
+    """Proxy the worker WS control channel to orchestration. The worker
+    presents its own ``Authorization: Bearer <worker_jwt>`` header which
+    orchestration verifies; we forward it unchanged."""
+    auth = websocket.headers.get("authorization", "")
+    if not auth:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+
+    upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace(
+        "https://", "wss://"
+    )
+    upstream_ws_url = f"{upstream_base.rstrip('/')}/v1/workers/channel"
+    upstream_headers = {
+        "Authorization": auth,
+        "X-Internal-API-Key": settings.internal_api_key,
+        "X-Gateway-Request": "true",
+    }
+    try:
+        async with websockets.connect(
+            upstream_ws_url,
+            additional_headers=upstream_headers,
+        ) as upstream:
+            async def client_to_upstream():
+                while True:
+                    payload = await websocket.receive()
+                    if payload.get("type") == "websocket.disconnect":
+                        break
+                    if payload.get("text") is not None:
+                        await upstream.send(payload["text"])
+                    elif payload.get("bytes") is not None:
+                        await upstream.send(payload["bytes"])
+
+            async def upstream_to_client():
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            tasks = {
+                asyncio.create_task(client_to_upstream()),
+                asyncio.create_task(upstream_to_client()),
+            }
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+    except WebSocketDisconnect:
+        logger.info("Worker WS disconnected")
+    except Exception as e:
+        logger.warning(f"Worker WS proxy error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@router.websocket("/admin/workers/{node_id}/logs")
+async def proxy_admin_workers_logs(websocket: WebSocket, node_id: str):
+    """Proxy live worker-container log streams to the dashboard.
+
+    The dashboard supplies ?access_token=<jwt> on the WS URL because
+    browsers can't attach Authorization headers to WebSocket upgrades.
+    We validate the JWT + DEPLOYMENT_LIST permission, then relay frames
+    to orchestration's /v1/admin/workers/{node_id}/logs.
+    """
+    await _proxy_admin_workers_ws(websocket, node_id, subpath="logs",
+                                   permission=PermissionEnum.DEPLOYMENT_LIST)
+
+
+@router.websocket("/admin/workers/{node_id}/shell")
+async def proxy_admin_workers_shell(websocket: WebSocket, node_id: str):
+    """Proxy interactive shell WS to the dashboard.
+
+    Same auth pattern as /logs but requires DEPLOYMENT_UPDATE — a shell
+    can mutate the running container, so we gate it more tightly.
+    """
+    await _proxy_admin_workers_ws(websocket, node_id, subpath="shell",
+                                   permission=PermissionEnum.DEPLOYMENT_UPDATE)
+
+
+async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath: str, permission):
+    token = websocket.query_params.get("access_token") or websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    try:
+        user_context = await _get_ws_user_context(token)
+        authz_service.require_permission(user_context, permission)
+    except Exception as e:
+        logger.warning(f"Rejected admin workers WS: {e}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+
+    # Carry the upstream query string forward (deployment=… / container=…)
+    # but drop the access_token — orchestration uses the internal API key,
+    # and we don't want the user JWT travelling further than necessary.
+    upstream_qs = "&".join(
+        f"{k}={v}" for k, v in websocket.query_params.items()
+        if k not in ("access_token", "token")
+    )
+    upstream_qs = f"?{upstream_qs}" if upstream_qs else ""
+
+    upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace("https://", "wss://")
+    upstream_url = f"{upstream_base.rstrip('/')}/v1/admin/workers/{node_id}/{subpath}{upstream_qs}"
+    upstream_headers = {
+        "X-Internal-API-Key": settings.internal_api_key,
+        "X-Gateway-Request": "true",
+        "X-User-ID": str(user_context.user_id),
+        "X-Organization-ID": str(user_context.org_id or ""),
+    }
+
+    try:
+        async with websockets.connect(upstream_url, additional_headers=upstream_headers) as upstream:
+            async def c2u():
+                while True:
+                    payload = await websocket.receive()
+                    et = payload.get("type")
+                    if et == "websocket.disconnect":
+                        break
+                    if payload.get("text") is not None:
+                        await upstream.send(payload["text"])
+                    elif payload.get("bytes") is not None:
+                        await upstream.send(payload["bytes"])
+
+            async def u2c():
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            tasks = {asyncio.create_task(c2u()), asyncio.create_task(u2c())}
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"admin workers WS proxy error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@router.api_route(
+    "/admin/workers/{path:path}",
+    methods=["GET", "POST", "DELETE"],
+)
+async def proxy_admin_workers(
+    request: Request,
+    path: str,
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy inferia-worker admin operations to the orchestration service.
+
+    The orchestration side's ``/v1/admin/workers/...`` router treats the
+    request as authorised (it trusts the api_gateway proxy boundary). RBAC
+    is enforced here:
+
+    * ``GET``    → ``DEPLOYMENT_LIST``   — view workers in a pool
+    * ``POST``   → ``DEPLOYMENT_CREATE`` — mint a bootstrap token
+    * ``DELETE`` → ``DEPLOYMENT_DELETE`` — revoke a worker
+    """
+    method = request.method.upper()
+    if method == "GET":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    elif method == "POST":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+    elif method == "DELETE":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_DELETE)
+    return await proxy_request(
+        method=request.method,
+        path=f"v1/admin/workers/{path}",
         request=request,
         target_url=ORCHESTRATION_URL,
         user_context=user_context,

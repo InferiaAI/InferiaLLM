@@ -37,7 +37,10 @@ from inferia.services.api_gateway.management.router import router as management_
 from inferia.services.api_gateway.rbac.roles_router import router as roles_router
 from inferia.services.api_gateway.rbac.users_router import router as users_router
 from inferia.services.api_gateway.audit.router import router as audit_router
-from inferia.services.api_gateway.gateway.proxy_routes import router as proxy_router
+from inferia.services.api_gateway.gateway.proxy_routes import (
+    router as proxy_router,
+    worker_passthrough_router,
+)
 from inferia.services.api_gateway.gateway.health_routes import router as health_router
 
 # Configure logging
@@ -151,6 +154,7 @@ app.include_router(gateway_router)
 app.include_router(roles_router)
 app.include_router(users_router)
 app.include_router(proxy_router)
+app.include_router(worker_passthrough_router)
 app.include_router(health_router)
 
 

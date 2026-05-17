@@ -996,7 +996,7 @@ async def delete_deployment(deployment_id: str):
 
 
 @router.post("/createpool")
-async def create_pool(req: CreatePoolRequest):
+async def create_pool(req: CreatePoolRequest, request: Request):
     # Validate provider exists before creating pool
     try:
         adapter = get_adapter(req.provider)
@@ -1005,6 +1005,16 @@ async def create_pool(req: CreatePoolRequest):
         raise HTTPException(
             status_code=400, detail=f"Invalid provider '{req.provider}'. {str(e)}"
         )
+
+    # The api_gateway forwards the caller's resolved org via X-Organization-ID.
+    # That value is authoritative for which org list-nodes will query later,
+    # so we override req.owner_id with it when present. Without this, a
+    # multi-org user whose JWT claim differs from their gateway-resolved
+    # org context can create pools that never show up in their list view.
+    hdr_org = request.headers.get("x-organization-id")
+    if hdr_org and req.owner_type == "user":
+        req.owner_id = hdr_org
+        req.owner_type = "organization"
 
     async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
@@ -1048,6 +1058,64 @@ async def create_pool(req: CreatePoolRequest):
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
                 raise HTTPException(status_code=409, detail=e.details())
             raise HTTPException(status_code=500, detail=e.details())
+
+    # Node-centric refactor: insert a placeholder compute_inventory row so the
+    # newly-created provider pool shows up in the Compute Nodes list right
+    # away. For DePIN providers (nosana, akash) and cluster providers
+    # (gcp/aws/etc.) we write a placeholder row marked state='ready' —
+    # there is no real provisioning lifecycle to track on the placeholder
+    # itself; the actual node is created lazily at deploy time. Placement
+    # filters out rows whose provider_instance_id starts with 'placeholder:'
+    # so they're advertised in the UI as available without competing for
+    # real scheduling decisions. For the on_prem path (legacy "Self-hosted"
+    # pool option) we skip — /v1/nodes/add/worker writes its own row.
+    try:
+        if req.provider in ("nosana", "akash", "gcp", "aws", "azure", "lambda", "runpod", "k8s"):
+            from uuid import UUID as _UUID
+            import asyncpg as _asyncpg
+            import os as _os
+            dsn = (
+                _os.getenv("POSTGRES_DSN")
+                or (_os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
+                or "postgresql://inferia:inferia@postgres:5432/inferia"
+            )
+            conn = await _asyncpg.connect(dsn=dsn, timeout=5)
+            try:
+                gpu_type = (req.allowed_gpu_types[0] if req.allowed_gpu_types else "any")
+                await conn.execute(
+                    """
+                    INSERT INTO compute_inventory (
+                        pool_id, provider, provider_instance_id, hostname,
+                        gpu_total, vcpu_total, ram_gb_total, state,
+                        node_class, metadata, labels
+                    )
+                    VALUES (
+                        $1::uuid, $2::provider_type, $3, $4,
+                        $5, $6, $7, 'ready',
+                        'on_demand', $8::jsonb, '{}'::jsonb
+                    )
+                    """,
+                    resp.pool_id,
+                    req.provider,
+                    f"placeholder:{resp.pool_id}",
+                    req.pool_name,
+                    req.gpu_count or 1,
+                    0, 0,
+                    __import__("json").dumps({
+                        "gpu_type": gpu_type,
+                        "provider_pool_id": req.provider_pool_id,
+                        "placeholder": True,
+                    }),
+                )
+            finally:
+                await conn.close()
+    except Exception as e:
+        # Non-fatal: pool creation already succeeded. Log and continue so the
+        # request remains a 200 even if the placeholder insert hiccups.
+        import logging as _logging
+        _logging.getLogger("deployment-server").warning(
+            "createpool: placeholder inventory insert failed: %s", e,
+        )
 
     return {
         "pool_id": resp.pool_id,
@@ -1530,13 +1598,33 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
         node_id = dep["node_ids"][0]
 
         node = await conn.fetchrow(
-            "SELECT provider_instance_id FROM compute_inventory WHERE id = $1", node_id
+            "SELECT provider_instance_id, agent_kind FROM compute_inventory WHERE id = $1", node_id
         )
 
         if not node:
             return {"error": "Node record not found"}
 
         provider_instance_id = node["provider_instance_id"]
+
+        # 1.5 — Worker short-circuit. Worker pools don't have a sidecar log
+        # stream the way Nosana does; we already expose live container logs
+        # via /api/v1/admin/workers/{node_id}/logs?deployment={id}, which is
+        # the same WS path the Compute > Nodes > Logs tab uses. Returning
+        # the relative URL here lets the dashboard's TerminalLogs component
+        # reuse its existing flow (it appends ?token=<jwt> and opens).
+        if (provider == "on_prem") or (node.get("agent_kind") == "worker"):
+            return {
+                "ws_url": (
+                    f"/api/v1/admin/workers/{node_id}/logs"
+                    f"?deployment={deployment_id}"
+                ),
+                "subscription": {
+                    "type": "subscribe_logs",
+                    "provider": "worker",
+                    "deployment_id": deployment_id,
+                    "node_id": str(node_id),
+                },
+            }
 
         # 2. Call Adapter for streaming info
         try:

@@ -10,6 +10,9 @@ from inferia.services.orchestration.services.adapter_engine.adapters.k8s.k8s_ada
 from inferia.services.orchestration.services.adapter_engine.adapters.akash.akash_adapter import (
     AkashAdapter,
 )
+from inferia.services.orchestration.services.adapter_engine.adapters.worker.worker_adapter import (
+    WorkerAdapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +20,17 @@ ADAPTER_REGISTRY = {
     "nosana": NosanaAdapter,
     "k8s": KubernetesAdapter,
     "akash": AkashAdapter,
+    # The 'worker' provider is the dashboard-facing name for the self-hosted
+    # (inferia-worker) deployment topology. 'on_prem' is the DB enum value
+    # used in compute_pools.provider; both are accepted here so the
+    # createpool flow doesn't reject worker-pool requests.
+    "worker": WorkerAdapter,
+    "on_prem": WorkerAdapter,
 }
+
+# Keys that are aliases for another canonical provider — hidden from
+# /inventory/providers so the dashboard doesn't render duplicate cards.
+_ADAPTER_ALIASES = {"on_prem"}
 
 _SKYPILOT_PROVIDERS = ("aws", "gcp", "azure", "lambda", "runpod")
 _skypilot_available = importlib.util.find_spec("sky") is not None
@@ -85,6 +98,8 @@ def get_provider_info() -> dict:
     """
     info = {}
     for provider_name, adapter_cls in ADAPTER_REGISTRY.items():
+        if provider_name in _ADAPTER_ALIASES:
+            continue
         info[provider_name] = {
             "adapter_type": adapter_cls.ADAPTER_TYPE,
             "capabilities": adapter_cls.CAPABILITIES.to_dict(),

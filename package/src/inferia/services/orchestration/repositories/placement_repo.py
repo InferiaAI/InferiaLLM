@@ -29,6 +29,7 @@ class PlacementRepository:
             ci.id AS node_id,
             ci.provider,
             ci.state,
+            ci.agent_kind,
             (ci.gpu_total - ci.gpu_allocated) AS gpu_free,
             (ci.vcpu_total - ci.vcpu_allocated) AS vcpu_free,
             (ci.ram_gb_total - ci.ram_gb_allocated) AS ram_free,
@@ -39,6 +40,11 @@ class PlacementRepository:
             ci.pool_id = $1
             AND cp.is_active = TRUE
             AND ci.state = 'ready'
+            -- Placeholder rows (created when a pool is added so the UI has
+            -- something to render) are not real, schedulable nodes. The
+            -- real node is provisioned lazily at deploy time via the
+            -- adapter. Exclude them from candidates.
+            AND COALESCE(ci.provider_instance_id, '') NOT LIKE 'placeholder:%'
             AND (ci.gpu_total - ci.gpu_allocated) >= $2
             AND (ci.vcpu_total - ci.vcpu_allocated) >= $3
             AND (ci.ram_gb_total - ci.ram_gb_allocated) >= $4

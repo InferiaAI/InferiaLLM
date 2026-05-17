@@ -21,6 +21,8 @@ KNOWN_COMMANDS = {
     "migrate",
     "write-dashboard-config",
     "providers",
+    "worker",
+    "node",
 }
 
 
@@ -141,6 +143,26 @@ def run_worker(queue=None):
     try:
         if queue:
             queue.put(ServiceStarting("Orchestration Worker"))
+
+        # When the orchestration HTTP server runs the deployment dispatcher
+        # in-process (the default — see server.py), this standalone worker
+        # process would compete for the same Redis stream messages and
+        # additionally cannot reach the in-process WorkerRegistry. So we
+        # short-circuit to an idle loop here.
+        if os.environ.get("INFERIA_INPROC_DEPLOYMENT_WORKER", "1") != "0":
+            import time
+
+            if queue:
+                queue.put(
+                    ServiceStarted(
+                        "Orchestration Worker",
+                        detail="Idle (dispatcher co-located in HTTP server)",
+                    )
+                )
+            while True:
+                time.sleep(3600)
+            return
+
         import asyncio
         from inferia.services.orchestration.services.model_deployment.worker_main import (
             main,
@@ -749,6 +771,176 @@ def main(argv=None):
     upd_p.add_argument("--value", default=None, help="New value")
     upd_p.add_argument("--active", default=None, help="Set active state (true/false)")
 
+    # --- worker sub-command -------------------------------------------------
+    worker_parser = sub.add_parser(
+        "worker",
+        help="Incubate an inferia-worker node (mint bootstrap token, scaffold compose)",
+    )
+    worker_sub = worker_parser.add_subparsers(
+        dest="worker_action", required=True, help="Action",
+    )
+
+    # worker token — mint and print
+    tok_p = worker_sub.add_parser(
+        "token",
+        help="Mint a bootstrap token for a pool and print a .env snippet",
+    )
+    tok_p.add_argument("--pool-id", required=True, help="UUID of the target compute pool")
+    tok_p.add_argument(
+        "--ttl-hours", type=int, default=1,
+        help="Token lifetime in hours (1-24, default 1)",
+    )
+    tok_p.add_argument(
+        "--orchestration-url",
+        default=None,
+        help="Orchestration service URL (default: http://localhost:8080)",
+    )
+    tok_p.add_argument(
+        "--internal-api-key",
+        default=None,
+        help="Internal API key (default: INTERNAL_API_KEY env var)",
+    )
+
+    # worker compose — scaffold a ready-to-run docker-compose directory
+    cmp_p = worker_sub.add_parser(
+        "compose",
+        help="Scaffold an inferia-worker compose dir for a fresh GPU host",
+    )
+    cmp_p.add_argument("--pool-id", required=True, help="UUID of the target compute pool")
+    cmp_p.add_argument(
+        "--node-name", required=True,
+        help="Stable node name unique within the pool",
+    )
+    cmp_p.add_argument(
+        "--advertise-url", required=True,
+        help="URL the control plane will use to reach this worker's inference port",
+    )
+    cmp_p.add_argument(
+        "--out-dir", default="./inferia-worker-deploy",
+        help="Directory to write .env + docker-compose.yml into",
+    )
+    cmp_p.add_argument(
+        "--ttl-hours", type=int, default=1,
+        help="Bootstrap token lifetime in hours (1-24, default 1)",
+    )
+    cmp_p.add_argument(
+        "--worker-image",
+        default="ghcr.io/inferia/inferia-worker:latest",
+        help="Worker container image tag",
+    )
+    cmp_p.add_argument(
+        "--inference-port", type=int, default=8080,
+        help="Host port to publish the worker's inference endpoint on",
+    )
+    cmp_p.add_argument(
+        "--orchestration-url",
+        default=None,
+        help="Orchestration service URL (default: http://localhost:8080)",
+    )
+    cmp_p.add_argument(
+        "--internal-api-key",
+        default=None,
+        help="Internal API key (default: INTERNAL_API_KEY env var)",
+    )
+
+    # worker list — show workers in a pool
+    list_w = worker_sub.add_parser(
+        "list",
+        help="List inferia-worker rows in a pool",
+    )
+    list_w.add_argument("--pool-id", required=True, help="UUID of the target compute pool")
+    list_w.add_argument(
+        "--orchestration-url",
+        default=None,
+        help="Orchestration service URL (default: http://localhost:8080)",
+    )
+    list_w.add_argument(
+        "--internal-api-key",
+        default=None,
+        help="Internal API key (default: INTERNAL_API_KEY env var)",
+    )
+
+    # --- node sub-command (node-centric API) -------------------------------
+    node_parser = sub.add_parser(
+        "node",
+        help="Manage compute nodes (add, list, label, remove)",
+    )
+    node_sub = node_parser.add_subparsers(
+        dest="node_action", required=True, help="Action",
+    )
+
+    # node add ...
+    node_add = node_sub.add_parser("add", help="Add a node to a pool")
+    node_add_sub = node_add.add_subparsers(
+        dest="node_add_provider", required=True, help="Provider",
+    )
+
+    def _add_common_flags(p):
+        p.add_argument("--name", required=True, help="Node name")
+        p.add_argument(
+            "--label",
+            action="append",
+            default=[],
+            help="Label key=value (repeat for multiple)",
+        )
+        p.add_argument("--org-id", default=None, help="Organization id (or INFERIA_ORG_ID env)")
+        p.add_argument("--orchestration-url", default=None,
+                       help="Orchestration URL (default: http://localhost:8080)")
+        p.add_argument("--internal-api-key", default=None,
+                       help="Internal API key (default: INTERNAL_API_KEY env)")
+
+    nw = node_add_sub.add_parser("worker", help="Add a self-hosted inferia-worker node")
+    _add_common_flags(nw)
+    nw.add_argument("--advertise-url", default=None,
+                    help="URL the control plane should use to reach this worker (operator can fill later)")
+
+    nn = node_add_sub.add_parser("nosana", help="Add a Nosana node")
+    _add_common_flags(nn)
+    nn.add_argument("--gpu-type", required=True)
+    nn.add_argument("--market-address", required=True)
+    nn.add_argument("--credential-name", default="default")
+
+    na = node_add_sub.add_parser("akash", help="Add an Akash node")
+    _add_common_flags(na)
+    na.add_argument("--gpu-type", required=True)
+    na.add_argument("--credential-name", default="default")
+
+    # node list
+    nl = node_sub.add_parser("list", help="List nodes (optionally filter by labels)")
+    nl.add_argument("--label", action="append", default=[], help="Filter by label key=value (AND)")
+    nl.add_argument("--org-id", default=None)
+    nl.add_argument("--orchestration-url", default=None)
+    nl.add_argument("--internal-api-key", default=None)
+
+    # node labels {set,del,get}
+    nl_labels = node_sub.add_parser("labels", help="Manage node labels")
+    nl_lab_sub = nl_labels.add_subparsers(
+        dest="labels_action", required=True, help="Action",
+    )
+
+    nl_set = nl_lab_sub.add_parser("set", help="Upsert labels on a node")
+    nl_set.add_argument("node_id")
+    nl_set.add_argument("kv", nargs="+", help="key=value pairs")
+    nl_set.add_argument("--orchestration-url", default=None)
+    nl_set.add_argument("--internal-api-key", default=None)
+
+    nl_del = nl_lab_sub.add_parser("del", help="Remove labels from a node")
+    nl_del.add_argument("node_id")
+    nl_del.add_argument("keys", nargs="+", help="label keys to remove")
+    nl_del.add_argument("--orchestration-url", default=None)
+    nl_del.add_argument("--internal-api-key", default=None)
+
+    nl_get = nl_lab_sub.add_parser("get", help="Print a node's labels as JSON")
+    nl_get.add_argument("node_id")
+    nl_get.add_argument("--orchestration-url", default=None)
+    nl_get.add_argument("--internal-api-key", default=None)
+
+    # node rm
+    n_rm = node_sub.add_parser("rm", help="Soft-delete a node")
+    n_rm.add_argument("node_id")
+    n_rm.add_argument("--orchestration-url", default=None)
+    n_rm.add_argument("--internal-api-key", default=None)
+
     args, unknown = parser.parse_known_args(argv)
 
     cmd = args.command
@@ -822,6 +1014,14 @@ def main(argv=None):
         elif cmd == "providers":
             from inferia.cli_providers import run_providers_command
             run_providers_command(args)
+
+        elif cmd == "worker":
+            from inferia.cli_worker import run_worker_command
+            run_worker_command(args)
+
+        elif cmd == "node":
+            from inferia.cli_node import run_node_command
+            run_node_command(args)
 
         else:
             print(f"Unknown command: {cmd}")

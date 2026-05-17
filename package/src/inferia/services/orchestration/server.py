@@ -38,6 +38,21 @@ from inferia.services.orchestration.services.inventory_manager.http import (
 from inferia.services.orchestration.services.model_deployment.deployment_server import (
     router as deployment_engine_router,
 )
+from inferia.services.orchestration.api import workers as workers_api
+from inferia.services.orchestration.api import admin_workers as admin_workers_api
+from inferia.services.orchestration.api import nodes as nodes_api
+from inferia.services.orchestration.services.adapter_engine.registry import (
+    ADAPTER_REGISTRY,
+)
+from inferia.services.orchestration.services.worker_controller.auth import (
+    WorkerAuth,
+)
+from inferia.services.orchestration.services.worker_controller.registry import (
+    WorkerRegistry,
+)
+from inferia.services.orchestration.services.worker_controller.controller import (
+    WorkerController,
+)
 
 from inferia.services.orchestration.v1 import (
     compute_pool_pb2_grpc,
@@ -57,6 +72,28 @@ from inferia.services.orchestration.services.model_deployment.service import (
 from inferia.services.orchestration.services.model_deployment.controller import (
     ModelDeploymentController,
 )
+from inferia.services.orchestration.services.model_deployment.worker import (
+    ModelDeploymentWorker,
+)
+from inferia.services.orchestration.services.model_deployment.runtime_resolver import (
+    RuntimeResolver,
+)
+from inferia.services.orchestration.services.model_deployment.strategies.vllm import (
+    VLLMDeploymentStrategy,
+)
+from inferia.services.orchestration.services.model_deployment.strategies.localai import (
+    LocalAIDeploymentStrategy,
+)
+from inferia.services.orchestration.services.model_deployment.strategies.worker import (
+    WorkerDeploymentStrategy,
+)
+from inferia.services.orchestration.repositories.placement_repo import (
+    PlacementRepository,
+)
+from inferia.services.orchestration.repositories.scheduler_repo import (
+    SchedulerRepository,
+)
+from inferia.services.orchestration.repositories.quota_repo import QuotaRepository
 
 from inferia.services.orchestration.repositories.pool_repo import ComputePoolRepository
 from inferia.services.orchestration.repositories.model_registry_repo import (
@@ -127,6 +164,74 @@ async def serve():
         event_bus=event_bus,
     )
 
+    # ---------------- Worker control plane ----------------
+    # The orchestration service sits behind InternalAuthMiddleware, which is
+    # the trust boundary with the api_gateway. The api_gateway already
+    # enforces user-JWT + RBAC on its admin-API surface, so internal-key-
+    # holding callers can be treated as authorised here. The admin_workers
+    # router accepts an injectable permission factory so we can tighten this
+    # later (e.g. by having the gateway forward a permission claim header).
+    #
+    # The orchestration Settings model does not declare a jwt_secret_key
+    # field, so we read it from env directly (it's the same value the
+    # api_gateway loads via its own Settings). Fall back to the internal
+    # API key if JWT_SECRET_KEY isn't set — anything ≥32 chars works for
+    # signing worker JWTs in MVP.
+    _worker_jwt_secret = (
+        os.getenv("JWT_SECRET_KEY")
+        or getattr(settings, "internal_api_key", "")
+        or "inferia-worker-secret-placeholder-please-set-JWT_SECRET_KEY-env-var"
+    )
+    if len(_worker_jwt_secret) < 32:
+        _worker_jwt_secret = (_worker_jwt_secret + "_" * 32)[:32]
+    worker_auth = WorkerAuth(
+        secret_key=_worker_jwt_secret,
+        algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
+    )
+    worker_registry = WorkerRegistry()
+    worker_controller = WorkerController(worker_registry)
+
+    def _permit_all(_perm):
+        async def _check(_authorization=None):
+            return True
+        return _check
+
+    workers_api.configure(
+        worker_auth, worker_registry, inventory_repo,
+    )
+    admin_workers_api.configure(
+        worker_auth=worker_auth,
+        worker_registry=worker_registry,
+        inventory_repo=inventory_repo,
+        pool_repo=pool_repo,
+        control_plane_external_url=os.getenv(
+            "CONTROL_PLANE_EXTERNAL_URL", ""
+        ),
+        require_permission=_permit_all,
+    )
+
+    # /v1/nodes/* — the new node-centric API. Wires only those adapters that
+    # implement provision_single_node (Nosana, Akash); the worker adapter is
+    # special-cased by the dedicated /add/worker route. k8s adapter is left
+    # absent from this map until its single-node path lands.
+    nodes_adapters = {}
+    for name in ("nosana", "akash"):
+        cls = ADAPTER_REGISTRY.get(name)
+        if cls is None:
+            continue
+        try:
+            nodes_adapters[name] = cls()
+        except Exception as e:
+            logger.warning("could not instantiate %s adapter for /v1/nodes: %s", name, e)
+    nodes_api.configure(
+        inventory_repo=inventory_repo,
+        pool_repo=pool_repo,
+        worker_auth=worker_auth,
+        control_plane_external_url=os.getenv("CONTROL_PLANE_EXTERNAL_URL", ""),
+        adapters=nodes_adapters,
+        require_permission=_permit_all,
+    )
+
     # ---------------- FastAPI App ----------------
     app = FastAPI(
         title=settings.app_name,
@@ -137,11 +242,18 @@ async def serve():
     # CORS configuration (Standardized)
     setup_cors(app, os.getenv("ALLOWED_ORIGINS", ""), settings.is_development)
 
-    # Add internal authentication middleware
+    # Add internal authentication middleware. The worker control plane
+    # endpoints use their own auth (bootstrap JWT for /register, worker JWT
+    # for the WS channel) so they're skipped here.
     app.add_middleware(
         InternalAuthMiddleware,
         internal_api_key=settings.internal_api_key,
-        skip_paths=["/health", "/deployment/ws"],
+        skip_paths=[
+            "/health",
+            "/deployment/ws",
+            "/v1/workers/register",
+            "/v1/workers/channel",
+        ],
     )
 
     # Register standard exception handlers
@@ -150,6 +262,9 @@ async def serve():
     # Include routers
     app.include_router(inventory_router)
     app.include_router(deployment_engine_router)
+    app.include_router(workers_api.router)
+    app.include_router(admin_workers_api.router)
+    app.include_router(nodes_api.router)
 
     # Share pool with routes
     app.state.pool = db_pool
@@ -211,6 +326,98 @@ async def serve():
 
     asyncio.create_task(http_server.serve())
     logger.info(f"HTTP server started on port {settings.http_port}")
+
+    # ---------------- Co-located Deployment Dispatcher ----------------
+    # The model_deployment dispatcher needs to share this process's
+    # WorkerRegistry so that LoadModel commands reach connected workers.
+    # We co-locate it here (a separate worker_main process would not see
+    # the live WS connections held by this process). Disable with
+    # INFERIA_INPROC_DEPLOYMENT_WORKER=0 if you intend to run worker_main
+    # standalone via a different bridging mechanism.
+    if os.getenv("INFERIA_INPROC_DEPLOYMENT_WORKER", "1") != "0":
+        try:
+            placement_repo = PlacementRepository(db_pool)
+            quota_repo = QuotaRepository(db_pool)
+            scheduler_repo = SchedulerRepository(db_pool, quota_repo=quota_repo)
+            runtime_resolver = RuntimeResolver()
+            vllm_strategy = VLLMDeploymentStrategy(scheduler_repo=scheduler_repo)
+            localai_strategy = LocalAIDeploymentStrategy(scheduler_repo=scheduler_repo)
+            inproc_worker_strategy = WorkerDeploymentStrategy(
+                scheduler_repo=scheduler_repo,
+                worker_controller=worker_controller,
+            )
+            inproc_worker = ModelDeploymentWorker(
+                deployment_repo=model_deployment_repo,
+                model_registry_repo=model_registry_repo,
+                pool_repo=pool_repo,
+                placement_repo=placement_repo,
+                scheduler=scheduler_repo,
+                inventory_repo=inventory_repo,
+                runtime_resolver=runtime_resolver,
+                runtime_strategies={
+                    "vllm": vllm_strategy,
+                    "localai": localai_strategy,
+                    "worker": inproc_worker_strategy,
+                },
+            )
+            from uuid import UUID as _UUID
+
+            max_concurrent = int(os.getenv("MAX_CONCURRENT_DEPLOYS", "8"))
+            deploy_sem = asyncio.Semaphore(max_concurrent)
+
+            async def _consume_deploy_requests():
+                async def _process(msg_id, event):
+                    async with deploy_sem:
+                        try:
+                            deployment_id = _UUID(event["deployment_id"])
+                            await inproc_worker.handle_deploy_requested(deployment_id)
+                            await event_bus.redis.xack(
+                                "model.deploy.requested",
+                                "deployment-workers",
+                                msg_id,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "in-proc deploy dispatcher failed"
+                            )
+
+                async for msg_id, event in event_bus.consume(
+                    stream="model.deploy.requested",
+                    group="deployment-workers",
+                    consumer="inproc-worker-1",
+                ):
+                    asyncio.create_task(_process(msg_id, event))
+
+            async def _consume_terminate_requests():
+                async def _process(msg_id, event):
+                    async with deploy_sem:
+                        try:
+                            deployment_id = _UUID(event["deployment_id"])
+                            await inproc_worker.handle_terminate_requested(deployment_id)
+                            await event_bus.redis.xack(
+                                "model.terminate.requested",
+                                "deployment-workers",
+                                msg_id,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "in-proc terminate dispatcher failed"
+                            )
+
+                async for msg_id, event in event_bus.consume(
+                    stream="model.terminate.requested",
+                    group="deployment-workers",
+                    consumer="inproc-worker-1",
+                ):
+                    asyncio.create_task(_process(msg_id, event))
+
+            asyncio.create_task(_consume_deploy_requests())
+            asyncio.create_task(_consume_terminate_requests())
+            logger.info("In-process model deployment dispatcher started")
+        except Exception as e:
+            logger.warning(
+                "Failed to start in-process deployment dispatcher: %s", e
+            )
 
     # Start gRPC
     server.add_insecure_port(f"[::]:{settings.grpc_port}")

@@ -409,3 +409,287 @@ class InventoryRepository:
         async with self.db.acquire() as conn:
             rows = await conn.fetch(query, provider, limit, offset)
             return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Worker-agent extensions (inferia-worker integration).
+# ---------------------------------------------------------------------------
+
+
+class DuplicateNodeError(Exception):
+    """Raised by upsert_worker when (pool_id, node_name) is held by a row
+    whose agent_kind is not 'worker'."""
+
+
+async def _upsert_worker_impl(self, *, pool_id, node_name, advertise_url, allocatable):
+    """Upsert a (pool_id, node_name) row with agent_kind='worker'.
+
+    Returns the row as a dict. Raises DuplicateNodeError if (pool_id,
+    node_name) is held by a non-worker-kind row — those cannot be
+    re-purposed in place.
+    """
+    # 1. Probe — does a row already exist for this (pool_id, node_name)?
+    async with self.db.acquire() as conn:
+        existing = await conn.fetchrow(
+            """
+            SELECT id, pool_id, node_name, agent_kind, state, advertise_url
+            FROM compute_inventory
+            WHERE pool_id = $1 AND node_name = $2
+            """,
+            pool_id, node_name,
+        )
+
+        if existing and existing.get("agent_kind") not in (None, "worker"):
+            raise DuplicateNodeError(
+                f"{pool_id}/{node_name} is held by a non-worker node"
+            )
+
+        # 2. Upsert. Use INSERT ON CONFLICT (pool_id, node_name) WHERE
+        #    agent_kind='worker' — the migration created a matching partial
+        #    unique index for exactly this purpose.
+        row = await conn.fetchrow(
+            """
+            INSERT INTO compute_inventory (
+                pool_id, node_name, agent_kind, state,
+                advertise_url, gpu_total, vcpu_total, ram_gb_total,
+                provider, provider_instance_id, metadata
+            )
+            VALUES ($1, $2, 'worker', 'provisioning', $3,
+                    COALESCE(($4::jsonb ->> 'gpu')::int, 0),
+                    COALESCE(($4::jsonb ->> 'cpu')::int, 0),
+                    COALESCE(($4::jsonb ->> 'memory_gb')::int, 0),
+                    'on_prem', $5, $4)
+            ON CONFLICT (pool_id, node_name)
+                WHERE agent_kind = 'worker' AND node_name IS NOT NULL
+            DO UPDATE SET
+                advertise_url = EXCLUDED.advertise_url,
+                metadata = EXCLUDED.metadata,
+                updated_at = now()
+            RETURNING id, pool_id, node_name, agent_kind, state, advertise_url
+            """,
+            pool_id, node_name, advertise_url,
+            __import__("json").dumps(allocatable),
+            f"worker-{pool_id}-{node_name}",
+        )
+        return dict(row) if row else {}
+
+
+async def _list_workers_impl(self, *, pool_id):
+    """All agent_kind='worker' rows in the pool, ordered by created_at."""
+    async with self.db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, pool_id, node_name, agent_kind, state,
+                   advertise_url, gpu_total, gpu_allocated,
+                   vcpu_total, vcpu_allocated, ram_gb_total,
+                   ram_gb_allocated, last_heartbeat, metadata,
+                   created_at, updated_at
+            FROM compute_inventory
+            WHERE pool_id = $1 AND agent_kind = 'worker'
+            ORDER BY created_at ASC
+            """,
+            pool_id,
+        )
+        return [dict(r) for r in rows]
+
+
+async def _update_heartbeat_with_telemetry_impl(self, *, node_id, used, loaded_models):
+    """Persist heartbeat fields specific to the worker protocol."""
+    payload = __import__("json").dumps({"used": used, "loaded_models": loaded_models})
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET
+              last_heartbeat = now(),
+              metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+              updated_at = now()
+            WHERE id = $1
+            """,
+            node_id, payload,
+        )
+
+
+async def _mark_ready_worker_impl(self, *, node_id):
+    """Transition a worker row from provisioning → ready. No-op otherwise."""
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET state = 'ready', updated_at = now()
+            WHERE id = $1
+              AND state = 'provisioning'
+              AND agent_kind = 'worker'
+            """,
+            node_id,
+        )
+
+
+async def _mark_terminated_worker_impl(self, *, node_id):
+    """Transition a worker row to terminated. Idempotent."""
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET state = 'terminated', updated_at = now()
+            WHERE id = $1 AND agent_kind = 'worker'
+            """,
+            node_id,
+        )
+
+
+# Attach the worker-agent methods to the existing repository class.
+InventoryRepository.upsert_worker = _upsert_worker_impl
+InventoryRepository.list_workers = _list_workers_impl
+InventoryRepository.update_heartbeat_with_telemetry = (
+    _update_heartbeat_with_telemetry_impl
+)
+InventoryRepository.mark_ready_worker = _mark_ready_worker_impl
+InventoryRepository.mark_terminated_worker = _mark_terminated_worker_impl
+
+
+# ---------------------------------------------------------------------------
+# Node-centric extensions (see docs/specs/2026-05-14-node-centric-refactor.md).
+# ---------------------------------------------------------------------------
+
+
+class NodeNotFoundError(Exception):
+    """Raised by set_labels / get_node when no inventory row matches the id."""
+
+
+class NodeTerminatedError(Exception):
+    """Raised when an operation is attempted on a terminated node."""
+
+
+class LabelConflictError(Exception):
+    """Raised by set_labels when the same key appears in both add and remove."""
+
+
+_MAX_LABELS = 32
+_MAX_KEY_LEN = 253
+_MAX_VAL_LEN = 253
+
+
+def _validate_labels(add: dict, remove: list[str]) -> None:
+    overlap = set(add.keys()) & set(remove)
+    if overlap:
+        raise LabelConflictError(
+            f"labels appear in both add and remove: {sorted(overlap)}"
+        )
+    if len(add) + len(remove) > _MAX_LABELS:
+        raise ValueError(f"labels payload exceeds {_MAX_LABELS} entries")
+    for k, v in add.items():
+        if not isinstance(k, str) or not k or len(k) > _MAX_KEY_LEN:
+            raise ValueError(f"label key length must be 1..{_MAX_KEY_LEN}: {k!r}")
+        if not isinstance(v, str) or len(v) > _MAX_VAL_LEN:
+            raise ValueError(f"label value length must be 0..{_MAX_VAL_LEN}: {v!r}")
+        if any(ord(c) < 0x20 for c in k) or any(ord(c) < 0x20 for c in v):
+            raise ValueError("label keys/values must not contain control characters")
+    for k in remove:
+        if not isinstance(k, str) or not k:
+            raise ValueError(f"label remove entries must be non-empty strings: {k!r}")
+
+
+async def _list_nodes_impl(self, *, org_id, selector=None):
+    """All non-terminated compute_inventory rows attached to a pool owned by
+    org_id, optionally filtered by a label selector (AND across keys)."""
+    # Filter on owner_id only so we catch both canonical
+    # owner_type='organization' rows and the legacy createpool path which
+    # writes owner_type='user' with owner_id set to the org's UUID anyway.
+    sql = (
+        "SELECT i.id, i.pool_id, i.node_name, i.agent_kind, i.state,"
+        "       i.advertise_url, i.expose_url, i.gpu_total, i.gpu_allocated,"
+        "       i.vcpu_total, i.vcpu_allocated, i.ram_gb_total,"
+        "       i.ram_gb_allocated, i.last_heartbeat, i.labels,"
+        "       i.metadata, i.provider, i.provider_instance_id,"
+        "       i.hostname, i.created_at, i.updated_at "
+        "FROM compute_inventory i "
+        "JOIN compute_pools p ON p.id = i.pool_id "
+        "WHERE p.owner_id = $1 "
+        "  AND i.state IS DISTINCT FROM 'terminated' "
+    )
+    args: list = [org_id]
+    if selector:
+        sql += " AND i.labels @> $2::jsonb "
+        args.append(__import__("json").dumps(selector))
+    sql += " ORDER BY i.created_at ASC"
+    async with self.db.acquire() as conn:
+        rows = await conn.fetch(sql, *args)
+        return [dict(r) for r in rows]
+
+
+async def _get_node_impl(self, *, node_id):
+    async with self.db.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, pool_id, node_name, agent_kind, state,
+                   advertise_url, expose_url, gpu_total, gpu_allocated,
+                   vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
+                   last_heartbeat, labels, metadata,
+                   provider, provider_instance_id, created_at, updated_at
+            FROM compute_inventory
+            WHERE id = $1
+            """,
+            node_id,
+        )
+        return dict(row) if row else None
+
+
+async def _set_labels_impl(self, *, node_id, add, remove):
+    """Apply an add/remove patch to compute_inventory.labels."""
+    _validate_labels(add, remove)
+    async with self.db.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT id, labels, state FROM compute_inventory WHERE id = $1",
+            node_id,
+        )
+        if not existing:
+            raise NodeNotFoundError(f"node {node_id} not found")
+        if existing.get("state") == "terminated":
+            raise NodeTerminatedError(f"node {node_id} is terminated")
+        # asyncpg returns jsonb as a string by default (no codec registered).
+        # Decode before dict() so we don't trip "dictionary update sequence" on
+        # the literal '{}' the DB column defaults to.
+        current = existing.get("labels") or {}
+        if isinstance(current, str):
+            try:
+                current = __import__("json").loads(current)
+            except Exception:
+                current = {}
+        merged = dict(current)
+        merged.update(add)
+        for k in remove:
+            merged.pop(k, None)
+        row = await conn.fetchrow(
+            """
+            UPDATE compute_inventory
+            SET labels = $2::jsonb,
+                updated_at = now()
+            WHERE id = $1
+            RETURNING id, labels, state, pool_id, node_name, agent_kind,
+                      advertise_url, gpu_total, gpu_allocated,
+                      vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
+                      last_heartbeat, provider
+            """,
+            node_id, __import__("json").dumps(merged),
+        )
+        return dict(row)
+
+
+async def _soft_delete_node_impl(self, *, node_id):
+    """Transition any inventory row to state='terminated'. Idempotent."""
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET state = 'terminated', updated_at = now()
+            WHERE id = $1
+            """,
+            node_id,
+        )
+
+
+InventoryRepository.list_nodes = _list_nodes_impl
+InventoryRepository.get_node = _get_node_impl
+InventoryRepository.set_labels = _set_labels_impl
+InventoryRepository.soft_delete_node = _soft_delete_node_impl
