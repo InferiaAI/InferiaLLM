@@ -56,24 +56,46 @@ class TestWorkerLifecycle:
 
     @pytest.mark.asyncio
     async def test_deploy_no_candidates_marks_failed(self, worker):
-        """No available nodes after retries marks deployment FAILED."""
+        """No available nodes after retries marks deployment FAILED.
+
+        The dispatcher reads deployment state twice — once at the top of
+        the handler (must be PENDING) and once mid-provisioning as a
+        cancellation safety check (must be PROVISIONING). A static
+        AsyncMock that returns PENDING for both calls makes the safety
+        check fire and the handler abort before update_state is ever
+        called. Mirror the real state machine with a tiny side_effect.
+        """
         dep_id = uuid4()
         pool_id = uuid4()
-        worker.deployments.get = AsyncMock(
-            return_value={
-                "state": "PENDING",
-                "deployment_id": str(dep_id),
-                "pool_id": str(pool_id),
-                "model_id": None,
-                "gpu_per_replica": 1,
-                "replicas": 1,
-                "configuration": '{"workload_type": "inference"}',
-                "model_name": "test-model",
-                "engine": "vllm",
-                "inference_model": None,
-            }
-        )
-        worker.deployments.update_state_if = AsyncMock(return_value=True)
+        deployment_state = {"state": "PENDING"}
+        base_row = {
+            "deployment_id": str(dep_id),
+            "pool_id": str(pool_id),
+            "model_id": None,
+            "gpu_per_replica": 1,
+            "replicas": 1,
+            "configuration": '{"workload_type": "inference"}',
+            "model_name": "test-model",
+            "engine": "vllm",
+            "inference_model": None,
+        }
+
+        async def fake_get(_dep_id):
+            return {**base_row, **deployment_state}
+
+        worker.deployments.get = AsyncMock(side_effect=fake_get)
+
+        async def fake_update_state(_id, new_state, **_kw):
+            deployment_state["state"] = new_state
+
+        async def fake_update_state_if(_id, *, expected_state, new_state):
+            if deployment_state["state"] == expected_state:
+                deployment_state["state"] = new_state
+                return True
+            return False
+
+        worker.deployments.update_state = AsyncMock(side_effect=fake_update_state)
+        worker.deployments.update_state_if = AsyncMock(side_effect=fake_update_state_if)
         worker.pools.get = AsyncMock(
             return_value={
                 "provider": "nosana",
