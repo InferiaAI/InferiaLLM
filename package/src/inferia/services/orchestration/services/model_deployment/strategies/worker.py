@@ -92,6 +92,8 @@ class WorkerDeploymentStrategy:
             return {
                 "runtime": "worker",
                 "allocation_id": str(allocation_id),
+                "allocation_ids": [str(allocation_id)],
+                "node_ids": [str(node_id)],
                 "endpoint": result.endpoint_url,
             }
         except Exception:

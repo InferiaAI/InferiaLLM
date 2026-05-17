@@ -1598,13 +1598,33 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
         node_id = dep["node_ids"][0]
 
         node = await conn.fetchrow(
-            "SELECT provider_instance_id FROM compute_inventory WHERE id = $1", node_id
+            "SELECT provider_instance_id, agent_kind FROM compute_inventory WHERE id = $1", node_id
         )
 
         if not node:
             return {"error": "Node record not found"}
 
         provider_instance_id = node["provider_instance_id"]
+
+        # 1.5 — Worker short-circuit. Worker pools don't have a sidecar log
+        # stream the way Nosana does; we already expose live container logs
+        # via /api/v1/admin/workers/{node_id}/logs?deployment={id}, which is
+        # the same WS path the Compute > Nodes > Logs tab uses. Returning
+        # the relative URL here lets the dashboard's TerminalLogs component
+        # reuse its existing flow (it appends ?token=<jwt> and opens).
+        if (provider == "on_prem") or (node.get("agent_kind") == "worker"):
+            return {
+                "ws_url": (
+                    f"/api/v1/admin/workers/{node_id}/logs"
+                    f"?deployment={deployment_id}"
+                ),
+                "subscription": {
+                    "type": "subscribe_logs",
+                    "provider": "worker",
+                    "deployment_id": deployment_id,
+                    "node_id": str(node_id),
+                },
+            }
 
         # 2. Call Adapter for streaming info
         try:
