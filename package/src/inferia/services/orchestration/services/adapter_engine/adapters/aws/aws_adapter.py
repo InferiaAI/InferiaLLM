@@ -10,6 +10,7 @@ role on EC2-hosted CPs, env vars / ~/.aws/credentials elsewhere).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -262,20 +263,105 @@ class AWSAdapter(ProviderAdapter):
         }
 
     # ------------------------------------------------------------------
-    # STUBS — Task 15 fills these in
+    # DISCOVERY
     # ------------------------------------------------------------------
 
-    async def discover_resources(self, *args, **kwargs) -> List[Dict]:
-        raise NotImplementedError("Task 15")
+    async def discover_resources(self, *, region: str = "us-east-1") -> List[Dict]:
+        """List GPU instance types in the given region.
+
+        Queries describe_instance_types filtered to the g5/g4dn/p4d/p5 families
+        that Inferia supports.  AWS errors are surfaced as ProvisionError without
+        leaking internal boto3 text to callers.
+        """
+        ec2 = self._ec2_client(region, None)
+        try:
+            resp = ec2.describe_instance_types(
+                Filters=[
+                    {
+                        "Name": "instance-type",
+                        "Values": ["g5.*", "g4dn.*", "p4d.*", "p5.*"],
+                    }
+                ],
+            )
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError):
+            raise ProvisionError("discover_resources failed")
+
+        out: List[Dict] = []
+        for it in resp.get("InstanceTypes", []):
+            gpu_info = (it.get("GpuInfo") or {}).get("Gpus") or [{}]
+            gpu = gpu_info[0] if gpu_info else {}
+            mem_mib = (gpu.get("MemoryInfo") or {}).get("SizeInMiB", 0)
+            out.append(
+                {
+                    "provider": "aws",
+                    "provider_resource_id": it["InstanceType"],
+                    "gpu_type": gpu.get("Name", "N/A"),
+                    "gpu_count": gpu.get("Count", 0),
+                    "gpu_memory_gb": mem_mib // 1024,
+                    "vcpu": it.get("VCpuInfo", {}).get("DefaultVCpus", 0),
+                    "ram_gb": it.get("MemoryInfo", {}).get("SizeInMiB", 0) // 1024,
+                    "region": region,
+                    "pricing_model": "on_demand",
+                    "price_per_hour": 0.0,  # static fallback; pricing API is future work
+                }
+            )
+        return out
+
+    # ------------------------------------------------------------------
+    # WAIT FOR READY
+    # ------------------------------------------------------------------
 
     async def wait_for_ready(
         self,
         *,
         provider_instance_id: str,
-        timeout: int = 300,
+        timeout: int = 900,
         provider_credential_name: Optional[str] = None,
+        region: Optional[str] = None,
     ) -> str:
-        raise NotImplementedError("Task 15")
+        """Wait for an EC2 instance to boot and the worker to register.
+
+        Phase 1: Use the boto3 ``instance_running`` waiter so we know the
+        hypervisor has started the VM.  If this times out we terminate the
+        instance immediately to avoid orphan billing.
+
+        Phase 2: Poll ``compute_inventory`` until the worker process flips the
+        row to ``ready`` (it does so via /v1/workers/register after cloud-init
+        runs).  If *timeout* elapses without seeing ``ready`` the instance is
+        terminated and ``ProvisionTimeoutError`` is raised.
+        """
+        ec2 = self._ec2_client(region or "us-east-1", provider_credential_name)
+
+        # Phase 1 — wait for hypervisor-level running state.
+        try:
+            waiter = ec2.get_waiter("instance_running")
+            waiter.wait(InstanceIds=[provider_instance_id])
+        except botocore.exceptions.WaiterError:
+            ec2.terminate_instances(InstanceIds=[provider_instance_id])
+            raise ProvisionTimeoutError("instance failed to reach running state")
+
+        # Phase 2 — poll until the worker has registered itself.
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            row = await self._db.fetchrow(
+                "SELECT state FROM compute_inventory WHERE provider_instance_id = $1",
+                provider_instance_id,
+            )
+            if row and row["state"] == "ready":
+                return "ready"
+            await asyncio.sleep(5)
+
+        # Deadline exceeded — kill the instance to avoid billing an orphan.
+        try:
+            ec2.terminate_instances(InstanceIds=[provider_instance_id])
+        except Exception:
+            pass
+        raise ProvisionTimeoutError("worker did not register in time")
+
+    # ------------------------------------------------------------------
+    # DEPROVISION
+    # ------------------------------------------------------------------
 
     async def deprovision_node(
         self,
@@ -283,7 +369,23 @@ class AWSAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        raise NotImplementedError("Task 15")
+        """Terminate an EC2 instance.
+
+        Idempotent: ``InvalidInstanceID.NotFound`` is silently ignored so
+        callers can safely retry deprovision after a partial failure.
+        """
+        ec2 = self._ec2_client("us-east-1", provider_credential_name)
+        try:
+            ec2.terminate_instances(InstanceIds=[provider_instance_id])
+        except botocore.exceptions.ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "InvalidInstanceID.NotFound":
+                return
+            raise ProvisionError("terminate failed")
+
+    # ------------------------------------------------------------------
+    # LOGS
+    # ------------------------------------------------------------------
 
     async def get_logs(
         self,
@@ -291,7 +393,17 @@ class AWSAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> Dict:
-        raise NotImplementedError("Task 15")
+        """Return EC2 console output for cloud-init debugging.
+
+        Returns ``{"logs": []}`` on any boto3 error so callers always get a
+        well-shaped response even when the instance is very new or already gone.
+        """
+        ec2 = self._ec2_client("us-east-1", provider_credential_name)
+        try:
+            resp = ec2.get_console_output(InstanceId=provider_instance_id)
+            return {"logs": (resp.get("Output") or "").splitlines()}
+        except botocore.exceptions.ClientError:
+            return {"logs": []}
 
     async def get_log_streaming_info(
         self,
@@ -299,4 +411,20 @@ class AWSAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> Dict:
-        raise NotImplementedError("Task 15")
+        """Return WebSocket log-streaming coordinates for a registered worker.
+
+        If the worker has not yet registered (no ``node_id`` in inventory) we
+        return ``{"supported": False}`` so callers can fall back to
+        ``get_logs``.
+        """
+        row = await self._db.fetchrow(
+            "SELECT node_id FROM compute_inventory WHERE provider_instance_id = $1",
+            provider_instance_id,
+        )
+        if row and row["node_id"]:
+            return {
+                "supported": True,
+                "kind": "worker-ws",
+                "ws_url": f"/admin/workers/{row['node_id']}/logs",
+            }
+        return {"supported": False, "reason": "not registered"}
