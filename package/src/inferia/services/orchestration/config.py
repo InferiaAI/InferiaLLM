@@ -121,6 +121,25 @@ class Settings(UnifiedBaseSettings):
         default=20, validation_alias="DEFAULT_POLLING_INTERVAL"
     )
 
+    # Worker provisioning
+    worker_image: str = Field(
+        default="ghcr.io/inferia-ai/inferia-worker",
+        validation_alias="INFERIA_WORKER_IMAGE",
+    )
+    worker_image_tag: str = Field(
+        default="latest",
+        validation_alias="INFERIA_WORKER_IMAGE_TAG",
+    )
+    bootstrap_token_ttl_seconds: int = Field(
+        default=3600,
+        validation_alias="INFERIA_BOOTSTRAP_TOKEN_TTL_SECONDS",
+    )
+    control_plane_external_url: str = Field(
+        default="http://api-gateway:8000",
+        validation_alias="INFERIA_CONTROL_PLANE_EXTERNAL_URL",
+        description="Public URL workers use to reach /v1/workers/register",
+    )
+
     # Deployment Log Persistence (Elasticsearch)
     elasticsearch_url: Optional[str] = Field(
         default=None, validation_alias="ELASTICSEARCH_URL"
