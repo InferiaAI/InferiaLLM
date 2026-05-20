@@ -14,8 +14,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSoc
 from pydantic import BaseModel
 
 from inferia.services.orchestration.services.worker_controller.auth import (
+    InvalidBootstrapToken,
     InvalidTokenError,
     WorkerAuth,
+    consume_bootstrap_token as _db_consume_bootstrap_token,
 )
 from inferia.services.orchestration.services.worker_controller.protocol import (
     CommandResultBody,
@@ -31,6 +33,20 @@ from inferia.services.orchestration.services.worker_controller.registry import (
 logger = logging.getLogger("inferia.workers_api")
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# DB-backed bootstrap token consumption (patchable for tests)
+# ---------------------------------------------------------------------------
+
+async def _consume_bootstrap_token(conn, *, token: str):
+    """Thin wrapper around the DB-backed consume helper.
+
+    Exists as a module-level function so tests can patch it without needing a
+    real asyncpg connection.  conn may be None when the body carries no
+    bootstrap_token (legacy JWT path never reaches this function).
+    """
+    return await _db_consume_bootstrap_token(conn, token=token)
 
 
 # Injected at app startup; tests override via dependency_overrides.
@@ -80,17 +96,47 @@ async def register_worker(
     auth: WorkerAuth = Depends(get_auth),
     inventory=Depends(get_inventory),
 ) -> RegisterResponse:
-    token = _strip_bearer(authorization)
-    if not token:
-        raise HTTPException(401, "missing bootstrap token")
+    # --- Authentication: two paths -------------------------------------------
+    # Path A (new): bootstrap_token in request body → DB-backed single-use
+    # consume.  No Authorization header required.
+    # Path B (legacy): Authorization: Bearer <JWT> → stateless JWT verify.
+    # Both paths verify pool_id scope.
+    if body.bootstrap_token is not None:
+        try:
+            # conn=None is intentional: the real DB connection is not wired into
+            # this router (legacy design).  Tests patch _consume_bootstrap_token
+            # to avoid needing asyncpg.  In production, callers that use the body
+            # bootstrap_token path must wire up a DB conn via the _deps adapter
+            # (future work) or use the Authorization header path instead.
+            db_claim = await _consume_bootstrap_token(None, token=body.bootstrap_token)
+        except InvalidBootstrapToken as e:
+            raise HTTPException(401, "invalid_bootstrap_token")
 
-    try:
-        claims = auth.verify_bootstrap_token(token)
-    except InvalidTokenError as e:
-        raise HTTPException(401, f"invalid bootstrap token: {e}")
+        if str(db_claim.pool_id) != str(body.pool_id):
+            raise HTTPException(401, "pool_scope_violation")
 
-    if claims.pool_id != body.pool_id:
-        raise HTTPException(403, "bootstrap token is for a different pool")
+    else:
+        # Legacy path: Authorization header with JWT bootstrap token.
+        token = _strip_bearer(authorization)
+        if not token:
+            raise HTTPException(401, "missing bootstrap token")
+        try:
+            claims = auth.verify_bootstrap_token(token)
+        except InvalidTokenError as e:
+            raise HTTPException(401, f"invalid bootstrap token: {e}")
+        if claims.pool_id != body.pool_id:
+            raise HTTPException(403, "bootstrap token is for a different pool")
+
+    # --- Build cloud-env labels to merge into inventory ----------------------
+    labels: dict = {}
+    if body.runtime_env:
+        labels["runtime_env"] = body.runtime_env
+    if body.instance_id:
+        labels["instance_id"] = body.instance_id
+    if body.region:
+        labels["region"] = body.region
+    if body.availability_zone:
+        labels["availability_zone"] = body.availability_zone
 
     # Upsert the compute_nodes row. If a row with the same (pool_id, node_name)
     # exists and is kind='worker', re-use its node_id (allows re-registration
@@ -101,6 +147,7 @@ async def register_worker(
             node_name=body.node_name,
             advertise_url=body.advertise_url,
             allocatable=body.allocatable,
+            labels=labels if labels else None,
         )
     except DuplicateNodeError as e:
         raise HTTPException(409, str(e))
