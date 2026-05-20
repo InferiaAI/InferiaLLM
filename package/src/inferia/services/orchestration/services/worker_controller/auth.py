@@ -151,4 +151,117 @@ __all__ = [
     "BootstrapClaims",
     "WorkerClaims",
     "InvalidTokenError",
+    # DB-backed bootstrap token helpers
+    "InvalidBootstrapToken",
+    "BootstrapClaim",
+    "mint_bootstrap_token",
+    "consume_bootstrap_token",
 ]
+
+# ---------------------------------------------------------------------------
+# DB-backed bootstrap token helpers (asyncpg)
+# ---------------------------------------------------------------------------
+# These functions deal with the worker_bootstrap_tokens table created in
+# migration 20260520.  The table schema is:
+#   id (uuid), token_hash (text), pool_id (uuid), org_id (text),
+#   expires_at (timestamptz), consumed_at (timestamptz nullable),
+#   consumed_node_id (uuid nullable), created_at (timestamptz default now())
+#
+# Design notes:
+# - Only the SHA-256 hash of the plaintext token is persisted; the plaintext
+#   is returned exactly once to the caller for embedding in EC2 user-data.
+# - consume_bootstrap_token uses an atomic UPDATE … WHERE consumed_at IS NULL
+#   so two concurrent callers racing on the same token: exactly one wins.
+# - org_id is typed as str (text in the schema), not UUID.
+# ---------------------------------------------------------------------------
+
+import hashlib
+import secrets
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+from uuid import UUID, uuid4
+
+import asyncpg
+
+
+class InvalidBootstrapToken(Exception):
+    """Raised when a bootstrap token is unknown, already consumed, or expired."""
+
+
+@dataclass(frozen=True)
+class BootstrapClaim:
+    bootstrap_id: UUID
+    pool_id: UUID
+    org_id: str  # org_id is text in the schema (migration 20260520), not uuid
+
+
+DEFAULT_BOOTSTRAP_TTL_SECONDS = 3600
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def mint_bootstrap_token(
+    conn: asyncpg.Connection,
+    *,
+    pool_id: UUID,
+    org_id: str,
+    ttl_seconds: int = DEFAULT_BOOTSTRAP_TTL_SECONDS,
+) -> tuple[str, UUID]:
+    """Generate a fresh URL-safe token, store its SHA-256 hash, return
+    (plaintext_token, bootstrap_id).
+
+    Negative TTL is allowed for tests: it produces a row whose expires_at is
+    already in the past, which consume_bootstrap_token will reject.
+    """
+    token = secrets.token_urlsafe(32)
+    bid = uuid4()
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+    await conn.execute(
+        """
+        INSERT INTO worker_bootstrap_tokens (id, token_hash, pool_id, org_id, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        bid,
+        _hash_token(token),
+        pool_id,
+        org_id,
+        expires_at,
+    )
+    return token, bid
+
+
+async def consume_bootstrap_token(
+    conn: asyncpg.Connection,
+    *,
+    token: str,
+) -> BootstrapClaim:
+    """Atomically consume a bootstrap token; return BootstrapClaim or raise
+    InvalidBootstrapToken.
+
+    The UPDATE … WHERE consumed_at IS NULL guarantees single-use even under
+    concurrent callers: the database serialises the UPDATE and only one
+    transaction can set consumed_at for a given row.
+    """
+    row = await conn.fetchrow(
+        """
+        UPDATE worker_bootstrap_tokens
+        SET consumed_at = now()
+        WHERE token_hash = $1
+          AND consumed_at IS NULL
+          AND expires_at > now()
+        RETURNING id, pool_id, org_id
+        """,
+        _hash_token(token),
+    )
+    if row is None:
+        raise InvalidBootstrapToken(
+            "bootstrap token is unknown, already consumed, or expired"
+        )
+    return BootstrapClaim(
+        bootstrap_id=row["id"],
+        pool_id=row["pool_id"],
+        org_id=row["org_id"],
+    )
