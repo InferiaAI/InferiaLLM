@@ -64,7 +64,7 @@ class AWSAdapter(ProviderAdapter):
         features={"cloud": "aws", "bootstrap": "cloud-init"},
     )
 
-    def __init__(self, db) -> None:
+    def __init__(self, db=None) -> None:
         self._db = db
         self._sessions: dict[str, boto3.Session] = {}
 

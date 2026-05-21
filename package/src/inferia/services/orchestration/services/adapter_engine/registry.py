@@ -13,6 +13,9 @@ from inferia.services.orchestration.services.adapter_engine.adapters.akash.akash
 from inferia.services.orchestration.services.adapter_engine.adapters.worker.worker_adapter import (
     WorkerAdapter,
 )
+from inferia.services.orchestration.services.adapter_engine.adapters.aws.aws_adapter import (
+    AWSAdapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +29,17 @@ ADAPTER_REGISTRY = {
     # createpool flow doesn't reject worker-pool requests.
     "worker": WorkerAdapter,
     "on_prem": WorkerAdapter,
+    # Native AWS EC2 adapter (boto3-based, no SkyPilot dependency).
+    "aws": AWSAdapter,
 }
 
 # Keys that are aliases for another canonical provider — hidden from
 # /inventory/providers so the dashboard doesn't render duplicate cards.
 _ADAPTER_ALIASES = {"on_prem"}
 
-_SKYPILOT_PROVIDERS = ("aws", "gcp", "azure", "lambda", "runpod")
+# AWS is now served by the native AWSAdapter above (boto3 + cloud-init),
+# so it is intentionally NOT in the SkyPilot list.
+_SKYPILOT_PROVIDERS = ("gcp", "azure", "lambda", "runpod")
 _skypilot_available = importlib.util.find_spec("sky") is not None
 
 # Register SkyPilot-based cloud adapters only when the 'sky' package is installed
@@ -45,8 +52,9 @@ if _skypilot_available:
         ADAPTER_REGISTRY[_provider] = SkyPilotAdapter
 else:
     logger.warning(
-        "SkyPilot is not installed — cloud provider adapters (aws, gcp, azure, lambda, runpod) "
-        "are unavailable. Install with: pip install 'skypilot[gcp]'"
+        "SkyPilot is not installed — cloud provider adapters (gcp, azure, lambda, runpod) "
+        "are unavailable. Install with: pip install 'skypilot[gcp]'. "
+        "AWS is served by the native boto3 adapter and does not need SkyPilot."
     )
 
 
