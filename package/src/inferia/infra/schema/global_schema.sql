@@ -173,6 +173,8 @@ CREATE TABLE IF NOT EXISTS public.compute_pools
     provider_pool_id text COLLATE pg_catalog."default",
     provider_credential_name text COLLATE pg_catalog."default",  -- References provider_credentials.name for this pool
     cluster_id text COLLATE pg_catalog."default",  -- For cluster-based pools: SkyPilot cluster name
+    org_id text COLLATE pg_catalog."default",  -- Alias for owner_id; queried by AWS adapter
+    metadata jsonb,  -- Provider-specific pool config (e.g. AWS subnet_id, security_group_ids)
     CONSTRAINT compute_pools_pkey PRIMARY KEY (id),
     CONSTRAINT compute_pools_pool_name_owner_type_owner_id_key UNIQUE (pool_name, owner_type, owner_id)
 );
