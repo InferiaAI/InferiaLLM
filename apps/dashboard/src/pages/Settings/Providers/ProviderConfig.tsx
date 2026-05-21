@@ -434,12 +434,31 @@ export default function ProviderConfigPage() {
     );
 }
 
+// Validation regex shared with the backend AWSPoolMetadata gate.
+const AWS_PROV_RE = {
+    subnet: /^subnet-[0-9a-f]{8,17}$/,
+    sg: /^sg-[0-9a-f]{8,17}$/,
+    ami: /^ami-[0-9a-f]{8,17}$/,
+    iam: /^arn:aws:iam::\d{12}:instance-profile\/.+$/,
+};
+
 function AWSFields({ config, updateField, isConfigured }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void; isConfigured?: boolean }) {
     // When the panel was loaded with stored credentials, the form starts empty
     // (masked values are stripped on load). Tell the user explicitly so they
     // don't think the existing credentials were wiped.
     const accessEmpty = !config.cloud.aws.access_key_id;
     const secretEmpty = !config.cloud.aws.secret_access_key;
+    const aws = config.cloud.aws;
+    const subnetErr = aws.subnet_id && !AWS_PROV_RE.subnet.test(aws.subnet_id)
+        ? "Must match subnet-XXXXXXXX" : "";
+    const sgErr = (aws.security_group_ids || []).find(sg => !AWS_PROV_RE.sg.test(sg))
+        ? "Each must match sg-XXXXXXXX" : "";
+    const amiErr = aws.ami_id && !AWS_PROV_RE.ami.test(aws.ami_id)
+        ? "Must match ami-XXXXXXXX" : "";
+    const iamErr = aws.iam_instance_profile && !AWS_PROV_RE.iam.test(aws.iam_instance_profile)
+        ? "Must match arn:aws:iam::ACCOUNT:instance-profile/NAME" : "";
+    const rootErr = aws.root_volume_gb && (aws.root_volume_gb < 10 || aws.root_volume_gb > 16384)
+        ? "Must be 10..16384" : "";
     return (
         <>
             {isConfigured && accessEmpty && secretEmpty && (
@@ -480,6 +499,97 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                     onChange={(e) => updateField(['cloud', 'aws', 'region'], e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 />
+            </div>
+
+            {/* AWS Provisioning Configuration — account-wide defaults SkyPilot
+                will use when creating EC2 clusters. All optional. */}
+            <div className="mt-6 pt-4 border-t border-border/60">
+                <h3 className="text-sm font-semibold">AWS Provisioning Configuration</h3>
+                <p className="text-xs text-muted-foreground mt-1 mb-4">
+                    Account-wide defaults applied to every AWS pool. Leave blank to
+                    let SkyPilot pick a sensible default (auto VPC + default SG +
+                    latest Deep Learning AMI + 100 GB root volume).
+                </p>
+
+                <div className="space-y-2">
+                    <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <input
+                        id="aws-subnet"
+                        value={aws.subnet_id || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'subnet_id'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="subnet-0123456789abcdef0"
+                    />
+                    {subnetErr && <p className="text-xs text-red-500">{subnetErr}</p>}
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
+                    <input
+                        id="aws-sg"
+                        value={(aws.security_group_ids || []).join(", ")}
+                        onChange={(e) => {
+                            const parts = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
+                            updateField(['cloud', 'aws', 'security_group_ids'], parts.length ? parts : undefined);
+                        }}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="sg-abc12345, sg-def67890"
+                    />
+                    {sgErr && <p className="text-xs text-red-500">{sgErr}</p>}
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <input
+                        id="aws-ami"
+                        value={aws.ami_id || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'ami_id'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="ami-deadbeef00000000 (auto if blank)"
+                    />
+                    {amiErr && <p className="text-xs text-red-500">{amiErr}</p>}
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <input
+                        id="aws-iam"
+                        value={aws.iam_instance_profile || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'iam_instance_profile'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="arn:aws:iam::123456789012:instance-profile/inferia-worker"
+                    />
+                    {iamErr && <p className="text-xs text-red-500">{iamErr}</p>}
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-root" className="text-sm font-medium">Root Volume Size (GB) <span className="text-muted-foreground text-xs">(default 100)</span></label>
+                    <input
+                        id="aws-root"
+                        type="number"
+                        min={10}
+                        max={16384}
+                        value={aws.root_volume_gb ?? ""}
+                        onChange={(e) => {
+                            const v = e.target.value;
+                            updateField(['cloud', 'aws', 'root_volume_gb'], v === "" ? undefined : parseInt(v, 10));
+                        }}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="100"
+                    />
+                    {rootErr && <p className="text-xs text-red-500">{rootErr}</p>}
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-image-tag" className="text-sm font-medium">inferia-worker Image Tag <span className="text-muted-foreground text-xs">(default "latest")</span></label>
+                    <input
+                        id="aws-image-tag"
+                        value={aws.worker_image_tag || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'worker_image_tag'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder='v1.2.3'
+                    />
+                </div>
             </div>
         </>
     );

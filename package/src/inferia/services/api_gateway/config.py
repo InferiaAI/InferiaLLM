@@ -18,6 +18,17 @@ class AWSConfig(BaseModel):
     access_key_id: Optional[str] = None
     secret_access_key: Optional[str] = None
     region: str = "us-east-1"
+    # Account-wide AWS provisioning defaults. SkyPilot uses these when
+    # spinning up pools; previously the same fields lived on each pool's
+    # compute_pools.metadata jsonb. None ⇒ SkyPilot picks a default
+    # (creates a VPC, default SG, latest Deep Learning AMI, no IAM
+    # instance profile, 100 GB root, "latest" worker image).
+    subnet_id: Optional[str] = None
+    security_group_ids: Optional[list[str]] = None
+    ami_id: Optional[str] = None
+    iam_instance_profile: Optional[str] = None
+    root_volume_gb: Optional[int] = None
+    worker_image_tag: Optional[str] = None
 
 
 class GCPConfig(BaseModel):

@@ -8,7 +8,6 @@ import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
 import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
 import { addWorkerNode, type AddWorkerNodeResponse } from "@/services/nodeService"
-import { AWSPoolFields, validateAwsMeta, DEFAULT_AWS_META, type AWSMeta } from "./AWSPoolFields"
 
 // Provider icons mapping
 const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -160,8 +159,6 @@ export default function NewPool() {
     const { user, organizations } = useAuth()
     const [state, dispatch] = useReducer(poolReducer, initialState);
     const [workerResult, setWorkerResult] = useState<AddWorkerNodeResponse | null>(null);
-    const [awsMeta, setAwsMeta] = useState<AWSMeta>(DEFAULT_AWS_META);
-    const [awsErrors, setAwsErrors] = useState<Record<string, string>>({});
     const {
         step,
         selectedProvider,
@@ -253,8 +250,8 @@ export default function NewPool() {
                     description: providerDescriptions.aws,
                     icon: providerIcons.aws,
                     color: providerColors.aws,
-                    disabled: true,
                     category: "cloud",
+                    clusterMode: true,
                     configPath: "/dashboard/settings/providers/cloud/aws"
                 }
             ]
@@ -345,13 +342,11 @@ export default function NewPool() {
     useEffect(() => {
         if (selectedProvider) {
             const provider = providers.find(p => p.id === selectedProvider);
-            // AWS uses the native boto3 adapter (Inferia's AWSAdapter) and
-            // surfaces the full EC2 instance catalog through
-            // /deployment/provider/resources — it goes through the
-            // resource-card UI like Nosana/Akash, NOT the cluster UI.
+            // AWS / GCP / Azure / Lambda / Runpod are all served by SkyPilot
+            // (or fall through to a static catalog) and use the cluster UI.
             const isCluster = provider?.clusterMode ||
                 provider?.capabilities?.supports_cluster_mode ||
-                ["gcp", "azure", "lambda", "runpod"].includes(selectedProvider);
+                ["aws", "gcp", "azure", "lambda", "runpod"].includes(selectedProvider);
             dispatch({ type: "SET_CLUSTER_PROVIDER", payload: isCluster });
         }
     }, [selectedProvider, providers]);
@@ -369,11 +364,10 @@ export default function NewPool() {
             const fetchResources = async () => {
                 dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
                 try {
-                    // SkyPilot-managed cluster providers (gcp/azure/lambda/runpod)
-                    // still use the static gcpGpuTypes catalog. AWS deliberately
-                    // hits the resource endpoint so the operator sees the real
-                    // EC2 instance catalog (boto3 describe_instance_types).
-                    if (["gcp", "azure", "lambda", "runpod"].includes(selectedProvider)) {
+                    // For cluster providers (AWS/GCP/Azure/Lambda/Runpod via
+                    // SkyPilot), use the static gcpGpuTypes catalog rather
+                    // than the resource endpoint.
+                    if (["aws", "gcp", "azure", "lambda", "runpod"].includes(selectedProvider)) {
                         dispatch({ type: "SET_RESOURCES", payload: [] })
                     } else {
                         const res = await computeApi.get(`/deployment/provider/resources?provider=${selectedProvider}`)
@@ -439,16 +433,6 @@ export default function NewPool() {
             return
         }
 
-        // Validate AWS-specific metadata before the network call
-        if (selectedProvider === "aws") {
-            const errs = validateAwsMeta(awsMeta);
-            if (Object.keys(errs).length > 0) {
-                setAwsErrors(errs);
-                return;
-            }
-            setAwsErrors({});
-        }
-
         dispatch({ type: "SET_CREATING", payload: true })
 
         try {
@@ -507,17 +491,9 @@ export default function NewPool() {
                 payload.provider_credential_name = selectedCredential
             }
 
-            // Inject AWS provisioning metadata into the payload
-            if (selectedProvider === "aws") {
-                const metadata: Record<string, any> = { ...(payload.metadata || {}) };
-                metadata.subnet_id = awsMeta.subnet_id;
-                metadata.security_group_ids = awsMeta.security_group_ids;
-                if (awsMeta.ami_id) metadata.ami_id = awsMeta.ami_id;
-                if (awsMeta.iam_instance_profile) metadata.iam_instance_profile = awsMeta.iam_instance_profile;
-                metadata.root_volume_gb = awsMeta.root_volume_gb || 100;
-                if (awsMeta.worker_image_tag) metadata.worker_image_tag = awsMeta.worker_image_tag;
-                payload.metadata = metadata;
-            }
+            // AWS provisioning configuration (subnet/SG/AMI/IAM/root/image-tag)
+            // is now managed account-wide under Settings → Providers → AWS,
+            // not per-pool. SkyPilot reads those defaults via the credential.
 
             const createRes = await computeApi.post("/deployment/createpool", payload)
             const newPoolId = createRes?.data?.pool_id || createRes?.data?.id;
@@ -664,15 +640,27 @@ export default function NewPool() {
                 </div>
             )}
 
-            {/* Step 2: Configure Compute - Cluster Providers (GCP/SkyPilot) */}
+            {/* Step 2: Configure Compute - Cluster Providers (GCP/SkyPilot/AWS) */}
             {step === 2 && isClusterProvider && (
                 <div className="space-y-6">
                     <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border">
                         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                             <Cloud className="w-5 h-5" />
-                            {selectedProvider === 'gcp' ? 'Google Cloud Platform' : 'SkyPilot'} Configuration
+                            {selectedProvider === 'gcp' ? 'Google Cloud Platform' :
+                             selectedProvider === 'aws' ? 'Amazon Web Services' :
+                             'SkyPilot'} Configuration
                         </h3>
-                        
+
+                        {selectedProvider === "aws" && (
+                            <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg text-xs text-blue-700 dark:text-blue-200">
+                                AWS provisioning details (subnet, security groups, AMI,
+                                IAM profile, root volume, worker image tag) are configured
+                                account-wide under <span className="font-semibold">Settings
+                                → Providers → AWS</span>. SkyPilot uses those defaults plus
+                                the region and GPU type below.
+                            </div>
+                        )}
+
                         {/* Region Selection */}
                         <div className="mb-6">
                             <label className="text-sm font-medium mb-2 block">Select Region</label>
@@ -924,16 +912,9 @@ export default function NewPool() {
                             useSpot={useSpot}
                         />
 
-                        {/* AWS provisioning configuration */}
-                        {selectedProvider === "aws" && (
-                            <div className="mt-4">
-                                <AWSPoolFields
-                                    value={awsMeta}
-                                    onChange={(next) => setAwsMeta(next)}
-                                    errors={awsErrors}
-                                />
-                            </div>
-                        )}
+                        {/* AWS provisioning configuration is now in
+                            Settings → Providers → AWS (account-wide); NewPool
+                            only needs region + GPU + (optional) credential. */}
 
                         {/* Cluster-specific info */}
                         {isClusterProvider && (

@@ -10,7 +10,6 @@ import {
   Tag,
   Terminal,
   ScrollText,
-  Cloud,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -21,21 +20,14 @@ import {
   deleteNode,
   type NodeView,
 } from "@/services/nodeService";
-import { getPoolMetadata, patchPoolMetadata } from "@/services/poolService";
 import LabelEditor from "@/components/nodes/LabelEditor";
 import NodeLogs from "@/components/nodes/NodeLogs";
 import NodeShell from "@/components/nodes/NodeShell";
-import {
-  AWSPoolFields,
-  validateAwsMeta,
-  DEFAULT_AWS_META,
-  type AWSMeta,
-} from "./AWSPoolFields";
 
-type Tab = "overview" | "labels" | "logs" | "shell" | "aws-config";
+type Tab = "overview" | "labels" | "logs" | "shell";
 
 function parseTab(s: string | null): Tab {
-  if (s === "labels" || s === "logs" || s === "shell" || s === "aws-config")
+  if (s === "labels" || s === "logs" || s === "shell")
     return s;
   return "overview";
 }
@@ -54,12 +46,6 @@ export default function InstanceDetail() {
   const [node, setNode] = useState<NodeView | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
-
-  // AWS Config tab state
-  const [awsMeta, setAwsMeta] = useState<AWSMeta>(DEFAULT_AWS_META);
-  const [awsErrors, setAwsErrors] = useState<Record<string, string>>({});
-  const [awsLoading, setAwsLoading] = useState(false);
-  const [awsSaving, setAwsSaving] = useState(false);
 
   const fetchNode = useCallback(async (silent = false) => {
     if (!id) return;
@@ -86,67 +72,6 @@ export default function InstanceDetail() {
     const interval = window.setInterval(() => void fetchNode(true), 15_000);
     return () => window.clearInterval(interval);
   }, [fetchNode]);
-
-  // Load AWS metadata when the AWS Config tab becomes active
-  useEffect(() => {
-    if (activeTab !== "aws-config" || !node?.pool_id) return;
-    if (node.provider !== "aws") return;
-
-    setAwsLoading(true);
-    getPoolMetadata(node.pool_id)
-      .then((meta) => {
-        setAwsMeta({
-          subnet_id: (meta.subnet_id as string) || "",
-          security_group_ids: (meta.security_group_ids as string[]) || [],
-          ami_id: (meta.ami_id as string) || "",
-          iam_instance_profile: (meta.iam_instance_profile as string) || "",
-          root_volume_gb: (meta.root_volume_gb as number) ?? 100,
-          worker_image_tag: (meta.worker_image_tag as string) || "",
-        });
-      })
-      .catch((e: unknown) => {
-        console.error("Failed to load AWS metadata", e);
-        toast.error("Failed to load AWS configuration");
-      })
-      .finally(() => setAwsLoading(false));
-  }, [activeTab, node?.pool_id, node?.provider]);
-
-  const handleSaveAwsMeta = async () => {
-    if (!node?.pool_id) return;
-    const errs = validateAwsMeta(awsMeta);
-    if (Object.keys(errs).length > 0) {
-      setAwsErrors(errs);
-      return;
-    }
-    setAwsErrors({});
-    setAwsSaving(true);
-    try {
-      await patchPoolMetadata(node.pool_id, {
-        subnet_id: awsMeta.subnet_id,
-        security_group_ids: awsMeta.security_group_ids,
-        ...(awsMeta.ami_id ? { ami_id: awsMeta.ami_id } : {}),
-        ...(awsMeta.iam_instance_profile
-          ? { iam_instance_profile: awsMeta.iam_instance_profile }
-          : {}),
-        root_volume_gb: awsMeta.root_volume_gb || 100,
-        ...(awsMeta.worker_image_tag
-          ? { worker_image_tag: awsMeta.worker_image_tag }
-          : {}),
-      });
-      toast.success("AWS configuration saved");
-    } catch (e: unknown) {
-      const detail =
-        (e as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail;
-      toast.error(
-        typeof detail === "string"
-          ? detail
-          : "Failed to save AWS configuration",
-      );
-    } finally {
-      setAwsSaving(false);
-    }
-  };
 
   const handleAddLabel = async (k: string, v: string) => {
     if (!id) return;
@@ -284,11 +209,6 @@ export default function InstanceDetail() {
                 { label: "Shell", value: "shell" as const, icon: Terminal },
               ]
             : []),
-          // AWS Config tab only appears for AWS-provisioned nodes that
-          // belong to a pool (pool_id is set) so we can read/write metadata.
-          ...(node.provider === "aws" && node.pool_id
-            ? [{ label: "AWS Config", value: "aws-config" as const, icon: Cloud }]
-            : []),
         ] as { label: string; value: Tab; icon: React.ComponentType<{ className?: string }> | null }[]).map((t) => (
           <button
             key={t.value}
@@ -398,53 +318,6 @@ export default function InstanceDetail() {
           </div>
         )}
 
-        {activeTab === "aws-config" && node.provider === "aws" && node.pool_id && (
-          <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-mono text-sm font-semibold inline-flex items-center gap-2">
-                  <Cloud className="w-4 h-4" /> AWS Provisioning Configuration
-                </h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  These settings are passed to the AWS adapter when spinning up
-                  EC2 instances for this node. Changes take effect for the next
-                  provisioning operation.
-                </p>
-              </div>
-            </div>
-
-            {awsLoading ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">
-                Loading AWS configuration…
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <AWSPoolFields
-                  value={awsMeta}
-                  onChange={(next) => setAwsMeta(next)}
-                  errors={awsErrors}
-                />
-
-                {canEdit && (
-                  <div className="flex justify-end pt-2">
-                    <button
-                      onClick={() => void handleSaveAwsMeta()}
-                      disabled={awsSaving}
-                      className={cn(
-                        "px-5 py-2 rounded-md text-sm font-medium text-white transition-colors",
-                        awsSaving
-                          ? "bg-ember-600/60 cursor-not-allowed"
-                          : "bg-ember-600 hover:bg-ember-700",
-                      )}
-                    >
-                      {awsSaving ? "Saving…" : "Save AWS Configuration"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
