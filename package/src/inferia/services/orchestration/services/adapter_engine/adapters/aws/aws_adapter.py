@@ -267,37 +267,64 @@ class AWSAdapter(ProviderAdapter):
     # ------------------------------------------------------------------
 
     async def discover_resources(self, *, region: str = "us-east-1") -> List[Dict]:
-        """List GPU instance types in the given region.
+        """List EC2 instance types in the given region.
 
-        Queries describe_instance_types filtered to the g5/g4dn/p4d/p5 families
-        that Inferia supports.  AWS errors are surfaced as ProvisionError without
-        leaking internal boto3 text to callers.
+        Returns every instance type the operator's credentials can see in this
+        region (no family filter). Each row carries a ``gpu_vendor`` field
+        ("nvidia"/"amd"/"intel"/"none") so the UI can offer client-side
+        filters (NVIDIA / Other GPU / No GPU). AWS errors are surfaced as
+        ProvisionError without leaking internal boto3 text to callers.
+
+        Uses describe_instance_types with NextToken paging to cover the full
+        catalog (~700 types as of 2026-05). Server-side filter intentionally
+        omitted — the UI prefers a single response it can re-filter without
+        round-trips.
         """
         ec2 = self._ec2_client(region, None)
+        instance_types: List[Dict] = []
+        next_token: Optional[str] = None
         try:
-            resp = ec2.describe_instance_types(
-                Filters=[
-                    {
-                        "Name": "instance-type",
-                        "Values": ["g5.*", "g4dn.*", "p4d.*", "p5.*"],
-                    }
-                ],
-            )
+            while True:
+                kwargs: Dict[str, Any] = {"MaxResults": 100}
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                resp = ec2.describe_instance_types(**kwargs)
+                instance_types.extend(resp.get("InstanceTypes", []))
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
         except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError):
             raise ProvisionError("discover_resources failed")
 
         out: List[Dict] = []
-        for it in resp.get("InstanceTypes", []):
-            gpu_info = (it.get("GpuInfo") or {}).get("Gpus") or [{}]
-            gpu = gpu_info[0] if gpu_info else {}
+        for it in instance_types:
+            gpu_info_root = it.get("GpuInfo") or {}
+            gpus = gpu_info_root.get("Gpus") or []
+            gpu = gpus[0] if gpus else {}
             mem_mib = (gpu.get("MemoryInfo") or {}).get("SizeInMiB", 0)
+
+            manufacturer = (gpu.get("Manufacturer") or "").strip().lower()
+            if not gpus:
+                gpu_vendor = "none"
+            elif "nvidia" in manufacturer:
+                gpu_vendor = "nvidia"
+            elif "amd" in manufacturer:
+                gpu_vendor = "amd"
+            elif "intel" in manufacturer or "habana" in manufacturer:
+                # Habana is an Intel-acquired AI accelerator; group under
+                # "intel" for the UI's purposes.
+                gpu_vendor = "intel"
+            else:
+                gpu_vendor = "other" if manufacturer else "none"
+
             out.append(
                 {
                     "provider": "aws",
                     "provider_resource_id": it["InstanceType"],
-                    "gpu_type": gpu.get("Name", "N/A"),
+                    "gpu_type": gpu.get("Name", "N/A") if gpus else "N/A",
                     "gpu_count": gpu.get("Count", 0),
                     "gpu_memory_gb": mem_mib // 1024,
+                    "gpu_vendor": gpu_vendor,
                     "vcpu": it.get("VCpuInfo", {}).get("DefaultVCpus", 0),
                     "ram_gb": it.get("MemoryInfo", {}).get("SizeInMiB", 0) // 1024,
                     "region": region,

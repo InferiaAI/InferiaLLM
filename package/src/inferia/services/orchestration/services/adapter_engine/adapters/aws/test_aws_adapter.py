@@ -378,6 +378,7 @@ def _make_instance_type_response(instance_type: str = "g5.xlarge") -> dict:
                         {
                             "Name": "A10G",
                             "Count": 1,
+                            "Manufacturer": "NVIDIA",
                             "MemoryInfo": {"SizeInMiB": 24576},
                         }
                     ]
@@ -404,11 +405,95 @@ async def test_discover_resources_normal():
     assert r["gpu_type"] == "A10G"
     assert r["gpu_count"] == 1
     assert r["gpu_memory_gb"] == 24  # 24576 MiB // 1024
+    assert r["gpu_vendor"] == "nvidia"
     assert r["vcpu"] == 4
     assert r["ram_gb"] == 16  # 16384 MiB // 1024
     assert r["region"] == "us-east-1"
     assert r["pricing_model"] == "on_demand"
     assert r["price_per_hour"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_discover_resources_returns_all_types_with_vendor():
+    """Mixed response covering NVIDIA / AMD / Intel / no-GPU instances."""
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_instance_types.return_value = {
+        "InstanceTypes": [
+            # NVIDIA GPU
+            {
+                "InstanceType": "g5.xlarge",
+                "VCpuInfo": {"DefaultVCpus": 4},
+                "MemoryInfo": {"SizeInMiB": 16384},
+                "GpuInfo": {"Gpus": [{"Name": "A10G", "Count": 1, "Manufacturer": "NVIDIA",
+                                       "MemoryInfo": {"SizeInMiB": 24576}}]},
+            },
+            # AMD GPU
+            {
+                "InstanceType": "g4ad.xlarge",
+                "VCpuInfo": {"DefaultVCpus": 4},
+                "MemoryInfo": {"SizeInMiB": 16384},
+                "GpuInfo": {"Gpus": [{"Name": "Radeon Pro V520", "Count": 1, "Manufacturer": "AMD",
+                                       "MemoryInfo": {"SizeInMiB": 8192}}]},
+            },
+            # Habana (Intel-acquired AI accelerator)
+            {
+                "InstanceType": "dl1.24xlarge",
+                "VCpuInfo": {"DefaultVCpus": 96},
+                "MemoryInfo": {"SizeInMiB": 786432},
+                "GpuInfo": {"Gpus": [{"Name": "Gaudi HL-205", "Count": 8, "Manufacturer": "Habana",
+                                       "MemoryInfo": {"SizeInMiB": 32768}}]},
+            },
+            # Plain CPU instance
+            {
+                "InstanceType": "m5.large",
+                "VCpuInfo": {"DefaultVCpus": 2},
+                "MemoryInfo": {"SizeInMiB": 8192},
+            },
+        ]
+    }
+    with patch.object(AWSAdapter, "_ec2_client", return_value=mock_ec2):
+        adapter = AWSAdapter(db=AsyncMock())
+        resources = await adapter.discover_resources(region="us-east-1")
+
+    by_type = {r["provider_resource_id"]: r for r in resources}
+    assert by_type["g5.xlarge"]["gpu_vendor"] == "nvidia"
+    assert by_type["g4ad.xlarge"]["gpu_vendor"] == "amd"
+    assert by_type["dl1.24xlarge"]["gpu_vendor"] == "intel"
+    assert by_type["m5.large"]["gpu_vendor"] == "none"
+    assert by_type["m5.large"]["gpu_count"] == 0
+    assert by_type["m5.large"]["gpu_type"] == "N/A"
+    # No filter applied — all four types returned.
+    assert len(resources) == 4
+
+
+@pytest.mark.asyncio
+async def test_discover_resources_paginates_via_next_token():
+    """Two-page response: NextToken on page 1, absent on page 2."""
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_instance_types.side_effect = [
+        {
+            "InstanceTypes": [
+                {"InstanceType": "t3.nano", "VCpuInfo": {"DefaultVCpus": 2},
+                 "MemoryInfo": {"SizeInMiB": 512}},
+            ],
+            "NextToken": "page2",
+        },
+        {
+            "InstanceTypes": [
+                {"InstanceType": "t3.micro", "VCpuInfo": {"DefaultVCpus": 2},
+                 "MemoryInfo": {"SizeInMiB": 1024}},
+            ],
+        },
+    ]
+    with patch.object(AWSAdapter, "_ec2_client", return_value=mock_ec2):
+        adapter = AWSAdapter(db=AsyncMock())
+        resources = await adapter.discover_resources(region="us-east-1")
+
+    assert {r["provider_resource_id"] for r in resources} == {"t3.nano", "t3.micro"}
+    # NextToken was honoured.
+    assert mock_ec2.describe_instance_types.call_count == 2
+    call_two = mock_ec2.describe_instance_types.call_args_list[1]
+    assert call_two.kwargs.get("NextToken") == "page2"
 
 
 @pytest.mark.asyncio

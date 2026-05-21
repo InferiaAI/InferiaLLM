@@ -69,6 +69,112 @@ def _mask_secret(value: Optional[str]) -> Optional[str]:
     return f"{value[:4]}...{value[-4:]}"
 
 
+_FULL_MASK = "********"
+
+
+def _is_masked(value: Optional[str]) -> bool:
+    """True when value looks like one of our mask outputs.
+
+    A frontend that round-trips the masked value back on save would
+    otherwise overwrite the real credential. Both ``_mask_secret`` shapes
+    are recognised: the full-mask ``********`` and the partial-mask
+    ``XXXX...XXXX`` (4 chars + literal ``...`` + 4 chars, total 11).
+    """
+    if not value:
+        return False
+    if value == _FULL_MASK:
+        return True
+    if len(value) == 11 and value[4:7] == "..." and "*" not in value:
+        return True
+    return False
+
+
+def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
+    """For each known sensitive field in ``incoming`` that arrives as a
+    masked value, substitute the corresponding value from ``existing``.
+
+    This is the server-side guard against the round-trip bug where a
+    dashboard form pre-populated with masked values is submitted as-is,
+    replacing the real key in the DB with the literal mask string.
+    """
+    # Operate on a copy so we don't mutate the caller's dict in place.
+    import copy as _copy
+    out = _copy.deepcopy(incoming)
+    cloud_in = out.get("cloud") or {}
+    cloud_ex = (existing.get("providers") or {}).get("cloud") or {}
+
+    # AWS — both access_key_id and secret_access_key may arrive masked.
+    aws_in = cloud_in.get("aws") or {}
+    aws_ex = cloud_ex.get("aws") or {}
+    for fld in ("access_key_id", "secret_access_key"):
+        if _is_masked(aws_in.get(fld)):
+            preserved = aws_ex.get(fld)
+            if preserved is not None:
+                aws_in[fld] = preserved
+            else:
+                # No prior value to fall back to; drop the masked field
+                # entirely so we don't persist the literal mask string.
+                aws_in.pop(fld, None)
+    if aws_in:
+        cloud_in["aws"] = aws_in
+
+    # GCP service_account_json is masked with "********".
+    gcp_in = cloud_in.get("gcp") or {}
+    gcp_ex = cloud_ex.get("gcp") or {}
+    if _is_masked(gcp_in.get("service_account_json")):
+        if gcp_ex.get("service_account_json"):
+            gcp_in["service_account_json"] = gcp_ex["service_account_json"]
+        else:
+            gcp_in.pop("service_account_json", None)
+    if gcp_in:
+        cloud_in["gcp"] = gcp_in
+
+    # Azure client_secret.
+    azure_in = cloud_in.get("azure") or {}
+    azure_ex = cloud_ex.get("azure") or {}
+    if _is_masked(azure_in.get("client_secret")):
+        if azure_ex.get("client_secret"):
+            azure_in["client_secret"] = azure_ex["client_secret"]
+        else:
+            azure_in.pop("client_secret", None)
+    if azure_in:
+        cloud_in["azure"] = azure_in
+
+    # IBM api_key.
+    ibm_in = cloud_in.get("ibm") or {}
+    ibm_ex = cloud_ex.get("ibm") or {}
+    if _is_masked(ibm_in.get("api_key")):
+        if ibm_ex.get("api_key"):
+            ibm_in["api_key"] = ibm_ex["api_key"]
+        else:
+            ibm_in.pop("api_key", None)
+    if ibm_in:
+        cloud_in["ibm"] = ibm_in
+
+    if cloud_in:
+        out["cloud"] = cloud_in
+
+    # VectorDB chroma api_key.
+    vec_in = (out.get("vectordb") or {}).get("chroma") or {}
+    vec_ex = ((existing.get("providers") or {}).get("vectordb") or {}).get("chroma") or {}
+    if _is_masked(vec_in.get("api_key")):
+        if vec_ex.get("api_key"):
+            vec_in["api_key"] = vec_ex["api_key"]
+        else:
+            vec_in.pop("api_key", None)
+
+    # DePIN nosana wallet_private_key.
+    nos_in = (out.get("depin") or {}).get("nosana") or {}
+    nos_ex = ((existing.get("providers") or {}).get("depin") or {}).get("nosana") or {}
+    if _is_masked(nos_in.get("wallet_private_key")):
+        if nos_ex.get("wallet_private_key"):
+            nos_in["wallet_private_key"] = nos_ex["wallet_private_key"]
+        else:
+            nos_in.pop("wallet_private_key", None)
+
+    return out
+
+
 def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     # Create a copy to mask
     masked = config.model_copy(deep=True)
@@ -158,6 +264,15 @@ async def update_provider_config(
     from inferia.services.api_gateway.management.config_manager import config_manager
 
     new_data = wrapper.providers.model_dump(exclude_unset=True)
+
+    # Defensive: if the dashboard round-trips masked values back on save
+    # (e.g. user clicked Edit then Save without retyping), preserve the
+    # existing secret instead of persisting the literal mask string.
+    try:
+        existing_config = await config_manager.load_config(db) or {}
+    except Exception:
+        existing_config = {}
+    new_data = _preserve_masked_secrets(new_data, existing_config)
 
     # Structure for DB storage
     db_config = {"providers": new_data}

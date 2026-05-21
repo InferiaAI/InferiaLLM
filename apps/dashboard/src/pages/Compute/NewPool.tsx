@@ -74,6 +74,12 @@ interface NewPoolState {
     searchQuery: string;
     minVram: number;
     sortBy: "price_asc" | "price_desc" | "memory";
+    // Vendor filter chip group above the resource grid:
+    //   "all"     — show everything (GPU + CPU-only)
+    //   "nvidia"  — NVIDIA-branded GPUs only (default)
+    //   "other"   — non-NVIDIA GPUs (AMD, Intel/Habana, ...)
+    //   "none"    — CPU-only instances (no GPU)
+    gpuVendorFilter: "all" | "nvidia" | "other" | "none";
     providerCredentials: NosanaApiKeyResponse[];
     selectedCredential: string;
     loadingCredentials: boolean;
@@ -101,7 +107,8 @@ type NewPoolAction =
     | { type: "SET_REGION"; payload: string }
     | { type: "SET_USE_SPOT"; payload: boolean }
     | { type: "SET_CLUSTER_PROVIDER"; payload: boolean }
-    | { type: "SET_GPU_COUNT"; payload: number };
+    | { type: "SET_GPU_COUNT"; payload: number }
+    | { type: "SET_GPU_VENDOR_FILTER"; payload: NewPoolState["gpuVendorFilter"] };
 
 const initialState: NewPoolState = {
     step: 1,
@@ -114,6 +121,7 @@ const initialState: NewPoolState = {
     searchQuery: "",
     minVram: 0,
     sortBy: "price_asc",
+    gpuVendorFilter: "nvidia",
     providerCredentials: [],
     selectedCredential: "",
     loadingCredentials: false,
@@ -142,6 +150,7 @@ function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
         case "SET_USE_SPOT": return { ...state, useSpot: action.payload };
         case "SET_CLUSTER_PROVIDER": return { ...state, isClusterProvider: action.payload };
         case "SET_GPU_COUNT": return { ...state, gpuCount: action.payload };
+        case "SET_GPU_VENDOR_FILTER": return { ...state, gpuVendorFilter: action.payload, selectedResource: null };
         default: return state;
     }
 }
@@ -171,6 +180,7 @@ export default function NewPool() {
         useSpot,
         isClusterProvider,
         gpuCount,
+        gpuVendorFilter,
     } = state;
 
     // Fetch provider configuration
@@ -335,9 +345,13 @@ export default function NewPool() {
     useEffect(() => {
         if (selectedProvider) {
             const provider = providers.find(p => p.id === selectedProvider);
-            const isCluster = provider?.clusterMode || 
+            // AWS uses the native boto3 adapter (Inferia's AWSAdapter) and
+            // surfaces the full EC2 instance catalog through
+            // /deployment/provider/resources — it goes through the
+            // resource-card UI like Nosana/Akash, NOT the cluster UI.
+            const isCluster = provider?.clusterMode ||
                 provider?.capabilities?.supports_cluster_mode ||
-                ["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider);
+                ["gcp", "azure", "lambda", "runpod"].includes(selectedProvider);
             dispatch({ type: "SET_CLUSTER_PROVIDER", payload: isCluster });
         }
     }, [selectedProvider, providers]);
@@ -355,8 +369,11 @@ export default function NewPool() {
             const fetchResources = async () => {
                 dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
                 try {
-                    // For cluster providers, use predefined GPU types (no API call needed)
-                    if (["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider)) {
+                    // SkyPilot-managed cluster providers (gcp/azure/lambda/runpod)
+                    // still use the static gcpGpuTypes catalog. AWS deliberately
+                    // hits the resource endpoint so the operator sees the real
+                    // EC2 instance catalog (boto3 describe_instance_types).
+                    if (["gcp", "azure", "lambda", "runpod"].includes(selectedProvider)) {
                         dispatch({ type: "SET_RESOURCES", payload: [] })
                     } else {
                         const res = await computeApi.get(`/deployment/provider/resources?provider=${selectedProvider}`)
@@ -786,9 +803,39 @@ export default function NewPool() {
                 </div>
             )}
 
-            {/* Step 2: Configure Compute - Job Providers (Nosana, Akash) */}
+            {/* Step 2: Configure Compute - Job Providers (Nosana, Akash, AWS) */}
             {step === 2 && !isClusterProvider && selectedProvider !== "worker" && (
                 <div className="space-y-6">
+                    {/* GPU vendor filter chips — only meaningful when the
+                        provider's catalog actually carries a gpu_vendor field
+                        (AWS does today; Nosana/Akash don't, so the chips
+                        still render and "All" + "NVIDIA" both match because
+                        unknown vendor counts as NVIDIA-by-default for those
+                        existing providers). */}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted-foreground mr-1">Filter:</span>
+                        {([
+                            ["all", "All"],
+                            ["nvidia", "NVIDIA"],
+                            ["other", "Other GPU"],
+                            ["none", "No GPU"],
+                        ] as const).map(([v, label]) => (
+                            <button
+                                key={v}
+                                type="button"
+                                onClick={() => dispatch({ type: "SET_GPU_VENDOR_FILTER", payload: v })}
+                                className={cn(
+                                    "px-3 py-1 rounded-full border text-xs font-medium transition-colors",
+                                    gpuVendorFilter === v
+                                        ? "border-ember-600 bg-ember-50 text-ember-700 dark:bg-ember-900/20 dark:text-ember-300"
+                                        : "border-border hover:border-ember-400"
+                                )}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+
                     <ResourceFilter
                         searchQuery={searchQuery}
                         setSearchQuery={(q) => dispatch({ type: "SET_SEARCH", payload: q })}
@@ -807,7 +854,17 @@ export default function NewPool() {
                                     const matchesSearch = res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
                                         res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase());
                                     const matchesVram = res.gpu_memory_gb >= minVram;
-                                    return matchesSearch && matchesVram;
+                                    // gpu_vendor is set by the AWS adapter; for legacy
+                                    // providers (Nosana/Akash) the field is missing —
+                                    // treat that as "nvidia" so existing flows are
+                                    // unaffected when the chip is on its default.
+                                    const vendor = (res as any).gpu_vendor || "nvidia";
+                                    const matchesVendor =
+                                        gpuVendorFilter === "all" ||
+                                        (gpuVendorFilter === "nvidia" && vendor === "nvidia") ||
+                                        (gpuVendorFilter === "other" && (vendor === "amd" || vendor === "intel" || vendor === "other")) ||
+                                        (gpuVendorFilter === "none" && vendor === "none");
+                                    return matchesSearch && matchesVram && matchesVendor;
                                 })
                                 .sort((a, b) => {
                                     if (sortBy === "price_asc") return a.price_per_hour - b.price_per_hour;

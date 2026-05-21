@@ -4,6 +4,41 @@ import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initial
 import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key } from "lucide-react";
 import { toast } from "sonner";
 
+// True when value looks like one of the backend's mask outputs:
+//   - "********" (full-mask)
+//   - "XXXX...XXXX" — 4 chars + literal "..." + 4 chars (partial mask)
+// Matches the contract enforced by api_gateway/management/configuration.py.
+function isMaskedSecret(value: string | null | undefined): boolean {
+    if (!value) return false;
+    if (value === "********") return true;
+    if (value.length === 11 && value.substring(4, 7) === "..." && !value.includes("*")) return true;
+    return false;
+}
+
+// Scrub masked-shaped values out of the form state on load so the user
+// doesn't accidentally re-submit a mask as the real credential.
+function clearMaskedSecrets(cfg: ProvidersConfig): ProvidersConfig {
+    const scrubbed = structuredClone(cfg);
+    const aws = scrubbed.cloud?.aws as any;
+    if (aws) {
+        if (isMaskedSecret(aws.access_key_id)) aws.access_key_id = "";
+        if (isMaskedSecret(aws.secret_access_key)) aws.secret_access_key = "";
+    }
+    const gcp = scrubbed.cloud?.gcp as any;
+    if (gcp && isMaskedSecret(gcp.service_account_json)) gcp.service_account_json = "";
+    const chroma = scrubbed.vectordb?.chroma as any;
+    if (chroma && isMaskedSecret(chroma.api_key)) chroma.api_key = "";
+    const groq = scrubbed.guardrails?.groq as any;
+    if (groq && isMaskedSecret(groq.api_key)) groq.api_key = "";
+    const lakera = scrubbed.guardrails?.lakera as any;
+    if (lakera && isMaskedSecret(lakera.api_key)) lakera.api_key = "";
+    const nosana = scrubbed.depin?.nosana as any;
+    if (nosana && isMaskedSecret(nosana.wallet_private_key)) nosana.wallet_private_key = "";
+    const akash = scrubbed.depin?.akash as any;
+    if (akash && isMaskedSecret(akash.mnemonic)) akash.mnemonic = "";
+    return scrubbed;
+}
+
 type State = {
     config: ProvidersConfig;
     loading: boolean;
@@ -100,9 +135,17 @@ export default function ProviderConfigPage() {
                     akash: { ...initialProviderConfig.depin.akash, ...data.depin?.akash }
                 }
             };
-            dispatch({ type: 'SET_FIELD', field: 'config', value: merged });
+            // Determine configured state from the merged server response
+            // (which still carries masked values like "AKIA...XYZ8") BEFORE
+            // we scrub. Otherwise an isConfigured pool would look unconfigured.
+            const configured = checkConfigured(merged, providerId);
 
-            if (checkConfigured(merged, providerId)) {
+            // Scrub masked secret values from the form state so the user can't
+            // accidentally round-trip the literal mask back as the real key.
+            const scrubbed = clearMaskedSecrets(merged);
+            dispatch({ type: 'SET_FIELD', field: 'config', value: scrubbed });
+
+            if (configured) {
                 dispatch({ type: 'SET_FIELD', field: 'isConfigured', value: true });
                 dispatch({ type: 'SET_FIELD', field: 'isEditing', value: false });
             } else {
@@ -261,6 +304,7 @@ export default function ProviderConfigPage() {
                             providerId={providerId}
                             config={config}
                             updateField={updateField}
+                            isConfigured={isConfigured}
                             nosanaApiKeys={nosanaApiKeys}
                             loadingKeys={loadingKeys}
                             handleAddKey={() => dispatch({ type: 'SET_FIELD', field: 'showAddKeyModal', value: true })}
@@ -390,9 +434,21 @@ export default function ProviderConfigPage() {
     );
 }
 
-function AWSFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void }) {
+function AWSFields({ config, updateField, isConfigured }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void; isConfigured?: boolean }) {
+    // When the panel was loaded with stored credentials, the form starts empty
+    // (masked values are stripped on load). Tell the user explicitly so they
+    // don't think the existing credentials were wiped.
+    const accessEmpty = !config.cloud.aws.access_key_id;
+    const secretEmpty = !config.cloud.aws.secret_access_key;
     return (
         <>
+            {isConfigured && accessEmpty && secretEmpty && (
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                    AWS credentials are stored and masked for security. Re-enter the
+                    Access Key ID and Secret Access Key to change them; leave blank
+                    to keep the existing values.
+                </div>
+            )}
             <div className="space-y-2">
                 <label htmlFor="aws-access-key" className="text-sm font-medium">Access Key ID</label>
                 <input
@@ -400,7 +456,8 @@ function AWSFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     value={config.cloud.aws.access_key_id || ""}
                     onChange={(e) => updateField(['cloud', 'aws', 'access_key_id'], e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="AKIA..."
+                    placeholder={isConfigured ? "(unchanged — type to replace)" : "AKIA..."}
+                    autoComplete="off"
                 />
             </div>
             <div className="space-y-2">
@@ -411,7 +468,8 @@ function AWSFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     value={config.cloud.aws.secret_access_key || ""}
                     onChange={(e) => updateField(['cloud', 'aws', 'secret_access_key'], e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="********"
+                    placeholder={isConfigured ? "(unchanged — type to replace)" : "********"}
+                    autoComplete="new-password"
                 />
             </div>
             <div className="space-y-2">
@@ -797,6 +855,7 @@ function ProviderFormFields({
     providerId,
     config,
     updateField,
+    isConfigured,
     nosanaApiKeys,
     loadingKeys,
     handleAddKey,
@@ -805,6 +864,7 @@ function ProviderFormFields({
     providerId?: string;
     config: ProvidersConfig;
     updateField: (path: string[], value: any) => void;
+    isConfigured?: boolean;
     nosanaApiKeys: NosanaApiKeyResponse[];
     loadingKeys: boolean;
     handleAddKey: () => void;
@@ -812,7 +872,7 @@ function ProviderFormFields({
 }) {
     switch (providerId) {
         case "aws":
-            return <AWSFields config={config} updateField={updateField} />;
+            return <AWSFields config={config} updateField={updateField} isConfigured={isConfigured} />;
         case "gcp":
             return <GCPFields config={config} updateField={updateField} />;
         case "chroma":
