@@ -8,38 +8,7 @@ import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
 import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
 import { addWorkerNode, type AddWorkerNodeResponse } from "@/services/nodeService"
-
-// AWS validation regex (mirrors backend Pydantic validators)
-const AWS_REGEX = {
-    subnet: /^subnet-[0-9a-f]{8,17}$/,
-    sg: /^sg-[0-9a-f]{8,17}$/,
-    ami: /^ami-[0-9a-f]{8,17}$/,
-    iamProfile: /^arn:aws:iam::\d{12}:instance-profile\/.+$/,
-};
-
-function validateAwsMeta(m: Record<string, any>): Record<string, string> {
-    const errs: Record<string, string> = {};
-    if (!m.subnet_id) errs.subnet_id = "Subnet ID is required";
-    else if (!AWS_REGEX.subnet.test(m.subnet_id)) errs.subnet_id = "Must match subnet-XXXXXXXX";
-    if (!m.security_group_ids || m.security_group_ids.length === 0) {
-        errs.security_group_ids = "At least one security group is required";
-    } else {
-        for (const sg of m.security_group_ids) {
-            if (!AWS_REGEX.sg.test(sg)) { errs.security_group_ids = `Invalid: ${sg}`; break; }
-        }
-    }
-    if (m.ami_id && !AWS_REGEX.ami.test(m.ami_id)) errs.ami_id = "Must match ami-XXXXXXXX";
-    if (m.iam_instance_profile && !AWS_REGEX.iamProfile.test(m.iam_instance_profile)) {
-        errs.iam_instance_profile = "Must match arn:aws:iam::ACCOUNT:instance-profile/NAME";
-    }
-    if (m.root_volume_gb && (m.root_volume_gb < 10 || m.root_volume_gb > 16384)) {
-        errs.root_volume_gb = "Must be 10..16384";
-    }
-    if (m.worker_image_tag && /\s/.test(m.worker_image_tag)) {
-        errs.worker_image_tag = "No whitespace allowed";
-    }
-    return errs;
-}
+import { AWSPoolFields, validateAwsMeta, DEFAULT_AWS_META, type AWSMeta } from "./AWSPoolFields"
 
 // Provider icons mapping
 const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -182,14 +151,7 @@ export default function NewPool() {
     const { user, organizations } = useAuth()
     const [state, dispatch] = useReducer(poolReducer, initialState);
     const [workerResult, setWorkerResult] = useState<AddWorkerNodeResponse | null>(null);
-    const [awsMeta, setAwsMeta] = useState<Record<string, any>>({
-        subnet_id: "",
-        security_group_ids: [] as string[],
-        ami_id: "",
-        iam_instance_profile: "",
-        root_volume_gb: 100,
-        worker_image_tag: "",
-    });
+    const [awsMeta, setAwsMeta] = useState<AWSMeta>(DEFAULT_AWS_META);
     const [awsErrors, setAwsErrors] = useState<Record<string, string>>({});
     const {
         step,
@@ -907,100 +869,12 @@ export default function NewPool() {
 
                         {/* AWS provisioning configuration */}
                         {selectedProvider === "aws" && (
-                            <div className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 mt-4">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-sm font-semibold">AWS provisioning configuration</h3>
-                                    <span className="text-xs text-zinc-500">Required for EC2 spin-up</span>
-                                </div>
-
-                                {/* subnet_id */}
-                                <div className="space-y-2">
-                                    <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-red-400">*</span></label>
-                                    <input
-                                        id="aws-subnet"
-                                        type="text"
-                                        placeholder="subnet-0123456789abcdef0"
-                                        value={awsMeta.subnet_id || ""}
-                                        onChange={(e) => setAwsMeta({ ...awsMeta, subnet_id: e.target.value })}
-                                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
-                                    />
-                                    {awsErrors.subnet_id && <p className="text-xs text-red-400">{awsErrors.subnet_id}</p>}
-                                </div>
-
-                                {/* security_group_ids — comma-separated */}
-                                <div className="space-y-2">
-                                    <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-red-400">*</span></label>
-                                    <input
-                                        id="aws-sg"
-                                        type="text"
-                                        placeholder="sg-abc12345, sg-def67890"
-                                        value={(awsMeta.security_group_ids || []).join(", ")}
-                                        onChange={(e) => setAwsMeta({
-                                            ...awsMeta,
-                                            security_group_ids: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean)
-                                        })}
-                                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
-                                    />
-                                    <p className="text-xs text-zinc-500">Comma-separated; at least one required.</p>
-                                    {awsErrors.security_group_ids && <p className="text-xs text-red-400">{awsErrors.security_group_ids}</p>}
-                                </div>
-
-                                {/* ami_id (optional) */}
-                                <div className="space-y-2">
-                                    <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-zinc-500">(optional)</span></label>
-                                    <input
-                                        id="aws-ami"
-                                        type="text"
-                                        placeholder="ami-deadbeef00000000 (auto-detect DLAMI if blank)"
-                                        value={awsMeta.ami_id || ""}
-                                        onChange={(e) => setAwsMeta({ ...awsMeta, ami_id: e.target.value })}
-                                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
-                                    />
-                                    {awsErrors.ami_id && <p className="text-xs text-red-400">{awsErrors.ami_id}</p>}
-                                </div>
-
-                                {/* iam_instance_profile (optional) */}
-                                <div className="space-y-2">
-                                    <label htmlFor="aws-iam" className="text-sm font-medium">IAM instance profile ARN <span className="text-zinc-500">(optional)</span></label>
-                                    <input
-                                        id="aws-iam"
-                                        type="text"
-                                        placeholder="arn:aws:iam::123456789012:instance-profile/inferia-worker"
-                                        value={awsMeta.iam_instance_profile || ""}
-                                        onChange={(e) => setAwsMeta({ ...awsMeta, iam_instance_profile: e.target.value })}
-                                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
-                                    />
-                                    {awsErrors.iam_instance_profile && <p className="text-xs text-red-400">{awsErrors.iam_instance_profile}</p>}
-                                </div>
-
-                                {/* root_volume_gb */}
-                                <div className="space-y-2">
-                                    <label htmlFor="aws-root-gb" className="text-sm font-medium">Root EBS volume (GB) <span className="text-zinc-500">(default 100)</span></label>
-                                    <input
-                                        id="aws-root-gb"
-                                        type="number"
-                                        min={10}
-                                        max={16384}
-                                        value={awsMeta.root_volume_gb ?? 100}
-                                        onChange={(e) => setAwsMeta({ ...awsMeta, root_volume_gb: parseInt(e.target.value, 10) || 100 })}
-                                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
-                                    />
-                                    {awsErrors.root_volume_gb && <p className="text-xs text-red-400">{awsErrors.root_volume_gb}</p>}
-                                </div>
-
-                                {/* worker_image_tag */}
-                                <div className="space-y-2">
-                                    <label htmlFor="aws-image-tag" className="text-sm font-medium">inferia-worker image tag <span className="text-zinc-500">(default "latest")</span></label>
-                                    <input
-                                        id="aws-image-tag"
-                                        type="text"
-                                        placeholder="v1.2.3"
-                                        value={awsMeta.worker_image_tag || ""}
-                                        onChange={(e) => setAwsMeta({ ...awsMeta, worker_image_tag: e.target.value })}
-                                        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
-                                    />
-                                    {awsErrors.worker_image_tag && <p className="text-xs text-red-400">{awsErrors.worker_image_tag}</p>}
-                                </div>
+                            <div className="mt-4">
+                                <AWSPoolFields
+                                    value={awsMeta}
+                                    onChange={(next) => setAwsMeta(next)}
+                                    errors={awsErrors}
+                                />
                             </div>
                         )}
 
