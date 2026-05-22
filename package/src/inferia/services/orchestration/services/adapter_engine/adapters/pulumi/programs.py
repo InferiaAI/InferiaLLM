@@ -64,3 +64,50 @@ def build_ec2_program(
         pulumi.export("private_ip", instance.private_ip)
 
     return _program
+
+
+def build_gce_program(
+    *,
+    pool_id: str,
+    org_id: str,
+    bootstrap_id: str,
+    machine_type: str,
+    zone: str,
+    image_uri: str,
+    user_data: str,
+) -> Callable[[], None]:
+    """Return a Pulumi program for a single gcp.compute.Instance."""
+
+    def _program() -> None:
+        import pulumi
+        import pulumi_gcp as gcp
+
+        instance = gcp.compute.Instance(
+            f"inferia-pool-{pool_id}",
+            name=f"inferia-pool-{pool_id}",
+            machine_type=machine_type,
+            zone=zone,
+            boot_disk=gcp.compute.InstanceBootDiskArgs(
+                initialize_params=gcp.compute.InstanceBootDiskInitializeParamsArgs(
+                    image=image_uri,
+                ),
+            ),
+            network_interfaces=[
+                gcp.compute.InstanceNetworkInterfaceArgs(
+                    network="default",
+                    access_configs=[gcp.compute.InstanceNetworkInterfaceAccessConfigArgs()],
+                ),
+            ],
+            metadata={
+                "startup-script": user_data,
+                "inferia-pool-id": pool_id,
+                "inferia-org-id": org_id,
+                "inferia-bootstrap-id": bootstrap_id,
+            },
+            labels={
+                "inferia-pool-id": pool_id,
+            },
+        )
+        pulumi.export("instance_id", instance.id)
+
+    return _program
