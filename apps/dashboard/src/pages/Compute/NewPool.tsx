@@ -554,21 +554,42 @@ export default function NewPool() {
             {/* Progress Steps */}
             <StepProgress currentStep={step} />
 
-            {/* Step 1: Provider Selection */}
-            {step === 1 && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {providers.map((p) => (
-                        <ProviderCard
-                            key={p.id}
-                            provider={p}
-                            onSelect={(id) => {
-                                dispatch({ type: "SET_PROVIDER", payload: id });
-                                dispatch({ type: "SET_STEP", payload: 2 });
-                            }}
-                        />
-                    ))}
-                </div>
-            )}
+            {/* Step 1: Provider Selection.
+                Only providers whose credentials are configured under
+                Settings → Providers show up. 'worker' is always shown —
+                inferia-worker pools have no credentials to configure; the
+                worker registers itself with a bootstrap token issued at
+                pool-create time. Filtering here means the operator never
+                sees a card they can't actually use. */}
+            {step === 1 && (() => {
+                const visible = providers.filter((p) => p.isConfigured || p.id === "worker");
+                if (visible.length === 0) {
+                    return (
+                        <div className="p-12 text-center text-muted-foreground border rounded-lg border-dashed">
+                            <p className="font-medium mb-1">No providers configured yet.</p>
+                            <p className="text-sm">
+                                Open <span className="font-mono">Settings → Providers</span> and
+                                add credentials for at least one cloud or DePIN provider, or use
+                                Self-hosted (inferia-worker).
+                            </p>
+                        </div>
+                    );
+                }
+                return (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {visible.map((p) => (
+                            <ProviderCard
+                                key={p.id}
+                                provider={p}
+                                onSelect={(id) => {
+                                    dispatch({ type: "SET_PROVIDER", payload: id });
+                                    dispatch({ type: "SET_STEP", payload: 2 });
+                                }}
+                            />
+                        ))}
+                    </div>
+                );
+            })()}
 
             {/* Step 2: Self-hosted (inferia-worker) — just name the pool. */}
             {step === 2 && selectedProvider === "worker" && (

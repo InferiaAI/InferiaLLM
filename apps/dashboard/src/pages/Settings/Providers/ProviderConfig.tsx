@@ -1,8 +1,26 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState, useReducer } from "react";
 import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
-import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key } from "lucide-react";
+import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+
+// Small helper rendered next to a credential field label. Opens the
+// official cloud-provider console / docs page where the value is found.
+function CredHelp({ href, label }: { href: string; label: string }) {
+    return (
+        <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Where to find ${label}`}
+            title={`Where to find ${label}`}
+            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 hover:underline"
+        >
+            <ExternalLink className="w-3 h-3" />
+            <span>where?</span>
+        </a>
+    );
+}
 
 // True when value looks like one of the backend's mask outputs:
 //   - "********" (full-mask)
@@ -469,7 +487,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 </div>
             )}
             <div className="space-y-2">
-                <label htmlFor="aws-access-key" className="text-sm font-medium">Access Key ID</label>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="aws-access-key" className="text-sm font-medium">Access Key ID</label>
+                    <CredHelp
+                        href="https://us-east-1.console.aws.amazon.com/iam/home#/security_credentials"
+                        label="AWS Access Key ID — IAM → Security credentials → Access keys"
+                    />
+                </div>
                 <input
                     id="aws-access-key"
                     value={config.cloud.aws.access_key_id || ""}
@@ -480,7 +504,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 />
             </div>
             <div className="space-y-2">
-                <label htmlFor="aws-secret-key" className="text-sm font-medium">Secret Access Key</label>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="aws-secret-key" className="text-sm font-medium">Secret Access Key</label>
+                    <CredHelp
+                        href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html#Using_CreateAccessKey"
+                        label="AWS Secret — shown ONCE when the access key is created"
+                    />
+                </div>
                 <input
                     id="aws-secret-key"
                     type="password"
@@ -492,7 +522,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 />
             </div>
             <div className="space-y-2">
-                <label htmlFor="aws-region" className="text-sm font-medium">Region</label>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="aws-region" className="text-sm font-medium">Region</label>
+                    <CredHelp
+                        href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#concepts-available-regions"
+                        label="AWS regions reference"
+                    />
+                </div>
                 <input
                     id="aws-region"
                     value={config.cloud.aws.region || "ap-south-1"}
@@ -512,7 +548,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 </p>
 
                 <div className="space-y-2">
-                    <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <div className="flex items-center justify-between">
+                        <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                        <CredHelp
+                            href="https://us-east-1.console.aws.amazon.com/vpcconsole/home#subnets:"
+                            label="VPC → Subnets in the AWS console"
+                        />
+                    </div>
                     <input
                         id="aws-subnet"
                         value={aws.subnet_id || ""}
@@ -524,7 +566,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 </div>
 
                 <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
+                    <div className="flex items-center justify-between">
+                        <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
+                        <CredHelp
+                            href="https://us-east-1.console.aws.amazon.com/ec2/home#SecurityGroups:"
+                            label="EC2 → Security Groups in the AWS console"
+                        />
+                    </div>
                     <input
                         id="aws-sg"
                         value={(aws.security_group_ids || []).join(", ")}
@@ -539,7 +587,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 </div>
 
                 <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <div className="flex items-center justify-between">
+                        <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                        <CredHelp
+                            href="https://us-east-1.console.aws.amazon.com/ec2/home#AMICatalog:"
+                            label="EC2 → AMI Catalog (or leave blank for auto-DLAMI)"
+                        />
+                    </div>
                     <input
                         id="aws-ami"
                         value={aws.ami_id || ""}
@@ -551,7 +605,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 </div>
 
                 <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <div className="flex items-center justify-between">
+                        <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
+                        <CredHelp
+                            href="https://us-east-1.console.aws.amazon.com/iam/home#/instance-profiles"
+                            label="IAM → Instance Profiles"
+                        />
+                    </div>
                     <input
                         id="aws-iam"
                         value={aws.iam_instance_profile || ""}
@@ -603,7 +663,13 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                 Pulumi will use your default GCP credentials if service account JSON is not provided.
             </div>
             <div className="space-y-2">
-                <label htmlFor="gcp-project" className="text-sm font-medium">Project ID</label>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="gcp-project" className="text-sm font-medium">Project ID</label>
+                    <CredHelp
+                        href="https://console.cloud.google.com/projectselector2/home/dashboard"
+                        label="GCP Console → project selector"
+                    />
+                </div>
                 <input
                     id="gcp-project"
                     value={config.cloud.gcp?.project_id || ""}
@@ -613,7 +679,13 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                 />
             </div>
             <div className="space-y-2">
-                <label htmlFor="gcp-region" className="text-sm font-medium">Default Region</label>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="gcp-region" className="text-sm font-medium">Default Region</label>
+                    <CredHelp
+                        href="https://cloud.google.com/compute/docs/regions-zones"
+                        label="GCP regions and zones reference"
+                    />
+                </div>
                 <input
                     id="gcp-region"
                     value={config.cloud.gcp?.region || "us-central1"}
@@ -623,7 +695,13 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                 />
             </div>
             <div className="space-y-2">
-                <label htmlFor="gcp-sa-json" className="text-sm font-medium">Service Account JSON (Optional)</label>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="gcp-sa-json" className="text-sm font-medium">Service Account JSON (Optional)</label>
+                    <CredHelp
+                        href="https://console.cloud.google.com/iam-admin/serviceaccounts"
+                        label="IAM & Admin → Service Accounts → Keys → Add Key (JSON)"
+                    />
+                </div>
                 <textarea
                     id="gcp-sa-json"
                     value={config.cloud.gcp?.service_account_json || ""}
