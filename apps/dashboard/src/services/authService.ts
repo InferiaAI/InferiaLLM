@@ -1,6 +1,53 @@
 import api from "@/lib/api";
 import { setToken } from "@/lib/tokenStore";
 
+/** Maximum allowed length for an access token returned via URL fragment.
+ *  Mirrors the gateway-side JWKSVerifier cap so a malformed redirect can't
+ *  pump arbitrary-sized data into the in-memory token store. */
+export const MAX_ACCESS_TOKEN_LENGTH = 8192;
+
+/**
+ * Kick the browser into the gateway-driven OAuth flow. The gateway will 302
+ * through inferia-auth's `/oauth/authorize`, the user logs in there, and the
+ * gateway redirects back to the dashboard with `#access_token=<jwt>`.
+ */
+export function startExternalLogin(): void {
+  window.location.assign("/auth/start");
+}
+
+/**
+ * Read `#access_token=<jwt>` from the current URL fragment, return the token,
+ * and scrub the fragment from the address bar via `history.replaceState` so
+ * the token doesn't leak into browser history, the `Referer` header on the
+ * next navigation, or any analytics that read `location.href`.
+ *
+ * Returns `null` when the fragment is empty, missing the `access_token`
+ * param, malformed, or carries a token over `MAX_ACCESS_TOKEN_LENGTH`.
+ */
+export function consumeAccessTokenFragment(): string | null {
+  if (!window.location.hash) return null;
+  const fragment = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  if (!fragment) return null;
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(fragment);
+  } catch {
+    return null;
+  }
+  const token = params.get("access_token");
+  if (!token) return null;
+  if (token.length > MAX_ACCESS_TOKEN_LENGTH) return null;
+  // Scrub before any handler can capture it.
+  window.history.replaceState(
+    null,
+    "",
+    window.location.pathname + window.location.search,
+  );
+  return token;
+}
+
 export interface RegisterRequest {
     email: string;
     password: string;
