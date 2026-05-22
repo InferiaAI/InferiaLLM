@@ -121,13 +121,15 @@ class Settings(UnifiedBaseSettings):
         default=20, validation_alias="DEFAULT_POLLING_INTERVAL"
     )
 
-    # Worker provisioning
+    # Worker provisioning. Default points at the GHCR image published by the
+    # InferiaAI/inferia-worker repo's docker-publish workflow on v* tags.
+    # The org segment "inferiaai" is the GHCR-lowercased form of "InferiaAI".
     worker_image: str = Field(
-        default="ghcr.io/inferia-ai/inferia-worker",
+        default="ghcr.io/inferiaai/inferia-worker",
         validation_alias="INFERIA_WORKER_IMAGE",
     )
     worker_image_tag: str = Field(
-        default="latest",
+        default="v0.1.0",
         validation_alias="INFERIA_WORKER_IMAGE_TAG",
     )
     bootstrap_token_ttl_seconds: int = Field(

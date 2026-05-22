@@ -825,8 +825,9 @@ def main(argv=None):
     )
     cmp_p.add_argument(
         "--worker-image",
-        default="ghcr.io/inferia/inferia-worker:latest",
-        help="Worker container image tag",
+        default="ghcr.io/inferiaai/inferia-worker:v0.1.0",
+        help="Worker container image (full repository:tag). Published via the "
+             "InferiaAI/inferia-worker GitHub Action on v* tags.",
     )
     cmp_p.add_argument(
         "--inference-port", type=int, default=8080,
