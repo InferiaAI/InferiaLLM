@@ -5,8 +5,8 @@ export interface AWSConfig {
     secret_access_key?: string;
     region?: string;
     // Account-wide provisioning defaults (formerly per-pool metadata).
-    // SkyPilot reads these when creating EC2 clusters. All optional —
-    // leaving them blank lets SkyPilot pick sane defaults.
+    // Pulumi reads these when creating EC2 clusters. All optional —
+    // leaving them blank lets Pulumi pick sane defaults.
     subnet_id?: string;
     security_group_ids?: string[];
     ami_id?: string;

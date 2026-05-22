@@ -16,7 +16,6 @@ const providerIcons: Record<string, React.ComponentType<{ className?: string }>>
     aws: Server,
     gcp: Cloud,
     k8s: Server,
-    skypilot: Server,
     worker: HardDrive,
 }
 
@@ -27,7 +26,6 @@ const providerColors: Record<string, string> = {
     aws: "text-ember-500 bg-ember-500/10",
     gcp: "text-blue-500 bg-blue-500/10",
     k8s: "text-orange-500 bg-orange-500/10",
-    skypilot: "text-cyan-500 bg-cyan-500/10",
     worker: "text-ember-500 bg-ember-500/10",
 }
 
@@ -36,13 +34,12 @@ const providerDescriptions: Record<string, string> = {
     nosana: "Decentralized GPU Compute grid. Cheapest and fastest for inference.",
     akash: "Decentralized cloud compute. Open-source marketplace for GPUs.",
     aws: "Managed EC2 instances. High reliability, higher cost.",
-    gcp: "Google Cloud Platform with SkyPilot. Unified multi-cloud orchestration.",
+    gcp: "Google Cloud Platform with Pulumi. Unified multi-cloud orchestration.",
     k8s: "On-premises Kubernetes cluster. Full control and privacy.",
-    skypilot: "Multi-cloud orchestration. Unified interface for AWS/GCP/Azure.",
     worker: "Self-hosted GPU hosts running the inferia-worker agent. Bare-metal, your own server, or a cloud VM you spin up. After creating the pool, click 'Add Worker' to register hosts.",
 }
 
-// GCP regions for SkyPilot
+// GCP regions for Pulumi-managed clusters
 const gcpRegions = [
     { id: "us-central1", name: "Iowa (us-central1)", available: true },
     { id: "us-east1", name: "South Carolina (us-east1)", available: true },
@@ -53,7 +50,7 @@ const gcpRegions = [
     { id: "asia-southeast1", name: "Singapore (asia-southeast1)", available: true },
 ]
 
-// GPU types for GCP/SkyPilot
+// GPU types for GCP/Pulumi
 const gcpGpuTypes = [
     { gpu_type: "H100", gpu_memory_gb: 80, vcpu: 26, ram_gb: 200, description: "NVIDIA H100 80GB" },
     { gpu_type: "A100", gpu_memory_gb: 80, vcpu: 12, ram_gb: 85, description: "NVIDIA A100 80GB" },
@@ -82,7 +79,7 @@ interface NewPoolState {
     providerCredentials: NosanaApiKeyResponse[];
     selectedCredential: string;
     loadingCredentials: boolean;
-    // New fields for SkyPilot/GCP
+    // New fields for Pulumi/GCP cluster provisioning
     selectedRegion: string;
     useSpot: boolean;
     isClusterProvider: boolean;
@@ -342,7 +339,7 @@ export default function NewPool() {
     useEffect(() => {
         if (selectedProvider) {
             const provider = providers.find(p => p.id === selectedProvider);
-            // AWS / GCP / Azure / Lambda / Runpod are all served by SkyPilot
+            // AWS / GCP / Azure / Lambda / Runpod are all served by Pulumi
             // (or fall through to a static catalog) and use the cluster UI.
             const isCluster = provider?.clusterMode ||
                 provider?.capabilities?.supports_cluster_mode ||
@@ -365,7 +362,7 @@ export default function NewPool() {
                 dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
                 try {
                     // For cluster providers (AWS/GCP/Azure/Lambda/Runpod via
-                    // SkyPilot), use the static gcpGpuTypes catalog rather
+                    // Pulumi), use the static gcpGpuTypes catalog rather
                     // than the resource endpoint.
                     if (["aws", "gcp", "azure", "lambda", "runpod"].includes(selectedProvider)) {
                         dispatch({ type: "SET_RESOURCES", payload: [] })
@@ -403,7 +400,7 @@ export default function NewPool() {
             }
 
             void fetchResources()
-            if (["nosana", "akash", "gcp", "skypilot"].includes(selectedProvider)) {
+            if (["nosana", "akash", "gcp"].includes(selectedProvider)) {
                 void loadProviderCredentials()
             }
         }
@@ -472,7 +469,7 @@ export default function NewPool() {
                 payload.max_cost_per_hour = 0;
                 payload.provider_pool_id = `worker:${poolName}`;
             } else if (isClusterProvider) {
-                // Cluster-based provider (GCP/SkyPilot) - include region and spot settings
+                // Cluster-based provider (GCP/AWS/Azure via Pulumi) - include region and spot settings
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
                 payload.region_constraint = [selectedRegion];
                 payload.use_spot = useSpot;
@@ -493,7 +490,7 @@ export default function NewPool() {
 
             // AWS provisioning configuration (subnet/SG/AMI/IAM/root/image-tag)
             // is now managed account-wide under Settings → Providers → AWS,
-            // not per-pool. SkyPilot reads those defaults via the credential.
+            // not per-pool. Pulumi reads those defaults via the credential.
 
             const createRes = await computeApi.post("/deployment/createpool", payload)
             const newPoolId = createRes?.data?.pool_id || createRes?.data?.id;
@@ -640,7 +637,7 @@ export default function NewPool() {
                 </div>
             )}
 
-            {/* Step 2: Configure Compute - Cluster Providers (GCP/SkyPilot/AWS) */}
+            {/* Step 2: Configure Compute - Cluster Providers (GCP/AWS/Azure via Pulumi) */}
             {step === 2 && isClusterProvider && (
                 <div className="space-y-6">
                     <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border">
@@ -648,7 +645,8 @@ export default function NewPool() {
                             <Cloud className="w-5 h-5" />
                             {selectedProvider === 'gcp' ? 'Google Cloud Platform' :
                              selectedProvider === 'aws' ? 'Amazon Web Services' :
-                             'SkyPilot'} Configuration
+                             selectedProvider === 'azure' ? 'Microsoft Azure' :
+                             'Cluster'} Configuration
                         </h3>
 
                         {selectedProvider === "aws" && (
@@ -656,7 +654,7 @@ export default function NewPool() {
                                 AWS provisioning details (subnet, security groups, AMI,
                                 IAM profile, root volume, worker image tag) are configured
                                 account-wide under <span className="font-semibold">Settings
-                                → Providers → AWS</span>. SkyPilot uses those defaults plus
+                                → Providers → AWS</span>. Pulumi uses those defaults plus
                                 the region and GPU type below.
                             </div>
                         )}

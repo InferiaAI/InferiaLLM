@@ -501,13 +501,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 />
             </div>
 
-            {/* AWS Provisioning Configuration — account-wide defaults SkyPilot
+            {/* AWS Provisioning Configuration — account-wide defaults Pulumi
                 will use when creating EC2 clusters. All optional. */}
             <div className="mt-6 pt-4 border-t border-border/60">
                 <h3 className="text-sm font-semibold">AWS Provisioning Configuration</h3>
                 <p className="text-xs text-muted-foreground mt-1 mb-4">
                     Account-wide defaults applied to every AWS pool. Leave blank to
-                    let SkyPilot pick a sensible default (auto VPC + default SG +
+                    let Pulumi pick a sensible default (auto VPC + default SG +
                     latest Deep Learning AMI + 100 GB root volume).
                 </p>
 
@@ -599,8 +599,8 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
     return (
         <div className="space-y-4">
             <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
-                GCP uses SkyPilot for cluster orchestration. Configure your GCP credentials below.
-                SkyPilot will use your default GCP credentials if service account JSON is not provided.
+                GCP uses Pulumi for cluster orchestration. Configure your GCP credentials below.
+                Pulumi will use your default GCP credentials if service account JSON is not provided.
             </div>
             <div className="space-y-2">
                 <label htmlFor="gcp-project" className="text-sm font-medium">Project ID</label>
@@ -632,7 +632,7 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     placeholder='{"type": "service_account", ...}'
                 />
                 <p className="text-xs text-muted-foreground">
-                    Paste your GCP service account JSON key. If not provided, SkyPilot will use 
+                    Paste your GCP service account JSON key. If not provided, Pulumi will use
                     your default gcloud credentials (run <code>gcloud auth application-default login</code>).
                 </p>
             </div>
