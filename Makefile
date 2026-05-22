@@ -1,6 +1,6 @@
 # InferiaLLM Makefile
 
-.PHONY: setup start test clean docker-build-unified docker-build-split docker-up-unified docker-up-split docker-down docker-clean
+.PHONY: setup start test clean docker-build-unified docker-build-split docker-up-unified docker-up-split docker-down docker-clean docker-up-sso docker-down-sso docker-logs-sso docker-build-sso
 
 # Setup the project (env, dependencies, init)
 setup:
@@ -47,3 +47,24 @@ docker-down:
 # Clean up docker (volumes, orphans)
 docker-clean:
 	$(DOCKER_COMPOSE) --profile unified --profile split down -v --remove-orphans
+
+# ==========================================
+# SSO Topology (InferiaLLM + inferia-auth + Caddy)
+# ==========================================
+# Self-contained compose at deploy/docker-compose.sso.yml. Requires the
+# sibling repo at ../inferia-auth/ (relative to this directory). Operator
+# must add `inferia.local` and `auth.inferia.local` to /etc/hosts pointing
+# at 127.0.0.1 before bringing the stack up. See docs/operations/auth.md.
+DOCKER_COMPOSE_SSO = docker compose -f deploy/docker-compose.sso.yml
+
+docker-build-sso:
+	$(DOCKER_COMPOSE_SSO) build
+
+docker-up-sso:
+	$(DOCKER_COMPOSE_SSO) up --build -d
+
+docker-down-sso:
+	$(DOCKER_COMPOSE_SSO) down
+
+docker-logs-sso:
+	$(DOCKER_COMPOSE_SSO) logs -f --tail=100

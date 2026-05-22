@@ -1,0 +1,242 @@
+# =============================================================================
+# InferiaLLM SSO Topology — InferiaLLM + inferia-auth + Caddy reverse proxy.
+# =============================================================================
+# This compose file stands up a full Single Sign-On topology for local-dev:
+#
+#   Browser → Caddy (TLS) → inferia-app  (dashboard + API gateway)
+#                        → inferia-auth  (OAuth2 IdP + login UI)
+#                        → postgres      (shared instance, two databases)
+#
+# Two hostnames must resolve to 127.0.0.1 on the host running docker compose.
+# Add to /etc/hosts (operator step — see docs/operations/auth.md):
+#
+#     127.0.0.1 inferia.local
+#     127.0.0.1 auth.inferia.local
+#
+# This file is self-contained and does NOT depend on docker-compose.yml; run it
+# with `make docker-up-sso` (see Makefile). The smoke script lives at
+# `scripts/sso_smoke.sh` and exercises the full flow end-to-end.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # postgres — single instance, two databases (inferiallm + inferia_auth +
+  # inferia_openfga). The init.sql below creates the extra databases on first
+  # boot; the primary `inferia` database is created by POSTGRES_DB.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: inferia-sso-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: inferia
+      POSTGRES_PASSWORD: inferia
+      POSTGRES_DB: inferia
+    volumes:
+      - sso-pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sso.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inferia -d inferia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sso-net
+
+  # ---------------------------------------------------------------------------
+  # redis — used by the InferiaLLM gateway for context cache / rate limiting.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: inferia-sso-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sso-net
+
+  # ---------------------------------------------------------------------------
+  # inferia-auth — OAuth2 IdP. Issues codes/tokens for `inferiallm-dashboard`.
+  # Built from the sibling repo at ../../inferia-auth. Mounts:
+  #   - migrations: applied by the binary on boot
+  #   - openfga model: loaded into the embedded FGA store
+  # ---------------------------------------------------------------------------
+  inferia-auth:
+    build:
+      context: ../../inferia-auth
+      dockerfile: Dockerfile
+    image: inferia-auth:dev
+    container_name: inferia-auth-sso
+    restart: unless-stopped
+    environment:
+      SERVER_HTTP_PORT: "3000"
+      SERVER_GRPC_PORT: "50051"
+      SERVER_ISSUER: "https://auth.inferia.local"
+      DATABASE_URL: "postgres://inferia:inferia@postgres:5432/inferia_auth?sslmode=disable"
+      OPENFGA_DATABASE_URL: "postgres://inferia:inferia@postgres:5432/inferia_openfga?sslmode=disable"
+      OPENFGA_STORE_NAME: "inferia-auth"
+      # Pre-generated dev keys. NOT FOR PRODUCTION — generate fresh ones with
+      # the python snippet in inferia-auth/.env.example and inject via secret
+      # manager when running outside local-dev.
+      JWT_PRIVATE_KEY: "/i5FUjyhcld2023H6Xp8JksHwUhHekhYHn3or7SK+bOM1YIRu3/v0wNPbeKfXJCoAptWUrbWxsDqmi40hoK93g=="
+      JWT_PUBLIC_KEY: "jNWCEbt/79MDT23in1yQqAKbVlK21sbA6pouNIaCvd4="
+      JWT_ACCESS_TTL: "15m"
+      JWT_REFRESH_TTL: "168h"
+      ENCRYPTION_KEY: "x9tZfrL6OCoGDLg26VKE3F4djdjoPQK989p9lmCt8UY="
+      # OAuth2 seed for the InferiaLLM dashboard client. These values must
+      # match the corresponding gateway env vars below (byte-for-byte for
+      # OAUTH_REDIRECT_URI; the gateway rejects mismatches).
+      OAUTH_SEED_CLIENT_ID: "inferiallm-dashboard"
+      OAUTH_SEED_CLIENT_NAME: "InferiaLLM Dashboard"
+      OAUTH_SEED_APP_NAMESPACE: "inferiallm"
+      OAUTH_SEED_REDIRECT_URI: "https://inferia.local/auth/callback"
+      OAUTH_SEED_CLIENT_TYPE: "public"
+      OAUTH_SEED_ALLOWED_SCOPES: "openid,profile,email,inferiallm"
+      COOKIE_SECURE: "true"
+      RATE_LIMIT_MAX: "60"
+      RATE_LIMIT_WINDOW: "1m"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - sso-net
+
+  # ---------------------------------------------------------------------------
+  # inferia-app — unified InferiaLLM image. AUTH_PROVIDER=external flips the
+  # gateway into JWKS-verify mode pointed at inferia-auth.
+  # ---------------------------------------------------------------------------
+  inferia-app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: unified
+    image: inferia-app:dev
+    container_name: inferia-app-sso
+    restart: unless-stopped
+    environment:
+      SERVICE_TYPE: "unified"
+      ENVIRONMENT: "development"
+      LOG_LEVEL: "INFO"
+
+      # --- Auth provider — external mode, pointed at inferia-auth via Caddy.
+      AUTH_PROVIDER: "external"
+      EXTERNAL_AUTH_URL: "https://auth.inferia.local"
+      EXTERNAL_AUTH_ISSUER: "https://auth.inferia.local"
+      APP_NAMESPACE: "inferiallm"
+      OAUTH_CLIENT_ID: "inferiallm-dashboard"
+      OAUTH_REDIRECT_URI: "https://inferia.local/auth/callback"
+      OAUTH_JWKS_CACHE_TTL_SECONDS: "3600"
+
+      # --- Vite build-time vars. The unified Dockerfile builds the dashboard
+      # in stage 2 of the multi-stage build, so these must be set as build
+      # args, not runtime env vars, in production. For local dev we set them
+      # here so a rebuild picks them up via `make docker-up-sso` (--build).
+      VITE_AUTH_PROVIDER: "external"
+      VITE_EXTERNAL_AUTH_URL: "https://auth.inferia.local"
+
+      # --- Local superadmin (recovery path). Always works even in external
+      # mode. See docs/operations/auth.md.
+      SUPERADMIN_EMAIL: "admin@example.com"
+      SUPERADMIN_PASSWORD: "change-me-immediately-1234"
+
+      # --- DB / Redis pointing at the shared sso-net services.
+      DATABASE_URL: "postgresql://inferia:inferia@postgres:5432/inferia"
+      DATABASE_SSL: "false"
+      PG_HOST: "postgres"
+      PG_PORT: "5432"
+      PG_ADMIN_USER: "inferia"
+      PG_ADMIN_PASSWORD: "inferia"
+      INFERIA_DB_USER: "inferia"
+      INFERIA_DB_PASSWORD: "inferia"
+      INFERIA_DB: "inferia"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      REDIS_USERNAME: "default"
+      REDIS_PASSWORD: ""
+      REDIS_SSL: "false"
+
+      # --- Secrets (dev defaults — rotate before any non-local deploy).
+      JWT_SECRET_KEY: "dev-jwt-secret-please-rotate-before-production-use-32b"
+      INTERNAL_API_KEY: "dev-internal-api-key-please-rotate-before-production"
+      SECRET_ENCRYPTION_KEY: "BFogM9wUArPKU+CWLzFDqfYPCiMsWMOjIBEoc8d6yIA="
+      LOG_ENCRYPTION_KEY: "02ca6d7c1c01a04cd74c92cd273bb1e3ce0ee32b87182a317857d6fabf425d39"
+
+      # --- Behind Caddy → trust the proxy headers.
+      FORWARDED_ALLOW_IPS: "*"
+      ALLOWED_ORIGINS: "https://inferia.local,https://auth.inferia.local"
+
+      # --- Dashboard runtime URLs (public, behind Caddy).
+      DASHBOARD_API_GATEWAY_URL: "https://inferia.local"
+      DASHBOARD_INFERENCE_URL: "https://inferia.local"
+      DASHBOARD_WEB_SOCKET_URL: "wss://inferia.local"
+      DASHBOARD_SIDECAR_URL: ""
+
+      INFERIA_CONFIG: "/etc/inferia/inferia.yaml"
+    volumes:
+      - sso-appdata:/data
+      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inferia-auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks:
+      - sso-net
+
+  # ---------------------------------------------------------------------------
+  # caddy — reverse proxy + local CA for `tls internal`.
+  # Mounts the Caddyfile read-only and persists CA material so re-bringup
+  # doesn't generate a new root every time.
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: inferia-sso-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.sso:/etc/caddy/Caddyfile:ro
+      - sso-caddy-data:/data
+      - sso-caddy-config:/config
+    depends_on:
+      - inferia-app
+      - inferia-auth
+    networks:
+      sso-net:
+        aliases:
+          # Caddy needs to resolve these hostnames itself for internal probes,
+          # but more importantly the *containers* on sso-net resolve them here
+          # so that `EXTERNAL_AUTH_URL=https://auth.inferia.local` works when
+          # the gateway makes server-side HTTP calls to inferia-auth.
+          - inferia.local
+          - auth.inferia.local
+
+volumes:
+  sso-pgdata:
+  sso-appdata:
+  sso-caddy-data:
+  sso-caddy-config:
+
+networks:
+  sso-net:
+    name: inferia-sso-net

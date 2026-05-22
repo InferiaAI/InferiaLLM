@@ -1,0 +1,51 @@
+{
+	# Caddy global options. `local_certs` forces Caddy's internal CA so the two
+	# `tls internal` sites below get self-signed certificates from a CA Caddy
+	# generated and parked in its data volume. No outbound ACME calls.
+	local_certs
+	auto_https disable_redirects
+}
+
+# -----------------------------------------------------------------------------
+# inferia.local — the InferiaLLM gateway + dashboard.
+# -----------------------------------------------------------------------------
+# The unified container runs the dashboard SPA on port 3001 and the API gateway
+# (which owns /auth/*, /oauth/*, /api/*) on port 8000. Caddy's `handle` blocks
+# route requests to the right backend by path prefix; the SPA fallback handles
+# everything else.
+inferia.local {
+	tls internal
+
+	# API gateway paths. The OAuth callback (/auth/callback) and the
+	# protected /auth/me endpoint MUST hit the gateway; same for /oauth/*
+	# and /api/*. /health is the gateway's health probe used by the smoke
+	# script and Docker healthchecks.
+	handle /auth/* {
+		reverse_proxy inferia-app:8000
+	}
+	handle /oauth/* {
+		reverse_proxy inferia-app:8000
+	}
+	handle /api/* {
+		reverse_proxy inferia-app:8000
+	}
+	handle /health {
+		reverse_proxy inferia-app:8000
+	}
+	handle /internal/* {
+		reverse_proxy inferia-app:8000
+	}
+
+	# Everything else is the dashboard SPA.
+	handle {
+		reverse_proxy inferia-app:3001
+	}
+}
+
+# -----------------------------------------------------------------------------
+# auth.inferia.local — the inferia-auth IdP (OAuth2 endpoints + login UI).
+# -----------------------------------------------------------------------------
+auth.inferia.local {
+	tls internal
+	reverse_proxy inferia-auth:3000
+}
