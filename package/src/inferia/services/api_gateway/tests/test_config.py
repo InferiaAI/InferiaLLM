@@ -13,7 +13,12 @@ from inferia.services.api_gateway.config import Settings
 
 
 def _clean_env(monkeypatch, **overrides) -> None:
-    """Strip all relevant env vars then apply overrides."""
+    """Strip all relevant env vars then apply overrides.
+
+    Includes INFERIA_CONFIG because other test modules in the repo leak it
+    (set in fixtures without cleanup), and our Settings init walks the
+    unified config loader which would otherwise fail on a stale path.
+    """
     for key in (
         "AUTH_PROVIDER",
         "EXTERNAL_AUTH_URL",
@@ -22,6 +27,7 @@ def _clean_env(monkeypatch, **overrides) -> None:
         "OAUTH_CLIENT_ID",
         "OAUTH_REDIRECT_URI",
         "OAUTH_JWKS_CACHE_TTL_SECONDS",
+        "INFERIA_CONFIG",
     ):
         monkeypatch.delenv(key, raising=False)
     for k, v in overrides.items():
