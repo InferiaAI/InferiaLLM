@@ -47,12 +47,12 @@ def aws_config():
 @pytest.mark.asyncio
 async def test_provision_node_kicks_off_async_task(fake_db, aws_config, tmp_path):
     """provision_node returns immediately with state=provisioning and
-    schedules a background task that calls stack.up_async."""
+    schedules a background task that calls asyncio.to_thread(stack.up)."""
     pool_id = "00000000-0000-0000-0000-000000000001"
     org_id = "11111111-1111-1111-1111-111111111111"
 
     fake_stack = MagicMock()
-    fake_stack.up_async = AsyncMock(return_value=MagicMock(outputs={}))
+    fake_stack.up = MagicMock(return_value=MagicMock(outputs={}))
     fake_stack.set_config = MagicMock()
 
     with patch(
@@ -137,11 +137,11 @@ async def test_provision_node_invalid_metadata_rejected(fake_db, aws_config, tmp
 
 @pytest.mark.asyncio
 async def test_provision_async_failure_marks_pool_failed(fake_db, aws_config, tmp_path):
-    """When stack.up_async raises, the pool moves to lifecycle_state='failed'
+    """When asyncio.to_thread(stack.up) raises, the pool moves to lifecycle_state='failed'
     and the error message lands in metadata.error."""
     fake_stack = MagicMock()
-    fake_stack.up_async = AsyncMock(side_effect=Exception("InsufficientInstanceCapacity"))
-    fake_stack.destroy_async = AsyncMock(return_value=None)
+    fake_stack.up = MagicMock(side_effect=Exception("InsufficientInstanceCapacity"))
+    fake_stack.destroy = MagicMock(return_value=None)
     adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
     await adapter._provision_async(fake_stack, "00000000-0000-0000-0000-000000000001", "boot-1")
     # _db.execute called with UPDATE compute_pools ... lifecycle_state='failed'
@@ -150,16 +150,16 @@ async def test_provision_async_failure_marks_pool_failed(fake_db, aws_config, tm
         for c in fake_db.execute.call_args_list
     )
     assert failed_call, fake_db.execute.call_args_list
-    fake_stack.destroy_async.assert_awaited_once()
+    fake_stack.destroy.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_provision_async_success_writes_outputs(fake_db, aws_config, tmp_path):
-    """On stack.up_async success, instance_id/public_dns/private_ip go into
+    """On asyncio.to_thread(stack.up) success, instance_id/public_dns/private_ip go into
     compute_pools.metadata via a jsonb-merge UPDATE."""
     fake_stack = MagicMock()
     fake_output = lambda v: MagicMock(value=v)
-    fake_stack.up_async = AsyncMock(return_value=MagicMock(outputs={
+    fake_stack.up = MagicMock(return_value=MagicMock(outputs={
         "instance_id": fake_output("i-abc"),
         "public_dns":  fake_output("ec2-1-2-3.amazon.com"),
         "private_ip":  fake_output("10.0.0.5"),
@@ -195,7 +195,7 @@ async def test_wait_for_ready_polls_until_inventory_ready(fake_db, aws_config, t
 async def test_wait_for_ready_timeout_destroys_stack(fake_db, aws_config, tmp_path):
     fake_db.fetchrow = AsyncMock(return_value={"state": "pending"})
     fake_stack = MagicMock()
-    fake_stack.destroy_async = AsyncMock(return_value=None)
+    fake_stack.destroy = MagicMock(return_value=None)
     adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
     with patch.object(adapter, "_select_stack", return_value=fake_stack), patch(
         "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
@@ -208,13 +208,13 @@ async def test_wait_for_ready_timeout_destroys_stack(fake_db, aws_config, tmp_pa
                 timeout=0.05,
                 poll_interval=0.01,
             )
-    fake_stack.destroy_async.assert_awaited_once()
+    fake_stack.destroy.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_deprovision_node_destroys_stack(fake_db, aws_config, tmp_path):
     fake_stack = MagicMock()
-    fake_stack.destroy_async = AsyncMock(return_value=None)
+    fake_stack.destroy = MagicMock(return_value=None)
     fake_stack.workspace = MagicMock()
     fake_stack.workspace.remove_stack = MagicMock()
     adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
@@ -224,7 +224,7 @@ async def test_deprovision_node_destroys_stack(fake_db, aws_config, tmp_path):
         return_value=aws_config,
     ):
         await adapter.deprovision_node(provider_instance_id="00000000-0000-0000-0000-000000000001")
-    fake_stack.destroy_async.assert_awaited_once()
+    fake_stack.destroy.assert_called_once()
 
 
 @pytest.mark.asyncio

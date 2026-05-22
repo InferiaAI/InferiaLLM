@@ -80,7 +80,7 @@ class PulumiAzureAdapter(PulumiProvisioningBase, ProviderAdapter):
         metadata: Optional[Dict[str, Any]] = None,
         provider_credential_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        cfg = load_providers_config()
+        cfg = await load_providers_config()
         env_vars = resolve_azure_env(cfg)
 
         self.ensure_state_dir()
@@ -137,12 +137,12 @@ class PulumiAzureAdapter(PulumiProvisioningBase, ProviderAdapter):
 
     async def _provision_async(self, stack, pool_id: str) -> None:
         try:
-            await stack.up_async()
+            await asyncio.to_thread(stack.up)
             logger.info("Pulumi up succeeded for Azure pool %s", pool_id)
         except Exception as e:
             logger.error("Pulumi up failed for Azure pool %s: %s", pool_id, e)
             try:
-                await stack.destroy_async()
+                await asyncio.to_thread(stack.destroy)
             except Exception:
                 pass
 
@@ -177,7 +177,7 @@ class PulumiAzureAdapter(PulumiProvisioningBase, ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        cfg = load_providers_config()
+        cfg = await load_providers_config()
         env_vars = resolve_azure_env(cfg)
         opts = self.local_workspace_opts(env_vars=env_vars)
         stack = pulumi.automation.create_or_select_stack(
@@ -192,7 +192,7 @@ class PulumiAzureAdapter(PulumiProvisioningBase, ProviderAdapter):
                 ),
             ),
         )
-        await stack.destroy_async()
+        await asyncio.to_thread(stack.destroy)
 
     async def discover_resources(self, *, region: str = "eastus") -> list:
         # Azure VM SKU discovery deferred to a follow-up.

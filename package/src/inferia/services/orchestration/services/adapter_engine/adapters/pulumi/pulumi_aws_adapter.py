@@ -1,7 +1,7 @@
 """Pulumi-backed AWS EC2 provisioning adapter.
 
 provision_node returns immediately with lifecycle_state='provisioning'
-and schedules an asyncio background task that calls stack.up_async().
+and schedules an asyncio background task that calls asyncio.to_thread(stack.up)().
 """
 from __future__ import annotations
 
@@ -55,15 +55,20 @@ class ProvisionError(Exception):
     """Surface-safe provisioning error (no internal stack text)."""
 
 
-def load_providers_config() -> ProvidersConfig:
+async def load_providers_config() -> ProvidersConfig:
     """Load the current ProvidersConfig from system_settings.
 
-    Indirection so tests can patch it. Production loads the
-    Fernet-decrypted config from config_manager.
+    Opens a short-lived AsyncSession against the gateway DB, reads the
+    Fernet-decrypted providers blob, returns it as a Pydantic
+    ProvidersConfig. Indirection lives here so tests can monkey-patch
+    this function and skip the DB entirely.
     """
+    from inferia.services.api_gateway.db.database import AsyncSessionLocal
     from inferia.services.api_gateway.management.config_manager import config_manager
-    data = (config_manager.get_cached() or {}).get("providers") or {}
-    return ProvidersConfig.model_validate(data)
+    async with AsyncSessionLocal() as db:
+        data = await config_manager.load_config(db) or {}
+    raw = data.get("providers") or {}
+    return ProvidersConfig.model_validate(raw)
 
 
 class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
@@ -101,7 +106,7 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         metadata: Optional[Dict[str, Any]] = None,
         provider_credential_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        cfg = load_providers_config()
+        cfg = await load_providers_config()
         env_vars = resolve_aws_env(cfg)  # raises MissingCredentialsError
 
         pool_meta = dict(metadata or {})
@@ -125,18 +130,52 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         )
 
         if not ami_id:
+            # CPU-only instances (t/m/c/r families) don't need the NVIDIA
+            # DLAMI — fall back to plain Ubuntu 22.04, which boots faster
+            # and avoids "instance type doesn't support GPU AMI" errors.
+            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
+                PLAIN_UBUNTU_PARAMETER,
+            )
+            is_gpu_family = provider_resource_id.split(".")[0].lower() in {
+                "g5", "g5g", "g6", "g6e", "g6f", "g4dn", "g4ad", "p4d", "p4de",
+                "p5", "p5e", "p5en", "p3", "p3dn", "p2", "dl1", "dl2q", "trn1",
+                "trn1n", "trn2",
+            }
+            param = None if is_gpu_family else PLAIN_UBUNTU_PARAMETER
             try:
-                ami_id = latest_dlami_ami(region)
+                ami_id = latest_dlami_ami(
+                    region,
+                    aws_access_key_id=env_vars["AWS_ACCESS_KEY_ID"],
+                    aws_secret_access_key=env_vars["AWS_SECRET_ACCESS_KEY"],
+                    parameter_name=param,
+                )
             except AMILookupError as e:
                 raise ProvisionError(f"AMI lookup failed: {e}") from e
 
         self.ensure_state_dir()  # raises PulumiStateError
 
-        token, bootstrap_id = await mint_bootstrap_token(
-            self._db,
-            pool_id=UUID(pool_id) if isinstance(pool_id, str) else pool_id,
-            org_id=org_id,
-        )
+        # When constructed via the registry the adapter has no db handle —
+        # mint the bootstrap token through a short-lived asyncpg connection
+        # opened on demand against the orchestration's POSTGRES_DSN.
+        db_conn = self._db
+        owned_conn = False
+        if db_conn is None:
+            import asyncpg
+            db_conn = await asyncpg.connect(dsn=settings.postgres_dsn)
+            owned_conn = True
+        try:
+            token, bootstrap_id = await mint_bootstrap_token(
+                db_conn,
+                pool_id=UUID(pool_id) if isinstance(pool_id, str) else pool_id,
+                org_id=org_id,
+            )
+        finally:
+            if owned_conn:
+                try:
+                    await db_conn.close()
+                except Exception:
+                    pass
+
         user_data = build_user_data(
             bootstrap_token=token,
             control_plane_url=settings.control_plane_external_url,
@@ -189,11 +228,52 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             },
         }
 
+    async def provision_cluster(
+        self,
+        *,
+        cluster_name: str,
+        gpu_type: str,
+        gpu_count: int,
+        region: Optional[str] = None,
+        use_spot: bool = False,
+        provider_credential_name: Optional[str] = None,
+        pool_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        **_ignored: Any,
+    ) -> Dict[str, Any]:
+        """Provision a 1-instance "cluster" — one EC2 instance per pool.
+
+        The compute_pool_manager calls this for cloud providers with
+        supports_cluster_mode=True. We translate the cluster-shaped args
+        into a provision_node call. gpu_type carries the EC2 instance type
+        (the dashboard's resource-card path puts the real instance_id
+        like 't3.micro' / 'g5.xlarge' in allowed_gpu_types[0], which the
+        manager passes here as gpu_type).
+        """
+        if not pool_id or not org_id:
+            raise ProvisionError(
+                "provision_cluster requires pool_id and org_id — update the manager"
+            )
+        result = await self.provision_node(
+            provider_resource_id=gpu_type,
+            pool_id=pool_id,
+            org_id=org_id,
+            region=region,
+            use_spot=use_spot,
+            provider_credential_name=provider_credential_name,
+        )
+        return {
+            "cluster_id": cluster_name,
+            "hostname": result.get("metadata", {}).get("public_dns", ""),
+            "ip_address": result.get("metadata", {}).get("private_ip", ""),
+            "provider_instance_id": result.get("provider_instance_id"),
+        }
+
     async def _provision_async(self, stack: Any, pool_id: str, bootstrap_id: str) -> None:
         """Run pulumi up. On success, write outputs into compute_pools.metadata.
         On failure, set lifecycle_state='failed' and record the error."""
         try:
-            result = await stack.up_async()
+            result = await asyncio.to_thread(stack.up)
             outputs = result.outputs or {}
             meta_update = {
                 "instance_id": self._extract_output(outputs, "instance_id"),
@@ -223,9 +303,9 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                     UUID(pool_id),
                 )
             try:
-                await stack.destroy_async()
+                await asyncio.to_thread(stack.destroy)
             except Exception as de:
-                logger.warning("destroy_async failed after up failure: %s", de)
+                logger.warning("destroy failed after up failure: %s", de)
 
     @staticmethod
     def _extract_output(outputs: Dict[str, Any], key: str) -> Any:
@@ -234,9 +314,13 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             return None
         return v.value if hasattr(v, "value") else v
 
-    def _select_stack(self, pool_id: str) -> Any:
-        """Open an existing stack (no program) for wait_for_ready/deprovision."""
-        cfg = load_providers_config()
+    async def _select_stack(self, pool_id: str) -> Any:
+        """Open an existing stack (no program) for wait_for_ready/deprovision.
+
+        Async because it has to await the DB-backed providers config to
+        rebuild the AWS env vars Pulumi will inherit.
+        """
+        cfg = await load_providers_config()
         env_vars = resolve_aws_env(cfg)
         opts = self.local_workspace_opts(env_vars=env_vars)
         return pulumi.automation.create_or_select_stack(
@@ -275,9 +359,9 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             if row and row["state"] == "ready":
                 return "ready"
             await asyncio.sleep(poll_interval)
-        stack = self._select_stack(provider_instance_id)
+        stack = await self._select_stack(provider_instance_id)
         try:
-            await stack.destroy_async()
+            await asyncio.to_thread(stack.destroy)
         except Exception:
             pass
         raise ProvisionError("worker did not register within timeout")
@@ -288,8 +372,8 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        stack = self._select_stack(provider_instance_id)
-        await stack.destroy_async()
+        stack = await self._select_stack(provider_instance_id)
+        await asyncio.to_thread(stack.destroy)
         try:
             stack.workspace.remove_stack(self.stack_name_for_pool(provider_instance_id))
         except Exception as e:
@@ -297,7 +381,7 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
 
     async def discover_resources(self, *, region: str = "us-east-1") -> List[Dict[str, Any]]:
         import boto3
-        cfg = load_providers_config()
+        cfg = await load_providers_config()
         env_vars = resolve_aws_env(cfg)
         ec2 = boto3.client(
             "ec2",
@@ -351,7 +435,7 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         provider_credential_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         import boto3
-        cfg = load_providers_config()
+        cfg = await load_providers_config()
         env_vars = resolve_aws_env(cfg)
         ec2 = boto3.client(
             "ec2",

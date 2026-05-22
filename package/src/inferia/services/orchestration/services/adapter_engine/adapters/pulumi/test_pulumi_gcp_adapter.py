@@ -37,7 +37,7 @@ def gcp_config():
 @pytest.mark.asyncio
 async def test_provision_node_kicks_off_async_task(fake_db, gcp_config, tmp_path):
     fake_stack = MagicMock()
-    fake_stack.up_async = AsyncMock(return_value=MagicMock(outputs={}))
+    fake_stack.up = MagicMock(return_value=MagicMock(outputs={}))
     fake_stack.set_config = MagicMock()
     pool_id = "00000000-0000-0000-0000-000000000001"
     with patch(

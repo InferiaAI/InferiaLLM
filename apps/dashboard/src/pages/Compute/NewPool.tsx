@@ -335,15 +335,17 @@ export default function NewPool() {
         isConfigured: isProviderConfigured(p.id)
     })), [providerMeta, config]);
 
-    // Determine if selected provider is a cluster-based provider
+    // Determine if selected provider is a cluster-based provider.
+    // AWS is provisioned by Pulumi but its catalog comes from the live
+    // describe_instance_types call, so it goes through the resource-card
+    // UI (with the GPU-vendor filter chips) — NOT the static GCP cluster
+    // UI. Only GCP/Azure/Lambda/Runpod still fall back to the static path.
     useEffect(() => {
         if (selectedProvider) {
             const provider = providers.find(p => p.id === selectedProvider);
-            // AWS / GCP / Azure / Lambda / Runpod are all served by Pulumi
-            // (or fall through to a static catalog) and use the cluster UI.
             const isCluster = provider?.clusterMode ||
                 provider?.capabilities?.supports_cluster_mode ||
-                ["aws", "gcp", "azure", "lambda", "runpod"].includes(selectedProvider);
+                ["gcp", "azure", "lambda", "runpod"].includes(selectedProvider);
             dispatch({ type: "SET_CLUSTER_PROVIDER", payload: isCluster });
         }
     }, [selectedProvider, providers]);
@@ -361,10 +363,11 @@ export default function NewPool() {
             const fetchResources = async () => {
                 dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
                 try {
-                    // For cluster providers (AWS/GCP/Azure/Lambda/Runpod via
-                    // Pulumi), use the static gcpGpuTypes catalog rather
-                    // than the resource endpoint.
-                    if (["aws", "gcp", "azure", "lambda", "runpod"].includes(selectedProvider)) {
+                    // For static-cluster providers (GCP/Azure/Lambda/Runpod via
+                    // Pulumi), the UI uses the gcpGpuTypes catalog so no
+                    // network call is needed. AWS, Nosana, Akash all hit the
+                    // resource endpoint for a live catalog.
+                    if (["gcp", "azure", "lambda", "runpod"].includes(selectedProvider)) {
                         dispatch({ type: "SET_RESOURCES", payload: [] })
                     } else {
                         const res = await computeApi.get(`/deployment/provider/resources?provider=${selectedProvider}`)
@@ -477,6 +480,16 @@ export default function NewPool() {
                 // Estimate cost (for GCP, we don't have real-time pricing without API call)
                 payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
                 payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
+            } else if (selectedProvider === "aws") {
+                // AWS via Pulumi — the orchestration manager passes
+                // allowed_gpu_types[0] to provision_cluster as 'gpu_type'.
+                // For Pulumi-AWS that value IS the EC2 instance type, so
+                // forward provider_resource_id (e.g. "t3.micro", "g5.xlarge")
+                // rather than the semantic gpu name ("A10G" / "N/A").
+                payload.allowed_gpu_types = [selectedResource.provider_resource_id];
+                payload.max_cost_per_hour = selectedResource.price_per_hour || 0;
+                payload.provider_pool_id = `aws/${selectedResource.provider_resource_id}`;
+                payload.gpu_count = selectedResource.gpu_count || 1;
             } else {
                 // Job-based provider (Nosana, Akash)
                 payload.allowed_gpu_types = [selectedResource.gpu_type];

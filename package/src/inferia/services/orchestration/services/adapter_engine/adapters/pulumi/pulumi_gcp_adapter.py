@@ -88,7 +88,7 @@ class PulumiGCPAdapter(PulumiProvisioningBase, ProviderAdapter):
         metadata: Optional[Dict[str, Any]] = None,
         provider_credential_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        cfg = load_providers_config()
+        cfg = await load_providers_config()
         env_vars = resolve_gcp_env(cfg, write_dir=self.state_dir)
 
         self.ensure_state_dir()
@@ -147,12 +147,12 @@ class PulumiGCPAdapter(PulumiProvisioningBase, ProviderAdapter):
 
     async def _provision_async(self, stack, pool_id: str) -> None:
         try:
-            await stack.up_async()
+            await asyncio.to_thread(stack.up)
             logger.info("Pulumi up succeeded for GCP pool %s", pool_id)
         except Exception as e:
             logger.error("Pulumi up failed for GCP pool %s: %s", pool_id, e)
             try:
-                await stack.destroy_async()
+                await asyncio.to_thread(stack.destroy)
             except Exception:
                 pass
 
@@ -188,7 +188,7 @@ class PulumiGCPAdapter(PulumiProvisioningBase, ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        cfg = load_providers_config()
+        cfg = await load_providers_config()
         env_vars = resolve_gcp_env(cfg, write_dir=self.state_dir)
         opts = self.local_workspace_opts(env_vars=env_vars)
         stack = pulumi.automation.create_or_select_stack(
@@ -203,7 +203,7 @@ class PulumiGCPAdapter(PulumiProvisioningBase, ProviderAdapter):
                 ),
             ),
         )
-        await stack.destroy_async()
+        await asyncio.to_thread(stack.destroy)
 
     async def discover_resources(self, *, region: str = "us-central1") -> list:
         # GCP machine type discovery deferred to a follow-up.
