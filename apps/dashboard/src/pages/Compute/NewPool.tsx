@@ -555,29 +555,39 @@ export default function NewPool() {
             <StepProgress currentStep={step} />
 
             {/* Step 1: Provider Selection.
-                Only providers whose credentials are configured under
-                Settings → Providers show up. 'worker' is always shown —
-                inferia-worker pools have no credentials to configure; the
-                worker registers itself with a bootstrap token issued at
-                pool-create time. Filtering here means the operator never
-                sees a card they can't actually use. */}
+                Only show providers whose credentials are configured in
+                Settings → Providers. The 'worker' / 'k8s' providers don't
+                require credentials so they always show; everything else
+                needs an entry in ProvidersConfig. */}
             {step === 1 && (() => {
-                const visible = providers.filter((p) => p.isConfigured || p.id === "worker");
-                if (visible.length === 0) {
+                const eligible = providers.filter(
+                    (p) => p.isConfigured || p.id === "worker" || p.id === "on_prem"
+                );
+                if (eligible.length === 0) {
                     return (
-                        <div className="p-12 text-center text-muted-foreground border rounded-lg border-dashed">
-                            <p className="font-medium mb-1">No providers configured yet.</p>
-                            <p className="text-sm">
-                                Open <span className="font-mono">Settings → Providers</span> and
-                                add credentials for at least one cloud or DePIN provider, or use
-                                Self-hosted (inferia-worker).
+                        <div className="p-12 text-center border rounded-lg border-dashed bg-muted/40 dark:bg-card/40">
+                            <p className="text-sm font-medium mb-2">
+                                No provider configured yet
                             </p>
+                            <p className="text-xs text-muted-foreground mb-4">
+                                To create a compute node, first add credentials for at
+                                least one provider in <strong>Settings → Providers</strong>.
+                                The self-hosted <em>inferia-worker</em> path is always
+                                available with no credentials.
+                            </p>
+                            <Link
+                                to="/dashboard/settings/providers"
+                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700"
+                            >
+                                Go to Providers
+                                <ArrowRight className="w-4 h-4" />
+                            </Link>
                         </div>
                     );
                 }
                 return (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {visible.map((p) => (
+                        {eligible.map((p) => (
                             <ProviderCard
                                 key={p.id}
                                 provider={p}

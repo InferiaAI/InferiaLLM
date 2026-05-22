@@ -1,24 +1,19 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState, useReducer } from "react";
 import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
-import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, ExternalLink } from "lucide-react";
+import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 
-// Small helper rendered next to a credential field label. Opens the
-// official cloud-provider console / docs page where the value is found.
-function CredHelp({ href, label }: { href: string; label: string }) {
+// Small inline "where to find" hint rendered below a credential field
+// label. The HelpCircle icon plus a one-line writeup tells the user
+// exactly which screen of the cloud provider's console holds the value.
+// No external link — keep the user in the dashboard.
+function CredHint({ children }: { children: React.ReactNode }) {
     return (
-        <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Where to find ${label}`}
-            title={`Where to find ${label}`}
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 hover:underline"
-        >
-            <ExternalLink className="w-3 h-3" />
-            <span>where?</span>
-        </a>
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground mt-1">
+            <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
+            <span>{children}</span>
+        </p>
     );
 }
 
@@ -487,13 +482,7 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 </div>
             )}
             <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <label htmlFor="aws-access-key" className="text-sm font-medium">Access Key ID</label>
-                    <CredHelp
-                        href="https://us-east-1.console.aws.amazon.com/iam/home#/security_credentials"
-                        label="AWS Access Key ID — IAM → Security credentials → Access keys"
-                    />
-                </div>
+                <label htmlFor="aws-access-key" className="text-sm font-medium">Access Key ID</label>
                 <input
                     id="aws-access-key"
                     value={config.cloud.aws.access_key_id || ""}
@@ -502,15 +491,13 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                     placeholder={isConfigured ? "(unchanged — type to replace)" : "AKIA..."}
                     autoComplete="off"
                 />
+                <CredHint>
+                    AWS Console → <strong>IAM</strong> → Users → your IAM user →
+                    Security credentials → <em>Create access key</em>. Starts with <code>AKIA</code>.
+                </CredHint>
             </div>
             <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <label htmlFor="aws-secret-key" className="text-sm font-medium">Secret Access Key</label>
-                    <CredHelp
-                        href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html#Using_CreateAccessKey"
-                        label="AWS Secret — shown ONCE when the access key is created"
-                    />
-                </div>
+                <label htmlFor="aws-secret-key" className="text-sm font-medium">Secret Access Key</label>
                 <input
                     id="aws-secret-key"
                     type="password"
@@ -520,21 +507,24 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                     placeholder={isConfigured ? "(unchanged — type to replace)" : "********"}
                     autoComplete="new-password"
                 />
+                <CredHint>
+                    Shown <strong>only once</strong> on the same screen where you create
+                    the access key. If you lost it, generate a new key pair —
+                    AWS doesn't let you retrieve the secret.
+                </CredHint>
             </div>
             <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <label htmlFor="aws-region" className="text-sm font-medium">Region</label>
-                    <CredHelp
-                        href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#concepts-available-regions"
-                        label="AWS regions reference"
-                    />
-                </div>
+                <label htmlFor="aws-region" className="text-sm font-medium">Region</label>
                 <input
                     id="aws-region"
                     value={config.cloud.aws.region || "ap-south-1"}
                     onChange={(e) => updateField(['cloud', 'aws', 'region'], e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 />
+                <CredHint>
+                    Any AWS region code: <code>us-east-1</code>, <code>eu-west-2</code>,
+                    <code> ap-south-1</code>… Shown top-right of the AWS Console (e.g. "Mumbai").
+                </CredHint>
             </div>
 
             {/* AWS Provisioning Configuration — account-wide defaults Pulumi
@@ -548,13 +538,7 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                 </p>
 
                 <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                        <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
-                        <CredHelp
-                            href="https://us-east-1.console.aws.amazon.com/vpcconsole/home#subnets:"
-                            label="VPC → Subnets in the AWS console"
-                        />
-                    </div>
+                    <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
                     <input
                         id="aws-subnet"
                         value={aws.subnet_id || ""}
@@ -563,16 +547,15 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                         placeholder="subnet-0123456789abcdef0"
                     />
                     {subnetErr && <p className="text-xs text-red-500">{subnetErr}</p>}
+                    <CredHint>
+                        VPC Console → <strong>Subnets</strong>. Pick one in the same
+                        region as your access keys. Leave blank to let Pulumi create
+                        a fresh VPC + subnet automatically.
+                    </CredHint>
                 </div>
 
                 <div className="space-y-2 mt-3">
-                    <div className="flex items-center justify-between">
-                        <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
-                        <CredHelp
-                            href="https://us-east-1.console.aws.amazon.com/ec2/home#SecurityGroups:"
-                            label="EC2 → Security Groups in the AWS console"
-                        />
-                    </div>
+                    <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
                     <input
                         id="aws-sg"
                         value={(aws.security_group_ids || []).join(", ")}
@@ -584,16 +567,15 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                         placeholder="sg-abc12345, sg-def67890"
                     />
                     {sgErr && <p className="text-xs text-red-500">{sgErr}</p>}
+                    <CredHint>
+                        EC2 Console → <strong>Security Groups</strong>. Each ID looks like
+                        <code> sg-XXXXXXXX</code>. Must allow outbound TCP 443
+                        (to reach the control plane) and inbound 8080 from the CP.
+                    </CredHint>
                 </div>
 
                 <div className="space-y-2 mt-3">
-                    <div className="flex items-center justify-between">
-                        <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
-                        <CredHelp
-                            href="https://us-east-1.console.aws.amazon.com/ec2/home#AMICatalog:"
-                            label="EC2 → AMI Catalog (or leave blank for auto-DLAMI)"
-                        />
-                    </div>
+                    <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
                     <input
                         id="aws-ami"
                         value={aws.ami_id || ""}
@@ -602,16 +584,15 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                         placeholder="ami-deadbeef00000000 (auto if blank)"
                     />
                     {amiErr && <p className="text-xs text-red-500">{amiErr}</p>}
+                    <CredHint>
+                        EC2 Console → <strong>AMIs</strong>. Leave blank and Pulumi will
+                        auto-detect the latest AWS Deep Learning AMI (Ubuntu 22.04 +
+                        NVIDIA driver) for the selected region.
+                    </CredHint>
                 </div>
 
                 <div className="space-y-2 mt-3">
-                    <div className="flex items-center justify-between">
-                        <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
-                        <CredHelp
-                            href="https://us-east-1.console.aws.amazon.com/iam/home#/instance-profiles"
-                            label="IAM → Instance Profiles"
-                        />
-                    </div>
+                    <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
                     <input
                         id="aws-iam"
                         value={aws.iam_instance_profile || ""}
@@ -620,6 +601,11 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                         placeholder="arn:aws:iam::123456789012:instance-profile/inferia-worker"
                     />
                     {iamErr && <p className="text-xs text-red-500">{iamErr}</p>}
+                    <CredHint>
+                        IAM Console → <strong>Roles</strong> → your role →
+                        Trust relationships must include <code>ec2.amazonaws.com</code>.
+                        Only needed if the worker pulls from private ECR or S3.
+                    </CredHint>
                 </div>
 
                 <div className="space-y-2 mt-3">
@@ -638,6 +624,11 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                         placeholder="100"
                     />
                     {rootErr && <p className="text-xs text-red-500">{rootErr}</p>}
+                    <CredHint>
+                        Size of the EBS root volume in GB. 100 GB is enough for the
+                        worker image + a couple of model containers; bump higher if
+                        you'll pull large model artifacts at runtime.
+                    </CredHint>
                 </div>
 
                 <div className="space-y-2 mt-3">
@@ -649,6 +640,12 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                         placeholder='v1.2.3'
                     />
+                    <CredHint>
+                        Tag of <code>ghcr.io/inferiaai/inferia-worker</code> to pull on the
+                        EC2 instance. Pin (e.g. <code>0.1.0</code>) for reproducible
+                        deploys, or leave blank to follow the rolling default
+                        (<code>latest</code>).
+                    </CredHint>
                 </div>
             </div>
         </>
@@ -663,13 +660,7 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                 Pulumi will use your default GCP credentials if service account JSON is not provided.
             </div>
             <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <label htmlFor="gcp-project" className="text-sm font-medium">Project ID</label>
-                    <CredHelp
-                        href="https://console.cloud.google.com/projectselector2/home/dashboard"
-                        label="GCP Console → project selector"
-                    />
-                </div>
+                <label htmlFor="gcp-project" className="text-sm font-medium">Project ID</label>
                 <input
                     id="gcp-project"
                     value={config.cloud.gcp?.project_id || ""}
@@ -677,15 +668,14 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     placeholder="my-gcp-project"
                 />
+                <CredHint>
+                    GCP Console → click the <strong>project picker</strong> at the very
+                    top of the page. The Project ID is the string under the project name
+                    (e.g. <code>my-project-12345</code>), not the human-readable name.
+                </CredHint>
             </div>
             <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <label htmlFor="gcp-region" className="text-sm font-medium">Default Region</label>
-                    <CredHelp
-                        href="https://cloud.google.com/compute/docs/regions-zones"
-                        label="GCP regions and zones reference"
-                    />
-                </div>
+                <label htmlFor="gcp-region" className="text-sm font-medium">Default Region</label>
                 <input
                     id="gcp-region"
                     value={config.cloud.gcp?.region || "us-central1"}
@@ -693,15 +683,14 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     placeholder="us-central1"
                 />
+                <CredHint>
+                    Any Compute Engine region: <code>us-central1</code>,
+                    <code> europe-west4</code>, <code>asia-east1</code>… GPU
+                    availability varies — check Compute Engine → Quotas before picking.
+                </CredHint>
             </div>
             <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <label htmlFor="gcp-sa-json" className="text-sm font-medium">Service Account JSON (Optional)</label>
-                    <CredHelp
-                        href="https://console.cloud.google.com/iam-admin/serviceaccounts"
-                        label="IAM & Admin → Service Accounts → Keys → Add Key (JSON)"
-                    />
-                </div>
+                <label htmlFor="gcp-sa-json" className="text-sm font-medium">Service Account JSON (Optional)</label>
                 <textarea
                     id="gcp-sa-json"
                     value={config.cloud.gcp?.service_account_json || ""}
@@ -709,10 +698,12 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[100px] font-mono text-xs"
                     placeholder='{"type": "service_account", ...}'
                 />
-                <p className="text-xs text-muted-foreground">
-                    Paste your GCP service account JSON key. If not provided, Pulumi will use
-                    your default gcloud credentials (run <code>gcloud auth application-default login</code>).
-                </p>
+                <CredHint>
+                    IAM &amp; Admin → <strong>Service Accounts</strong> → pick a
+                    service account → Keys tab → <em>Add Key → JSON</em>. Paste the
+                    downloaded file verbatim. Blank ⇒ Pulumi uses your local
+                    <code> gcloud auth application-default login</code>.
+                </CredHint>
             </div>
         </div>
     );
