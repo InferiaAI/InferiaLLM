@@ -1,5 +1,7 @@
 import api from "@/lib/api";
-import { setToken } from "@/lib/tokenStore";
+import * as tokenStore from "@/lib/tokenStore";
+
+const { setToken } = tokenStore;
 
 /** Maximum allowed length for an access token returned via URL fragment.
  *  Mirrors the gateway-side JWKSVerifier cap so a malformed redirect can't
@@ -46,6 +48,50 @@ export function consumeAccessTokenFragment(): string | null {
     window.location.pathname + window.location.search,
   );
   return token;
+}
+
+/**
+ * Sign the user out of the dashboard.
+ *
+ * Order matters:
+ * 1. Clear the in-memory access token first so nothing else can re-use it
+ *    while the network request is still in flight.
+ * 2. POST `/auth/logout` (best-effort — the gateway holds no server-side
+ *    session state now that refresh lives in an httpOnly cookie, but the
+ *    endpoint still writes an audit log entry). A network failure here
+ *    must NOT block the user-facing redirect.
+ * 3. In external mode, navigate to the IdP's `/logout?post_logout_redirect_uri=`
+ *    so the SSO cookie at auth.* clears too. Otherwise drop the user on /login.
+ */
+export async function logout(): Promise<void> {
+  tokenStore.clearToken();
+  try {
+    await fetch("/auth/logout", { method: "POST", credentials: "include" });
+  } catch {
+    // Network failure on the audit POST must not block the redirect.
+  }
+
+  const isExternal = import.meta.env.VITE_AUTH_PROVIDER === "external";
+  const externalUrl = import.meta.env.VITE_EXTERNAL_AUTH_URL as
+    | string
+    | undefined;
+
+  if (isExternal && externalUrl) {
+    try {
+      const dest = new URL("/logout", externalUrl);
+      dest.searchParams.set(
+        "post_logout_redirect_uri",
+        window.location.origin + "/login",
+      );
+      window.location.assign(dest.toString());
+      return;
+    } catch {
+      // VITE_EXTERNAL_AUTH_URL is malformed; fall through to the local
+      // redirect rather than crashing the page during sign-out.
+    }
+  }
+
+  window.location.assign("/login");
 }
 
 export interface RegisterRequest {

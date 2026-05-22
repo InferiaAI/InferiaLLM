@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   consumeAccessTokenFragment,
+  logout,
   startExternalLogin,
 } from "@/services/authService";
+import * as tokenStore from "@/lib/tokenStore";
 
 /**
  * jsdom's `window.location` is not redefinable property-by-property, but
@@ -116,5 +118,95 @@ describe("consumeAccessTokenFragment", () => {
   it("ignores a fragment with only delimiters", () => {
     setLocation("#&&=&");
     expect(consumeAccessTokenFragment()).toBeNull();
+  });
+});
+
+describe("logout", () => {
+  const originalLocation = window.location;
+  const originalFetch = window.fetch;
+  let assignMock: ReturnType<typeof vi.fn>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let clearSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    assignMock = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: {
+        ...originalLocation,
+        origin: "https://inferia.local",
+        assign: assignMock,
+      },
+    });
+    fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    window.fetch = fetchMock as unknown as typeof window.fetch;
+    clearSpy = vi.spyOn(tokenStore, "clearToken");
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
+    });
+    window.fetch = originalFetch;
+    clearSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it("local mode: clears the token store, POSTs /auth/logout, then redirects to /login", async () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    await logout();
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    });
+    expect(assignMock).toHaveBeenCalledWith("/login");
+  });
+
+  it("external mode: redirects to the IdP /logout with post_logout_redirect_uri", async () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "external");
+    vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "https://auth.inferia.local");
+    await logout();
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    });
+    expect(assignMock).toHaveBeenCalledTimes(1);
+    const dest = assignMock.mock.calls[0][0] as string;
+    expect(dest).toMatch(/^https:\/\/auth\.inferia\.local\/logout\?/);
+    const url = new URL(dest);
+    expect(url.searchParams.get("post_logout_redirect_uri")).toBe(
+      "https://inferia.local/login",
+    );
+  });
+
+  it("does not throw when /auth/logout fails on the network", async () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    fetchMock.mockRejectedValueOnce(new Error("network"));
+    await expect(logout()).resolves.toBeUndefined();
+    // User-facing redirect must still happen.
+    expect(assignMock).toHaveBeenCalledWith("/login");
+    // Token store must still be cleared even when the audit POST fails.
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("external mode without VITE_EXTERNAL_AUTH_URL falls back to /login", async () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "external");
+    vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "");
+    await logout();
+    expect(assignMock).toHaveBeenCalledWith("/login");
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("external mode with malformed VITE_EXTERNAL_AUTH_URL falls back to /login", async () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "external");
+    vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "not a url");
+    await logout();
+    expect(assignMock).toHaveBeenCalledWith("/login");
+    expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 });
