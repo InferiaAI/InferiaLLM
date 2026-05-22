@@ -73,6 +73,18 @@ async def login(
     """
     from inferia.services.api_gateway.config import settings as _settings
 
+    # When external SSO is active, /auth/login is reserved for the
+    # superadmin (break-glass). Everyone else MUST go through /auth/start
+    # so PKCE + state cookies are issued. See spec §9.3.
+    use_external = (
+        _settings.auth_provider == "external" and _settings.external_auth_url
+    )
+    if use_external and request.username != _settings.superadmin_email:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct password sign in is disabled. Use /auth/start.",
+        )
+
     # Rate limiting check
     client_ip = http_request.client.host if http_request.client else "unknown"
 
