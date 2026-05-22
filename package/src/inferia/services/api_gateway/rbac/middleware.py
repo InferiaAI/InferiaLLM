@@ -147,6 +147,8 @@ async def auth_middleware(request: Request, call_next):
         "/auth/register",
         "/auth/refresh",
         "/auth/register-invite",
+        "/auth/start",
+        "/auth/callback",
         "/audit/internal/log",
     ]
     # Allow /auth/invitations/{token} (exactly one segment after prefix)

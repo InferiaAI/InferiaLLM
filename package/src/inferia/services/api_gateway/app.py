@@ -32,6 +32,7 @@ from inferia.services.api_gateway.gateway.internal_middleware import (
 )
 from inferia.services.api_gateway.rbac.middleware import auth_middleware
 from inferia.services.api_gateway.rbac.router import router as auth_router
+from inferia.services.api_gateway.rbac.oauth_router import router as oauth_router
 from inferia.services.api_gateway.gateway.router import router as gateway_router
 from inferia.services.api_gateway.management.router import router as management_router
 from inferia.services.api_gateway.rbac.roles_router import router as roles_router
@@ -148,6 +149,7 @@ add_standard_health_routes(
 
 # Include routers
 app.include_router(auth_router)
+app.include_router(oauth_router)
 app.include_router(audit_router)
 app.include_router(management_router)
 app.include_router(gateway_router)
