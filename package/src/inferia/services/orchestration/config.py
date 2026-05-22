@@ -143,6 +143,16 @@ class Settings(UnifiedBaseSettings):
         validation_alias="INFERIA_CONTROL_PLANE_EXTERNAL_URL",
         description="Public URL workers use to reach /v1/workers/register",
     )
+    pulumi_state_dir: str = Field(
+        default="/var/lib/inferia/pulumi-state",
+        validation_alias="INFERIA_PULUMI_STATE_DIR",
+        description="Filesystem path where Pulumi local-backend state is persisted.",
+    )
+    pulumi_passphrase: str = Field(
+        default="",
+        validation_alias="INFERIA_PULUMI_PASSPHRASE",
+        description="PULUMI_CONFIG_PASSPHRASE — empty disables stack-config secrets.",
+    )
 
     # Deployment Log Persistence (Elasticsearch)
     elasticsearch_url: Optional[str] = Field(
