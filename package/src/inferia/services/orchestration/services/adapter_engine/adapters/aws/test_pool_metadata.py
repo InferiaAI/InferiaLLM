@@ -20,8 +20,20 @@ def test_minimal_valid():
     assert m.security_group_ids == ["sg-0123456789abcdef0"]
     assert m.ami_id is None
     assert m.iam_instance_profile is None
-    assert m.root_volume_gb == 100  # default
+    # All numeric fields default to None — the PulumiAWSAdapter falls back
+    # to ProvidersConfig.cloud.aws account defaults when these are unset.
+    assert m.root_volume_gb is None
     assert m.worker_image_tag is None
+
+
+def test_empty_metadata_valid():
+    """Empty dict is now valid — every field is an optional pool-level
+    override of the account-wide defaults."""
+    m = AWSPoolMetadata()
+    assert m.subnet_id is None
+    assert m.security_group_ids is None
+    assert m.ami_id is None
+    assert m.root_volume_gb is None
 
 
 def test_full_valid():

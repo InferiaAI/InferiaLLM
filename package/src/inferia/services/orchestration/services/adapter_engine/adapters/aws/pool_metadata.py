@@ -18,20 +18,29 @@ IAM_PROFILE_RE = r"^arn:aws:iam::\d{12}:instance-profile/.+$"
 
 
 class AWSPoolMetadata(BaseModel):
-    """Schema for compute_pools.metadata when provider='aws'."""
+    """Schema for compute_pools.metadata when provider='aws'.
+
+    All fields are optional pool-level overrides. When omitted, the
+    PulumiAWSAdapter falls back to the account-wide defaults on
+    ProvidersConfig.cloud.aws (configured in Settings → Providers → AWS).
+    An empty `metadata: {}` is therefore valid and means "use account
+    defaults entirely".
+    """
 
     model_config = {"extra": "ignore"}  # forward-compat: ignore unknown keys
 
-    subnet_id: str = Field(pattern=SUBNET_RE)
-    security_group_ids: list[str] = Field(min_length=1)
+    subnet_id: Optional[str] = Field(default=None, pattern=SUBNET_RE)
+    security_group_ids: Optional[list[str]] = Field(default=None, min_length=1)
     ami_id: Optional[str] = Field(default=None, pattern=AMI_RE)
     iam_instance_profile: Optional[str] = Field(default=None, pattern=IAM_PROFILE_RE)
-    root_volume_gb: int = Field(default=100, ge=10, le=16384)
+    root_volume_gb: Optional[int] = Field(default=None, ge=10, le=16384)
     worker_image_tag: Optional[str] = Field(default=None, max_length=128)
 
     @field_validator("security_group_ids")
     @classmethod
-    def _sg_format(cls, v: list[str]) -> list[str]:
+    def _sg_format(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
         import re
         compiled = re.compile(SG_RE)
         for sg in v:
