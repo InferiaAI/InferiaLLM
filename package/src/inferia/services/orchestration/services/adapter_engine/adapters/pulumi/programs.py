@@ -111,3 +111,87 @@ def build_gce_program(
         pulumi.export("instance_id", instance.id)
 
     return _program
+
+
+def build_azure_vm_program(
+    *,
+    pool_id: str,
+    org_id: str,
+    bootstrap_id: str,
+    vm_size: str,
+    location: str,
+    user_data: str,
+) -> Callable[[], None]:
+    """Return a Pulumi program for a single azure_native VM.
+
+    Creates a resource group, virtual network, subnet, NIC, and the VM.
+    user_data is base64-encoded and passed as custom_data (cloud-init).
+    """
+
+    def _program() -> None:
+        import base64
+        import pulumi
+        import pulumi_azure_native as azure
+
+        rg = azure.resources.ResourceGroup(
+            f"inferia-rg-{pool_id}",
+            resource_group_name=f"inferia-rg-{pool_id}",
+            location=location,
+        )
+        vnet = azure.network.VirtualNetwork(
+            f"inferia-vnet-{pool_id}",
+            resource_group_name=rg.name,
+            location=location,
+            address_space=azure.network.AddressSpaceArgs(address_prefixes=["10.0.0.0/16"]),
+        )
+        subnet = azure.network.Subnet(
+            f"inferia-subnet-{pool_id}",
+            resource_group_name=rg.name,
+            virtual_network_name=vnet.name,
+            address_prefix="10.0.1.0/24",
+        )
+        nic = azure.network.NetworkInterface(
+            f"inferia-nic-{pool_id}",
+            resource_group_name=rg.name,
+            location=location,
+            ip_configurations=[azure.network.NetworkInterfaceIPConfigurationArgs(
+                name="ipconfig",
+                subnet=azure.network.SubnetArgs(id=subnet.id),
+                private_ip_allocation_method=azure.network.IPAllocationMethod.DYNAMIC,
+            )],
+        )
+        vm = azure.compute.VirtualMachine(
+            f"inferia-vm-{pool_id}",
+            resource_group_name=rg.name,
+            location=location,
+            hardware_profile=azure.compute.HardwareProfileArgs(vm_size=vm_size),
+            network_profile=azure.compute.NetworkProfileArgs(
+                network_interfaces=[azure.compute.NetworkInterfaceReferenceArgs(
+                    id=nic.id, primary=True,
+                )],
+            ),
+            os_profile=azure.compute.OSProfileArgs(
+                computer_name=f"inferia-{pool_id[:8]}",
+                admin_username="azureuser",
+                custom_data=base64.b64encode(user_data.encode()).decode(),
+                linux_configuration=azure.compute.LinuxConfigurationArgs(
+                    disable_password_authentication=False,
+                ),
+            ),
+            storage_profile=azure.compute.StorageProfileArgs(
+                image_reference=azure.compute.ImageReferenceArgs(
+                    publisher="Canonical",
+                    offer="0001-com-ubuntu-server-jammy",
+                    sku="22_04-lts-gen2",
+                    version="latest",
+                ),
+            ),
+            tags={
+                "InferiaPoolId": pool_id,
+                "InferiaOrgId": org_id,
+                "InferiaBootstrapId": bootstrap_id,
+            },
+        )
+        pulumi.export("vm_id", vm.id)
+
+    return _program
