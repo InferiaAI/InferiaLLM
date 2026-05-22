@@ -190,25 +190,97 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         }
 
     async def _provision_async(self, stack: Any, pool_id: str, bootstrap_id: str) -> None:
-        """Run pulumi up. Failure-path/DB-update logic is added in P6."""
-        await stack.up_async()
-        logger.info("Pulumi up completed for pool %s", pool_id)
+        """Run pulumi up. On success, write outputs into compute_pools.metadata.
+        On failure, set lifecycle_state='failed' and record the error."""
+        try:
+            result = await stack.up_async()
+            outputs = result.outputs or {}
+            meta_update = {
+                "instance_id": self._extract_output(outputs, "instance_id"),
+                "public_dns":  self._extract_output(outputs, "public_dns"),
+                "private_ip":  self._extract_output(outputs, "private_ip"),
+            }
+            if self._db is not None:
+                await self._db.execute(
+                    "UPDATE compute_pools "
+                    "SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
+                    "WHERE id = $2",
+                    json.dumps(meta_update),
+                    UUID(pool_id),
+                )
+            logger.info("Pulumi up succeeded for pool %s: instance %s",
+                        pool_id, meta_update["instance_id"])
+        except Exception as e:
+            err = str(e)
+            logger.error("Pulumi up failed for pool %s: %s", pool_id, err)
+            if self._db is not None:
+                await self._db.execute(
+                    "UPDATE compute_pools "
+                    "SET lifecycle_state = 'failed', "
+                    "    metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
+                    "WHERE id = $2",
+                    json.dumps({"error": err}),
+                    UUID(pool_id),
+                )
+            try:
+                await stack.destroy_async()
+            except Exception as de:
+                logger.warning("destroy_async failed after up failure: %s", de)
 
-    # ------------------------------------------------------------------
-    # Stubs for abstract methods — full implementations land in P6.
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_output(outputs: Dict[str, Any], key: str) -> Any:
+        v = outputs.get(key)
+        if v is None:
+            return None
+        return v.value if hasattr(v, "value") else v
 
-    async def discover_resources(self) -> List[Dict]:
-        raise NotImplementedError("discover_resources not yet implemented for PulumiAWSAdapter")
+    def _select_stack(self, pool_id: str) -> Any:
+        """Open an existing stack (no program) for wait_for_ready/deprovision."""
+        cfg = load_providers_config()
+        env_vars = resolve_aws_env(cfg)
+        opts = self.local_workspace_opts(env_vars=env_vars)
+        return pulumi.automation.create_or_select_stack(
+            stack_name=self.stack_name_for_pool(pool_id),
+            project_name=self.project_name,
+            program=lambda: None,
+            opts=pulumi.automation.LocalWorkspaceOptions(
+                work_dir=opts.work_dir,
+                env_vars=opts.env_vars,
+                project_settings=pulumi.automation.ProjectSettings(
+                    name=self.project_name, runtime="python",
+                ),
+            ),
+        )
 
     async def wait_for_ready(
         self,
         *,
         provider_instance_id: str,
-        timeout: int = 300,
+        timeout: int = 900,
+        poll_interval: float = 5.0,
         provider_credential_name: Optional[str] = None,
+        region: Optional[str] = None,
     ) -> str:
-        raise NotImplementedError("wait_for_ready not yet implemented for PulumiAWSAdapter")
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            row = None
+            if self._db is not None:
+                row = await self._db.fetchrow(
+                    "SELECT state FROM compute_inventory "
+                    "WHERE labels->>'bootstrap_id' = $1 "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    provider_instance_id,
+                )
+            if row and row["state"] == "ready":
+                return "ready"
+            await asyncio.sleep(poll_interval)
+        stack = self._select_stack(provider_instance_id)
+        try:
+            await stack.destroy_async()
+        except Exception:
+            pass
+        raise ProvisionError("worker did not register within timeout")
 
     async def deprovision_node(
         self,
@@ -216,20 +288,83 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        raise NotImplementedError("deprovision_node not yet implemented for PulumiAWSAdapter")
+        stack = self._select_stack(provider_instance_id)
+        await stack.destroy_async()
+        try:
+            stack.workspace.remove_stack(self.stack_name_for_pool(provider_instance_id))
+        except Exception as e:
+            logger.warning("remove_stack failed (non-fatal): %s", e)
+
+    async def discover_resources(self, *, region: str = "us-east-1") -> List[Dict[str, Any]]:
+        import boto3
+        cfg = load_providers_config()
+        env_vars = resolve_aws_env(cfg)
+        ec2 = boto3.client(
+            "ec2",
+            region_name=region,
+            aws_access_key_id=env_vars["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=env_vars["AWS_SECRET_ACCESS_KEY"],
+        )
+        out: List[Dict[str, Any]] = []
+        next_token: Optional[str] = None
+        while True:
+            kwargs: Dict[str, Any] = {"MaxResults": 100}
+            if next_token:
+                kwargs["NextToken"] = next_token
+            resp = ec2.describe_instance_types(**kwargs)
+            for it in resp.get("InstanceTypes", []):
+                gpus = (it.get("GpuInfo") or {}).get("Gpus") or []
+                gpu = gpus[0] if gpus else {}
+                mfg = (gpu.get("Manufacturer") or "").strip().lower()
+                if not gpus:
+                    vendor = "none"
+                elif "nvidia" in mfg:
+                    vendor = "nvidia"
+                elif "amd" in mfg:
+                    vendor = "amd"
+                elif "intel" in mfg or "habana" in mfg:
+                    vendor = "intel"
+                else:
+                    vendor = "other"
+                out.append({
+                    "provider": "aws",
+                    "provider_resource_id": it["InstanceType"],
+                    "gpu_type": gpu.get("Name", "N/A") if gpus else "N/A",
+                    "gpu_count": gpu.get("Count", 0),
+                    "gpu_memory_gb": ((gpu.get("MemoryInfo") or {}).get("SizeInMiB", 0)) // 1024,
+                    "gpu_vendor": vendor,
+                    "vcpu": it.get("VCpuInfo", {}).get("DefaultVCpus", 0),
+                    "ram_gb": it.get("MemoryInfo", {}).get("SizeInMiB", 0) // 1024,
+                    "region": region,
+                    "pricing_model": "on_demand",
+                    "price_per_hour": 0.0,
+                })
+            next_token = resp.get("NextToken")
+            if not next_token:
+                break
+        return out
 
     async def get_logs(
         self,
         *,
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
-    ) -> Dict:
-        raise NotImplementedError("get_logs not yet implemented for PulumiAWSAdapter")
+    ) -> Dict[str, Any]:
+        import boto3
+        cfg = load_providers_config()
+        env_vars = resolve_aws_env(cfg)
+        ec2 = boto3.client(
+            "ec2",
+            region_name=env_vars["AWS_DEFAULT_REGION"],
+            aws_access_key_id=env_vars["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=env_vars["AWS_SECRET_ACCESS_KEY"],
+        )
+        try:
+            resp = ec2.get_console_output(InstanceId=provider_instance_id)
+        except Exception:
+            return {"logs": []}
+        text = resp.get("Output") or ""
+        return {"logs": text.splitlines()}
 
-    async def get_log_streaming_info(
-        self,
-        *,
-        provider_instance_id: str,
-        provider_credential_name: Optional[str] = None,
-    ) -> Dict:
-        raise NotImplementedError("get_log_streaming_info not yet implemented for PulumiAWSAdapter")
+    async def get_log_streaming_info(self, **_kwargs) -> Dict[str, Any]:
+        return {"supported": False, "reason": "Pulumi adapter uses worker WS for live logs"}
