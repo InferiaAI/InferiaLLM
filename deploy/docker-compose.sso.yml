@@ -18,6 +18,11 @@
 # `scripts/sso_smoke.sh` and exercises the full flow end-to-end.
 # =============================================================================
 
+# Explicit project name so this compose does NOT collide with the existing
+# `deploy/docker-compose.yml` (which would otherwise share the `deploy`
+# project namespace and trigger recreation of unrelated containers).
+name: inferia-sso
+
 services:
 
   # ---------------------------------------------------------------------------
@@ -60,10 +65,62 @@ services:
       - sso-net
 
   # ---------------------------------------------------------------------------
+  # inferia-auth-migrate — runs `./server migrate` once, then exits. The auth
+  # binary's `migrate` subcommand applies golang-migrate up against
+  # DATABASE_URL. The main inferia-auth service depends on this completing
+  # successfully (service_completed_successfully) before it boots, ensuring
+  # the oauth_clients table exists before the boot-time seed runs.
+  # ---------------------------------------------------------------------------
+  inferia-auth-migrate:
+    image: inferia-auth:dev
+    build:
+      context: ../../inferia-auth
+      dockerfile: Dockerfile
+    container_name: inferia-auth-sso-migrate
+    restart: "no"
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: "postgres://inferia:inferia@postgres:5432/inferia_auth?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sso-net
+
+  # ---------------------------------------------------------------------------
+  # inferia-auth-seed-client — inserts the inferiallm-dashboard oauth_clients
+  # row after migrations. We do this from SQL (rather than letting the auth
+  # binary's boot-time seed do it) because the binary's seed ALSO writes the
+  # FGA permission tree, and the current FGA-tuple format (multi-colon
+  # permission IDs) is rejected by real OpenFGA. That's a known Phase A bug
+  # we work around by disabling the in-process seed (OAUTH_SEED_DISABLED=true
+  # on inferia-auth below) and inserting only the client row here.
+  #
+  # Idempotent (ON CONFLICT DO NOTHING).
+  # ---------------------------------------------------------------------------
+  inferia-auth-seed-client:
+    image: postgres:17-alpine
+    container_name: inferia-auth-sso-seed-client
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        until pg_isready -h postgres -U inferia -d inferia_auth >/dev/null 2>&1; do sleep 1; done
+        PGPASSWORD=inferia psql -h postgres -U inferia -d inferia_auth -v ON_ERROR_STOP=1 -f /seed.sql
+    volumes:
+      - ./sso-seed-client.sql:/seed.sql:ro
+    depends_on:
+      inferia-auth-migrate:
+        condition: service_completed_successfully
+    networks:
+      - sso-net
+
+  # ---------------------------------------------------------------------------
   # inferia-auth — OAuth2 IdP. Issues codes/tokens for `inferiallm-dashboard`.
   # Built from the sibling repo at ../../inferia-auth. Mounts:
-  #   - migrations: applied by the binary on boot
-  #   - openfga model: loaded into the embedded FGA store
+  #   - migrations: applied by the binary on boot (via the migrate sidecar)
+  #   - openfga model: loaded into the embedded FGA store on this service
   # ---------------------------------------------------------------------------
   inferia-auth:
     build:
@@ -87,23 +144,26 @@ services:
       JWT_ACCESS_TTL: "15m"
       JWT_REFRESH_TTL: "168h"
       ENCRYPTION_KEY: "x9tZfrL6OCoGDLg26VKE3F4djdjoPQK989p9lmCt8UY="
-      # OAuth2 seed for the InferiaLLM dashboard client. These values must
-      # match the corresponding gateway env vars below (byte-for-byte for
-      # OAUTH_REDIRECT_URI; the gateway rejects mismatches).
-      OAUTH_SEED_CLIENT_ID: "inferiallm-dashboard"
-      OAUTH_SEED_CLIENT_NAME: "InferiaLLM Dashboard"
-      OAUTH_SEED_APP_NAMESPACE: "inferiallm"
-      OAUTH_SEED_REDIRECT_URI: "https://inferia.local/auth/callback"
-      OAUTH_SEED_CLIENT_TYPE: "public"
-      OAUTH_SEED_ALLOWED_SCOPES: "openid,profile,email,inferiallm"
+      # Disable the in-process OAuth seed; we insert the oauth_clients row
+      # via the inferia-auth-seed-client SQL sidecar instead (see comment
+      # there for the rationale). When the Phase A FGA multi-colon-id bug
+      # is fixed, this can be flipped back to "false" and the SQL sidecar
+      # dropped.
+      OAUTH_SEED_DISABLED: "true"
       COOKIE_SECURE: "true"
       RATE_LIMIT_MAX: "60"
       RATE_LIMIT_WINDOW: "1m"
     depends_on:
       postgres:
         condition: service_healthy
+      inferia-auth-migrate:
+        condition: service_completed_successfully
+      inferia-auth-seed-client:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      # 127.0.0.1 (not "localhost") to avoid IPv6 resolution issues inside
+      # the alpine container — the fiber server binds to IPv4 only.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 5s
       timeout: 5s
       retries: 20

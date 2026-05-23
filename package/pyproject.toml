@@ -36,6 +36,10 @@ dependencies = [
 
   # Auth / Security
   "python-jose[cryptography]",
+  # PyJWT is used by the JWKS verifier in api_gateway/rbac/jwks_verifier.py
+  # to validate Ed25519-signed tokens from inferia-auth when
+  # AUTH_PROVIDER=external. Must be a core dep, not a dev-only one.
+  "PyJWT[crypto]>=2.8",
   "bcrypt",
   "pyotp",
   "qrcode",
