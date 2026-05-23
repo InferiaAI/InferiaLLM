@@ -115,3 +115,34 @@ class SmokeAPI:
 
     def list_workers(self, pool_id: str) -> list[dict[str, Any]]:
         return self._request("GET", "/v1/admin/workers", params={"pool": pool_id}).json()["workers"]
+
+    # ---- deployments ----
+
+    def create_deployment(
+        self,
+        *,
+        pool_id: str,
+        recipe: str,
+        model_uri: str,
+        name: str,
+        config: dict[str, Any] | None = None,
+    ) -> str:
+        body: dict[str, Any] = {
+            "pool_id": pool_id,
+            "recipe": recipe,
+            "model_uri": model_uri,
+            "name": name,
+        }
+        if config:
+            body["config"] = config
+        return self._request("POST", "/v1/deployments", json=body).json()["deployment_id"]
+
+    def delete_deployment(self, deployment_id: str) -> None:
+        try:
+            self._request("DELETE", f"/v1/deployments/{deployment_id}")
+        except APIError as e:
+            if e.status != 404:
+                raise
+
+    def get_deployment(self, deployment_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/v1/deployments/{deployment_id}").json()

@@ -101,3 +101,41 @@ def test_list_workers(api: SmokeAPI) -> None:
     )
     workers = api.list_workers("pool-1")
     assert workers == [{"node_id": "n1", "status": "ready"}]
+
+
+@respx.mock
+def test_create_deployment_returns_id(api: SmokeAPI) -> None:
+    api._token = "t"
+    route = respx.post(f"{BASE}/v1/deployments").mock(
+        return_value=httpx.Response(200, json={"deployment_id": "dep-1"})
+    )
+    did = api.create_deployment(
+        pool_id="p1",
+        recipe="vllm",
+        model_uri="hf://Qwen/Qwen3-0.6B",
+        name="smoke-vllm",
+        config={"gpu_memory_utilization": 0.5},
+    )
+    assert did == "dep-1"
+    body = route.calls.last.request.read()
+    assert b"Qwen3-0.6B" in body
+    assert b"gpu_memory_utilization" in body
+
+
+@respx.mock
+def test_delete_deployment_tolerates_404(api: SmokeAPI) -> None:
+    api._token = "t"
+    respx.delete(f"{BASE}/v1/deployments/dep-1").mock(
+        return_value=httpx.Response(404, json={"detail": "gone"})
+    )
+    api.delete_deployment("dep-1")
+
+
+@respx.mock
+def test_get_deployment(api: SmokeAPI) -> None:
+    api._token = "t"
+    respx.get(f"{BASE}/v1/deployments/dep-1").mock(
+        return_value=httpx.Response(200, json={"id": "dep-1", "state": "running"})
+    )
+    d = api.get_deployment("dep-1")
+    assert d["state"] == "running"
