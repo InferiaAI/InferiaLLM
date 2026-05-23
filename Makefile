@@ -68,3 +68,22 @@ docker-down-sso:
 
 docker-logs-sso:
 	$(DOCKER_COMPOSE_SSO) logs -f --tail=100
+
+.PHONY: smoke-local smoke-local-up smoke-local-down smoke-aws smoke-aws-dry
+
+smoke-local-up:    ## bring up unified stack and build worker image (no worker container yet)
+	docker compose -f deploy/docker-compose.unified.yml up -d
+	docker build -t inferia-worker:smoke ../inferia-worker
+
+smoke-local-down:  ## tear down worker compose + unified
+	-docker compose -f deploy/compose.worker-local.yml down -v
+	docker compose -f deploy/docker-compose.unified.yml down
+
+smoke-local: smoke-local-up   ## run the local Qwen3 smoke end-to-end
+	python -m scripts.smoke.local
+
+smoke-aws-dry:     ## AWS smoke pre-flight only (no spend)
+	python -m scripts.smoke.aws --dry-run
+
+smoke-aws:         ## real EC2 AWS smoke; hard 20-min wall clock
+	timeout 1200 python -m scripts.smoke.aws --instance-type=g4dn.xlarge
