@@ -75,6 +75,12 @@ dependencies = [
   "pulumi-aws>=6.50.0,<7",
   "pulumi-azure-native>=2.50.0,<3",
   "pulumi-gcp>=8.0.0,<9",
+
+  # AWS SDK is imported transitively by the Pulumi-AWS adapter at
+  # orchestration boot, so it must be a core dep — not an optional extra.
+  # Without it the orchestration service fails fast with
+  # `ModuleNotFoundError: No module named 'boto3'`.
+  "boto3==1.42.10",
 ]
 
 [project.urls]
