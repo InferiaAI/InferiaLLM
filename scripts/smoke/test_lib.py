@@ -7,7 +7,9 @@ import respx
 
 from scripts.smoke.lib import (
     APIError,
+    EmptyResponseError,
     SmokeAPI,
+    StreamTruncatedError,
 )
 
 
@@ -139,3 +141,53 @@ def test_get_deployment(api: SmokeAPI) -> None:
     )
     d = api.get_deployment("dep-1")
     assert d["state"] == "running"
+
+
+@respx.mock
+def test_chat_non_stream(api: SmokeAPI) -> None:
+    api._token = "t"
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "hello there"}}]},
+        )
+    )
+    assert api.chat("dep-1", "say hi") == "hello there"
+
+
+@respx.mock
+def test_chat_non_stream_empty_raises(api: SmokeAPI) -> None:
+    api._token = "t"
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": ""}}]},
+        )
+    )
+    with pytest.raises(EmptyResponseError):
+        api.chat("dep-1", "say hi")
+
+
+@respx.mock
+def test_chat_stream_concatenates(api: SmokeAPI) -> None:
+    api._token = "t"
+    body = (
+        'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"}),
+    )
+    assert api.chat("dep-1", "hi", stream=True) == "Hello"
+
+
+@respx.mock
+def test_chat_stream_missing_done_raises(api: SmokeAPI) -> None:
+    api._token = "t"
+    body = 'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"}),
+    )
+    with pytest.raises(StreamTruncatedError):
+        api.chat("dep-1", "hi", stream=True)

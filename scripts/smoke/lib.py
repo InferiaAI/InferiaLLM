@@ -146,3 +146,67 @@ class SmokeAPI:
 
     def get_deployment(self, deployment_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/deployments/{deployment_id}").json()
+
+    # ---- chat ----
+
+    def chat(
+        self,
+        deployment_id: str,
+        prompt: str,
+        *,
+        stream: bool = False,
+        timeout: float = 60.0,
+    ) -> str:
+        body = {
+            "deployment_id": deployment_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": stream,
+        }
+        if not stream:
+            resp = self._http().post(
+                "/v1/inference/chat/completions",
+                json=body,
+                headers=self._auth_headers(),
+                timeout=timeout,
+            )
+            if resp.status_code >= 400:
+                raise APIError(resp.status_code, resp.text)
+            content = resp.json()["choices"][0]["message"]["content"]
+            if not content:
+                raise EmptyResponseError("assistant content empty")
+            return content
+
+        # Stream path: parse SSE manually so we don't pull in a heavier dep.
+        out: list[str] = []
+        saw_done = False
+        with self._http().stream(
+            "POST",
+            "/v1/inference/chat/completions",
+            json=body,
+            headers=self._auth_headers(),
+            timeout=timeout,
+        ) as resp:
+            if resp.status_code >= 400:
+                raise APIError(resp.status_code, resp.read().decode())
+            for line in resp.iter_lines():
+                line = line.strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                payload = line[len("data:"):].strip()
+                if payload == "[DONE]":
+                    saw_done = True
+                    break
+                try:
+                    import json as _json
+                    chunk = _json.loads(payload)
+                except Exception:
+                    continue
+                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content")
+                if delta:
+                    out.append(delta)
+        if not saw_done:
+            raise StreamTruncatedError("stream ended without [DONE]")
+        full = "".join(out)
+        if not full:
+            raise EmptyResponseError("stream produced no content")
+        return full
