@@ -73,3 +73,31 @@ class SmokeAPI:
         if self._client is not None:
             self._client.close()
             self._client = None
+
+    # ---- pool ----
+
+    def create_pool(
+        self,
+        *,
+        provider: str,
+        name: str,
+        instance_type: str | None = None,
+        region: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        body: dict[str, Any] = {"provider": provider, "name": name}
+        if instance_type:
+            body["instance_type"] = instance_type
+        if region:
+            body["region"] = region
+        if metadata:
+            body["metadata"] = metadata
+        return self._request("POST", "/v1/compute-pools", json=body).json()["id"]
+
+    def destroy_pool(self, pool_id: str) -> None:
+        """Idempotent: 404 is treated as already destroyed."""
+        try:
+            self._request("POST", f"/v1/compute-pools/{pool_id}:destroy")
+        except APIError as e:
+            if e.status != 404:
+                raise
