@@ -1,0 +1,40 @@
+# Sibling worker compose for the local Qwen3 smoke. Brought up by
+# scripts/smoke/local.py after a real bootstrap token has been minted.
+#
+# Required env (no defaults — docker compose refuses to start otherwise):
+#   BOOTSTRAP_TOKEN, POOL_ID, INFERENCE_TOKEN
+# Optional:
+#   NODE_NAME (default: smoke-local-1)
+
+services:
+  worker:
+    image: inferia-worker:smoke
+    container_name: inferia-worker
+    restart: unless-stopped
+    environment:
+      CONTROL_PLANE_URL:    http://gateway:8000
+      BOOTSTRAP_TOKEN:      ${BOOTSTRAP_TOKEN:?required}
+      POOL_ID:              ${POOL_ID:?required}
+      NODE_NAME:            ${NODE_NAME:-smoke-local-1}
+      WORKER_ADVERTISE_URL: http://inferia-worker:8080
+      INFERENCE_TOKEN:      ${INFERENCE_TOKEN:?required}
+      MODELS_NETWORK:       inferia-models
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+      - worker-state-local:/var/lib/inferia-worker
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks: [default, inferia-cp]
+
+volumes:
+  worker-state-local:
+
+networks:
+  inferia-cp:
+    name: deploy_inferia-net
+    external: true
