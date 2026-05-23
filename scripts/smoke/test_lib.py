@@ -72,3 +72,32 @@ def test_destroy_pool_idempotent_on_404(api: SmokeAPI) -> None:
         return_value=httpx.Response(404, json={"detail": "gone"})
     )
     api.destroy_pool("p1")
+
+
+@respx.mock
+def test_mint_bootstrap_token(api: SmokeAPI) -> None:
+    api._token = "t"
+    respx.post(f"{BASE}/v1/admin/workers/mint").mock(
+        return_value=httpx.Response(200, json={"token": "bt-xyz", "expires_at": "2099-01-01T00:00:00Z"}),
+    )
+    r = api.mint_bootstrap_token("pool-1", ttl_hours=1)
+    assert r["token"] == "bt-xyz"
+
+
+@pytest.mark.parametrize("ttl", [0, 25, -1])
+def test_mint_bootstrap_token_rejects_bad_ttl(api: SmokeAPI, ttl: int) -> None:
+    with pytest.raises(ValueError):
+        api.mint_bootstrap_token("pool-1", ttl_hours=ttl)
+
+
+@respx.mock
+def test_list_workers(api: SmokeAPI) -> None:
+    api._token = "t"
+    respx.get(f"{BASE}/v1/admin/workers").mock(
+        return_value=httpx.Response(
+            200,
+            json={"workers": [{"node_id": "n1", "status": "ready"}]},
+        )
+    )
+    workers = api.list_workers("pool-1")
+    assert workers == [{"node_id": "n1", "status": "ready"}]

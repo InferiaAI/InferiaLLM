@@ -101,3 +101,17 @@ class SmokeAPI:
         except APIError as e:
             if e.status != 404:
                 raise
+
+    # ---- workers ----
+
+    def mint_bootstrap_token(self, pool_id: str, ttl_hours: int) -> dict[str, Any]:
+        if not (1 <= ttl_hours <= 24):
+            raise ValueError(f"ttl_hours must be 1..24, got {ttl_hours}")
+        return self._request(
+            "POST",
+            "/v1/admin/workers/mint",
+            json={"pool_id": pool_id, "ttl_hours": ttl_hours},
+        ).json()
+
+    def list_workers(self, pool_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", "/v1/admin/workers", params={"pool": pool_id}).json()["workers"]
