@@ -58,6 +58,17 @@ def ensure_preconditions() -> None:
     )
     if existing.stdout.strip():
         sys.exit("A container named 'inferia-worker' already exists. Remove it and retry.")
+    # Model containers are spawned by the worker via docker.sock as sibling
+    # containers on the host — `docker compose down -v` on the worker compose
+    # does not touch them, so a previous failed run can leave them holding
+    # host ports (notably 19000+). Wipe any stragglers before starting.
+    leftovers = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", "name=^inferia-(ollama|vllm|infinity|tei|tgi)-"],
+        capture_output=True, text=True,
+    )
+    ids = [x for x in leftovers.stdout.split() if x]
+    if ids:
+        subprocess.run(["docker", "rm", "-f", *ids], check=False, capture_output=True)
 
 
 _ENGINE_PRESETS: dict[str, dict[str, object]] = {
@@ -66,7 +77,7 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
         "model_version": "0.6b",
         "engine": "ollama",
         "configuration": None,
-        "ready_timeout": 240.0,
+        "ready_timeout": 900.0,
         "chat_model": "qwen3:0.6b",
     },
     "vllm": {
@@ -78,7 +89,7 @@ _ENGINE_PRESETS: dict[str, dict[str, object]] = {
             "max_model_len": 4096,
             "dtype": "bfloat16",
         },
-        "ready_timeout": 360.0,
+        "ready_timeout": 900.0,
         "chat_model": "Qwen/Qwen3-0.6B",
     },
 }

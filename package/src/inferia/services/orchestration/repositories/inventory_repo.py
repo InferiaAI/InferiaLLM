@@ -472,6 +472,25 @@ async def _upsert_worker_impl(
                 advertise_url = EXCLUDED.advertise_url,
                 metadata = EXCLUDED.metadata,
                 labels = compute_inventory.labels || EXCLUDED.labels,
+                -- Resource totals are refreshed only when the incoming
+                -- payload actually reports a non-zero value. The
+                -- /api/v1/nodes/add/worker route pre-creates a placeholder
+                -- row with allocatable={} (so the dashboard shows the
+                -- pending node immediately); the worker's later register
+                -- call carries the real capacity probed by telemetry on
+                -- the host. Without these COALESCE-on-non-zero updates,
+                -- the placeholder's zeros would shadow the worker's real
+                -- numbers and the scheduler would refuse to place any
+                -- GPU/CPU/RAM workload onto the node.
+                gpu_total = CASE WHEN EXCLUDED.gpu_total > 0
+                                 THEN EXCLUDED.gpu_total
+                                 ELSE compute_inventory.gpu_total END,
+                vcpu_total = CASE WHEN EXCLUDED.vcpu_total > 0
+                                  THEN EXCLUDED.vcpu_total
+                                  ELSE compute_inventory.vcpu_total END,
+                ram_gb_total = CASE WHEN EXCLUDED.ram_gb_total > 0
+                                    THEN EXCLUDED.ram_gb_total
+                                    ELSE compute_inventory.ram_gb_total END,
                 updated_at = now()
             RETURNING id, pool_id, node_name, agent_kind, state, advertise_url
             """,

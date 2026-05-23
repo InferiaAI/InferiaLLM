@@ -230,6 +230,29 @@ class SmokeAPI:
         ).json()
 
     def delete_deployment(self, deployment_id: str) -> None:
+        # Orchestration requires terminate-before-delete. Try terminate first,
+        # poll briefly for the state to settle, then delete. 404s are fine —
+        # the deployment may already be gone if the test cleaned up early.
+        try:
+            self._request(
+                "POST",
+                "/api/v1/deployment/terminate",
+                json={"deployment_id": deployment_id},
+            )
+        except APIError as e:
+            if e.status not in (404, 400):
+                raise
+        for _ in range(20):
+            try:
+                s = self.get_deployment_status(deployment_id)
+            except APIError as e:
+                if e.status == 404:
+                    return
+                raise
+            state = (s.get("state") or s.get("status") or "").upper()
+            if state in {"TERMINATED", "STOPPED", "FAILED", "DELETED"}:
+                break
+            time.sleep(1.0)
         try:
             self._request("DELETE", f"/api/v1/deployment/delete/{deployment_id}")
         except APIError as e:
@@ -251,11 +274,14 @@ class SmokeAPI:
             "messages": [{"role": "user", "content": prompt}],
             "stream": stream,
         }
+        # Use sandbox mode so the gateway JWT is accepted as the api_key —
+        # smoke runs as superadmin and has no DB-stored inference API key.
+        sandbox_headers = {**self._auth_headers(), "x-sandbox": "true"}
         if not stream:
             resp = self._http_inference().post(
                 "/v1/chat/completions",
                 json=body,
-                headers=self._auth_headers(),
+                headers=sandbox_headers,
                 timeout=timeout,
             )
             if resp.status_code >= 400:
@@ -271,7 +297,7 @@ class SmokeAPI:
             "POST",
             "/v1/chat/completions",
             json=body,
-            headers=self._auth_headers(),
+            headers=sandbox_headers,
             timeout=timeout,
         ) as resp:
             if resp.status_code >= 400:

@@ -31,7 +31,7 @@ class NodeUnreachableError(Exception):
     """Raised when the caller targets a node that has no live WS connection."""
 
 
-_DEFAULT_TIMEOUT = 180.0  # seconds — covers cold pulls
+_DEFAULT_TIMEOUT = 900.0  # seconds — covers cold image pulls + ollama model downloads (qwen3:0.6b ≈ 5 GiB)
 
 
 class WorkerController:

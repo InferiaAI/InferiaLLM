@@ -22,6 +22,12 @@ services:
       WORKER_ADVERTISE_URL: http://inferia-worker:8080
       INFERENCE_TOKEN:      ${INFERENCE_TOKEN:?required}
       MODELS_NETWORK:       inferia-models
+      # Distroless worker image has no nvidia-smi, so telemetry.ReadGPU()
+      # reports zero GPUs even when the host actually has one (passed
+      # through by the nvidia container runtime below). Override so the
+      # control plane sees the real capacity.
+      ALLOCATABLE_GPU_OVERRIDE:        ${ALLOCATABLE_GPU_OVERRIDE:-1}
+      ALLOCATABLE_GPU_MODELS_OVERRIDE: ${ALLOCATABLE_GPU_MODELS_OVERRIDE:-NVIDIA}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:rw
       - worker-state-local:/var/lib/inferia-worker

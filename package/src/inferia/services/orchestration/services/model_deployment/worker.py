@@ -250,6 +250,11 @@ class ModelDeploymentWorker:
                     vcpu_req=vcpu_req,
                     ram_req=ram_gb_req,
                 )
+                log.info(
+                    f"placement attempt={attempt} pool={d['pool_id']} "
+                    f"gpu_req={d['gpu_per_replica']} vcpu_req={vcpu_req} ram_req={ram_gb_req} "
+                    f"candidates={len(candidates)}"
+                )
 
                 if candidates:
                     break
@@ -515,7 +520,7 @@ class ModelDeploymentWorker:
             await self.deployments.update_state(deployment_id, "RUNNING")
 
         except Exception as e:
-            log.error(f"Deployment {deployment_id} failed: {e}")
+            log.exception(f"Deployment {deployment_id} failed: type={type(e).__name__} repr={e!r}")
 
             # Cleanup any orphaned node that was provisioned before the failure
             if node_spec and node_spec.get("provider_instance_id"):
