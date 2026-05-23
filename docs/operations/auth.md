@@ -236,33 +236,27 @@ All cookies use:
 - **JWKS rotation requires a re-auth window.** The v1 JWKS document
   serves a single key. Until multi-key rotation lands, every key change
   forces clients to re-authenticate at the next access token refresh.
-- **FGA permission tree seeding has a known multi-colon-id bug.** The
-  boot-time seed in inferia-auth's `cmd/server/seed.go` writes FGA
-  tuples with permission IDs like `inferiallm:deployment:read`, which
-  OpenFGA's tuple-user validator rejects (colons are the
-  type:id separator). The compose at `deploy/docker-compose.sso.yml`
-  works around this by setting `OAUTH_SEED_DISABLED=true` and
-  inserting the `oauth_clients` row via `deploy/sso-seed-client.sql`.
-  Phase A follow-up: encode the permission IDs (e.g. dot-separated)
-  before writing tuples.
+_The three Phase E blockers below were resolved in Phase F1
+(inferia-auth commits `dbaea82`, `275899d`, `eb271c3` plus InferiaLLM
+`417fd41`). Kept here as historical context — every item is now
+exercised by the SSO smoke._
 
-- **OAuth handlers and OIDC discovery are not wired in
-  `inferia-auth/cmd/server/main.go`.** Although the handlers exist
-  (`OAuthAuthorizeHandler`, `OAuthTokenHandler`, `OAuthUserinfoHandler`,
-  `OAuthRevokeHandler`, `OIDCDiscoveryHandler`) and the `rest.NewServer`
-  config accepts them, `main.go` does not instantiate them or pass them
-  to `ServerConfig`. As a result `/oauth/authorize`, `/oauth/token`,
-  `/oauth/userinfo`, `/oauth/revoke`, and `/.well-known/openid-configuration`
-  all return HTTP 404. The Phase A fix is to construct the five handlers
-  in `main.go` next to the existing `jwksHandler` and pass them through
-  the `ServerConfig` struct.
+- ~~**FGA permission tree seeding has a known multi-colon-id bug.**~~
+  Fixed: the seeder now writes permission ids in dotted form
+  (`inferiallm.deployment.read`) at the FGA boundary while keeping
+  the canonical colon form everywhere else.
+  `OAUTH_SEED_DISABLED` defaults to `false` and the SQL seed-client
+  workaround in `deploy/` has been removed.
 
-- **JWKS path is `/api/v1/.well-known/jwks.json`, not `/.well-known/jwks.json`.**
-  `internal/transport/rest/server.go` registers the JWKS handler under
-  the `/api/v1` group, but every OIDC relying party (including the
-  InferiaLLM gateway's `JWKSVerifier`) hardcodes the well-known root
-  path. Phase A fix: move the `cfg.JWKSHandler.Register(...)` call out
-  of the `/api/v1` group and onto the top-level `app`.
+- ~~**OAuth handlers and OIDC discovery are not wired in
+  `inferia-auth/cmd/server/main.go`.**~~ Fixed: all five OAuth/OIDC
+  endpoints are instantiated and passed to `rest.NewServer`. Verified
+  by route-mount integration test + the SSO smoke.
+
+- ~~**JWKS path is `/api/v1/.well-known/jwks.json`, not
+  `/.well-known/jwks.json`.**~~ Fixed: JWKS is mounted at the root
+  well-known path with a `/api/v1` alias for back-compat. The OIDC
+  discovery document advertises the root path.
 
 ---
 
@@ -322,8 +316,10 @@ Most common causes:
 - Migrations haven't run yet — the compose's `inferia-auth-migrate`
   init container should have completed first.
 - `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` are missing or malformed.
-- The OAuth seed crashed (see the FGA multi-colon-id known issue
-  above).
+- The OAuth seed failed. Look for `oauth seed complete` in the logs;
+  if absent, scan for the underlying postgres or OpenFGA error. Note
+  that `OAUTH_SEED_DISABLED=true` skips the seed entirely — use it as
+  a temporary workaround only.
 
 ### Smoke script: `ERROR: /etc/hosts is missing the SSO hostnames.`
 
@@ -350,3 +346,57 @@ bash scripts/sso_smoke.sh
 On success: prints `ALL GOOD`. On failure: dumps the last 200 lines of
 compose logs and exits non-zero. Use `KEEP_STACK_UP=1` to leave the
 stack running for manual debugging.
+
+### Curl-based smoke (when `/etc/hosts` is not writable)
+
+If you cannot edit `/etc/hosts` (e.g. CI runners, container hosts), the
+same end-to-end checks can be driven directly against the running
+compose by using `curl --resolve` to spoof DNS:
+
+```bash
+make docker-up-sso
+
+# 1. OIDC discovery + JWKS (proves F1a + F1b: handlers wired, JWKS at root)
+curl -sk --resolve auth.inferia.local:443:127.0.0.1 \
+  https://auth.inferia.local/.well-known/openid-configuration | jq .
+curl -sk --resolve auth.inferia.local:443:127.0.0.1 \
+  https://auth.inferia.local/.well-known/jwks.json | jq .keys[0]
+
+# 2. Boot-time FGA seed succeeded (proves F1c: multi-colon-id fix)
+docker logs inferia-auth-sso 2>&1 | grep "oauth seed complete"
+
+# 3. Register a user + log in to get an SSO session cookie
+curl -sk --resolve auth.inferia.local:443:127.0.0.1 \
+  -X POST https://auth.inferia.local/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"smoke@inferia.local","password":"smoke-password-1234","display_name":"Smoke"}'
+curl -sk --resolve auth.inferia.local:443:127.0.0.1 \
+  -X POST https://auth.inferia.local/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"smoke@inferia.local","password":"smoke-password-1234"}' \
+  -c /tmp/sso.cookies
+
+# 4. Drive /oauth/authorize → expect 302 to redirect_uri?code=...
+CHALLENGE=$(echo -n verifier-1234567890abcdefghijklmnopqrstuvwxyzABCDEF \
+  | openssl dgst -binary -sha256 | base64 | tr '+/' '-_' | tr -d '=')
+curl -sk --resolve auth.inferia.local:443:127.0.0.1 -i \
+  "https://auth.inferia.local/oauth/authorize?response_type=code\
+&client_id=inferiallm-dashboard\
+&redirect_uri=https://inferia.local/auth/callback\
+&scope=openid&state=xyz\
+&code_challenge=${CHALLENGE}&code_challenge_method=S256" \
+  -b /tmp/sso.cookies | head -6
+
+# 5. Exchange code for token (extract code from step 4)
+curl -sk --resolve auth.inferia.local:443:127.0.0.1 \
+  -X POST https://auth.inferia.local/oauth/token \
+  -d "grant_type=authorization_code&code=${CODE}\
+&client_id=inferiallm-dashboard\
+&redirect_uri=https://inferia.local/auth/callback\
+&code_verifier=verifier-1234567890abcdefghijklmnopqrstuvwxyzABCDEF"
+```
+
+The final token response carries an `access_token` JWT whose `iss` and
+`aud` claims both equal `https://auth.inferia.local`, and an opaque
+`refresh_token`. Verify the gateway can read it via `/oauth/userinfo`
+with `Authorization: Bearer <access_token>`.
