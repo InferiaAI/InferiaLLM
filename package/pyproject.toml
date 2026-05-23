@@ -105,6 +105,7 @@ dev = [
   "pytest-mock",
   "pytest-httpserver>=1.0",
   "PyJWT[crypto]>=2.8",
+  "respx>=0.21",
 ]
 
 [tool.setuptools]

@@ -1,0 +1,75 @@
+"""HTTP helpers for the Qwen3 smoke scripts.
+
+Public surface mirrors the spec §5.2. Pure Python; tests use respx mocks.
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable, TypeVar
+
+import httpx
+
+
+T = TypeVar("T")
+
+
+class SmokeError(Exception):
+    """Base class for all smoke errors."""
+
+
+class APIError(SmokeError):
+    def __init__(self, status: int, body: str, message: str = "") -> None:
+        super().__init__(message or f"HTTP {status}: {body[:200]}")
+        self.status = status
+        self.body = body
+
+
+class SmokeTimeoutError(SmokeError):
+    pass
+
+
+class EmptyResponseError(SmokeError):
+    pass
+
+
+class StreamTruncatedError(SmokeError):
+    pass
+
+
+@dataclass
+class SmokeAPI:
+    """Thin httpx wrapper used by the smoke scripts."""
+
+    base_url: str
+    timeout: float = 30.0
+    _token: str | None = field(default=None, init=False)
+    _client: httpx.Client | None = field(default=None, init=False)
+
+    def _http(self) -> httpx.Client:
+        if self._client is None:
+            self._client = httpx.Client(base_url=self.base_url, timeout=self.timeout)
+        return self._client
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}"} if self._token else {}
+
+    def _request(self, method: str, path: str, **kw: Any) -> httpx.Response:
+        kw.setdefault("headers", {}).update(self._auth_headers())
+        resp = self._http().request(method, path, **kw)
+        if resp.status_code >= 400:
+            raise APIError(resp.status_code, resp.text)
+        return resp
+
+    # ---- auth ----
+
+    def login(self, email: str, password: str) -> None:
+        resp = self._http().post("/v1/auth/login", json={"email": email, "password": password})
+        if resp.status_code >= 400:
+            raise APIError(resp.status_code, resp.text)
+        self._token = resp.json()["access_token"]
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+            self._client = None
