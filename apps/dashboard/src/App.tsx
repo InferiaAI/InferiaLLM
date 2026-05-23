@@ -38,6 +38,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
 import { PermissionGuard } from "@/components/PermissionGuard";
+import { useTokenFragmentConsumer } from "@/hooks/useTokenFragmentConsumer";
 
 function RequireAuth() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -237,6 +238,11 @@ const router = createBrowserRouter([
 ]);
 
 function App() {
+  // Consume `#access_token=<jwt>` left by the gateway's /auth/callback redirect
+  // BEFORE AuthProvider's init effect reads the in-memory token. This runs
+  // before AuthProvider mounts because hooks fire top-down.
+  useTokenFragmentConsumer();
+
   return (
     <AuthProvider>
       <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">

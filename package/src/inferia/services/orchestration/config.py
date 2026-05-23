@@ -121,6 +121,39 @@ class Settings(UnifiedBaseSettings):
         default=20, validation_alias="DEFAULT_POLLING_INTERVAL"
     )
 
+    # Worker provisioning. Default points at the GHCR image published by the
+    # InferiaAI/inferia-worker repo's docker-publish workflow on v* tags.
+    # The org segment "inferiaai" is the GHCR-lowercased form of "InferiaAI".
+    worker_image: str = Field(
+        default="ghcr.io/inferiaai/inferia-worker",
+        validation_alias="INFERIA_WORKER_IMAGE",
+    )
+    worker_image_tag: str = Field(
+        # docker/metadata-action's semver pattern strips the leading "v"
+        # from git tags, so the GHCR tag for git tag v0.1.0 is 0.1.0.
+        default="0.1.0",
+        validation_alias="INFERIA_WORKER_IMAGE_TAG",
+    )
+    bootstrap_token_ttl_seconds: int = Field(
+        default=3600,
+        validation_alias="INFERIA_BOOTSTRAP_TOKEN_TTL_SECONDS",
+    )
+    control_plane_external_url: str = Field(
+        default="http://api-gateway:8000",
+        validation_alias="INFERIA_CONTROL_PLANE_EXTERNAL_URL",
+        description="Public URL workers use to reach /v1/workers/register",
+    )
+    pulumi_state_dir: str = Field(
+        default="/var/lib/inferia/pulumi-state",
+        validation_alias="INFERIA_PULUMI_STATE_DIR",
+        description="Filesystem path where Pulumi local-backend state is persisted.",
+    )
+    pulumi_passphrase: str = Field(
+        default="",
+        validation_alias="INFERIA_PULUMI_PASSPHRASE",
+        description="PULUMI_CONFIG_PASSPHRASE — empty disables stack-config secrets.",
+    )
+
     # Deployment Log Persistence (Elasticsearch)
     elasticsearch_url: Optional[str] = Field(
         default=None, validation_alias="ELASTICSEARCH_URL"

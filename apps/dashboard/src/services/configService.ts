@@ -4,6 +4,15 @@ export interface AWSConfig {
     access_key_id?: string;
     secret_access_key?: string;
     region?: string;
+    // Account-wide provisioning defaults (formerly per-pool metadata).
+    // Pulumi reads these when creating EC2 clusters. All optional —
+    // leaving them blank lets Pulumi pick sane defaults.
+    subnet_id?: string;
+    security_group_ids?: string[];
+    ami_id?: string;
+    iam_instance_profile?: string;
+    root_volume_gb?: number;
+    worker_image_tag?: string;
 }
 
 export interface GCPConfig {

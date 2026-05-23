@@ -20,6 +20,17 @@ export function setToken(token: string | null): void {
   _token = token;
 }
 
+/**
+ * Alias for {@link setToken} used by the external (OAuth) sign-in flow.
+ * Kept as a separate symbol so callers can express intent: "this is the JWT
+ * we just lifted off the URL fragment" — never persisted to sessionStorage
+ * (the refresh side of the flow now lives in an httpOnly cookie that JS
+ * cannot read).
+ */
+export function setAccessToken(token: string | null): void {
+  _token = token;
+}
+
 export function clearToken(): void {
   _token = null;
   clearRefreshToken();

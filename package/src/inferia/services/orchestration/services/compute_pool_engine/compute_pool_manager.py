@@ -105,6 +105,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                 self._provision_cluster_task(
                     pool_id=pool_id,
                     pool_name=request.pool_name,
+                    org_id=request.owner_id,
                     adapter=adapter,
                     gpu_type=(
                         request.allowed_gpu_types[0]
@@ -139,6 +140,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         self,
         pool_id: uuid_module.UUID,
         pool_name: str,
+        org_id: str,
         adapter,
         gpu_type: str,
         gpu_count: int,
@@ -147,7 +149,12 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
         provider_name: str,
         provider_credential_name: Optional[str],
     ):
-        """Background task to provision a cluster and update the pool record."""
+        """Background task to provision a cluster and update the pool record.
+
+        pool_id and org_id are passed to provision_cluster as kwargs so
+        adapters that need them (e.g. Pulumi adapters that mint a
+        bootstrap_token tied to the pool) can use them. Older adapters
+        that ignore unknown kwargs still work."""
         try:
             logger.info(f"Provisioning cluster for pool '{pool_name}' (ID: {pool_id}), gpu_count={gpu_count}")
 
@@ -165,6 +172,8 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                 region=region,
                 use_spot=use_spot,
                 provider_credential_name=provider_credential_name,
+                pool_id=str(pool_id),
+                org_id=org_id,
             )
 
             cluster_id = cluster_info["cluster_id"]

@@ -825,8 +825,11 @@ def main(argv=None):
     )
     cmp_p.add_argument(
         "--worker-image",
-        default="ghcr.io/inferia/inferia-worker:latest",
-        help="Worker container image tag",
+        default="ghcr.io/inferiaai/inferia-worker:0.1.0",
+        help="Worker container image (full repository:tag). Published via the "
+             "InferiaAI/inferia-worker GitHub Action on v* tags. Note that "
+             "docker/metadata-action strips the leading 'v' from semver tags, "
+             "so git tag v0.1.0 produces GHCR tag 0.1.0.",
     )
     cmp_p.add_argument(
         "--inference-port", type=int, default=8080,
@@ -940,6 +943,39 @@ def main(argv=None):
     n_rm.add_argument("node_id")
     n_rm.add_argument("--orchestration-url", default=None)
     n_rm.add_argument("--internal-api-key", default=None)
+
+    # node pool …
+    np = node_sub.add_parser("pool", help="Pool management")
+    np_sub = np.add_subparsers(dest="pool_action", required=True, help="Pool action")
+
+    # node pool aws-config POOL_ID …
+    np_cfg = np_sub.add_parser("aws-config", help="Configure AWS metadata on a pool")
+    np_cfg.add_argument("pool_id", help="Pool ID (UUID)")
+    np_cfg.add_argument("--subnet", required=True, help="VPC subnet ID (subnet-…)")
+    np_cfg.add_argument(
+        "--security-group",
+        action="append",
+        default=[],
+        dest="security_group",
+        help="Security group ID (sg-…) — pass multiple times",
+    )
+    np_cfg.add_argument("--ami", default=None, help="AMI ID (ami-…) — defaults to auto-detect DLAMI")
+    np_cfg.add_argument("--iam-profile", default=None, dest="iam_profile",
+                        help="IAM instance profile ARN")
+    np_cfg.add_argument("--root-gb", type=int, default=None, dest="root_gb",
+                        help="Root EBS volume in GB (10..16384, default 100)")
+    np_cfg.add_argument("--image-tag", default=None, dest="image_tag",
+                        help="inferia-worker Docker image tag (default 'latest')")
+    np_cfg.add_argument("--orchestration-url", default=None)
+    np_cfg.add_argument("--internal-api-key", default=None)
+    np_cfg.add_argument("--org-id", default=None)
+
+    # node pool show POOL_ID
+    np_show = np_sub.add_parser("show", help="Show pool details")
+    np_show.add_argument("pool_id", help="Pool ID (UUID)")
+    np_show.add_argument("--orchestration-url", default=None)
+    np_show.add_argument("--internal-api-key", default=None)
+    np_show.add_argument("--org-id", default=None)
 
     args, unknown = parser.parse_known_args(argv)
 

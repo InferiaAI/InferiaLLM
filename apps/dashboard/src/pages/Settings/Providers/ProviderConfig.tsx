@@ -1,8 +1,56 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState, useReducer } from "react";
 import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
-import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key } from "lucide-react";
+import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
+
+// Small inline "where to find" hint rendered below a credential field
+// label. The HelpCircle icon plus a one-line writeup tells the user
+// exactly which screen of the cloud provider's console holds the value.
+// No external link — keep the user in the dashboard.
+function CredHint({ children }: { children: React.ReactNode }) {
+    return (
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground mt-1">
+            <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
+            <span>{children}</span>
+        </p>
+    );
+}
+
+// True when value looks like one of the backend's mask outputs:
+//   - "********" (full-mask)
+//   - "XXXX...XXXX" — 4 chars + literal "..." + 4 chars (partial mask)
+// Matches the contract enforced by api_gateway/management/configuration.py.
+function isMaskedSecret(value: string | null | undefined): boolean {
+    if (!value) return false;
+    if (value === "********") return true;
+    if (value.length === 11 && value.substring(4, 7) === "..." && !value.includes("*")) return true;
+    return false;
+}
+
+// Scrub masked-shaped values out of the form state on load so the user
+// doesn't accidentally re-submit a mask as the real credential.
+function clearMaskedSecrets(cfg: ProvidersConfig): ProvidersConfig {
+    const scrubbed = structuredClone(cfg);
+    const aws = scrubbed.cloud?.aws as any;
+    if (aws) {
+        if (isMaskedSecret(aws.access_key_id)) aws.access_key_id = "";
+        if (isMaskedSecret(aws.secret_access_key)) aws.secret_access_key = "";
+    }
+    const gcp = scrubbed.cloud?.gcp as any;
+    if (gcp && isMaskedSecret(gcp.service_account_json)) gcp.service_account_json = "";
+    const chroma = scrubbed.vectordb?.chroma as any;
+    if (chroma && isMaskedSecret(chroma.api_key)) chroma.api_key = "";
+    const groq = scrubbed.guardrails?.groq as any;
+    if (groq && isMaskedSecret(groq.api_key)) groq.api_key = "";
+    const lakera = scrubbed.guardrails?.lakera as any;
+    if (lakera && isMaskedSecret(lakera.api_key)) lakera.api_key = "";
+    const nosana = scrubbed.depin?.nosana as any;
+    if (nosana && isMaskedSecret(nosana.wallet_private_key)) nosana.wallet_private_key = "";
+    const akash = scrubbed.depin?.akash as any;
+    if (akash && isMaskedSecret(akash.mnemonic)) akash.mnemonic = "";
+    return scrubbed;
+}
 
 type State = {
     config: ProvidersConfig;
@@ -100,9 +148,17 @@ export default function ProviderConfigPage() {
                     akash: { ...initialProviderConfig.depin.akash, ...data.depin?.akash }
                 }
             };
-            dispatch({ type: 'SET_FIELD', field: 'config', value: merged });
+            // Determine configured state from the merged server response
+            // (which still carries masked values like "AKIA...XYZ8") BEFORE
+            // we scrub. Otherwise an isConfigured pool would look unconfigured.
+            const configured = checkConfigured(merged, providerId);
 
-            if (checkConfigured(merged, providerId)) {
+            // Scrub masked secret values from the form state so the user can't
+            // accidentally round-trip the literal mask back as the real key.
+            const scrubbed = clearMaskedSecrets(merged);
+            dispatch({ type: 'SET_FIELD', field: 'config', value: scrubbed });
+
+            if (configured) {
                 dispatch({ type: 'SET_FIELD', field: 'isConfigured', value: true });
                 dispatch({ type: 'SET_FIELD', field: 'isEditing', value: false });
             } else {
@@ -261,6 +317,7 @@ export default function ProviderConfigPage() {
                             providerId={providerId}
                             config={config}
                             updateField={updateField}
+                            isConfigured={isConfigured}
                             nosanaApiKeys={nosanaApiKeys}
                             loadingKeys={loadingKeys}
                             handleAddKey={() => dispatch({ type: 'SET_FIELD', field: 'showAddKeyModal', value: true })}
@@ -390,9 +447,40 @@ export default function ProviderConfigPage() {
     );
 }
 
-function AWSFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void }) {
+// Validation regex shared with the backend AWSPoolMetadata gate.
+const AWS_PROV_RE = {
+    subnet: /^subnet-[0-9a-f]{8,17}$/,
+    sg: /^sg-[0-9a-f]{8,17}$/,
+    ami: /^ami-[0-9a-f]{8,17}$/,
+    iam: /^arn:aws:iam::\d{12}:instance-profile\/.+$/,
+};
+
+function AWSFields({ config, updateField, isConfigured }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void; isConfigured?: boolean }) {
+    // When the panel was loaded with stored credentials, the form starts empty
+    // (masked values are stripped on load). Tell the user explicitly so they
+    // don't think the existing credentials were wiped.
+    const accessEmpty = !config.cloud.aws.access_key_id;
+    const secretEmpty = !config.cloud.aws.secret_access_key;
+    const aws = config.cloud.aws;
+    const subnetErr = aws.subnet_id && !AWS_PROV_RE.subnet.test(aws.subnet_id)
+        ? "Must match subnet-XXXXXXXX" : "";
+    const sgErr = (aws.security_group_ids || []).find(sg => !AWS_PROV_RE.sg.test(sg))
+        ? "Each must match sg-XXXXXXXX" : "";
+    const amiErr = aws.ami_id && !AWS_PROV_RE.ami.test(aws.ami_id)
+        ? "Must match ami-XXXXXXXX" : "";
+    const iamErr = aws.iam_instance_profile && !AWS_PROV_RE.iam.test(aws.iam_instance_profile)
+        ? "Must match arn:aws:iam::ACCOUNT:instance-profile/NAME" : "";
+    const rootErr = aws.root_volume_gb && (aws.root_volume_gb < 10 || aws.root_volume_gb > 16384)
+        ? "Must be 10..16384" : "";
     return (
         <>
+            {isConfigured && accessEmpty && secretEmpty && (
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                    AWS credentials are stored and masked for security. Re-enter the
+                    Access Key ID and Secret Access Key to change them; leave blank
+                    to keep the existing values.
+                </div>
+            )}
             <div className="space-y-2">
                 <label htmlFor="aws-access-key" className="text-sm font-medium">Access Key ID</label>
                 <input
@@ -400,8 +488,13 @@ function AWSFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     value={config.cloud.aws.access_key_id || ""}
                     onChange={(e) => updateField(['cloud', 'aws', 'access_key_id'], e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="AKIA..."
+                    placeholder={isConfigured ? "(unchanged — type to replace)" : "AKIA..."}
+                    autoComplete="off"
                 />
+                <CredHint>
+                    AWS Console → <strong>IAM</strong> → Users → your IAM user →
+                    Security credentials → <em>Create access key</em>. Starts with <code>AKIA</code>.
+                </CredHint>
             </div>
             <div className="space-y-2">
                 <label htmlFor="aws-secret-key" className="text-sm font-medium">Secret Access Key</label>
@@ -411,8 +504,14 @@ function AWSFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     value={config.cloud.aws.secret_access_key || ""}
                     onChange={(e) => updateField(['cloud', 'aws', 'secret_access_key'], e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="********"
+                    placeholder={isConfigured ? "(unchanged — type to replace)" : "********"}
+                    autoComplete="new-password"
                 />
+                <CredHint>
+                    Shown <strong>only once</strong> on the same screen where you create
+                    the access key. If you lost it, generate a new key pair —
+                    AWS doesn't let you retrieve the secret.
+                </CredHint>
             </div>
             <div className="space-y-2">
                 <label htmlFor="aws-region" className="text-sm font-medium">Region</label>
@@ -422,6 +521,132 @@ function AWSFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     onChange={(e) => updateField(['cloud', 'aws', 'region'], e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 />
+                <CredHint>
+                    Any AWS region code: <code>us-east-1</code>, <code>eu-west-2</code>,
+                    <code> ap-south-1</code>… Shown top-right of the AWS Console (e.g. "Mumbai").
+                </CredHint>
+            </div>
+
+            {/* AWS Provisioning Configuration — account-wide defaults Pulumi
+                will use when creating EC2 clusters. All optional. */}
+            <div className="mt-6 pt-4 border-t border-border/60">
+                <h3 className="text-sm font-semibold">AWS Provisioning Configuration</h3>
+                <p className="text-xs text-muted-foreground mt-1 mb-4">
+                    Account-wide defaults applied to every AWS pool. Leave blank to
+                    let Pulumi pick a sensible default (auto VPC + default SG +
+                    latest Deep Learning AMI + 100 GB root volume).
+                </p>
+
+                <div className="space-y-2">
+                    <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <input
+                        id="aws-subnet"
+                        value={aws.subnet_id || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'subnet_id'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="subnet-0123456789abcdef0"
+                    />
+                    {subnetErr && <p className="text-xs text-red-500">{subnetErr}</p>}
+                    <CredHint>
+                        VPC Console → <strong>Subnets</strong>. Pick one in the same
+                        region as your access keys. Leave blank to let Pulumi create
+                        a fresh VPC + subnet automatically.
+                    </CredHint>
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
+                    <input
+                        id="aws-sg"
+                        value={(aws.security_group_ids || []).join(", ")}
+                        onChange={(e) => {
+                            const parts = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
+                            updateField(['cloud', 'aws', 'security_group_ids'], parts.length ? parts : undefined);
+                        }}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="sg-abc12345, sg-def67890"
+                    />
+                    {sgErr && <p className="text-xs text-red-500">{sgErr}</p>}
+                    <CredHint>
+                        EC2 Console → <strong>Security Groups</strong>. Each ID looks like
+                        <code> sg-XXXXXXXX</code>. Must allow outbound TCP 443
+                        (to reach the control plane) and inbound 8080 from the CP.
+                    </CredHint>
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <input
+                        id="aws-ami"
+                        value={aws.ami_id || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'ami_id'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="ami-deadbeef00000000 (auto if blank)"
+                    />
+                    {amiErr && <p className="text-xs text-red-500">{amiErr}</p>}
+                    <CredHint>
+                        EC2 Console → <strong>AMIs</strong>. Leave blank and Pulumi will
+                        auto-detect the latest AWS Deep Learning AMI (Ubuntu 22.04 +
+                        NVIDIA driver) for the selected region.
+                    </CredHint>
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
+                    <input
+                        id="aws-iam"
+                        value={aws.iam_instance_profile || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'iam_instance_profile'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="arn:aws:iam::123456789012:instance-profile/inferia-worker"
+                    />
+                    {iamErr && <p className="text-xs text-red-500">{iamErr}</p>}
+                    <CredHint>
+                        IAM Console → <strong>Roles</strong> → your role →
+                        Trust relationships must include <code>ec2.amazonaws.com</code>.
+                        Only needed if the worker pulls from private ECR or S3.
+                    </CredHint>
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-root" className="text-sm font-medium">Root Volume Size (GB) <span className="text-muted-foreground text-xs">(default 100)</span></label>
+                    <input
+                        id="aws-root"
+                        type="number"
+                        min={10}
+                        max={16384}
+                        value={aws.root_volume_gb ?? ""}
+                        onChange={(e) => {
+                            const v = e.target.value;
+                            updateField(['cloud', 'aws', 'root_volume_gb'], v === "" ? undefined : parseInt(v, 10));
+                        }}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="100"
+                    />
+                    {rootErr && <p className="text-xs text-red-500">{rootErr}</p>}
+                    <CredHint>
+                        Size of the EBS root volume in GB. 100 GB is enough for the
+                        worker image + a couple of model containers; bump higher if
+                        you'll pull large model artifacts at runtime.
+                    </CredHint>
+                </div>
+
+                <div className="space-y-2 mt-3">
+                    <label htmlFor="aws-image-tag" className="text-sm font-medium">inferia-worker Image Tag <span className="text-muted-foreground text-xs">(default "latest")</span></label>
+                    <input
+                        id="aws-image-tag"
+                        value={aws.worker_image_tag || ""}
+                        onChange={(e) => updateField(['cloud', 'aws', 'worker_image_tag'], e.target.value || undefined)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder='v1.2.3'
+                    />
+                    <CredHint>
+                        Tag of <code>ghcr.io/inferiaai/inferia-worker</code> to pull on the
+                        EC2 instance. Pin (e.g. <code>0.1.0</code>) for reproducible
+                        deploys, or leave blank to follow the rolling default
+                        (<code>latest</code>).
+                    </CredHint>
+                </div>
             </div>
         </>
     );
@@ -431,8 +656,8 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
     return (
         <div className="space-y-4">
             <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
-                GCP uses SkyPilot for cluster orchestration. Configure your GCP credentials below.
-                SkyPilot will use your default GCP credentials if service account JSON is not provided.
+                GCP uses Pulumi for cluster orchestration. Configure your GCP credentials below.
+                Pulumi will use your default GCP credentials if service account JSON is not provided.
             </div>
             <div className="space-y-2">
                 <label htmlFor="gcp-project" className="text-sm font-medium">Project ID</label>
@@ -443,6 +668,11 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     placeholder="my-gcp-project"
                 />
+                <CredHint>
+                    GCP Console → click the <strong>project picker</strong> at the very
+                    top of the page. The Project ID is the string under the project name
+                    (e.g. <code>my-project-12345</code>), not the human-readable name.
+                </CredHint>
             </div>
             <div className="space-y-2">
                 <label htmlFor="gcp-region" className="text-sm font-medium">Default Region</label>
@@ -453,6 +683,11 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     placeholder="us-central1"
                 />
+                <CredHint>
+                    Any Compute Engine region: <code>us-central1</code>,
+                    <code> europe-west4</code>, <code>asia-east1</code>… GPU
+                    availability varies — check Compute Engine → Quotas before picking.
+                </CredHint>
             </div>
             <div className="space-y-2">
                 <label htmlFor="gcp-sa-json" className="text-sm font-medium">Service Account JSON (Optional)</label>
@@ -463,10 +698,12 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[100px] font-mono text-xs"
                     placeholder='{"type": "service_account", ...}'
                 />
-                <p className="text-xs text-muted-foreground">
-                    Paste your GCP service account JSON key. If not provided, SkyPilot will use 
-                    your default gcloud credentials (run <code>gcloud auth application-default login</code>).
-                </p>
+                <CredHint>
+                    IAM &amp; Admin → <strong>Service Accounts</strong> → pick a
+                    service account → Keys tab → <em>Add Key → JSON</em>. Paste the
+                    downloaded file verbatim. Blank ⇒ Pulumi uses your local
+                    <code> gcloud auth application-default login</code>.
+                </CredHint>
             </div>
         </div>
     );
@@ -797,6 +1034,7 @@ function ProviderFormFields({
     providerId,
     config,
     updateField,
+    isConfigured,
     nosanaApiKeys,
     loadingKeys,
     handleAddKey,
@@ -805,6 +1043,7 @@ function ProviderFormFields({
     providerId?: string;
     config: ProvidersConfig;
     updateField: (path: string[], value: any) => void;
+    isConfigured?: boolean;
     nosanaApiKeys: NosanaApiKeyResponse[];
     loadingKeys: boolean;
     handleAddKey: () => void;
@@ -812,7 +1051,7 @@ function ProviderFormFields({
 }) {
     switch (providerId) {
         case "aws":
-            return <AWSFields config={config} updateField={updateField} />;
+            return <AWSFields config={config} updateField={updateField} isConfigured={isConfigured} />;
         case "gcp":
             return <GCPFields config={config} updateField={updateField} />;
         case "chroma":

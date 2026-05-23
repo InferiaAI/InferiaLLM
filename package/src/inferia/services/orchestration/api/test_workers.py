@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -11,6 +13,8 @@ from fastapi.testclient import TestClient
 
 from inferia.services.orchestration.api import workers
 from inferia.services.orchestration.services.worker_controller.auth import (
+    BootstrapClaim,
+    InvalidBootstrapToken,
     WorkerAuth,
 )
 from inferia.services.orchestration.services.worker_controller.registry import (
@@ -23,6 +27,8 @@ from inferia.services.orchestration.services.worker_controller.protocol import (
 
 SECRET = "test-secret-key-at-least-32-chars-long!"
 POOL_ID = "00000000-0000-0000-0000-000000000001"
+POOL_UUID = UUID(POOL_ID)
+OTHER_POOL_ID = "11111111-2222-3333-4444-555555555555"
 
 
 class FakeInventory:
@@ -34,7 +40,8 @@ class FakeInventory:
         self.marked_ready: list[str] = []
         self.duplicate_kind: bool = False  # toggles to force a conflict
 
-    async def upsert_worker(self, *, pool_id, node_name, advertise_url, allocatable):
+    async def upsert_worker(self, *, pool_id, node_name, advertise_url, allocatable,
+                            labels=None):
         if self.duplicate_kind:
             raise workers.DuplicateNodeError(
                 f"{pool_id}/{node_name} taken by a non-worker node"
@@ -42,6 +49,9 @@ class FakeInventory:
         key = (pool_id, node_name)
         if key in self.nodes:
             row = self.nodes[key]
+            # Merge labels if provided (simulate jsonb merge).
+            if labels:
+                row.setdefault("labels", {}).update(labels)
         else:
             row = {
                 "id": f"node-{node_name}",
@@ -51,6 +61,7 @@ class FakeInventory:
                 "state": "provisioning",
                 "advertise_url": advertise_url,
                 "allocatable": allocatable,
+                "labels": dict(labels) if labels else {},
             }
             self.nodes[key] = row
         return row
@@ -188,6 +199,191 @@ def test_register_idempotent_reissues_token(app_and_deps):
     )
     assert r1.status_code == 200 and r2.status_code == 200
     assert r1.json()["node_id"] == r2.json()["node_id"]
+
+
+# ---------------------------------------------------------------------------
+# bootstrap_token body field + cloud-env fields
+# ---------------------------------------------------------------------------
+
+# Helpers for building fake BootstrapClaim responses and stub consume fns.
+
+def _make_claim(pool_id: UUID = POOL_UUID) -> BootstrapClaim:
+    return BootstrapClaim(
+        bootstrap_id=UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+        pool_id=pool_id,
+        org_id="org-1",
+    )
+
+
+def _single_use_consume(call_count_holder: list, claim: BootstrapClaim):
+    """Returns an async callable that yields ``claim`` on first call, then raises
+    InvalidBootstrapToken (simulates single-use DB semantics)."""
+    async def _consume(conn, *, token):
+        call_count_holder[0] += 1
+        if call_count_holder[0] > 1:
+            raise InvalidBootstrapToken("already consumed")
+        return claim
+    return _consume
+
+
+def test_register_with_bootstrap_token_happy(app_and_deps):
+    """POST with bootstrap_token in body → 200, node_id + worker_jwt.
+    Second call with same token → 401 (single-use)."""
+    app, auth, _reg, _inv = app_and_deps
+    client = TestClient(app)
+
+    call_count = [0]
+    claim = _make_claim()
+    consume_fn = _single_use_consume(call_count, claim)
+
+    with patch("inferia.services.orchestration.api.workers._consume_bootstrap_token",
+               consume_fn):
+        r1 = client.post(
+            "/v1/workers/register",
+            json={
+                "node_name": "ec2-node-1",
+                "pool_id": POOL_ID,
+                "advertise_url": "https://ec2:8080",
+                "allocatable": {"gpu": "1"},
+                "bootstrap_token": "a-valid-bootstrap-token",
+                "runtime_env": "aws-ec2",
+                "instance_id": "i-0abc123",
+                "region": "us-east-1",
+                "availability_zone": "us-east-1a",
+            },
+        )
+        assert r1.status_code == 200, r1.text
+        data = r1.json()
+        assert "node_id" in data
+        assert data["worker_jwt"]
+
+        # Second call with same (mocked) token → 401.
+        r2 = client.post(
+            "/v1/workers/register",
+            json={
+                "node_name": "ec2-node-1",
+                "pool_id": POOL_ID,
+                "advertise_url": "https://ec2:8080",
+                "allocatable": {},
+                "bootstrap_token": "a-valid-bootstrap-token",
+            },
+        )
+        assert r2.status_code == 401, r2.text
+
+
+def test_register_records_cloud_env_in_labels(app_and_deps):
+    """POST with cloud-env fields → labels stored in compute inventory."""
+    app, auth, _reg, inventory = app_and_deps
+    client = TestClient(app)
+
+    claim = _make_claim()
+    call_count = [0]
+
+    async def _consume(conn, *, token):
+        call_count[0] += 1
+        return claim
+
+    with patch("inferia.services.orchestration.api.workers._consume_bootstrap_token",
+               _consume):
+        r = client.post(
+            "/v1/workers/register",
+            json={
+                "node_name": "ec2-labels-node",
+                "pool_id": POOL_ID,
+                "advertise_url": "https://ec2:8080",
+                "allocatable": {},
+                "bootstrap_token": "some-token-value",
+                "runtime_env": "aws-ec2",
+                "instance_id": "i-abcdef012345",
+                "region": "eu-west-1",
+                "availability_zone": "eu-west-1b",
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    node = inventory.nodes.get((POOL_ID, "ec2-labels-node"))
+    assert node is not None, "node was not upserted"
+    labels = node.get("labels", {})
+    assert labels.get("runtime_env") == "aws-ec2"
+    assert labels.get("instance_id") == "i-abcdef012345"
+    assert labels.get("region") == "eu-west-1"
+    assert labels.get("availability_zone") == "eu-west-1b"
+
+
+def test_register_without_cloud_env_still_works(app_and_deps):
+    """POST with bootstrap_token but no cloud-env fields → 200 (backward compat)."""
+    app, auth, _reg, _inv = app_and_deps
+    client = TestClient(app)
+
+    claim = _make_claim()
+
+    async def _consume(conn, *, token):
+        return claim
+
+    with patch("inferia.services.orchestration.api.workers._consume_bootstrap_token",
+               _consume):
+        r = client.post(
+            "/v1/workers/register",
+            json={
+                "node_name": "bare-node",
+                "pool_id": POOL_ID,
+                "advertise_url": "https://bare:8080",
+                "allocatable": {},
+                "bootstrap_token": "bare-token-value",
+            },
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert "node_id" in data
+        assert data["worker_jwt"]
+
+
+def test_register_bootstrap_token_pool_mismatch_rejected(app_and_deps):
+    """Token minted for pool A; register claims pool B → 401."""
+    app, auth, _reg, _inv = app_and_deps
+    client = TestClient(app)
+
+    # Claim says pool A (POOL_UUID), but request body says OTHER_POOL_ID.
+    claim = _make_claim(pool_id=POOL_UUID)
+
+    async def _consume(conn, *, token):
+        return claim
+
+    with patch("inferia.services.orchestration.api.workers._consume_bootstrap_token",
+               _consume):
+        r = client.post(
+            "/v1/workers/register",
+            json={
+                "node_name": "mismatch-node",
+                "pool_id": OTHER_POOL_ID,
+                "advertise_url": "https://mismatch:8080",
+                "allocatable": {},
+                "bootstrap_token": "pool-a-token",
+            },
+        )
+        assert r.status_code == 401, r.text
+        assert "pool_scope_violation" in r.text
+
+
+def test_register_oversized_fields_rejected(app_and_deps):
+    """runtime_env > 64 chars → 422 Pydantic validation error."""
+    app, auth, _reg, _inv = app_and_deps
+    client = TestClient(app)
+
+    boot = auth.mint_bootstrap_token(pool_id=POOL_ID)
+    r = client.post(
+        "/v1/workers/register",
+        json={
+            "node_name": "n",
+            "pool_id": POOL_ID,
+            "advertise_url": "http://x",
+            "allocatable": {},
+            "bootstrap_token": "some-token",
+            "runtime_env": "x" * 65,
+        },
+        headers={"Authorization": f"Bearer {boot}"},
+    )
+    assert r.status_code == 422, r.text
 
 
 # ---------------------------------------------------------------------------

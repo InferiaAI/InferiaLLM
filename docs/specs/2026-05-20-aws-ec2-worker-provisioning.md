@@ -72,7 +72,7 @@ worker opens /v1/workers/channel
 
 ### Control-plane (env / `inferiallm.yaml`)
 
-- `INFERIA_WORKER_IMAGE` — default `ghcr.io/inferia-ai/inferia-worker`. The org segment is parameterized so other orgs can ship private builds. Used as the default in `bootstrap_builder.build_user_data`.
+- `INFERIA_WORKER_IMAGE` — default `ghcr.io/inferiaai/inferia-worker`. The org segment is parameterized so other orgs can ship private builds. Published by `InferiaAI/inferia-worker`'s `docker-publish.yml` workflow on every `v*` tag. Used as the default in `bootstrap_builder.build_user_data`.
 - `INFERIA_WORKER_IMAGE_TAG` — default `latest`. Per-pool override via `pool.metadata.worker_image_tag` to pin a specific version.
 - `INFERIA_BOOTSTRAP_TOKEN_TTL_SECONDS` — default `3600`. Raise to `7200` if cloud-init reliably exceeds 1h on cold AMIs in some region.
 

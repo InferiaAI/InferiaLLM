@@ -10,6 +10,11 @@ from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
 from inferia.services.api_gateway.rbac.permissions import normalize_permissions
+from inferia.services.api_gateway.rbac.jwks_verifier import (
+    JWKSVerifier,
+    JWKSVerifyError,
+)
+from inferia.services.api_gateway.rbac.shadow_user import get_or_create_shadow_user
 
 logger = logging.getLogger(__name__)
 
@@ -60,48 +65,63 @@ async def _resolve_local_token(db, token: str) -> UserContext:
     )
 
 
-async def _resolve_external_token(db, token: str) -> UserContext:
-    """
-    Validate a token issued by inferia-auth via its introspect endpoint,
-    then map the external identity to a local shadow user.
-    """
-    from inferia.services.api_gateway.rbac.external_auth import external_introspect
-    from inferia.services.api_gateway.rbac.shadow_user import get_or_create_shadow_user
+# Lazily-built JWKSVerifier singleton. Re-instantiating per request would
+# defeat the JWKS cache and force a network round-trip on every API call.
+_verifier: Optional[JWKSVerifier] = None
 
-    result = await external_introspect(token)
-    if result is None or not result.get("valid"):
+
+def _get_verifier() -> JWKSVerifier:
+    global _verifier
+    if _verifier is None:
+        _verifier = JWKSVerifier(
+            jwks_url=settings.external_auth_url.rstrip("/") + "/.well-known/jwks.json",
+            issuer=settings.external_auth_issuer,
+            audience=settings.app_namespace,
+            cache_ttl=settings.oauth_jwks_cache_ttl_seconds,
+        )
+    return _verifier
+
+
+async def _resolve_external_token(db, token: str) -> UserContext:
+    """Verify an inferia-auth-issued JWT and build a UserContext.
+
+    Roles and permissions come straight from the JWT claims — the local
+    DB is consulted only to mint/resolve a shadow-user row so that org
+    memberships, audit log foreign keys, and API key references remain
+    valid. This is per spec §9.1: 'roles and permissions come straight
+    from the JWT'.
+    """
+    try:
+        claims = _get_verifier().verify_sync(token)
+    except JWKSVerifyError as e:
+        logger.info("External token verification failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    email = result.get("email", "")
-    external_user_id = result.get("subject_id", "")
+    sub = claims.get("sub", "")
+    external_user_id = sub.split(":", 1)[1] if ":" in sub else sub
+    email = claims.get("email", "")
 
-    user, org_id, roles = await get_or_create_shadow_user(
+    user, _local_org_id, _local_roles = await get_or_create_shadow_user(
         db, email=email, external_id=external_user_id
     )
 
-    from sqlalchemy.future import select
-    from inferia.services.api_gateway.db.models import Role as RoleModel
-
-    permissions_set = set()
-    if roles:
-        stmt = select(RoleModel).where(RoleModel.name.in_(roles))
-        res = await db.execute(stmt)
-        for r in res.scalars().all():
-            if r.permissions:
-                permissions_set.update(r.permissions)
-
-    permissions, _, _ = normalize_permissions(permissions_set)
+    # org_id source-of-truth: explicit 'org_id' claim if present, else
+    # first entry of org_ids[], else None.
+    org_id = claims.get("org_id")
+    if not org_id:
+        org_ids = claims.get("org_ids") or []
+        org_id = org_ids[0] if org_ids else None
 
     return UserContext(
         user_id=user.id,
         username=user.email,
         email=user.email,
-        roles=roles,
-        permissions=permissions,
+        roles=list(claims.get("roles") or []),
+        permissions=list(claims.get("permissions") or []),
         org_id=org_id,
         quota_limit=10000,
         quota_used=0,
@@ -147,6 +167,8 @@ async def auth_middleware(request: Request, call_next):
         "/auth/register",
         "/auth/refresh",
         "/auth/register-invite",
+        "/auth/start",
+        "/auth/callback",
         "/audit/internal/log",
     ]
     # Allow /auth/invitations/{token} (exactly one segment after prefix)

@@ -27,7 +27,8 @@ import NodeShell from "@/components/nodes/NodeShell";
 type Tab = "overview" | "labels" | "logs" | "shell";
 
 function parseTab(s: string | null): Tab {
-  if (s === "labels" || s === "logs" || s === "shell") return s;
+  if (s === "labels" || s === "logs" || s === "shell")
+    return s;
   return "overview";
 }
 
@@ -316,6 +317,7 @@ export default function InstanceDetail() {
             <NodeShell nodeId={node.id} />
           </div>
         )}
+
       </div>
     </div>
   );

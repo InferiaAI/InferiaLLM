@@ -29,7 +29,7 @@ from inferia.services.orchestration.services.model_deployment.log_store import (
     DeploymentLogBuffer,
 )
 from inferia.services.orchestration.config import settings as orch_settings
-from typing import Optional
+from typing import Any, Optional
 
 import os
 
@@ -309,6 +309,7 @@ class CreatePoolRequest(BaseModel):
         None  # Generic: which credential to use for this provider
     )
     gpu_count: int = 1  # Number of GPUs per node (for cluster provisioning)
+    metadata: Optional[dict[str, Any]] = None  # Provider-specific pool config (e.g. AWS subnet_id)
 
 
 class ModelRegistryRequest(BaseModel):
@@ -1006,6 +1007,19 @@ async def create_pool(req: CreatePoolRequest, request: Request):
             status_code=400, detail=f"Invalid provider '{req.provider}'. {str(e)}"
         )
 
+    # Validate AWS pool metadata shape at the API boundary when provider=aws
+    # and a metadata dict is supplied, so AWSAdapter.provision_node never
+    # receives malformed subnet_id / security_group_ids.
+    if req.provider == "aws" and req.metadata is not None:
+        from inferia.services.orchestration.services.adapter_engine.adapters.aws.pool_metadata import (
+            AWSPoolMetadata,
+        )
+        from pydantic import ValidationError as _ValidationError
+        try:
+            AWSPoolMetadata(**req.metadata)
+        except _ValidationError as e:
+            raise HTTPException(status_code=422, detail={"errors": e.errors()})
+
     # The api_gateway forwards the caller's resolved org via X-Organization-ID.
     # That value is authoritative for which org list-nodes will query later,
     # so we override req.owner_id with it when present. Without this, a
@@ -1116,6 +1130,40 @@ async def create_pool(req: CreatePoolRequest, request: Request):
         _logging.getLogger("deployment-server").warning(
             "createpool: placeholder inventory insert failed: %s", e,
         )
+
+    # Persist metadata + org_id (alias of owner_id for AWS adapter queries)
+    # into compute_pools. Non-fatal if the columns don't exist yet — the
+    # migration will add them.
+    if req.metadata or True:  # always update org_id
+        try:
+            import asyncpg as _asyncpg2
+            import os as _os2
+            dsn2 = (
+                _os2.getenv("POSTGRES_DSN")
+                or (_os2.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
+                or "postgresql://inferia:inferia@postgres:5432/inferia"
+            )
+            conn2 = await _asyncpg2.connect(dsn=dsn2, timeout=5)
+            try:
+                await conn2.execute(
+                    """
+                    UPDATE compute_pools
+                    SET org_id = $2,
+                        metadata = COALESCE($3::jsonb, metadata),
+                        updated_at = now()
+                    WHERE id = $1::uuid
+                    """,
+                    resp.pool_id,
+                    req.owner_id,
+                    json.dumps(req.metadata) if req.metadata else None,
+                )
+            finally:
+                await conn2.close()
+        except Exception as e2:
+            import logging as _logging2
+            _logging2.getLogger("deployment-server").warning(
+                "createpool: metadata/org_id update failed: %s", e2,
+            )
 
     return {
         "pool_id": resp.pool_id,
@@ -1300,6 +1348,112 @@ async def get_pool(pool_id: str):
         "lifecycle_state": lifecycle_state,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
+    }
+
+
+class UpdatePoolMetadataRequest(BaseModel):
+    """Request body for PATCH /updatepool/{pool_id}.
+
+    Only ``metadata`` is accepted today. Additional mutable fields may be
+    added later without breaking callers (the response always returns the
+    full pool row).
+    """
+    metadata: Optional[dict[str, Any]] = None
+
+
+@router.patch("/updatepool/{pool_id}")
+async def update_pool_metadata(pool_id: str, req: UpdatePoolMetadataRequest, request: Request):
+    """Merge ``metadata`` into compute_pools.metadata for the given pool.
+
+    If the pool's provider is ``"aws"`` and a non-null metadata dict is
+    supplied, the dict is validated against ``AWSPoolMetadata`` before being
+    persisted, so AWSAdapter.provision_node never receives a malformed config.
+    """
+    try:
+        pool_uuid = UUID(pool_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pool_id")
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        pool = await conn.fetchrow(
+            """
+            SELECT id, provider, metadata
+            FROM compute_pools
+            WHERE id = $1 AND is_active = TRUE
+            """,
+            pool_uuid,
+        )
+        if not pool:
+            raise HTTPException(status_code=404, detail="Pool not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            await conn.close()
+            conn = None
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
+    provider = pool["provider"]
+
+    # Validate AWS metadata shape before writing.
+    if provider == "aws" and req.metadata is not None:
+        from inferia.services.orchestration.services.adapter_engine.adapters.aws.pool_metadata import (
+            AWSPoolMetadata,
+        )
+        from pydantic import ValidationError as _ValidationError
+        try:
+            AWSPoolMetadata(**req.metadata)
+        except _ValidationError as e:
+            if conn:
+                await conn.close()
+            raise HTTPException(status_code=422, detail={"errors": e.errors()})
+    elif provider != "aws" and req.metadata is not None:
+        # Reject AWS-specific metadata keys sent to non-AWS pools to prevent
+        # operator confusion (spec section "Failure modes").
+        aws_keys = {"subnet_id", "security_group_ids", "ami_id", "iam_instance_profile"}
+        if aws_keys & set(req.metadata.keys()):
+            if conn:
+                await conn.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"pool provider is not aws; AWS metadata keys are not valid for provider '{provider}'",
+            )
+
+    try:
+        if req.metadata is not None:
+            # Merge: keep existing keys that are not overridden.
+            existing_meta = pool["metadata"] or {}
+            if isinstance(existing_meta, str):
+                import json as _json
+                existing_meta = _json.loads(existing_meta)
+            merged = {**existing_meta, **req.metadata}
+            await conn.execute(
+                """
+                UPDATE compute_pools
+                SET metadata = $2::jsonb,
+                    updated_at = now()
+                WHERE id = $1 AND is_active = TRUE
+                """,
+                pool_uuid,
+                json.dumps(merged),
+            )
+
+        # Return the updated pool row (metadata only).
+        updated = await conn.fetchrow(
+            "SELECT id, provider, metadata FROM compute_pools WHERE id = $1",
+            pool_uuid,
+        )
+    finally:
+        if conn:
+            await conn.close()
+
+    return {
+        "pool_id": pool_id,
+        "provider": provider,
+        "metadata": updated["metadata"] if updated else req.metadata,
+        "status": "UPDATED",
     }
 
 

@@ -9,7 +9,7 @@ this surface.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,14 @@ class RegisterRequest(BaseModel):
     pool_id: str
     advertise_url: str
     allocatable: dict[str, str] = Field(default_factory=dict)
+    # Optional bootstrap_token in request body (DB-backed single-use token).
+    # When provided, the Authorization header is not required.
+    bootstrap_token: Optional[str] = Field(default=None, min_length=10, max_length=128)
+    # Optional cloud-env metadata fields recorded in inventory labels.
+    runtime_env: Optional[str] = Field(default=None, max_length=64)
+    instance_id: Optional[str] = Field(default=None, max_length=128)
+    region: Optional[str] = Field(default=None, max_length=64)
+    availability_zone: Optional[str] = Field(default=None, max_length=64)
 
 
 class RegisterResponse(BaseModel):

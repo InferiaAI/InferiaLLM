@@ -5,7 +5,7 @@ Uses Pydantic Settings for environment-based configuration.
 
 from typing import ClassVar, Literal, Optional, Any, Dict, List
 import logging
-from pydantic import Field, BaseModel, field_validator
+from pydantic import Field, BaseModel, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 from inferia.common.unified_config import UnifiedBaseSettings
 
@@ -18,6 +18,17 @@ class AWSConfig(BaseModel):
     access_key_id: Optional[str] = None
     secret_access_key: Optional[str] = None
     region: str = "us-east-1"
+    # Account-wide AWS provisioning defaults. SkyPilot uses these when
+    # spinning up pools; previously the same fields lived on each pool's
+    # compute_pools.metadata jsonb. None ⇒ SkyPilot picks a default
+    # (creates a VPC, default SG, latest Deep Learning AMI, no IAM
+    # instance profile, 100 GB root, "latest" worker image).
+    subnet_id: Optional[str] = None
+    security_group_ids: Optional[list[str]] = None
+    ami_id: Optional[str] = None
+    iam_instance_profile: Optional[str] = None
+    root_volume_gb: Optional[int] = None
+    worker_image_tag: Optional[str] = None
 
 
 class GCPConfig(BaseModel):
@@ -149,6 +160,33 @@ class Settings(UnifiedBaseSettings):
         validation_alias="EXTERNAL_AUTH_URL",
         description="Base URL of the inferia-auth service (e.g. http://inferia-auth:3000)",
     )
+    external_auth_issuer: Optional[str] = Field(
+        default=None,
+        validation_alias="EXTERNAL_AUTH_ISSUER",
+        description="Expected 'iss' claim in inferia-auth-issued JWTs",
+    )
+    app_namespace: str = Field(
+        default="inferiallm",
+        validation_alias="APP_NAMESPACE",
+        description="Expected 'aud' claim in inferia-auth-issued JWTs",
+    )
+    oauth_client_id: Optional[str] = Field(
+        default=None,
+        validation_alias="OAUTH_CLIENT_ID",
+        description="OAuth2 client_id registered with inferia-auth for this gateway",
+    )
+    oauth_redirect_uri: Optional[str] = Field(
+        default=None,
+        validation_alias="OAUTH_REDIRECT_URI",
+        description="OAuth2 redirect_uri pointing back at /auth/callback on this gateway",
+    )
+    oauth_jwks_cache_ttl_seconds: int = Field(
+        default=3600,
+        validation_alias="OAUTH_JWKS_CACHE_TTL_SECONDS",
+        ge=60,
+        le=86400,
+        description="JWKS cache lifetime in seconds (60–86400)",
+    )
 
     # Superadmin credentials - MUST be set via environment variables in production
     superadmin_email: Optional[str] = Field(default=None, validation_alias="SUPERADMIN_EMAIL")
@@ -261,6 +299,27 @@ class Settings(UnifiedBaseSettings):
     )
 
     _PLACEHOLDER_JWT_SECRET = "placeholder-secret-key-at-least-32-chars-long"
+
+    @model_validator(mode="after")
+    def _validate_external_auth_complete(self):
+        """When AUTH_PROVIDER=external, the four external auth fields are mandatory.
+
+        Raises a single ValueError that lists every missing env var so operators
+        can fix the config in one pass instead of guess-and-restart.
+        """
+        if self.auth_provider == "external":
+            required = {
+                "EXTERNAL_AUTH_URL": self.external_auth_url,
+                "EXTERNAL_AUTH_ISSUER": self.external_auth_issuer,
+                "OAUTH_CLIENT_ID": self.oauth_client_id,
+                "OAUTH_REDIRECT_URI": self.oauth_redirect_uri,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError(
+                    f"AUTH_PROVIDER=external requires: {', '.join(missing)}"
+                )
+        return self
 
     def model_post_init(self, __context: Any) -> None:
         """

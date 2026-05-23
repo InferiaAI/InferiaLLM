@@ -6,7 +6,13 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import { LockKeyhole, Radar, ShieldCheck, Sparkles } from "lucide-react";
 
-export default function Login() {
+import { startExternalLogin } from "@/services/authService";
+
+/**
+ * The legacy email/password form. Always available locally; surfaced as an
+ * "Administrator sign in" fallback when external SSO is the primary flow.
+ */
+function LocalCredentialForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
@@ -57,6 +63,92 @@ export default function Login() {
   };
 
   return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {!requiresTwoFactor ? (
+        <>
+          <div className="space-y-1.5">
+            <label htmlFor="email" className="block text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Work Email
+            </label>
+            <input
+              id="email"
+              className="w-full rounded-xl border border-border bg-background/70 px-3 py-2.5 outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
+              placeholder="name@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              required
+              disabled={loading}
+              autoComplete="email"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Password
+            </label>
+            <input
+              id="password"
+              className="w-full rounded-xl border border-border bg-background/70 px-3 py-2.5 outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              disabled={loading}
+              autoComplete="current-password"
+            />
+          </div>
+        </>
+      ) : (
+        <div className="space-y-1.5">
+          <label htmlFor="totp-code" className="block text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            2FA Code
+          </label>
+          <input
+            id="totp-code"
+            className="w-full rounded-xl border border-border bg-background/70 px-3 py-2.5 text-center font-mono text-lg tracking-[0.38em] outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
+            placeholder="000000"
+            value={totpCode}
+            onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            inputMode="numeric"
+            maxLength={6}
+            required
+            autoFocus
+            disabled={loading}
+            autoComplete="one-time-code"
+          />
+        </div>
+      )}
+
+      <button
+        disabled={loading}
+        className="w-full rounded-xl bg-primary px-4 py-2.5 font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {loading ? "Signing in..." : (requiresTwoFactor ? "Verify & Sign In" : "Sign In to Dashboard")}
+      </button>
+
+      {requiresTwoFactor && (
+        <button
+          type="button"
+          onClick={() => {
+            setRequiresTwoFactor(false);
+            setTotpCode("");
+          }}
+          className="w-full text-sm text-muted-foreground transition hover:text-foreground"
+        >
+          Back to email and password
+        </button>
+      )}
+    </form>
+  );
+}
+
+export default function Login() {
+  // VITE_AUTH_PROVIDER is baked in at build time. Only the exact literal
+  // "external" enables the redirect flow; anything else (unset, "local",
+  // typos, garbage) falls back to the legacy email/password form.
+  const isExternal = import.meta.env.VITE_AUTH_PROVIDER === "external";
+
+  return (
     <div className="relative w-full max-w-5xl px-4 py-6 sm:px-8">
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.14),_transparent_56%)]" />
 
@@ -75,7 +167,7 @@ export default function Login() {
                   Build, Ship, and Monitor AI Deployments in One Place
                 </h1>
                 <p className="max-w-md text-sm text-cream/70 sm:text-base">
-                  Secure inference operations with policy controls, multi-provider routing, and real-time deployment intelligence.
+                  Secure inference operations with policy controls, multi-provider routing, and live deployment intelligence.
                 </p>
               </div>
 
@@ -111,91 +203,37 @@ export default function Login() {
                 Team Access
               </div>
               <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-                {requiresTwoFactor ? "Verify your identity" : "Welcome back"}
+                {isExternal ? "Sign in" : "Welcome back"}
               </h2>
               <p className="text-sm text-muted-foreground sm:text-base">
-                {requiresTwoFactor
-                  ? "Enter the 6-digit authenticator code to finish signing in."
+                {isExternal
+                  ? "You'll be redirected to your identity provider to sign in."
                   : "Sign in to open your deployment workspace."}
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {!requiresTwoFactor ? (
-                <>
-                  <div className="space-y-1.5">
-                    <label htmlFor="email" className="block text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Work Email
-                    </label>
-                    <input
-                      id="email"
-                      className="w-full rounded-xl border border-border bg-background/70 px-3 py-2.5 outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
-                      placeholder="name@company.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      type="email"
-                      required
-                      disabled={loading}
-                      autoComplete="email"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Password
-                    </label>
-                    <input
-                      id="password"
-                      className="w-full rounded-xl border border-border bg-background/70 px-3 py-2.5 outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      disabled={loading}
-                      autoComplete="current-password"
-                    />
-                  </div>
-                </>
-              ) : (
-                <div className="space-y-1.5">
-                  <label htmlFor="totp-code" className="block text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    2FA Code
-                  </label>
-                  <input
-                    id="totp-code"
-                    className="w-full rounded-xl border border-border bg-background/70 px-3 py-2.5 text-center font-mono text-lg tracking-[0.38em] outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
-                    placeholder="000000"
-                    value={totpCode}
-                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                    inputMode="numeric"
-                    maxLength={6}
-                    required
-                    autoFocus
-                    disabled={loading}
-                    autoComplete="one-time-code"
-                  />
-                </div>
-              )}
-
-              <button
-                disabled={loading}
-                className="w-full rounded-xl bg-primary px-4 py-2.5 font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {loading ? "Signing in..." : (requiresTwoFactor ? "Verify & Sign In" : "Sign In to Dashboard")}
-              </button>
-
-              {requiresTwoFactor && (
+            {isExternal ? (
+              <div className="space-y-4">
                 <button
                   type="button"
-                  onClick={() => {
-                    setRequiresTwoFactor(false);
-                    setTotpCode("");
-                  }}
-                  className="w-full text-sm text-muted-foreground transition hover:text-foreground"
+                  onClick={startExternalLogin}
+                  className="w-full rounded-xl bg-primary px-4 py-2.5 font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition hover:brightness-110"
                 >
-                  Back to email and password
+                  Sign in with Inferia
                 </button>
-              )}
-            </form>
+
+                <details className="rounded-xl border border-border/60 bg-background/40 px-4 py-3 text-sm">
+                  <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Administrator sign in
+                  </summary>
+                  <div className="mt-4">
+                    <LocalCredentialForm />
+                  </div>
+                </details>
+              </div>
+            ) : (
+              <LocalCredentialForm />
+            )}
           </section>
         </div>
       </div>

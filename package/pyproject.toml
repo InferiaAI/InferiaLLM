@@ -36,6 +36,10 @@ dependencies = [
 
   # Auth / Security
   "python-jose[cryptography]",
+  # PyJWT is used by the JWKS verifier in api_gateway/rbac/jwks_verifier.py
+  # to validate Ed25519-signed tokens from inferia-auth when
+  # AUTH_PROVIDER=external. Must be a core dep, not a dev-only one.
+  "PyJWT[crypto]>=2.8",
   "bcrypt",
   "pyotp",
   "qrcode",
@@ -65,6 +69,18 @@ dependencies = [
   # Orchestration Core
   "python-multipart",
   "kubernetes==33.1.0",
+
+  # Compute provisioning (Pulumi)
+  "pulumi>=3.140.0,<4",
+  "pulumi-aws>=6.50.0,<7",
+  "pulumi-azure-native>=2.50.0,<3",
+  "pulumi-gcp>=8.0.0,<9",
+
+  # AWS SDK is imported transitively by the Pulumi-AWS adapter at
+  # orchestration boot, so it must be a core dep — not an optional extra.
+  # Without it the orchestration service fails fast with
+  # `ModuleNotFoundError: No module named 'boto3'`.
+  "boto3==1.42.10",
 ]
 
 [project.urls]
@@ -75,28 +91,11 @@ Documentation = "https://docs.inferia.ai/docs"
 # Optional: Compute Providers
 # ---------------------------------
 [project.optional-dependencies]
-skypilot = [
-  "skypilot[all]",
-]
 aws = [
   "boto3==1.42.10",
-  "skypilot[aws]",
-]
-gcp = [
-  "skypilot[gcp]",
-]
-azure = [
-  "skypilot[azure]",
-]
-lambda = [
-  "skypilot[lambda]",
-]
-runpod = [
-  "skypilot[runpod]",
 ]
 all-providers = [
   "boto3==1.42.10",
-  "skypilot[aws,gcp,azure,lambda,runpod,kubernetes]",
 ]
 logstash = [
   "python-logstash>=0.4.6",
@@ -110,6 +109,9 @@ dev = [
   "pytest-cov",
   "pytest-asyncio>=0.23",
   "pytest-mock",
+  "pytest-httpserver>=1.0",
+  "PyJWT[crypto]>=2.8",
+  "respx>=0.21",
 ]
 
 [tool.setuptools]

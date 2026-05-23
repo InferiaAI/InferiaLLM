@@ -15,12 +15,23 @@ Subcommands
 * ``node labels del <id> KEY ...``                          → unset labels
 * ``node labels get <id>``                                  → JSON
 * ``node rm <id>``                                          → soft delete
+* ``node pool aws-config POOL_ID --subnet=... --security-group=... ...``
+                                                           → set AWS metadata on pool
+* ``node pool show POOL_ID``                               → show pool details
+
+Endpoint notes
+--------------
+Pool operations hit the orchestration deployment router (prefix ``/deployment``):
+  GET  /deployment/pool/{pool_id}           – basic pool info (no metadata field)
+  PATCH /deployment/updatepool/{pool_id}    – merge metadata; ``metadata=null`` is
+                                              a safe no-op read (returns current row)
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from typing import Iterable
 from urllib import error as urlerror, request as urlrequest
@@ -218,6 +229,171 @@ def _cmd_rm(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Pool subcommands (U4/U5)
+# ---------------------------------------------------------------------------
+
+POOL_SUBNET_RE = re.compile(r"^subnet-[0-9a-f]{8,17}$")
+POOL_SG_RE = re.compile(r"^sg-[0-9a-f]{8,17}$")
+POOL_AMI_RE = re.compile(r"^ami-[0-9a-f]{8,17}$")
+POOL_IAM_RE = re.compile(r"^arn:aws:iam::\d{12}:instance-profile/.+$")
+
+
+def cmd_pool_aws_config(args) -> None:
+    """inferiallm node pool aws-config POOL_ID --subnet=... --security-group=... ...
+
+    Validates AWS-specific metadata client-side, then reads the pool to
+    confirm it exists and has provider=aws, then PATCHes the metadata.
+    The backend merges the new fields with any existing metadata so no
+    previously-set keys are clobbered.
+
+    Endpoints used:
+        GET  /deployment/pool/{pool_id}        (existence + provider check)
+        PATCH /deployment/updatepool/{pool_id} (metadata merge-write)
+    """
+    # --- Client-side validation ---
+    if not args.subnet:
+        print("error: --subnet is required", file=sys.stderr)
+        raise SystemExit(2)
+    if not POOL_SUBNET_RE.match(args.subnet):
+        print(f"error: invalid subnet_id {args.subnet!r}", file=sys.stderr)
+        raise SystemExit(2)
+    if not args.security_group:
+        print("error: at least one --security-group is required", file=sys.stderr)
+        raise SystemExit(2)
+    for sg in args.security_group:
+        if not POOL_SG_RE.match(sg):
+            print(f"error: invalid security_group_id {sg!r}", file=sys.stderr)
+            raise SystemExit(2)
+    if args.ami and not POOL_AMI_RE.match(args.ami):
+        print(f"error: invalid ami_id {args.ami!r}", file=sys.stderr)
+        raise SystemExit(2)
+    if args.iam_profile and not POOL_IAM_RE.match(args.iam_profile):
+        print(f"error: invalid iam_instance_profile {args.iam_profile!r}", file=sys.stderr)
+        raise SystemExit(2)
+    if args.root_gb is not None and not (10 <= args.root_gb <= 16384):
+        print("error: --root-gb must be 10..16384", file=sys.stderr)
+        raise SystemExit(2)
+    if args.image_tag and (not args.image_tag.strip() or any(c.isspace() for c in args.image_tag)):
+        print("error: --image-tag must be non-empty and contain no whitespace", file=sys.stderr)
+        raise SystemExit(2)
+
+    base = _orchestration_base(args)
+    headers = _internal_headers(args, org_id=getattr(args, "org_id", None))
+
+    # Verify the pool exists and has provider=aws before writing.
+    status, body = _http("GET", f"{base}/deployment/pool/{args.pool_id}", headers=headers)
+    if status == 404:
+        print(f"error: pool not found: {args.pool_id}", file=sys.stderr)
+        raise SystemExit(1)
+    if status != 200:
+        print(
+            f"error: GET pool {args.pool_id} returned {status}: "
+            f"{body.decode(errors='replace')}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    pool = json.loads(body)
+
+    if pool.get("provider") != "aws":
+        print(
+            f"error: pool provider is {pool.get('provider')!r}, not aws",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    # Build the metadata dict to merge.  The backend (updatepool) reads the
+    # existing row and merges before writing, so we only need to send the
+    # keys we want to set/update.
+    metadata: dict = {}
+    metadata["subnet_id"] = args.subnet
+    metadata["security_group_ids"] = list(args.security_group)
+    if args.ami:
+        metadata["ami_id"] = args.ami
+    if args.iam_profile:
+        metadata["iam_instance_profile"] = args.iam_profile
+    if args.root_gb is not None:
+        metadata["root_volume_gb"] = args.root_gb
+    if args.image_tag:
+        metadata["worker_image_tag"] = args.image_tag
+
+    patch_body = json.dumps({"metadata": metadata}).encode()
+    status, body = _http(
+        "PATCH",
+        f"{base}/deployment/updatepool/{args.pool_id}",
+        headers={**headers, "Content-Type": "application/json"},
+        body=patch_body,
+    )
+    if status not in (200, 204):
+        print(
+            f"error: PATCH returned {status}: {body.decode(errors='replace')}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    print(f"updated pool {args.pool_id} with AWS metadata")
+
+
+def cmd_pool_show(args) -> None:
+    """inferiallm node pool show POOL_ID
+
+    Prints pool details with provider-aware metadata formatting.
+
+    Endpoints used:
+        GET   /deployment/pool/{pool_id}        (basic fields)
+        PATCH /deployment/updatepool/{pool_id}  (metadata read — metadata=null
+              is a documented no-op that returns the current metadata row)
+    """
+    base = _orchestration_base(args)
+    headers = _internal_headers(args, org_id=getattr(args, "org_id", None))
+
+    # Fetch basic pool info (pool_id, pool_name, provider, lifecycle_state, …).
+    status, body = _http("GET", f"{base}/deployment/pool/{args.pool_id}", headers=headers)
+    if status == 404:
+        print(f"error: pool not found: {args.pool_id}", file=sys.stderr)
+        raise SystemExit(1)
+    if status != 200:
+        print(f"error: GET pool returned {status}", file=sys.stderr)
+        raise SystemExit(1)
+    pool = json.loads(body)
+
+    # Fetch metadata via PATCH with metadata=null (safe no-op read).
+    status2, body2 = _http(
+        "PATCH",
+        f"{base}/deployment/updatepool/{args.pool_id}",
+        headers={**headers, "Content-Type": "application/json"},
+        body=json.dumps({"metadata": None}).encode(),
+    )
+    metadata: dict = {}
+    if status2 in (200, 204) and body2:
+        try:
+            patch_resp = json.loads(body2)
+            raw = patch_resp.get("metadata") or {}
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            metadata = raw or {}
+        except (json.JSONDecodeError, ValueError):
+            metadata = {}
+
+    # pool_id / pool_name are the field names from GET /deployment/pool/{id}
+    print(f"ID:        {pool.get('pool_id', pool.get('id', '-'))}")
+    print(f"Provider:  {pool.get('provider', '-')}")
+    print(f"Name:      {pool.get('pool_name', pool.get('name', '-'))}")
+    print(f"State:     {pool.get('lifecycle_state', pool.get('state', '-'))}")
+
+    if pool.get("provider") == "aws":
+        print("\nAWS configuration:")
+        print(f"  subnet_id:            {metadata.get('subnet_id', '-')}")
+        sgs = metadata.get("security_group_ids", [])
+        print(f"  security_group_ids:   {', '.join(sgs) if sgs else '-'}")
+        print(f"  ami_id:               {metadata.get('ami_id', '(auto)')}")
+        print(f"  iam_instance_profile: {metadata.get('iam_instance_profile', '-')}")
+        print(f"  root_volume_gb:       {metadata.get('root_volume_gb', 100)}")
+        print(f"  worker_image_tag:     {metadata.get('worker_image_tag', '(default)')}")
+    elif metadata:
+        print("\nMetadata:")
+        print(json.dumps(metadata, indent=2))
+
+
+# ---------------------------------------------------------------------------
 # Dispatch.
 # ---------------------------------------------------------------------------
 
@@ -246,5 +422,13 @@ def run_node_command(args) -> None:
             sys.exit(f"error: unknown labels action: {sub}")
     elif action == "rm":
         _cmd_rm(args)
+    elif action == "pool":
+        sub = args.pool_action
+        if sub == "aws-config":
+            cmd_pool_aws_config(args)
+        elif sub == "show":
+            cmd_pool_show(args)
+        else:
+            sys.exit(f"error: unknown pool action: {sub}")
     else:
         sys.exit(f"error: unknown node action: {action}")

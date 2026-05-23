@@ -16,7 +16,6 @@ const providerIcons: Record<string, React.ComponentType<{ className?: string }>>
     aws: Server,
     gcp: Cloud,
     k8s: Server,
-    skypilot: Server,
     worker: HardDrive,
 }
 
@@ -27,7 +26,6 @@ const providerColors: Record<string, string> = {
     aws: "text-ember-500 bg-ember-500/10",
     gcp: "text-blue-500 bg-blue-500/10",
     k8s: "text-orange-500 bg-orange-500/10",
-    skypilot: "text-cyan-500 bg-cyan-500/10",
     worker: "text-ember-500 bg-ember-500/10",
 }
 
@@ -36,13 +34,12 @@ const providerDescriptions: Record<string, string> = {
     nosana: "Decentralized GPU Compute grid. Cheapest and fastest for inference.",
     akash: "Decentralized cloud compute. Open-source marketplace for GPUs.",
     aws: "Managed EC2 instances. High reliability, higher cost.",
-    gcp: "Google Cloud Platform with SkyPilot. Unified multi-cloud orchestration.",
+    gcp: "Google Cloud Platform with Pulumi. Unified multi-cloud orchestration.",
     k8s: "On-premises Kubernetes cluster. Full control and privacy.",
-    skypilot: "Multi-cloud orchestration. Unified interface for AWS/GCP/Azure.",
     worker: "Self-hosted GPU hosts running the inferia-worker agent. Bare-metal, your own server, or a cloud VM you spin up. After creating the pool, click 'Add Worker' to register hosts.",
 }
 
-// GCP regions for SkyPilot
+// GCP regions for Pulumi-managed clusters
 const gcpRegions = [
     { id: "us-central1", name: "Iowa (us-central1)", available: true },
     { id: "us-east1", name: "South Carolina (us-east1)", available: true },
@@ -53,7 +50,7 @@ const gcpRegions = [
     { id: "asia-southeast1", name: "Singapore (asia-southeast1)", available: true },
 ]
 
-// GPU types for GCP/SkyPilot
+// GPU types for GCP/Pulumi
 const gcpGpuTypes = [
     { gpu_type: "H100", gpu_memory_gb: 80, vcpu: 26, ram_gb: 200, description: "NVIDIA H100 80GB" },
     { gpu_type: "A100", gpu_memory_gb: 80, vcpu: 12, ram_gb: 85, description: "NVIDIA A100 80GB" },
@@ -73,10 +70,16 @@ interface NewPoolState {
     searchQuery: string;
     minVram: number;
     sortBy: "price_asc" | "price_desc" | "memory";
+    // Vendor filter chip group above the resource grid:
+    //   "all"     — show everything (GPU + CPU-only)
+    //   "nvidia"  — NVIDIA-branded GPUs only (default)
+    //   "other"   — non-NVIDIA GPUs (AMD, Intel/Habana, ...)
+    //   "none"    — CPU-only instances (no GPU)
+    gpuVendorFilter: "all" | "nvidia" | "other" | "none";
     providerCredentials: NosanaApiKeyResponse[];
     selectedCredential: string;
     loadingCredentials: boolean;
-    // New fields for SkyPilot/GCP
+    // New fields for Pulumi/GCP cluster provisioning
     selectedRegion: string;
     useSpot: boolean;
     isClusterProvider: boolean;
@@ -100,7 +103,8 @@ type NewPoolAction =
     | { type: "SET_REGION"; payload: string }
     | { type: "SET_USE_SPOT"; payload: boolean }
     | { type: "SET_CLUSTER_PROVIDER"; payload: boolean }
-    | { type: "SET_GPU_COUNT"; payload: number };
+    | { type: "SET_GPU_COUNT"; payload: number }
+    | { type: "SET_GPU_VENDOR_FILTER"; payload: NewPoolState["gpuVendorFilter"] };
 
 const initialState: NewPoolState = {
     step: 1,
@@ -113,6 +117,7 @@ const initialState: NewPoolState = {
     searchQuery: "",
     minVram: 0,
     sortBy: "price_asc",
+    gpuVendorFilter: "nvidia",
     providerCredentials: [],
     selectedCredential: "",
     loadingCredentials: false,
@@ -141,6 +146,7 @@ function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
         case "SET_USE_SPOT": return { ...state, useSpot: action.payload };
         case "SET_CLUSTER_PROVIDER": return { ...state, isClusterProvider: action.payload };
         case "SET_GPU_COUNT": return { ...state, gpuCount: action.payload };
+        case "SET_GPU_VENDOR_FILTER": return { ...state, gpuVendorFilter: action.payload, selectedResource: null };
         default: return state;
     }
 }
@@ -168,6 +174,7 @@ export default function NewPool() {
         useSpot,
         isClusterProvider,
         gpuCount,
+        gpuVendorFilter,
     } = state;
 
     // Fetch provider configuration
@@ -240,8 +247,8 @@ export default function NewPool() {
                     description: providerDescriptions.aws,
                     icon: providerIcons.aws,
                     color: providerColors.aws,
-                    disabled: true,
                     category: "cloud",
+                    clusterMode: true,
                     configPath: "/dashboard/settings/providers/cloud/aws"
                 }
             ]
@@ -328,13 +335,17 @@ export default function NewPool() {
         isConfigured: isProviderConfigured(p.id)
     })), [providerMeta, config]);
 
-    // Determine if selected provider is a cluster-based provider
+    // Determine if selected provider is a cluster-based provider.
+    // AWS is provisioned by Pulumi but its catalog comes from the live
+    // describe_instance_types call, so it goes through the resource-card
+    // UI (with the GPU-vendor filter chips) — NOT the static GCP cluster
+    // UI. Only GCP/Azure/Lambda/Runpod still fall back to the static path.
     useEffect(() => {
         if (selectedProvider) {
             const provider = providers.find(p => p.id === selectedProvider);
-            const isCluster = provider?.clusterMode || 
+            const isCluster = provider?.clusterMode ||
                 provider?.capabilities?.supports_cluster_mode ||
-                ["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider);
+                ["gcp", "azure", "lambda", "runpod"].includes(selectedProvider);
             dispatch({ type: "SET_CLUSTER_PROVIDER", payload: isCluster });
         }
     }, [selectedProvider, providers]);
@@ -352,8 +363,11 @@ export default function NewPool() {
             const fetchResources = async () => {
                 dispatch({ type: "SET_LOADING_RESOURCES", payload: true })
                 try {
-                    // For cluster providers, use predefined GPU types (no API call needed)
-                    if (["gcp", "aws", "azure", "lambda", "runpod"].includes(selectedProvider)) {
+                    // For static-cluster providers (GCP/Azure/Lambda/Runpod via
+                    // Pulumi), the UI uses the gcpGpuTypes catalog so no
+                    // network call is needed. AWS, Nosana, Akash all hit the
+                    // resource endpoint for a live catalog.
+                    if (["gcp", "azure", "lambda", "runpod"].includes(selectedProvider)) {
                         dispatch({ type: "SET_RESOURCES", payload: [] })
                     } else {
                         const res = await computeApi.get(`/deployment/provider/resources?provider=${selectedProvider}`)
@@ -389,7 +403,7 @@ export default function NewPool() {
             }
 
             void fetchResources()
-            if (["nosana", "akash", "gcp", "skypilot"].includes(selectedProvider)) {
+            if (["nosana", "akash", "gcp"].includes(selectedProvider)) {
                 void loadProviderCredentials()
             }
         }
@@ -458,7 +472,7 @@ export default function NewPool() {
                 payload.max_cost_per_hour = 0;
                 payload.provider_pool_id = `worker:${poolName}`;
             } else if (isClusterProvider) {
-                // Cluster-based provider (GCP/SkyPilot) - include region and spot settings
+                // Cluster-based provider (GCP/AWS/Azure via Pulumi) - include region and spot settings
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
                 payload.region_constraint = [selectedRegion];
                 payload.use_spot = useSpot;
@@ -466,6 +480,16 @@ export default function NewPool() {
                 // Estimate cost (for GCP, we don't have real-time pricing without API call)
                 payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
                 payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
+            } else if (selectedProvider === "aws") {
+                // AWS via Pulumi — the orchestration manager passes
+                // allowed_gpu_types[0] to provision_cluster as 'gpu_type'.
+                // For Pulumi-AWS that value IS the EC2 instance type, so
+                // forward provider_resource_id (e.g. "t3.micro", "g5.xlarge")
+                // rather than the semantic gpu name ("A10G" / "N/A").
+                payload.allowed_gpu_types = [selectedResource.provider_resource_id];
+                payload.max_cost_per_hour = selectedResource.price_per_hour || 0;
+                payload.provider_pool_id = `aws/${selectedResource.provider_resource_id}`;
+                payload.gpu_count = selectedResource.gpu_count || 1;
             } else {
                 // Job-based provider (Nosana, Akash)
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
@@ -476,6 +500,10 @@ export default function NewPool() {
             if (selectedCredential) {
                 payload.provider_credential_name = selectedCredential
             }
+
+            // AWS provisioning configuration (subnet/SG/AMI/IAM/root/image-tag)
+            // is now managed account-wide under Settings → Providers → AWS,
+            // not per-pool. Pulumi reads those defaults via the credential.
 
             const createRes = await computeApi.post("/deployment/createpool", payload)
             const newPoolId = createRes?.data?.pool_id || createRes?.data?.id;
@@ -539,21 +567,52 @@ export default function NewPool() {
             {/* Progress Steps */}
             <StepProgress currentStep={step} />
 
-            {/* Step 1: Provider Selection */}
-            {step === 1 && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {providers.map((p) => (
-                        <ProviderCard
-                            key={p.id}
-                            provider={p}
-                            onSelect={(id) => {
-                                dispatch({ type: "SET_PROVIDER", payload: id });
-                                dispatch({ type: "SET_STEP", payload: 2 });
-                            }}
-                        />
-                    ))}
-                </div>
-            )}
+            {/* Step 1: Provider Selection.
+                Only show providers whose credentials are configured in
+                Settings → Providers. The 'worker' / 'k8s' providers don't
+                require credentials so they always show; everything else
+                needs an entry in ProvidersConfig. */}
+            {step === 1 && (() => {
+                const eligible = providers.filter(
+                    (p) => p.isConfigured || p.id === "worker" || p.id === "on_prem"
+                );
+                if (eligible.length === 0) {
+                    return (
+                        <div className="p-12 text-center border rounded-lg border-dashed bg-muted/40 dark:bg-card/40">
+                            <p className="text-sm font-medium mb-2">
+                                No provider configured yet
+                            </p>
+                            <p className="text-xs text-muted-foreground mb-4">
+                                To create a compute node, first add credentials for at
+                                least one provider in <strong>Settings → Providers</strong>.
+                                The self-hosted <em>inferia-worker</em> path is always
+                                available with no credentials.
+                            </p>
+                            <Link
+                                to="/dashboard/settings/providers"
+                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700"
+                            >
+                                Go to Providers
+                                <ArrowRight className="w-4 h-4" />
+                            </Link>
+                        </div>
+                    );
+                }
+                return (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {eligible.map((p) => (
+                            <ProviderCard
+                                key={p.id}
+                                provider={p}
+                                onSelect={(id) => {
+                                    dispatch({ type: "SET_PROVIDER", payload: id });
+                                    dispatch({ type: "SET_STEP", payload: 2 });
+                                }}
+                            />
+                        ))}
+                    </div>
+                );
+            })()}
 
             {/* Step 2: Self-hosted (inferia-worker) — just name the pool. */}
             {step === 2 && selectedProvider === "worker" && (
@@ -622,15 +681,28 @@ export default function NewPool() {
                 </div>
             )}
 
-            {/* Step 2: Configure Compute - Cluster Providers (GCP/SkyPilot) */}
+            {/* Step 2: Configure Compute - Cluster Providers (GCP/AWS/Azure via Pulumi) */}
             {step === 2 && isClusterProvider && (
                 <div className="space-y-6">
                     <div className="p-6 rounded-xl border bg-muted dark:bg-card/50 dark:border-border">
                         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                             <Cloud className="w-5 h-5" />
-                            {selectedProvider === 'gcp' ? 'Google Cloud Platform' : 'SkyPilot'} Configuration
+                            {selectedProvider === 'gcp' ? 'Google Cloud Platform' :
+                             selectedProvider === 'aws' ? 'Amazon Web Services' :
+                             selectedProvider === 'azure' ? 'Microsoft Azure' :
+                             'Cluster'} Configuration
                         </h3>
-                        
+
+                        {selectedProvider === "aws" && (
+                            <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg text-xs text-blue-700 dark:text-blue-200">
+                                AWS provisioning details (subnet, security groups, AMI,
+                                IAM profile, root volume, worker image tag) are configured
+                                account-wide under <span className="font-semibold">Settings
+                                → Providers → AWS</span>. Pulumi uses those defaults plus
+                                the region and GPU type below.
+                            </div>
+                        )}
+
                         {/* Region Selection */}
                         <div className="mb-6">
                             <label className="text-sm font-medium mb-2 block">Select Region</label>
@@ -761,9 +833,39 @@ export default function NewPool() {
                 </div>
             )}
 
-            {/* Step 2: Configure Compute - Job Providers (Nosana, Akash) */}
+            {/* Step 2: Configure Compute - Job Providers (Nosana, Akash, AWS) */}
             {step === 2 && !isClusterProvider && selectedProvider !== "worker" && (
                 <div className="space-y-6">
+                    {/* GPU vendor filter chips — only meaningful when the
+                        provider's catalog actually carries a gpu_vendor field
+                        (AWS does today; Nosana/Akash don't, so the chips
+                        still render and "All" + "NVIDIA" both match because
+                        unknown vendor counts as NVIDIA-by-default for those
+                        existing providers). */}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted-foreground mr-1">Filter:</span>
+                        {([
+                            ["all", "All"],
+                            ["nvidia", "NVIDIA"],
+                            ["other", "Other GPU"],
+                            ["none", "No GPU"],
+                        ] as const).map(([v, label]) => (
+                            <button
+                                key={v}
+                                type="button"
+                                onClick={() => dispatch({ type: "SET_GPU_VENDOR_FILTER", payload: v })}
+                                className={cn(
+                                    "px-3 py-1 rounded-full border text-xs font-medium transition-colors",
+                                    gpuVendorFilter === v
+                                        ? "border-ember-600 bg-ember-50 text-ember-700 dark:bg-ember-900/20 dark:text-ember-300"
+                                        : "border-border hover:border-ember-400"
+                                )}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+
                     <ResourceFilter
                         searchQuery={searchQuery}
                         setSearchQuery={(q) => dispatch({ type: "SET_SEARCH", payload: q })}
@@ -782,7 +884,17 @@ export default function NewPool() {
                                     const matchesSearch = res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
                                         res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase());
                                     const matchesVram = res.gpu_memory_gb >= minVram;
-                                    return matchesSearch && matchesVram;
+                                    // gpu_vendor is set by the AWS adapter; for legacy
+                                    // providers (Nosana/Akash) the field is missing —
+                                    // treat that as "nvidia" so existing flows are
+                                    // unaffected when the chip is on its default.
+                                    const vendor = (res as any).gpu_vendor || "nvidia";
+                                    const matchesVendor =
+                                        gpuVendorFilter === "all" ||
+                                        (gpuVendorFilter === "nvidia" && vendor === "nvidia") ||
+                                        (gpuVendorFilter === "other" && (vendor === "amd" || vendor === "intel" || vendor === "other")) ||
+                                        (gpuVendorFilter === "none" && vendor === "none");
+                                    return matchesSearch && matchesVram && matchesVendor;
                                 })
                                 .sort((a, b) => {
                                     if (sortBy === "price_asc") return a.price_per_hour - b.price_per_hour;
@@ -841,6 +953,10 @@ export default function NewPool() {
                             region={selectedRegion}
                             useSpot={useSpot}
                         />
+
+                        {/* AWS provisioning configuration is now in
+                            Settings → Providers → AWS (account-wide); NewPool
+                            only needs region + GPU + (optional) credential. */}
 
                         {/* Cluster-specific info */}
                         {isClusterProvider && (

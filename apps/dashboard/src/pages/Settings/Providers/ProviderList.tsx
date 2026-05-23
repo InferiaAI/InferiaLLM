@@ -14,8 +14,8 @@ const PROVIDERS_MAP: Record<string, ProviderOption[]> = {
     cloud: [
         { id: "nosana", name: "Nosana", description: "Decentralized GPU Compute (DePIN)" },
         { id: "akash", name: "Akash Network", description: "Open Cloud Network (DePIN)" },
-        { id: "aws", name: "Amazon Web Services", description: "AWS SDK & S3 Integration", disabled: true },
-        { id: "gcp", name: "Google Cloud Platform", description: "GCP with SkyPilot orchestration" },
+        { id: "aws", name: "Amazon Web Services", description: "EC2 GPU clusters via Pulumi" },
+        { id: "gcp", name: "Google Cloud Platform", description: "Coming Soon", disabled: true },
         { id: "azure", name: "Microsoft Azure", description: "Coming Soon", disabled: true },
     ],
     "vector-db": [
