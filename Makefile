@@ -72,12 +72,12 @@ docker-logs-sso:
 .PHONY: smoke-local smoke-local-up smoke-local-down smoke-aws smoke-aws-dry
 
 smoke-local-up:    ## bring up unified stack and build worker image (no worker container yet)
-	docker compose -f deploy/docker-compose.unified.yml up -d
+	docker compose -f deploy/docker-compose.yml up -d
 	docker build -t inferia-worker:smoke ../inferia-worker
 
 smoke-local-down:  ## tear down worker compose + unified
 	-docker compose -f deploy/compose.worker-local.yml down -v
-	docker compose -f deploy/docker-compose.unified.yml down
+	docker compose -f deploy/docker-compose.yml down
 
 smoke-local: smoke-local-up   ## run the local Qwen3 smoke end-to-end
 	python -m scripts.smoke.local
