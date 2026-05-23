@@ -210,3 +210,43 @@ class SmokeAPI:
         if not full:
             raise EmptyResponseError("stream produced no content")
         return full
+
+
+INSTANCE_HOURLY_USD = {
+    "g4dn.xlarge": 0.526,
+    "g5.xlarge": 1.006,
+    "g6.xlarge": 0.805,
+}
+
+
+def wait_until(
+    predicate: Callable[[], T | None],
+    *,
+    timeout: float,
+    interval: float = 2.0,
+    tolerate_status: set[int] = frozenset({503, 504}),
+) -> T:
+    """Poll `predicate` until it returns truthy or `timeout` elapses.
+
+    APIError with status in `tolerate_status` is swallowed (counts as not-yet).
+    Any other APIError propagates. SmokeTimeoutError is raised on deadline.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            v = predicate()
+        except APIError as e:
+            if e.status not in tolerate_status:
+                raise
+            v = None
+        if v:
+            return v
+        if time.monotonic() >= deadline:
+            raise SmokeTimeoutError(f"timed out after {timeout}s")
+        time.sleep(interval)
+
+
+def cost_estimate(instance_type: str, hours: float) -> str:
+    rate = INSTANCE_HOURLY_USD.get(instance_type, 0.0)
+    total = rate * hours
+    return f"{instance_type} × {hours:.2f}h ≈ ${total:.3f}"

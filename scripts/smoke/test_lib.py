@@ -9,6 +9,7 @@ from scripts.smoke.lib import (
     APIError,
     EmptyResponseError,
     SmokeAPI,
+    SmokeTimeoutError,
     StreamTruncatedError,
 )
 
@@ -190,4 +191,146 @@ def test_chat_stream_missing_done_raises(api: SmokeAPI) -> None:
         return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"}),
     )
     with pytest.raises(StreamTruncatedError):
+        api.chat("dep-1", "hi", stream=True)
+
+
+def test_wait_until_returns_first_truthy() -> None:
+    from scripts.smoke.lib import wait_until
+    calls = {"n": 0}
+    def p() -> str | None:
+        calls["n"] += 1
+        return "ok" if calls["n"] >= 3 else None
+    assert wait_until(p, timeout=1.0, interval=0.01) == "ok"
+    assert calls["n"] == 3
+
+
+def test_wait_until_times_out() -> None:
+    from scripts.smoke.lib import wait_until
+    with pytest.raises(SmokeTimeoutError):
+        wait_until(lambda: None, timeout=0.05, interval=0.01)
+
+
+def test_wait_until_tolerates_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.smoke.lib import wait_until
+    calls = {"n": 0}
+    def p() -> str | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise APIError(503, "")
+        return "ok"
+    assert wait_until(p, timeout=1.0, interval=0.01) == "ok"
+
+
+def test_wait_until_propagates_4xx() -> None:
+    from scripts.smoke.lib import wait_until
+    def p() -> str | None:
+        raise APIError(404, "")
+    with pytest.raises(APIError):
+        wait_until(p, timeout=1.0, interval=0.01)
+
+
+def test_cost_estimate() -> None:
+    from scripts.smoke.lib import cost_estimate
+    s = cost_estimate("g4dn.xlarge", 0.083)
+    assert "g4dn.xlarge" in s
+    assert "$" in s
+
+
+# ---- Extra coverage tests ----
+
+def test_close_releases_client(api: SmokeAPI) -> None:
+    """close() should close and null out an existing client."""
+    # Force client creation
+    _ = api._http()
+    assert api._client is not None
+    api.close()
+    assert api._client is None
+    # Calling close again on a None client should be a no-op
+    api.close()
+
+
+@respx.mock
+def test_create_pool_with_region(api: SmokeAPI) -> None:
+    """region parameter is included in POST body when provided."""
+    api._token = "t"
+    route = respx.post(f"{BASE}/v1/compute-pools").mock(
+        return_value=httpx.Response(200, json={"id": "p"})
+    )
+    api.create_pool(provider="aws", name="smoke-aws", region="us-east-1")
+    sent = route.calls.last.request.read()
+    assert b"us-east-1" in sent
+
+
+@respx.mock
+def test_destroy_pool_propagates_non_404(api: SmokeAPI) -> None:
+    """destroy_pool re-raises non-404 errors."""
+    api._token = "t"
+    respx.post(f"{BASE}/v1/compute-pools/p1:destroy").mock(
+        return_value=httpx.Response(500, json={"detail": "server error"})
+    )
+    with pytest.raises(APIError) as exc:
+        api.destroy_pool("p1")
+    assert exc.value.status == 500
+
+
+@respx.mock
+def test_delete_deployment_propagates_non_404(api: SmokeAPI) -> None:
+    """delete_deployment re-raises non-404 errors."""
+    api._token = "t"
+    respx.delete(f"{BASE}/v1/deployments/dep-1").mock(
+        return_value=httpx.Response(500, json={"detail": "server error"})
+    )
+    with pytest.raises(APIError) as exc:
+        api.delete_deployment("dep-1")
+    assert exc.value.status == 500
+
+
+@respx.mock
+def test_chat_non_stream_4xx_raises(api: SmokeAPI) -> None:
+    """chat() raises APIError for 4xx non-stream responses."""
+    api._token = "t"
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(429, json={"detail": "rate limited"})
+    )
+    with pytest.raises(APIError) as exc:
+        api.chat("dep-1", "hi")
+    assert exc.value.status == 429
+
+
+@respx.mock
+def test_chat_stream_4xx_raises(api: SmokeAPI) -> None:
+    """chat() raises APIError for 4xx streaming responses."""
+    api._token = "t"
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(401, text="Unauthorized")
+    )
+    with pytest.raises(APIError) as exc:
+        api.chat("dep-1", "hi", stream=True)
+    assert exc.value.status == 401
+
+
+@respx.mock
+def test_chat_stream_skips_invalid_json(api: SmokeAPI) -> None:
+    """chat() stream skips malformed SSE data lines and still completes."""
+    api._token = "t"
+    body = (
+        "data: not-valid-json\n\n"
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"}),
+    )
+    assert api.chat("dep-1", "hi", stream=True) == "ok"
+
+
+@respx.mock
+def test_chat_stream_empty_content_raises(api: SmokeAPI) -> None:
+    """chat() stream with [DONE] but no delta content raises EmptyResponseError."""
+    api._token = "t"
+    body = "data: [DONE]\n\n"
+    respx.post(f"{BASE}/v1/inference/chat/completions").mock(
+        return_value=httpx.Response(200, text=body, headers={"content-type": "text/event-stream"}),
+    )
+    with pytest.raises(EmptyResponseError):
         api.chat("dep-1", "hi", stream=True)
