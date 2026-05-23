@@ -421,13 +421,20 @@ class DuplicateNodeError(Exception):
     whose agent_kind is not 'worker'."""
 
 
-async def _upsert_worker_impl(self, *, pool_id, node_name, advertise_url, allocatable):
+async def _upsert_worker_impl(
+    self, *, pool_id, node_name, advertise_url, allocatable, labels=None,
+):
     """Upsert a (pool_id, node_name) row with agent_kind='worker'.
 
     Returns the row as a dict. Raises DuplicateNodeError if (pool_id,
     node_name) is held by a non-worker-kind row — those cannot be
     re-purposed in place.
+
+    `labels` is a flat string→string dict (e.g. runtime_env / instance_id /
+    region / availability_zone supplied by the worker's cloudenv probe).
+    Stored in the `labels` jsonb column for filterable queries.
     """
+    labels_json = __import__("json").dumps(labels or {})
     # 1. Probe — does a row already exist for this (pool_id, node_name)?
     async with self.db.acquire() as conn:
         existing = await conn.fetchrow(
@@ -452,24 +459,26 @@ async def _upsert_worker_impl(self, *, pool_id, node_name, advertise_url, alloca
             INSERT INTO compute_inventory (
                 pool_id, node_name, agent_kind, state,
                 advertise_url, gpu_total, vcpu_total, ram_gb_total,
-                provider, provider_instance_id, metadata
+                provider, provider_instance_id, metadata, labels
             )
             VALUES ($1, $2, 'worker', 'provisioning', $3,
                     COALESCE(($4::jsonb ->> 'gpu')::int, 0),
                     COALESCE(($4::jsonb ->> 'cpu')::int, 0),
                     COALESCE(($4::jsonb ->> 'memory_gb')::int, 0),
-                    'on_prem', $5, $4)
+                    'on_prem', $5, $4, $6::jsonb)
             ON CONFLICT (pool_id, node_name)
                 WHERE agent_kind = 'worker' AND node_name IS NOT NULL
             DO UPDATE SET
                 advertise_url = EXCLUDED.advertise_url,
                 metadata = EXCLUDED.metadata,
+                labels = compute_inventory.labels || EXCLUDED.labels,
                 updated_at = now()
             RETURNING id, pool_id, node_name, agent_kind, state, advertise_url
             """,
             pool_id, node_name, advertise_url,
             __import__("json").dumps(allocatable),
             f"worker-{pool_id}-{node_name}",
+            labels_json,
         )
         return dict(row) if row else {}
 

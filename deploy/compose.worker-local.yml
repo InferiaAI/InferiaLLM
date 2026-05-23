@@ -5,6 +5,9 @@
 #   BOOTSTRAP_TOKEN, POOL_ID, INFERENCE_TOKEN
 # Optional:
 #   NODE_NAME (default: smoke-local-1)
+#   CONTROL_PLANE_URL (default: http://inferia-app:8000 — matches what
+#       POST /api/v1/nodes/add/worker returns when the control plane is
+#       reachable via the deploy_inferia-net docker network)
 
 services:
   worker:
@@ -12,7 +15,7 @@ services:
     container_name: inferia-worker
     restart: unless-stopped
     environment:
-      CONTROL_PLANE_URL:    http://gateway:8000
+      CONTROL_PLANE_URL:    ${CONTROL_PLANE_URL:-http://inferia-app:8000}
       BOOTSTRAP_TOKEN:      ${BOOTSTRAP_TOKEN:?required}
       POOL_ID:              ${POOL_ID:?required}
       NODE_NAME:            ${NODE_NAME:-smoke-local-1}

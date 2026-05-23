@@ -1,8 +1,8 @@
 """AWS Qwen3 smoke orchestrator with defense-in-depth teardown.
 
 Layers (per spec §7.3):
-  1. Pre-flight reject of pre-existing smoke-aws-* pools.
-  2. try/finally + atexit destroy.
+  1. Pre-flight reject of pre-existing smoke-aws-* nodes.
+  2. try/finally + atexit delete.
   3. Cost printout + 5s Ctrl-C window.
   4. Wall-clock guard via outer Makefile timeout(1).
   5. boto3 post-teardown verification.
@@ -23,14 +23,16 @@ from scripts.smoke.lib import (
     SmokeAPI,
     SmokeError,
     SmokeTimeoutError,
+    _decode_jwt_claims,
     cost_estimate,
     wait_until,
 )
 
 
 GATEWAY_URL = os.environ.get("SMOKE_GATEWAY_URL", "http://localhost:8000")
-ADMIN_EMAIL = os.environ.get("SMOKE_ADMIN_EMAIL", "admin@inferia.local")
-ADMIN_PASSWORD = os.environ.get("SMOKE_ADMIN_PASSWORD", "admin")
+INFERENCE_URL = os.environ.get("SMOKE_INFERENCE_URL", "http://localhost:8001")
+ADMIN_EMAIL = os.environ.get("SMOKE_ADMIN_EMAIL", "admin@example.com")
+ADMIN_PASSWORD = os.environ.get("SMOKE_ADMIN_PASSWORD", "change-me-immediately")
 WORKER_REPO = os.environ.get("SMOKE_WORKER_REPO", "inferia/inferia-worker")
 
 
@@ -63,22 +65,32 @@ def trigger_ghcr_build(tag_suffix: str) -> None:
 
 
 def preflight(api: SmokeAPI) -> dict:
-    """Verify AWS provider is configured and no stale smoke pools exist."""
+    """Verify AWS provider is configured and no stale smoke nodes exist."""
     try:
-        providers = api._request("GET", "/v1/providers").json().get("providers", [])
+        providers = api._request("GET", "/management/config/providers").json()
     except APIError as e:
         sys.exit(f"unable to list providers: {e}")
-    aws = next((p for p in providers if p.get("provider_type") == "aws" and p.get("configured")), None)
+    if isinstance(providers, dict):
+        provider_list = providers.get("providers", [])
+    else:
+        provider_list = providers
+    aws = next(
+        (p for p in provider_list
+         if p.get("provider_type") == "aws" and p.get("configured")),
+        None,
+    )
     if not aws:
         sys.exit("AWS provider not configured. Configure it in Settings → Providers first.")
     try:
-        pools = api._request("GET", "/v1/compute-pools").json().get("pools", [])
+        nodes_resp = api._request("GET", "/api/v1/nodes/").json()
     except APIError as e:
-        sys.exit(f"unable to list pools: {e}")
-    stale = [p for p in pools if str(p.get("name", "")).startswith("smoke-aws-")]
+        sys.exit(f"unable to list nodes: {e}")
+    nodes = nodes_resp.get("nodes", nodes_resp) if isinstance(nodes_resp, dict) else nodes_resp
+    stale = [n for n in (nodes or [])
+             if str(n.get("node_name", "")).startswith("smoke-aws-")]
     if stale:
-        names = ", ".join(p["name"] for p in stale)
-        sys.exit(f"pre-existing smoke pool(s) found: {names}. Destroy them first.")
+        names = ", ".join(n.get("node_name", "?") for n in stale)
+        sys.exit(f"pre-existing smoke node(s) found: {names}. Delete them first.")
     return aws
 
 
@@ -116,12 +128,12 @@ def main() -> int:
     p.add_argument("--keep-on-fail", action="store_true")
     args = p.parse_args()
 
-    api = SmokeAPI(base_url=GATEWAY_URL)
+    api = SmokeAPI(base_url=GATEWAY_URL, inference_url=INFERENCE_URL)
     api.login(ADMIN_EMAIL, ADMIN_PASSWORD)
 
     aws = preflight(api)
     if args.dry_run:
-        print("dry-run OK: AWS provider configured, no stale pools")
+        print("dry-run OK: AWS provider configured, no stale nodes")
         return 0
 
     print(cost_estimate(args.instance_type, hours=1/6))
@@ -136,19 +148,21 @@ def main() -> int:
     if not args.worker_image_tag:
         trigger_ghcr_build(tag)
 
+    node_id: str | None = None
     pool_id: str | None = None
 
     def teardown() -> None:
-        if pool_id is None:
+        if node_id is None:
             return
         try:
-            api.destroy_pool(pool_id)
+            api.delete_node(node_id)
         except Exception as e:
-            print(f"teardown destroy_pool failed: {e}", file=sys.stderr)
-        try:
-            verify_no_running_instances(pool_id)
-        except SystemExit as e:
-            print(str(e), file=sys.stderr)
+            print(f"teardown delete_node failed: {e}", file=sys.stderr)
+        if pool_id:
+            try:
+                verify_no_running_instances(pool_id)
+            except SystemExit as e:
+                print(str(e), file=sys.stderr)
 
     atexit.register(teardown)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit("SIGTERM"))
@@ -157,41 +171,34 @@ def main() -> int:
     fail = False
     try:
         ts = int(time.time())
-        pool_id = api.create_pool(
+        node_name = f"smoke-aws-{ts}-{uuid.uuid4().hex[:4]}"
+        added = api.add_provider_node(
             provider="aws",
-            name=f"smoke-aws-{ts}-{uuid.uuid4().hex[:4]}",
-            instance_type=args.instance_type,
-            region=args.region or aws.get("default_region"),
-            metadata={
-                **(aws.get("metadata") or {}),
+            node_name=node_name,
+            spec={
+                "instance_type": args.instance_type,
+                "region": args.region or aws.get("default_region"),
                 "worker_image_tag": tag,
+                **(aws.get("metadata") or {}),
             },
+            credential_name=aws.get("credential_name"),
         )
-        print(f"pool {pool_id} created; waiting for pulumi succeeded...")
-        wait_until(
-            lambda: api._request("GET", f"/v1/compute-pools/{pool_id}").json()
-                    if api._request("GET", f"/v1/compute-pools/{pool_id}").json().get("pulumi_state") == "succeeded"
-                    else None,
-            timeout=300.0, interval=10.0,
-        )
-        print("pulumi succeeded; waiting for worker register...")
+        node_id = added.get("node_id")
+        bootstrap = added.get("bootstrap_token")
+        if bootstrap:
+            pool_id = _decode_jwt_claims(bootstrap).get("pool_id")
+        if not node_id or not pool_id:
+            raise SmokeError(f"add_provider_node missing node_id/pool_id: {added}")
+        print(f"node {node_id} (pool {pool_id}) provisioning; waiting for worker...")
         wait_until(
             lambda: api.list_workers(pool_id)
-                    if any(w.get("status") == "ready" for w in api.list_workers(pool_id))
-                    else None,
-            timeout=180.0, interval=5.0,
+            if any(w.get("state") == "ready" for w in api.list_workers(pool_id))
+            else None,
+            timeout=600.0, interval=10.0,
         )
         from scripts.smoke.local import deploy_and_chat
-        deploy_and_chat(
-            api, pool_id=pool_id, recipe="ollama",
-            model_uri="ollama://qwen3:0.6b", config=None, ready_timeout=240.0,
-        )
-        deploy_and_chat(
-            api, pool_id=pool_id, recipe="vllm",
-            model_uri="hf://Qwen/Qwen3-0.6B",
-            config={"gpu_memory_utilization": 0.85, "max_model_len": 4096, "dtype": "bfloat16"},
-            ready_timeout=360.0,
-        )
+        deploy_and_chat(api, pool_id=pool_id, engine="ollama", gpu_per_replica=1)
+        deploy_and_chat(api, pool_id=pool_id, engine="vllm", gpu_per_replica=1)
     except (SmokeError, SmokeTimeoutError, APIError, subprocess.CalledProcessError) as e:
         print(f"FAILED: {e}", file=sys.stderr)
         fail = True

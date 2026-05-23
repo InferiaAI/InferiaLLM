@@ -101,27 +101,32 @@ async def register_worker(
     # consume.  No Authorization header required.
     # Path B (legacy): Authorization: Bearer <JWT> → stateless JWT verify.
     # Both paths verify pool_id scope.
-    if body.bootstrap_token is not None:
+    #
+    # The inferia-worker Go client always populates BOTH the body field and
+    # the Authorization header (omitempty + Set-Header), so in production
+    # we resolve which path to take based on whether a DB conn adapter is
+    # wired up. Until the DB-consume adapter is wired, we prefer the
+    # stateless JWT path whenever an Authorization header is present.
+    header_token = _strip_bearer(authorization)
+    use_header_path = bool(header_token)
+
+    if body.bootstrap_token is not None and not use_header_path:
         try:
             # conn=None is intentional: the real DB connection is not wired into
-            # this router (legacy design).  Tests patch _consume_bootstrap_token
-            # to avoid needing asyncpg.  In production, callers that use the body
-            # bootstrap_token path must wire up a DB conn via the _deps adapter
-            # (future work) or use the Authorization header path instead.
+            # this router yet (future work). Tests patch _consume_bootstrap_token
+            # to avoid needing asyncpg.
             db_claim = await _consume_bootstrap_token(None, token=body.bootstrap_token)
-        except InvalidBootstrapToken as e:
+        except InvalidBootstrapToken:
             raise HTTPException(401, "invalid_bootstrap_token")
 
         if str(db_claim.pool_id) != str(body.pool_id):
             raise HTTPException(401, "pool_scope_violation")
 
     else:
-        # Legacy path: Authorization header with JWT bootstrap token.
-        token = _strip_bearer(authorization)
-        if not token:
+        if not header_token:
             raise HTTPException(401, "missing bootstrap token")
         try:
-            claims = auth.verify_bootstrap_token(token)
+            claims = auth.verify_bootstrap_token(header_token)
         except InvalidTokenError as e:
             raise HTTPException(401, f"invalid bootstrap token: {e}")
         if claims.pool_id != body.pool_id:

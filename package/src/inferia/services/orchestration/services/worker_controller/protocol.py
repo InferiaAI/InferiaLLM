@@ -24,7 +24,12 @@ class RegisterRequest(BaseModel):
     allocatable: dict[str, str] = Field(default_factory=dict)
     # Optional bootstrap_token in request body (DB-backed single-use token).
     # When provided, the Authorization header is not required.
-    bootstrap_token: Optional[str] = Field(default=None, min_length=10, max_length=128)
+    # JWT-encoded bootstrap tokens minted by /api/v1/nodes/add/worker are
+    # ~300 chars (HS256 header + claims + signature, base64url). The
+    # previous 128-char cap predated the JWT migration and silently
+    # rejected every register call. Bound at 4096 to leave headroom for
+    # additional claims without re-tuning.
+    bootstrap_token: Optional[str] = Field(default=None, min_length=10, max_length=4096)
     # Optional cloud-env metadata fields recorded in inventory labels.
     runtime_env: Optional[str] = Field(default=None, max_length=64)
     instance_id: Optional[str] = Field(default=None, max_length=128)

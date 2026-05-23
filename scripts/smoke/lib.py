@@ -1,9 +1,29 @@
 """HTTP helpers for the Qwen3 smoke scripts.
 
-Public surface mirrors the spec §5.2. Pure Python; tests use respx mocks.
+This module tracks the *real* node-centric API surface as of the
+2026-05-14 refactor that removed the `/v1/compute-pools` namespace.
+The flow is now:
+
+  1. `POST /auth/login` with {username, password} → {access_token}
+  2. `POST /api/v1/nodes/add/worker` → {node_id, bootstrap_token,
+     control_plane_url, inference_token, env_snippet, ...}
+     The pool_id is embedded in the bootstrap_token JWT claim and is
+     extracted by `add_worker_node` for the caller's convenience.
+  3. `GET /api/v1/admin/workers/pool/{pool_id}` → list of WorkerView.
+     Status field is `state`, not `status`.
+  4. `POST /api/v1/deployment/deploy` proxies to the orchestration
+     service's DeployModelRequest shape (model_name, model_version,
+     replicas, gpu_per_replica, pool_id, engine, configuration).
+  5. `DELETE /api/v1/nodes/{node_id}` → 204.
+
+Chat completions are served by the inference data-plane on port
+8001 (`/v1/chat/completions`). The smoke connects directly with the
+admin access_token; we don't mint an org-scoped API key first.
 """
 from __future__ import annotations
 
+import base64
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
@@ -37,19 +57,50 @@ class StreamTruncatedError(SmokeError):
     pass
 
 
+def _decode_jwt_claims(token: str) -> dict[str, Any]:
+    """Parse a JWT payload without verifying — caller already trusts the issuer."""
+    try:
+        _, payload, _ = token.split(".", 2)
+    except ValueError as e:
+        raise SmokeError(f"malformed bootstrap_token JWT: {e}") from e
+    padding = "=" * (-len(payload) % 4)
+    raw = base64.urlsafe_b64decode(payload + padding)
+    return json.loads(raw)
+
+
+@dataclass
+class WorkerNode:
+    """Subset of the AddWorkerResponse the smoke actually uses."""
+
+    node_id: str
+    pool_id: str
+    bootstrap_token: str
+    control_plane_url: str
+    inference_token: str
+    env_snippet: str
+
+
 @dataclass
 class SmokeAPI:
     """Thin httpx wrapper used by the smoke scripts."""
 
     base_url: str
+    inference_url: str | None = None
     timeout: float = 30.0
     _token: str | None = field(default=None, init=False)
     _client: httpx.Client | None = field(default=None, init=False)
+    _inference_client: httpx.Client | None = field(default=None, init=False)
 
     def _http(self) -> httpx.Client:
         if self._client is None:
             self._client = httpx.Client(base_url=self.base_url, timeout=self.timeout)
         return self._client
+
+    def _http_inference(self) -> httpx.Client:
+        if self._inference_client is None:
+            url = self.inference_url or self.base_url.replace(":8000", ":8001")
+            self._inference_client = httpx.Client(base_url=url, timeout=self.timeout)
+        return self._inference_client
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
@@ -63,8 +114,12 @@ class SmokeAPI:
 
     # ---- auth ----
 
-    def login(self, email: str, password: str) -> None:
-        resp = self._http().post("/v1/auth/login", json={"email": email, "password": password})
+    def login(self, username: str, password: str) -> None:
+        """Login via gateway. `username` matches the LoginRequest model field."""
+        resp = self._http().post(
+            "/auth/login",
+            json={"username": username, "password": password},
+        )
         if resp.status_code >= 400:
             raise APIError(resp.status_code, resp.text)
         self._token = resp.json()["access_token"]
@@ -73,98 +128,132 @@ class SmokeAPI:
         if self._client is not None:
             self._client.close()
             self._client = None
+        if self._inference_client is not None:
+            self._inference_client.close()
+            self._inference_client = None
 
-    # ---- pool ----
+    # ---- node lifecycle ----
 
-    def create_pool(
+    def add_worker_node(
+        self,
+        *,
+        node_name: str,
+        advertise_url: str | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> WorkerNode:
+        body: dict[str, Any] = {"node_name": node_name}
+        if advertise_url:
+            body["advertise_url"] = advertise_url
+        if labels:
+            body["labels"] = labels
+        data = self._request("POST", "/api/v1/nodes/add/worker", json=body).json()
+        claims = _decode_jwt_claims(data["bootstrap_token"])
+        pool_id = claims.get("pool_id")
+        if not pool_id:
+            raise SmokeError("bootstrap_token JWT missing pool_id claim")
+        return WorkerNode(
+            node_id=data["node_id"],
+            pool_id=pool_id,
+            bootstrap_token=data["bootstrap_token"],
+            control_plane_url=data["control_plane_url"],
+            inference_token=data["inference_token"],
+            env_snippet=data["env_snippet"],
+        )
+
+    def add_provider_node(
         self,
         *,
         provider: str,
-        name: str,
-        instance_type: str | None = None,
-        region: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> str:
-        body: dict[str, Any] = {"provider": provider, "name": name}
-        if instance_type:
-            body["instance_type"] = instance_type
-        if region:
-            body["region"] = region
-        if metadata:
-            body["metadata"] = metadata
-        return self._request("POST", "/v1/compute-pools", json=body).json()["id"]
+        node_name: str | None = None,
+        spec: dict[str, Any] | None = None,
+        credential_name: str | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Provision a provider-backed node (AWS, GCP, Nosana, ...).
 
-    def destroy_pool(self, pool_id: str) -> None:
-        """Idempotent: 404 is treated as already destroyed."""
-        try:
-            self._request("POST", f"/v1/compute-pools/{pool_id}:destroy")
-        except APIError as e:
-            if e.status != 404:
-                raise
-
-    # ---- workers ----
-
-    def mint_bootstrap_token(self, pool_id: str, ttl_hours: int) -> dict[str, Any]:
-        if not (1 <= ttl_hours <= 24):
-            raise ValueError(f"ttl_hours must be 1..24, got {ttl_hours}")
+        Pool_id for the resulting node is read from the response. The
+        underlying provisioning is asynchronous; poll worker state for
+        readiness.
+        """
+        body: dict[str, Any] = {"spec": spec or {}, "labels": labels or {}}
+        if node_name:
+            body["node_name"] = node_name
+        if credential_name:
+            body["credential_name"] = credential_name
         return self._request(
-            "POST",
-            "/v1/admin/workers/mint",
-            json={"pool_id": pool_id, "ttl_hours": ttl_hours},
+            "POST", f"/api/v1/nodes/add/{provider}", json=body
         ).json()
 
     def list_workers(self, pool_id: str) -> list[dict[str, Any]]:
-        return self._request("GET", "/v1/admin/workers", params={"pool": pool_id}).json()["workers"]
+        return self._request(
+            "GET", f"/api/v1/admin/workers/pool/{pool_id}"
+        ).json()["workers"]
 
-    # ---- deployments ----
-
-    def create_deployment(
-        self,
-        *,
-        pool_id: str,
-        recipe: str,
-        model_uri: str,
-        name: str,
-        config: dict[str, Any] | None = None,
-    ) -> str:
-        body: dict[str, Any] = {
-            "pool_id": pool_id,
-            "recipe": recipe,
-            "model_uri": model_uri,
-            "name": name,
-        }
-        if config:
-            body["config"] = config
-        return self._request("POST", "/v1/deployments", json=body).json()["deployment_id"]
-
-    def delete_deployment(self, deployment_id: str) -> None:
+    def delete_node(self, node_id: str) -> None:
+        """Idempotent: 404 treated as already gone."""
         try:
-            self._request("DELETE", f"/v1/deployments/{deployment_id}")
+            self._request("DELETE", f"/api/v1/nodes/{node_id}")
         except APIError as e:
             if e.status != 404:
                 raise
 
-    def get_deployment(self, deployment_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/v1/deployments/{deployment_id}").json()
+    # ---- deployments ----
 
-    # ---- chat ----
+    def deploy_model(
+        self,
+        *,
+        pool_id: str,
+        model_name: str,
+        model_version: str,
+        engine: str,
+        replicas: int = 1,
+        gpu_per_replica: int = 0,
+        configuration: dict[str, Any] | None = None,
+        workload_type: str = "inference",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "pool_id": pool_id,
+            "model_name": model_name,
+            "model_version": model_version,
+            "engine": engine,
+            "replicas": replicas,
+            "gpu_per_replica": gpu_per_replica,
+            "workload_type": workload_type,
+        }
+        if configuration is not None:
+            body["configuration"] = configuration
+        return self._request("POST", "/api/v1/deployment/deploy", json=body).json()
+
+    def get_deployment_status(self, deployment_id: str) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/api/v1/deployment/status/{deployment_id}"
+        ).json()
+
+    def delete_deployment(self, deployment_id: str) -> None:
+        try:
+            self._request("DELETE", f"/api/v1/deployment/delete/{deployment_id}")
+        except APIError as e:
+            if e.status != 404:
+                raise
+
+    # ---- chat (inference data-plane on :8001) ----
 
     def chat(
         self,
-        deployment_id: str,
+        model: str,
         prompt: str,
         *,
         stream: bool = False,
         timeout: float = 60.0,
     ) -> str:
         body = {
-            "deployment_id": deployment_id,
+            "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": stream,
         }
         if not stream:
-            resp = self._http().post(
-                "/v1/inference/chat/completions",
+            resp = self._http_inference().post(
+                "/v1/chat/completions",
                 json=body,
                 headers=self._auth_headers(),
                 timeout=timeout,
@@ -176,12 +265,11 @@ class SmokeAPI:
                 raise EmptyResponseError("assistant content empty")
             return content
 
-        # Stream path: parse SSE manually so we don't pull in a heavier dep.
         out: list[str] = []
         saw_done = False
-        with self._http().stream(
+        with self._http_inference().stream(
             "POST",
-            "/v1/inference/chat/completions",
+            "/v1/chat/completions",
             json=body,
             headers=self._auth_headers(),
             timeout=timeout,
@@ -197,11 +285,14 @@ class SmokeAPI:
                     saw_done = True
                     break
                 try:
-                    import json as _json
-                    chunk = _json.loads(payload)
+                    chunk = json.loads(payload)
                 except Exception:
                     continue
-                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content")
+                delta = (
+                    chunk.get("choices", [{}])[0]
+                    .get("delta", {})
+                    .get("content")
+                )
                 if delta:
                     out.append(delta)
         if not saw_done:
