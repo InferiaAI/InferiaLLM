@@ -88,35 +88,6 @@ services:
       - sso-net
 
   # ---------------------------------------------------------------------------
-  # inferia-auth-seed-client — inserts the inferiallm-dashboard oauth_clients
-  # row after migrations. We do this from SQL (rather than letting the auth
-  # binary's boot-time seed do it) because the binary's seed ALSO writes the
-  # FGA permission tree, and the current FGA-tuple format (multi-colon
-  # permission IDs) is rejected by real OpenFGA. That's a known Phase A bug
-  # we work around by disabling the in-process seed (OAUTH_SEED_DISABLED=true
-  # on inferia-auth below) and inserting only the client row here.
-  #
-  # Idempotent (ON CONFLICT DO NOTHING).
-  # ---------------------------------------------------------------------------
-  inferia-auth-seed-client:
-    image: postgres:17-alpine
-    container_name: inferia-auth-sso-seed-client
-    restart: "no"
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        set -e
-        until pg_isready -h postgres -U inferia -d inferia_auth >/dev/null 2>&1; do sleep 1; done
-        PGPASSWORD=inferia psql -h postgres -U inferia -d inferia_auth -v ON_ERROR_STOP=1 -f /seed.sql
-    volumes:
-      - ./sso-seed-client.sql:/seed.sql:ro
-    depends_on:
-      inferia-auth-migrate:
-        condition: service_completed_successfully
-    networks:
-      - sso-net
-
-  # ---------------------------------------------------------------------------
   # inferia-auth — OAuth2 IdP. Issues codes/tokens for `inferiallm-dashboard`.
   # Built from the sibling repo at ../../inferia-auth. Mounts:
   #   - migrations: applied by the binary on boot (via the migrate sidecar)
@@ -144,12 +115,11 @@ services:
       JWT_ACCESS_TTL: "15m"
       JWT_REFRESH_TTL: "168h"
       ENCRYPTION_KEY: "x9tZfrL6OCoGDLg26VKE3F4djdjoPQK989p9lmCt8UY="
-      # Disable the in-process OAuth seed; we insert the oauth_clients row
-      # via the inferia-auth-seed-client SQL sidecar instead (see comment
-      # there for the rationale). When the Phase A FGA multi-colon-id bug
-      # is fixed, this can be flipped back to "false" and the SQL sidecar
-      # dropped.
-      OAUTH_SEED_DISABLED: "true"
+      # The in-process OAuth seed (cmd/server/seed.go) inserts the
+      # inferiallm-dashboard oauth_clients row and seeds the FGA permission
+      # tree. OAUTH_SEED_REDIRECT_URI overrides the default so the registered
+      # redirect_uri matches what the Caddy-fronted dashboard advertises.
+      OAUTH_SEED_REDIRECT_URI: "https://inferia.local/auth/callback"
       COOKIE_SECURE: "true"
       RATE_LIMIT_MAX: "60"
       RATE_LIMIT_WINDOW: "1m"
@@ -157,8 +127,6 @@ services:
       postgres:
         condition: service_healthy
       inferia-auth-migrate:
-        condition: service_completed_successfully
-      inferia-auth-seed-client:
         condition: service_completed_successfully
     healthcheck:
       # 127.0.0.1 (not "localhost") to avoid IPv6 resolution issues inside
