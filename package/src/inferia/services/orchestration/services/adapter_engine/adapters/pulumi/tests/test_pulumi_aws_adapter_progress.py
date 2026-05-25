@@ -227,3 +227,170 @@ async def test_pulumi_up_called_with_on_event_callback():
     args, kwargs = fake_stack.up.call_args
     assert "on_event" in kwargs
     assert callable(kwargs["on_event"])
+
+
+@pytest.mark.asyncio
+async def test_provision_node_invalid_metadata_emits_prepare_failed():
+    """Invalid AWS pool metadata short-circuits provision_node with
+    `prepare/failed` written and a ProvisionError raised. No pulumi
+    work is started."""
+    adapter = PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+
+    with patch.object(adapter, "ensure_state_dir"), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.load_providers_config",
+               new=AsyncMock(return_value=_fake_providers_config())), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.mint_bootstrap_token",
+               new=AsyncMock(return_value=("tok", uuid4()))), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.pulumi.automation.create_or_select_stack"):
+        with pytest.raises(ProvisionError, match="invalid AWS metadata"):
+            await adapter.provision_node(
+                provider_resource_id="t3.micro",
+                pool_id=str(uuid4()), org_id=str(uuid4()),
+                metadata={"subnet_id": 12345},  # subnet_id must be a string
+                progress_writer=writer,
+            )
+    phases = [(p, s) for p, s, _ in writer.calls]
+    assert ("prepare", "running") in phases
+    assert ("prepare", "failed") in phases
+    # No ami_lookup or pulumi_init events when prepare failed early.
+    assert not any(p == "ami_lookup" for p, _ in phases)
+    assert not any(p == "pulumi_init" for p, _ in phases)
+
+
+@pytest.mark.asyncio
+async def test_provision_node_ami_lookup_failure_emits_ami_lookup_failed():
+    adapter = PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+    cfg = _fake_providers_config()
+    cfg.cloud.aws.ami_id = None  # force lookup
+
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
+        AMILookupError,
+    )
+
+    with patch.object(adapter, "ensure_state_dir"), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.load_providers_config",
+               new=AsyncMock(return_value=cfg)), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.mint_bootstrap_token",
+               new=AsyncMock(return_value=("tok", uuid4()))), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.latest_dlami_ami",
+               side_effect=AMILookupError("no images found")):
+        with pytest.raises(ProvisionError, match="AMI lookup failed"):
+            await adapter.provision_node(
+                provider_resource_id="t3.micro",
+                pool_id=str(uuid4()), org_id=str(uuid4()),
+                progress_writer=writer,
+            )
+    phase_statuses = [(p, s) for p, s, _ in writer.calls]
+    assert ("ami_lookup", "running") in phase_statuses
+    assert ("ami_lookup", "failed") in phase_statuses
+    # Downstream phases must NOT fire on AMI failure.
+    assert not any(p == "pulumi_init" for p, _ in phase_statuses)
+    assert not any(p == "pulumi_up" for p, _ in phase_statuses)
+
+
+@pytest.mark.asyncio
+async def test_on_event_callback_classifies_known_pulumi_events():
+    """The sync _on_event passed to stack.up classifies events of each
+    known kind and forwards to writer.write with status='log'."""
+    from types import SimpleNamespace
+    adapter = PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+
+    captured_callback = {}
+
+    def _fake_up(*, on_event):
+        captured_callback["fn"] = on_event
+        return MagicMock(outputs=_ok_outputs())
+
+    fake_stack = MagicMock()
+    fake_stack.up.side_effect = _fake_up
+
+    with patch.object(adapter, "ensure_state_dir"), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.load_providers_config",
+               new=AsyncMock(return_value=_fake_providers_config())), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.mint_bootstrap_token",
+               new=AsyncMock(return_value=("tok", uuid4()))), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.pulumi.automation.create_or_select_stack",
+               return_value=fake_stack):
+        await adapter.provision_node(
+            provider_resource_id="t3.micro",
+            pool_id=str(uuid4()), org_id=str(uuid4()),
+            progress_writer=writer,
+        )
+    # Wait for the background task to call up()
+    for _ in range(30):
+        await asyncio.sleep(0.02)
+        if "fn" in captured_callback:
+            break
+    callback = captured_callback["fn"]
+    assert callable(callback)
+
+    # Drive the callback with a fake resource_pre_event.
+    fake_event = SimpleNamespace(
+        resource_pre_event=SimpleNamespace(
+            metadata=SimpleNamespace(op="create", urn="urn:aws:ec2:Instance::test"),
+        ),
+        res_outputs_event=None,
+        diagnostic_event=None,
+        summary_event=None,
+    )
+    pre_count = len([c for c in writer.calls if c[0] == "pulumi_up" and c[1] == "log"])
+    callback(fake_event)
+    post_count = len([c for c in writer.calls if c[0] == "pulumi_up" and c[1] == "log"])
+    assert post_count == pre_count + 1
+    # Last logged message should mention the kind we classified.
+    last_log = [c for c in writer.calls if c[0] == "pulumi_up" and c[1] == "log"][-1]
+    assert "resource_pre_event" in (last_log[2] or "")
+
+    # Also exercise the except-swallow branch (lines 329-330): pass an event
+    # whose attribute access raises, so the try body explodes and the bare
+    # `except Exception: pass` is hit.  The callback must not propagate.
+    class _BadEvent:
+        @property
+        def resource_pre_event(self):
+            raise RuntimeError("intentional error for coverage")
+        res_outputs_event = None
+        diagnostic_event = None
+        summary_event = None
+
+    callback(_BadEvent())  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_pulumi_up_failure_calls_stack_destroy():
+    """On pulumi up failure the adapter must run stack.destroy() so AWS
+    resources don't leak. Verify by asserting the mock's destroy call.
+    Also covers the `except Exception` handler (lines 393-394) when
+    destroy itself raises."""
+    adapter = PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+    fake_stack = MagicMock()
+    fake_stack.up.side_effect = RuntimeError("aws: throttled")
+    # Make destroy raise so we also hit the except-swallow on lines 393-394.
+    fake_stack.destroy.side_effect = RuntimeError("destroy also failed")
+
+    with patch.object(adapter, "ensure_state_dir"), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.load_providers_config",
+               new=AsyncMock(return_value=_fake_providers_config())), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.mint_bootstrap_token",
+               new=AsyncMock(return_value=("tok", uuid4()))), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.pulumi.automation.create_or_select_stack",
+               return_value=fake_stack):
+        await adapter.provision_node(
+            provider_resource_id="t3.micro",
+            pool_id=str(uuid4()), org_id=str(uuid4()),
+            progress_writer=writer,
+        )
+    # Drain background task — wait until pulumi_up/failed is written,
+    # which only happens after destroy has been attempted.
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if any(s == "failed" for _, s, _ in writer.calls):
+            break
+    assert fake_stack.destroy.called, "stack.destroy must be called on pulumi_up failure"
