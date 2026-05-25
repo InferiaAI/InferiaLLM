@@ -8,6 +8,8 @@ interface Props {
   deploymentId?: string;
   containerId?: string;
   className?: string;
+  nodeState?: string;
+  currentPhase?: string | null;
 }
 
 // Strip ANSI escape sequences. Container shells (bash/sh) emit a lot of
@@ -35,7 +37,14 @@ const USER_OPTIONS: { label: string; value: string }[] = [
   { label: "Custom…", value: "__custom__" },
 ];
 
-export default function NodeShell({ nodeId, deploymentId, containerId, className }: Props) {
+export default function NodeShell({ nodeId, deploymentId, containerId, className, nodeState, currentPhase }: Props) {
+  if (nodeState && nodeState !== "ready") {
+    return (
+      <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
+        Shell available once the worker registers. Currently {currentPhase ?? "pending"}…
+      </div>
+    );
+  }
   const [output, setOutput] = useState<string>("");
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
