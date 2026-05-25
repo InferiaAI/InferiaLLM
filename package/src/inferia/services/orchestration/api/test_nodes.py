@@ -318,6 +318,42 @@ class TestAddWorker:
         assert "env_snippet" in data
         assert "BOOTSTRAP_TOKEN=fake-bootstrap-token" in data["env_snippet"]
 
+    def test_default_advertise_url_is_compose_service_hostname(self, app_and_deps):
+        # Regression: the default WORKER_ADVERTISE_URL must be
+        # http://inferia-worker:8080 (the worker compose's service name on
+        # deploy_inferia-net). http://localhost:8080 is wrong for the
+        # sibling-compose case — localhost inside the control-plane
+        # container resolves to itself, not the worker — and would cause
+        # placement to silently fail every GPU deployment.
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.post(
+            "/v1/nodes/add/worker",
+            json={"node_name": "host-1"},
+            headers=_user_ctx_header(),
+        )
+        assert r.status_code == 200, r.text
+        snippet = r.json()["env_snippet"]
+        assert "WORKER_ADVERTISE_URL=http://inferia-worker:8080\n" in snippet
+        assert "WORKER_ADVERTISE_URL=http://localhost" not in snippet
+
+    def test_explicit_advertise_url_overrides_default(self, app_and_deps):
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.post(
+            "/v1/nodes/add/worker",
+            json={
+                "node_name": "host-1",
+                "advertise_url": "https://gpu-1.prod.example.com:8443",
+            },
+            headers=_user_ctx_header(),
+        )
+        assert r.status_code == 200, r.text
+        snippet = r.json()["env_snippet"]
+        assert (
+            "WORKER_ADVERTISE_URL=https://gpu-1.prod.example.com:8443\n" in snippet
+        )
+
     def test_validation_missing_node_name(self, app_and_deps):
         app, *_ = app_and_deps
         client = TestClient(app)

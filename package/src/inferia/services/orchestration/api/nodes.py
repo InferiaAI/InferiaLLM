@@ -329,7 +329,12 @@ async def add_worker_node(
         or os.getenv("WORKER_DEFAULT_CONTROL_PLANE_URL")
         or "http://inferia-app:8000"
     )
-    advertise_url = body.advertise_url or "http://localhost:8080"
+    # advertise_url default: the worker's compose service hostname on the
+    # shared deploy_inferia-net network. http://localhost:8080 is NEVER
+    # right for the same-host sibling-compose case — `localhost` inside the
+    # control-plane container resolves to itself, not the worker. Operators
+    # running the worker on a different host MUST pass body.advertise_url.
+    advertise_url = body.advertise_url or "http://inferia-worker:8080"
     # IMPORTANT: docker-compose treats the entire characters after '=' as the
     # value (no inline comment stripping). Keep comments on their own lines.
     env_snippet = (
@@ -343,8 +348,13 @@ async def add_worker_node(
         f"POOL_ID={pool_id}\n"
         f"NODE_NAME={body.node_name}\n"
         "# WORKER_ADVERTISE_URL: URL the control plane will use to reach this\n"
-        "# worker's inference port. localhost is fine for same-host smoke;\n"
-        "# change to a routable URL for production.\n"
+        "# worker's inference port. The default below works when the worker\n"
+        "# compose runs as a sibling service on the same docker host.\n"
+        "# Operators on a different host must replace it with a routable\n"
+        "# URL (public IP, DNS, or the private address the control plane\n"
+        "# can dial). Do NOT use http://localhost:8080 in any compose-on-\n"
+        "# same-host setup — localhost inside the control-plane container\n"
+        "# resolves to itself, not the worker.\n"
         f"WORKER_ADVERTISE_URL={advertise_url}\n"
         f"INFERENCE_TOKEN={inference_token}\n"
     )
