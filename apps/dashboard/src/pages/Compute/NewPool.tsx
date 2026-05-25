@@ -7,7 +7,7 @@ import { useAuth } from "@/context/AuthContext"
 import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
 import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
-import { addWorkerNode, type AddWorkerNodeResponse } from "@/services/nodeService"
+import { addWorkerNode, listNodes, type AddWorkerNodeResponse } from "@/services/nodeService"
 
 // Provider icons mapping
 const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -515,6 +515,25 @@ export default function NewPool() {
                         ? `/dashboard/compute/nodes/${newPoolId}?tab=workers`
                         : "/dashboard/compute/nodes",
                 );
+            } else if (selectedProvider === "aws" && newPoolId) {
+                // The /createpool handler inserts the placeholder inventory row inline,
+                // so the node should be discoverable immediately. Short retry guards
+                // against eventual-consistency in the gateway proxy.
+                toast.success("AWS pool created — provisioning EC2 instance…");
+                let nodeId: string | null = null;
+                for (let i = 0; i < 5 && !nodeId; i++) {
+                    try {
+                        const nodes = await listNodes();
+                        const match = nodes.find(n => n.pool_id === newPoolId);
+                        if (match) nodeId = match.id;
+                    } catch { /* swallow */ }
+                    if (!nodeId) await new Promise(r => setTimeout(r, 300));
+                }
+                if (nodeId) {
+                    navigate(`/dashboard/compute/nodes/${nodeId}?tab=overview`, { replace: true });
+                } else {
+                    navigate("/dashboard/compute/nodes");
+                }
             } else if (isClusterProvider) {
                 toast.success(`Pool created! GPU cluster provisioning in ${selectedRegion}...`)
                 navigate("/dashboard/compute/nodes")
