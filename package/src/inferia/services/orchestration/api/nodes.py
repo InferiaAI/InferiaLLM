@@ -48,6 +48,7 @@ class _Deps:
     control_plane_external_url: str = ""
     adapters: dict[str, Any] = {}
     require_permission: Callable[[str], Any] | None = None
+    provisioning_repo: Any = None
 
 
 _deps = _Deps()
@@ -61,6 +62,7 @@ def configure(
     control_plane_external_url: str,
     adapters: dict[str, Any],
     require_permission,
+    provisioning_repo=None,
 ) -> None:
     _deps.inventory_repo = inventory_repo
     _deps.pool_repo = pool_repo
@@ -68,6 +70,7 @@ def configure(
     _deps.control_plane_external_url = control_plane_external_url
     _deps.adapters = dict(adapters)
     _deps.require_permission = require_permission
+    _deps.provisioning_repo = provisioning_repo
 
 
 def _need_perm(perm: str):
@@ -193,6 +196,38 @@ class AddProviderNodeResponse(BaseModel):
     provider: str
     provider_instance_id: str | None = None
     state: str
+
+
+class ProvisioningPhase(BaseModel):
+    phase: str
+    status: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    last_message: str | None = None
+
+
+class ProvisioningSummary(BaseModel):
+    current_phase: str | None = None
+    terminal: bool
+    phases: list[ProvisioningPhase]
+
+
+class ProvisioningEvent(BaseModel):
+    id: int
+    phase: str
+    status: str
+    message: str | None = None
+    created_at: str
+
+
+class ProvisioningLogsResponse(BaseModel):
+    events: list[ProvisioningEvent]
+    next_after: int | None = None
+
+
+class EC2ConsoleResponse(BaseModel):
+    logs: list[str]
+    fetched_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +451,92 @@ async def add_provider_node(
         provider=node.get("provider", provider),
         provider_instance_id=node.get("provider_instance_id"),
         state=node.get("state", "provisioning"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provisioning / EC2 console endpoints.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{node_id}/provisioning", response_model=ProvisioningSummary)
+async def get_provisioning(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    pool_id = row.get("pool_id")
+    if not pool_id or _deps.provisioning_repo is None:
+        return ProvisioningSummary(current_phase=None, terminal=True, phases=[])
+    summary = await _deps.provisioning_repo.summarize_phases(pool_id=pool_id)
+    current = await _deps.provisioning_repo.current_phase(pool_id=pool_id)
+    node_state = row.get("state")
+    terminal = current is None or node_state in ("ready", "terminated")
+    return ProvisioningSummary(
+        current_phase=current,
+        terminal=terminal,
+        phases=[ProvisioningPhase(
+            phase=p["phase"], status=p["status"],
+            started_at=p["started_at"].isoformat() if p["started_at"] else None,
+            ended_at=p["ended_at"].isoformat() if p["ended_at"] else None,
+            last_message=p["last_message"],
+        ) for p in summary],
+    )
+
+
+@router.get("/{node_id}/provisioning-logs", response_model=ProvisioningLogsResponse)
+async def get_provisioning_logs(
+    node_id: str = Path(...),
+    after: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=2000),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    pool_id = row.get("pool_id")
+    if _deps.provisioning_repo is None or not pool_id:
+        return ProvisioningLogsResponse(events=[], next_after=None)
+    events = await _deps.provisioning_repo.list_events_after(
+        pool_id=pool_id, after_id=after, limit=limit,
+    )
+    next_after = events[-1]["id"] if events else None
+    return ProvisioningLogsResponse(
+        events=[ProvisioningEvent(
+            id=e["id"], phase=e["phase"], status=e["status"],
+            message=e["message"],
+            created_at=e["created_at"].isoformat(),
+        ) for e in events],
+        next_after=next_after,
+    )
+
+
+@router.get("/{node_id}/ec2-console", response_model=EC2ConsoleResponse)
+async def get_ec2_console(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    from datetime import datetime, timezone
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    if row.get("provider") != "aws":
+        raise HTTPException(404, "ec2 console only available for aws provider")
+    adapters = getattr(_deps, "adapters", None) or {}
+    adapter = adapters.get("aws")
+    if adapter is None:
+        raise HTTPException(503, "aws adapter not configured")
+    instance_id = row.get("provider_instance_id") or ""
+    if not instance_id or instance_id.startswith("placeholder:"):
+        return EC2ConsoleResponse(
+            logs=[], fetched_at=datetime.now(timezone.utc).isoformat(),
+        )
+    result = await adapter.get_logs(provider_instance_id=instance_id)
+    return EC2ConsoleResponse(
+        logs=result.get("logs", []),
+        fetched_at=datetime.now(timezone.utc).isoformat(),
     )
 
 

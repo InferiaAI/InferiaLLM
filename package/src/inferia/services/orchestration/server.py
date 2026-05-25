@@ -223,6 +223,22 @@ async def serve():
             nodes_adapters[name] = cls()
         except Exception as e:
             logger.warning("could not instantiate %s adapter for /v1/nodes: %s", name, e)
+
+    from inferia.services.orchestration.repositories.node_provisioning_repo import (
+        NodeProvisioningRepo,
+    )
+    # provisioning repo shares the existing inventory_repo's db pool
+    provisioning_repo = NodeProvisioningRepo(inventory_repo.db)
+
+    # /v1/nodes/{id}/ec2-console requires an AWS adapter instance to
+    # proxy boto3 console_output fetches. Best-effort instantiation.
+    aws_cls = ADAPTER_REGISTRY.get("aws")
+    if aws_cls is not None:
+        try:
+            nodes_adapters["aws"] = aws_cls()
+        except Exception as e:
+            logger.warning("could not instantiate aws adapter for /v1/nodes: %s", e)
+
     nodes_api.configure(
         inventory_repo=inventory_repo,
         pool_repo=pool_repo,
@@ -230,6 +246,7 @@ async def serve():
         control_plane_external_url=os.getenv("CONTROL_PLANE_EXTERNAL_URL", ""),
         adapters=nodes_adapters,
         require_permission=_permit_all,
+        provisioning_repo=provisioning_repo,
     )
 
     # ---------------- FastAPI App ----------------
