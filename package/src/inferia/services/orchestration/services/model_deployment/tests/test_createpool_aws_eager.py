@@ -34,6 +34,10 @@ async def test_createpool_aws_inserts_provisioning_placeholder(monkeypatch):
     mock_adapter.get_capabilities.return_value = MagicMock()
     mock_adapter.provision_node = AsyncMock(return_value={"lifecycle_state": "provisioning"})
     monkeypatch.setattr(deployment_server, "get_adapter", lambda p: mock_adapter)
+    # Also patch ADAPTER_REGISTRY so the per-call instantiation path returns
+    # a class whose constructor yields mock_adapter.
+    mock_aws_cls = MagicMock(return_value=mock_adapter)
+    monkeypatch.setattr(deployment_server, "ADAPTER_REGISTRY", {"aws": mock_aws_cls})
 
     fake_stub = MagicMock()
     fake_stub.RegisterPool = AsyncMock(return_value=MagicMock(pool_id="00000000-0000-0000-0000-00000000aaaa"))

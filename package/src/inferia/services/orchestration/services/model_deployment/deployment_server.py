@@ -23,7 +23,10 @@ from inferia.services.orchestration.v1 import (
 from inferia.services.orchestration.repositories.provider_repo import (
     ProviderResourceRepository,
 )
-from inferia.services.orchestration.services.adapter_engine.registry import get_adapter
+from inferia.services.orchestration.services.adapter_engine.registry import (
+    get_adapter,
+    ADAPTER_REGISTRY,
+)
 from inferia.services.orchestration.services.model_deployment.log_store import (
     DeploymentLogStore,
     DeploymentLogBuffer,
@@ -1183,8 +1186,12 @@ async def create_pool(req: CreatePoolRequest, request: Request):
                 pool_id=_UUID(resp.pool_id),
                 node_id=None,
             )
-            adapter = get_adapter("aws")
-            adapter._db = pool_conn  # adapter UPDATEs run through this conn
+            # Construct a per-call adapter instance so concurrent /createpool
+            # requests don't race on the shared adapter._db field.
+            aws_cls = ADAPTER_REGISTRY.get("aws")
+            if aws_cls is None:
+                raise Exception("aws adapter not registered")
+            adapter = aws_cls(db=pool_conn)
             _t = asyncio.create_task(_kick_aws_provision(
                 adapter, req, resp.pool_id, writer, pool_conn,
             ))
