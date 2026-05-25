@@ -36,6 +36,9 @@ from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.cred
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.programs import (
     build_ec2_program,
 )
+from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.progress_writer import (
+    ProgressWriter,
+)
 from inferia.services.orchestration.services.adapter_engine.base import (
     AdapterType,
     PricingModel,
@@ -53,6 +56,13 @@ PROJECT_NAME = "inferia-aws"
 
 class ProvisionError(Exception):
     """Surface-safe provisioning error (no internal stack text)."""
+
+
+class _NoopWriter:
+    """Drop-in no-op for callers that don't provide a progress writer
+    (e.g. the legacy lazy-deploy path)."""
+    async def write_async(self, *a, **kw): pass
+    def write(self, *a, **kw): pass
 
 
 async def load_providers_config() -> ProvidersConfig:
@@ -105,29 +115,43 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         use_spot: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
         provider_credential_name: Optional[str] = None,
+        progress_writer: Any = None,
     ) -> Dict[str, Any]:
-        cfg = await load_providers_config()
-        env_vars = resolve_aws_env(cfg)  # raises MissingCredentialsError
+        writer = progress_writer or _NoopWriter()
 
-        pool_meta = dict(metadata or {})
-        if pool_meta:
-            try:
-                AWSPoolMetadata(**pool_meta)
-            except Exception as e:
-                raise ProvisionError(f"invalid AWS metadata: {e}") from e
+        await writer.write_async("prepare", "running")
+        try:
+            cfg = await load_providers_config()
+            env_vars = resolve_aws_env(cfg)  # raises MissingCredentialsError
 
-        account = cfg.cloud.aws
-        region = region or account.region or "us-east-1"
-        subnet_id = pool_meta.get("subnet_id") or account.subnet_id
-        sg_ids = pool_meta.get("security_group_ids") or account.security_group_ids
-        ami_id = pool_meta.get("ami_id") or account.ami_id
-        iam_arn = pool_meta.get("iam_instance_profile") or account.iam_instance_profile
-        root_gb = pool_meta.get("root_volume_gb") or account.root_volume_gb or 100
-        image_tag = (
-            pool_meta.get("worker_image_tag")
-            or account.worker_image_tag
-            or settings.worker_image_tag
-        )
+            pool_meta = dict(metadata or {})
+            if pool_meta:
+                try:
+                    AWSPoolMetadata(**pool_meta)
+                except Exception as e:
+                    await writer.write_async("prepare", "failed", str(e))
+                    raise ProvisionError(f"invalid AWS metadata: {e}") from e
+
+            account = cfg.cloud.aws
+            region = region or account.region or "us-east-1"
+            subnet_id = pool_meta.get("subnet_id") or account.subnet_id
+            sg_ids = pool_meta.get("security_group_ids") or account.security_group_ids
+            ami_id = pool_meta.get("ami_id") or account.ami_id
+            iam_arn = pool_meta.get("iam_instance_profile") or account.iam_instance_profile
+            root_gb = pool_meta.get("root_volume_gb") or account.root_volume_gb or 100
+            image_tag = (
+                pool_meta.get("worker_image_tag")
+                or account.worker_image_tag
+                or settings.worker_image_tag
+            )
+
+        except ProvisionError:
+            raise
+        except Exception as e:
+            await writer.write_async("prepare", "failed", str(e))
+            raise
+
+        await writer.write_async("prepare", "succeeded")
 
         if not ami_id:
             # CPU-only instances (t/m/c/r families) don't need the NVIDIA
@@ -142,6 +166,7 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                 "trn1n", "trn2",
             }
             param = None if is_gpu_family else PLAIN_UBUNTU_PARAMETER
+            await writer.write_async("ami_lookup", "running")
             try:
                 ami_id = latest_dlami_ami(
                     region,
@@ -149,10 +174,10 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                     aws_secret_access_key=env_vars["AWS_SECRET_ACCESS_KEY"],
                     parameter_name=param,
                 )
+                await writer.write_async("ami_lookup", "succeeded", ami_id)
             except AMILookupError as e:
+                await writer.write_async("ami_lookup", "failed", str(e))
                 raise ProvisionError(f"AMI lookup failed: {e}") from e
-
-        self.ensure_state_dir()  # raises PulumiStateError
 
         # When constructed via the registry the adapter has no db handle —
         # mint the bootstrap token through a short-lived asyncpg connection
@@ -199,6 +224,10 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             user_data=user_data,
             use_spot=use_spot,
         )
+
+        self.ensure_state_dir()  # raises PulumiStateError
+
+        await writer.write_async("pulumi_init", "running")
         opts = self.local_workspace_opts(env_vars=env_vars)
         stack = pulumi.automation.create_or_select_stack(
             stack_name=self.stack_name_for_pool(pool_id),
@@ -214,8 +243,10 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             ),
         )
         stack.set_config("aws:region", pulumi.automation.ConfigValue(region))
+        await writer.write_async("pulumi_init", "succeeded")
 
-        asyncio.create_task(self._provision_async(stack, pool_id, str(bootstrap_id)))
+        await writer.write_async("pulumi_up", "running")
+        asyncio.create_task(self._provision_async(stack, pool_id, str(bootstrap_id), writer))
 
         return {
             "provider": "aws",
@@ -269,17 +300,43 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             "provider_instance_id": result.get("provider_instance_id"),
         }
 
-    async def _provision_async(self, stack: Any, pool_id: str, bootstrap_id: str) -> None:
+    async def _provision_async(
+        self,
+        stack: Any,
+        pool_id: str,
+        bootstrap_id: str,
+        writer: Any = None,
+    ) -> None:
         """Run pulumi up. On success, write outputs into compute_pools.metadata.
         On failure, set lifecycle_state='failed' and record the error."""
+        writer = writer or _NoopWriter()
+
+        def _on_event(ev):
+            try:
+                kind = next(
+                    (k for k in ("resource_pre_event", "res_outputs_event",
+                                 "diagnostic_event", "summary_event")
+                     if hasattr(ev, k) and getattr(ev, k) is not None),
+                    "engine_event",
+                )
+                payload = str(getattr(ev, kind, ev))
+                writer.write("pulumi_up", "log", f"{kind}: {payload}")
+            except Exception:
+                pass
+
         try:
-            result = await asyncio.to_thread(stack.up)
+            result = await asyncio.to_thread(stack.up, on_event=_on_event)
             outputs = result.outputs or {}
+            instance_id = self._extract_output(outputs, "instance_id")
+            public_dns  = self._extract_output(outputs, "public_dns")
+            private_ip  = self._extract_output(outputs, "private_ip")
             meta_update = {
-                "instance_id": self._extract_output(outputs, "instance_id"),
-                "public_dns":  self._extract_output(outputs, "public_dns"),
-                "private_ip":  self._extract_output(outputs, "private_ip"),
+                "instance_id": instance_id,
+                "public_dns":  public_dns,
+                "private_ip":  private_ip,
             }
+            await writer.write_async("pulumi_up", "succeeded", instance_id)
+            await writer.write_async("ec2_running", "succeeded", public_dns)
             if self._db is not None:
                 await self._db.execute(
                     "UPDATE compute_pools "
@@ -288,10 +345,26 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                     json.dumps(meta_update),
                     UUID(pool_id),
                 )
+                # Promote the placeholder inventory row to point at the real
+                # EC2 instance. The worker's later register_worker call upserts
+                # on (provider, provider_instance_id) and finds the same row,
+                # flipping state -> ready.
+                if instance_id:
+                    await self._db.execute(
+                        "UPDATE compute_inventory "
+                        "SET provider_instance_id = $1, hostname = $2, "
+                        "    updated_at = now() "
+                        "WHERE pool_id = $3 AND provider_instance_id LIKE 'placeholder:%'",
+                        instance_id,
+                        public_dns or "",
+                        UUID(pool_id),
+                    )
+            await writer.write_async("worker_bootstrap", "running")
             logger.info("Pulumi up succeeded for pool %s: instance %s",
-                        pool_id, meta_update["instance_id"])
+                        pool_id, instance_id)
         except Exception as e:
             err = str(e)
+            await writer.write_async("pulumi_up", "failed", err)
             logger.error("Pulumi up failed for pool %s: %s", pool_id, err)
             if self._db is not None:
                 await self._db.execute(
@@ -300,6 +373,14 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                     "    metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
                     "WHERE id = $2",
                     json.dumps({"error": err}),
+                    UUID(pool_id),
+                )
+                await self._db.execute(
+                    "UPDATE compute_inventory "
+                    "SET state = 'terminated', updated_at = now(), "
+                    "    metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
+                    "WHERE pool_id = $2 AND provider_instance_id LIKE 'placeholder:%'",
+                    json.dumps({"failure_reason": err}),
                     UUID(pool_id),
                 )
             try:
