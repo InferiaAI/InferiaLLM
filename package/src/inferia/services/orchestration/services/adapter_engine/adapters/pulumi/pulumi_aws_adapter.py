@@ -104,6 +104,9 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             passphrase=passphrase if passphrase is not None else settings.pulumi_passphrase,
         )
         self._db = db
+        # Holds a strong reference to the background _provision_async task so
+        # callers can await it and CPython cannot GC it prematurely.
+        self._last_provision_task: Optional[asyncio.Task] = None
 
     async def provision_node(
         self,
@@ -246,7 +249,9 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         await writer.write_async("pulumi_init", "succeeded")
 
         await writer.write_async("pulumi_up", "running")
-        asyncio.create_task(self._provision_async(stack, pool_id, str(bootstrap_id), writer))
+        self._last_provision_task = asyncio.create_task(
+            self._provision_async(stack, pool_id, str(bootstrap_id), writer)
+        )
 
         return {
             "provider": "aws",
