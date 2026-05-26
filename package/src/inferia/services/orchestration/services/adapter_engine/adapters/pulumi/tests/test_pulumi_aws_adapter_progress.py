@@ -48,6 +48,18 @@ def _fake_providers_config():
     )))
 
 
+@pytest.fixture(autouse=True)
+def _stub_control_plane_url(monkeypatch):
+    """Default to a valid public URL so tests not specifically about
+    URL resolution don't trip the new validation gate."""
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as _mod,
+    )
+    monkeypatch.setattr(_mod.settings, "control_plane_external_url",
+                        "https://stub-tunnel.trycloudflare.com")
+
+
+
 @pytest.mark.asyncio
 async def test_provision_node_emits_eight_phase_sequence_on_success():
     adapter = PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
@@ -84,14 +96,18 @@ async def test_provision_node_emits_eight_phase_sequence_on_success():
         await asyncio.sleep(0.02)
         if any(c[0] == "worker_bootstrap" for c in writer.calls):
             break
-    phases = [c[0] for c in writer.calls]
-    # First six events (synchronous part) are prepare(running, succeeded) +
-    # pulumi_init(running, succeeded) + pulumi_up(running) — ami_lookup is
-    # skipped because AMI is pinned in the providers config.
+    # Skip the prepare/log entries (control-plane URL + GPU mapping) when
+    # asserting phase order — those are informational events, not phase
+    # transitions.
+    phases = [c[0] for c in writer.calls if c[1] != "log"]
+    # First five non-log events (synchronous part) are
+    # prepare(running, succeeded) + pulumi_init(running, succeeded) +
+    # pulumi_up(running) — ami_lookup is skipped because AMI is pinned.
     assert phases[:5] == ["prepare", "prepare",
                           "pulumi_init", "pulumi_init",
                           "pulumi_up"]
-    statuses_for_each = {p: [s for ph, s, _ in writer.calls if ph == p]
+    statuses_for_each = {p: [s for ph, s, _ in writer.calls
+                              if ph == p and s != "log"]
                          for p in set(phases)}
     assert statuses_for_each["prepare"] == ["running", "succeeded"]
     assert statuses_for_each["pulumi_init"] == ["running", "succeeded"]
@@ -462,11 +478,14 @@ async def test_provision_node_maps_gpu_name_to_instance_type():
             pool_id=str(uuid4()), org_id=str(uuid4()),
             progress_writer=writer,
         )
-    # prepare/log must record the mapping
-    logs = [c for c in writer.calls if c[0] == "prepare" and c[1] == "log"]
-    assert len(logs) == 1
-    assert "T4" in (logs[0][2] or "")
-    assert "g4dn.xlarge" in (logs[0][2] or "")
+    # prepare/log must record the GPU-name → instance-type mapping
+    # (alongside the new control-plane URL log).
+    mapping_logs = [c for c in writer.calls
+                    if c[0] == "prepare" and c[1] == "log"
+                    and "mapped GPU name" in (c[2] or "")]
+    assert len(mapping_logs) == 1
+    assert "T4" in (mapping_logs[0][2] or "")
+    assert "g4dn.xlarge" in (mapping_logs[0][2] or "")
     # The Pulumi program builder must have received the mapped instance type
     assert bp.call_args.kwargs["instance_type"] == "g4dn.xlarge"
 
@@ -494,6 +513,178 @@ async def test_provision_node_passes_through_explicit_instance_type():
             pool_id=str(uuid4()), org_id=str(uuid4()),
             progress_writer=writer,
         )
-    logs = [c for c in writer.calls if c[0] == "prepare" and c[1] == "log"]
-    assert logs == []
+    mapping_logs = [c for c in writer.calls
+                    if c[0] == "prepare" and c[1] == "log"
+                    and "mapped GPU name" in (c[2] or "")]
+    assert mapping_logs == []
     assert bp.call_args.kwargs["instance_type"] == "g5.xlarge"
+
+
+# ---------------------------------------------------------------------------
+# Control-plane URL resolution and validation
+# ---------------------------------------------------------------------------
+
+def test_validate_control_plane_url_accepts_https():
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _validate_control_plane_url,
+    )
+    assert _validate_control_plane_url("https://example.trycloudflare.com") is None
+    assert _validate_control_plane_url("http://example.com:8000") is None
+
+
+def test_validate_control_plane_url_rejects_empty():
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _validate_control_plane_url,
+    )
+    err = _validate_control_plane_url("")
+    assert err is not None
+    assert "not configured" in err
+    err = _validate_control_plane_url(None)
+    assert err is not None
+
+
+def test_validate_control_plane_url_rejects_localhost():
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _validate_control_plane_url,
+    )
+    for bad in ("http://localhost:8000", "http://127.0.0.1:8000",
+                "http://0.0.0.0:8000", "http://inferia-app:8000/"):
+        err = _validate_control_plane_url(bad)
+        assert err is not None, f"expected reject for {bad}"
+        assert "not reachable" in err
+
+
+def test_validate_control_plane_url_rejects_missing_scheme():
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _validate_control_plane_url,
+    )
+    err = _validate_control_plane_url("example.trycloudflare.com")
+    assert err is not None
+    assert "scheme" in err
+
+
+def test_resolve_control_plane_url_prefers_settings(monkeypatch, tmp_path):
+    """When settings.control_plane_external_url is set, it wins over the
+    sidecar file."""
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as mod,
+    )
+    monkeypatch.setattr(mod.settings, "control_plane_external_url", "https://from-settings.example")
+    tunnel_file = tmp_path / "url"
+    tunnel_file.write_text("https://from-file.example")
+    monkeypatch.setattr(mod, "_TUNNEL_URL_FILE", str(tunnel_file))
+    assert mod._resolve_control_plane_url() == "https://from-settings.example"
+
+
+def test_resolve_control_plane_url_falls_back_to_sidecar_file(monkeypatch, tmp_path):
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as mod,
+    )
+    monkeypatch.setattr(mod.settings, "control_plane_external_url", "")
+    tunnel_file = tmp_path / "url"
+    tunnel_file.write_text("https://from-cloudflared.trycloudflare.com\n")
+    monkeypatch.setattr(mod, "_TUNNEL_URL_FILE", str(tunnel_file))
+    assert mod._resolve_control_plane_url() == "https://from-cloudflared.trycloudflare.com"
+
+
+def test_resolve_control_plane_url_returns_none_when_nothing_set(monkeypatch, tmp_path):
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as mod,
+    )
+    monkeypatch.setattr(mod.settings, "control_plane_external_url", "")
+    monkeypatch.setattr(mod, "_TUNNEL_URL_FILE", str(tmp_path / "does-not-exist"))
+    assert mod._resolve_control_plane_url() is None
+
+
+@pytest.mark.asyncio
+async def test_provision_node_fails_prepare_when_control_plane_url_missing(monkeypatch, tmp_path):
+    """Refuse to provision when no public URL is configured — saves money
+    by not spinning up an EC2 that can't ever phone home."""
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as mod,
+    )
+    monkeypatch.setattr(mod.settings, "control_plane_external_url", "")
+    monkeypatch.setattr(mod, "_TUNNEL_URL_FILE", str(tmp_path / "absent"))
+
+    adapter = mod.PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+
+    with pytest.raises(mod.ProvisionError, match="not configured"):
+        await adapter.provision_node(
+            provider_resource_id="t3.medium",
+            pool_id=str(uuid4()), org_id=str(uuid4()),
+            progress_writer=writer,
+        )
+    failed = [c for c in writer.calls if c[1] == "failed"]
+    assert len(failed) == 1
+    assert failed[0][0] == "prepare"
+    assert "not configured" in (failed[0][2] or "")
+
+
+@pytest.mark.asyncio
+async def test_provision_node_uses_sidecar_url_in_user_data(monkeypatch, tmp_path):
+    """When cloudflared sidecar wrote a URL, it flows into build_user_data
+    instead of the legacy settings.control_plane_external_url."""
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as mod,
+    )
+    monkeypatch.setattr(mod.settings, "control_plane_external_url", "")
+    tunnel_file = tmp_path / "url"
+    tunnel_file.write_text("https://abc.trycloudflare.com")
+    monkeypatch.setattr(mod, "_TUNNEL_URL_FILE", str(tunnel_file))
+
+    adapter = mod.PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+    fake_stack = MagicMock()
+    fake_stack.up.return_value = MagicMock(outputs=_ok_outputs())
+
+    with patch.object(adapter, "ensure_state_dir"), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.load_providers_config",
+               new=AsyncMock(return_value=_fake_providers_config())), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.mint_bootstrap_token",
+               new=AsyncMock(return_value=("tok", uuid4()))), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.pulumi.automation.create_or_select_stack",
+               return_value=fake_stack), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.build_user_data") as bud:
+        await adapter.provision_node(
+            provider_resource_id="t3.medium",
+            pool_id=str(uuid4()), org_id=str(uuid4()),
+            progress_writer=writer,
+        )
+    assert bud.call_args.kwargs["control_plane_url"] == "https://abc.trycloudflare.com"
+    # And a prepare/log records the URL we resolved
+    logs = [c for c in writer.calls if c[0] == "prepare" and c[1] == "log"
+            and "control plane URL" in (c[2] or "")]
+    assert len(logs) == 1
+    assert "abc.trycloudflare.com" in (logs[0][2] or "")
+
+
+def test_validate_control_plane_url_rejects_unqualified_hostname():
+    """Docker-compose service names like 'api-gateway' or 'inferia-app'
+    can never be resolved by an EC2 instance — reject them even when
+    they're not in the explicit _UNREACHABLE_HOSTS list."""
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _validate_control_plane_url,
+    )
+    for bad in ("http://api-gateway:8000", "http://my-service:9000",
+                "https://random-hostname"):
+        err = _validate_control_plane_url(bad)
+        assert err is not None, f"expected reject for {bad}"
+        assert "unqualified hostname" in err
+
+
+def test_resolve_control_plane_url_falls_through_when_settings_invalid(monkeypatch, tmp_path):
+    """When settings.control_plane_external_url is at its docker-only
+    default (`http://api-gateway:8000`), the resolver must fall through
+    to the cloudflared sidecar file instead of returning the bad URL."""
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as mod,
+    )
+    monkeypatch.setattr(mod.settings, "control_plane_external_url",
+                        "http://api-gateway:8000")
+    tunnel_file = tmp_path / "url"
+    tunnel_file.write_text("https://abc-def.trycloudflare.com")
+    monkeypatch.setattr(mod, "_TUNNEL_URL_FILE", str(tunnel_file))
+    assert mod._resolve_control_plane_url() == "https://abc-def.trycloudflare.com"

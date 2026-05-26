@@ -77,6 +77,9 @@ services:
       # Unified config yaml — mounted read-only. Edit the host file to change
       # operational parameters; restart the container to apply.
       - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+      # Read the public control-plane URL written by the cloudflared sidecar.
+      # See the `cloudflared` service definition below. Read-only.
+      - tunnel-shared:/var/lib/inferia/tunnel:ro
     ports:
       - "8000:8000"   # Filtration Gateway (external API)
       - "8001:8001"   # Inference Gateway (external API)
@@ -181,10 +184,72 @@ services:
     networks:
       - inferia-net
 
+  # ---------------------------------------------------------------------------
+  # cloudflared: free, ephemeral, no-account public tunnel to the control plane.
+  #
+  # AWS / GCP / Azure compute nodes need to reach the InferiaLLM control plane
+  # from the public internet. On a dev machine behind NAT (or anywhere without
+  # a routable inbound port 8000) the worker bootstrap call from the provisioned
+  # EC2 instance fails silently and the provisioning flow hangs at the
+  # worker_bootstrap phase. cloudflared quick-tunnel creates an ephemeral
+  # https://*.trycloudflare.com URL on every start; the wrapper script extracts
+  # that URL from stderr, writes it to a shared volume, and the inferia-app
+  # picks it up at provision time as the value of CONTROL_PLANE_URL in the
+  # cloud user-data.
+  cloudflared:
+    # The official cloudflare/cloudflared image is distroless (no /bin/sh),
+    # so we wrap it in alpine and download the cloudflared binary at first
+    # start. Cached in the named volume after the first pull.
+    image: alpine:3
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mkdir -p /tunnel /opt/cf
+        if [ ! -x /opt/cf/cloudflared ]; then
+          echo "[cloudflared-init] downloading cloudflared binary..."
+          apk add --no-cache curl ca-certificates >/dev/null
+          curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" \
+            -o /opt/cf/cloudflared
+          chmod +x /opt/cf/cloudflared
+        fi
+        # Erase any stale URL from a previous run so the validator never
+        # serves a dead tunnel.
+        rm -f /tunnel/url
+        ( /opt/cf/cloudflared tunnel --no-autoupdate --url http://app:8000 2>&1 | tee /tmp/cf.log ) &
+        CF_PID=$$!
+        for _ in $$(seq 1 90); do
+          URL=$$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1 || true)
+          if [ -n "$$URL" ]; then
+            printf '%s\n' "$$URL" > /tunnel/url
+            echo "[cloudflared-init] tunnel URL: $$URL (written to /tunnel/url)"
+            break
+          fi
+          sleep 1
+        done
+        if [ ! -s /tunnel/url ]; then
+          echo "[cloudflared-init] WARN: tunnel URL not detected within 90s"
+        fi
+        wait $$CF_PID
+    volumes:
+      - tunnel-shared:/tunnel
+      - cf-bin:/opt/cf
+    depends_on:
+      app:
+        condition: service_started
+    networks:
+      - inferia-net
+
 volumes:
   pgdata:
   appdata:
   esdata:
+  # Shared between the cloudflared sidecar (writer) and inferia-app (reader)
+  # so the control-plane public URL can be discovered on every provision.
+  tunnel-shared:
+  # Caches the cloudflared binary so we don't re-download on every restart.
+  cf-bin:
 
 networks:
   inferia-net:

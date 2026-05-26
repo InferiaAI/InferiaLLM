@@ -53,6 +53,99 @@ logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "inferia-aws"
 
+# Where the cloudflared sidecar (deploy/docker-compose.yml) writes the
+# ephemeral public tunnel URL. Read at provision time, NOT at startup,
+# so a control-plane restart picks up a freshly-rotated tunnel URL on
+# the next provision without needing a separate refresh path.
+_TUNNEL_URL_FILE = "/var/lib/inferia/tunnel/url"
+
+# Hosts the EC2 worker can NEVER reach, even though they may be set in
+# settings.control_plane_external_url (typically through docker-compose
+# defaults). Reject these upfront so we don't burn an EC2 instance only
+# to have it hang at the worker_bootstrap phase.
+_UNREACHABLE_HOSTS = (
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "inferia-app",   # docker-compose service hostname; only resolves inside the compose network
+)
+
+
+def _resolve_control_plane_url() -> Optional[str]:
+    """Determine the public URL the cloud worker should call back to.
+
+    Priority:
+      1. ``settings.control_plane_external_url`` when it points at a
+         public host (i.e. passes ``_validate_control_plane_url``).
+         Operators override via INFERIA_CONTROL_PLANE_EXTERNAL_URL.
+      2. The URL the cloudflared sidecar writes to ``/var/lib/inferia/tunnel/url``.
+    The settings default is the docker-compose service hostname
+    ``http://api-gateway:8000``; that fails validation and falls
+    through to the sidecar file automatically — so the typical dev
+    flow (just bring up the stack with cloudflared) works without
+    setting any env var.
+
+    Returns ``None`` when neither produces a public URL; the caller
+    fails the prepare phase with a helpful message.
+    """
+    explicit = (settings.control_plane_external_url or "").strip()
+    if explicit and _validate_control_plane_url(explicit) is None:
+        return explicit
+    try:
+        with open(_TUNNEL_URL_FILE, "r", encoding="utf-8") as f:
+            url = f.read().strip()
+        return url or None
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
+
+
+def _validate_control_plane_url(url: Optional[str]) -> Optional[str]:
+    """Return an error message if the URL is not reachable from the public
+    internet (i.e. would leave the worker stuck at worker_bootstrap), or
+    None when it looks valid.
+
+    Catches both the obvious bad hosts (localhost, 127.0.0.1, the
+    docker-compose service names we know about) AND any unqualified
+    hostname (no dot in the host portion). Public DNS hostnames always
+    contain at least one dot — anything else is a docker / k8s service
+    name that an EC2 instance can never resolve.
+    """
+    if not url:
+        return (
+            "CONTROL_PLANE_EXTERNAL_URL is not configured. Cloud workers cannot "
+            "phone home. Either set the INFERIA_CONTROL_PLANE_EXTERNAL_URL env "
+            "var on the control plane, or start the bundled `cloudflared` "
+            "service (see deploy/docker-compose.yml) to auto-generate a public "
+            "tunnel URL."
+        )
+    lowered = url.lower()
+    if not (lowered.startswith("http://") or lowered.startswith("https://")):
+        return f"CONTROL_PLANE_EXTERNAL_URL={url!r} must include a scheme (http:// or https://)."
+    # Pull out the host portion ("host" or "host:port") between "//" and the
+    # first "/" or end-of-string.
+    after_scheme = lowered.split("//", 1)[1]
+    host_with_port = after_scheme.split("/", 1)[0]
+    host = host_with_port.split(":", 1)[0]
+    if host in _UNREACHABLE_HOSTS:
+        return (
+            f"CONTROL_PLANE_EXTERNAL_URL={url!r} points at {host!r}, which "
+            "is not reachable from a cloud EC2 instance. Use a public "
+            "hostname (ngrok / cloudflared / your routable DNS) instead."
+        )
+    # A public DNS hostname always has a dot (`example.com`,
+    # `tunnel.trycloudflare.com`); IPv4 addresses have dots too. Anything
+    # else is a docker / k8s service name and cannot be resolved from EC2.
+    # IPv6 hostnames would contain ':' which we already split out.
+    if "." not in host:
+        return (
+            f"CONTROL_PLANE_EXTERNAL_URL={url!r} uses an unqualified hostname "
+            f"({host!r}). A cloud EC2 instance cannot resolve it. Set "
+            "INFERIA_CONTROL_PLANE_EXTERNAL_URL to a public URL (e.g. via the "
+            "cloudflared sidecar in deploy/docker-compose.yml)."
+        )
+    return None
+
 # Map semantic GPU names → a sensible default EC2 instance type. Defensive
 # layer for callers (dashboards, scripts) that pass a GPU name like "T4"
 # where AWS expects an instance type like "g4dn.xlarge". A real instance
@@ -159,6 +252,20 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
 
         await writer.write_async("prepare", "running")
 
+        # Resolve the public URL the EC2 worker will call back to. If this
+        # is empty / points at localhost / a docker-internal hostname the
+        # worker will silently hang at worker_bootstrap — fail prepare now
+        # with a helpful message instead of burning an EC2 instance.
+        control_plane_url = _resolve_control_plane_url()
+        cp_err = _validate_control_plane_url(control_plane_url)
+        if cp_err:
+            await writer.write_async("prepare", "failed", cp_err)
+            raise ProvisionError(cp_err)
+        await writer.write_async(
+            "prepare", "log",
+            f"control plane URL: {control_plane_url}",
+        )
+
         # Defensive: callers occasionally pass a GPU name ("T4") where an
         # EC2 instance type ("g4dn.xlarge") is required. Map it before
         # building the Pulumi program so AWS doesn't return
@@ -255,7 +362,7 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
 
         user_data = build_user_data(
             bootstrap_token=token,
-            control_plane_url=settings.control_plane_external_url,
+            control_plane_url=control_plane_url,
             node_name=f"node-{str(bootstrap_id)[:8]}",
             pool_id=pool_id,
             image=settings.worker_image,
