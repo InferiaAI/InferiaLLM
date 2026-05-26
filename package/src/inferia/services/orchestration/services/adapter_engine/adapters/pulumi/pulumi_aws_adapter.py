@@ -367,6 +367,20 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                 pool_uuid,
                 secrets.token_urlsafe(32),
             )
+            # Pre-set the placeholder's node_name to the value build_user_data
+            # bakes into the cloud-init script. This needs to land BEFORE
+            # cloud-init runs on the EC2 (the worker's register POST is keyed
+            # on pool_id+node_name; a missing node_name on the placeholder
+            # would cause the worker to insert a fresh row instead of
+            # updating the placeholder in place).
+            expected_node_name = f"node-{str(bootstrap_id)[:8]}"
+            await db_conn.execute(
+                "UPDATE compute_inventory "
+                "SET node_name = $1, updated_at = now() "
+                "WHERE pool_id = $2 AND provider_instance_id LIKE 'placeholder:%'",
+                expected_node_name,
+                pool_uuid,
+            )
         finally:
             if owned_conn:
                 try:

@@ -1140,12 +1140,12 @@ async def create_pool(req: CreatePoolRequest, request: Request):
                     INSERT INTO compute_inventory (
                         pool_id, provider, provider_instance_id, hostname,
                         gpu_total, vcpu_total, ram_gb_total, state,
-                        node_class, metadata, labels
+                        node_class, agent_kind, metadata, labels
                     )
                     VALUES (
                         $1::uuid, $2::provider_type, $3, $4,
                         0, 0, 0, 'provisioning',
-                        'on_demand', $5::jsonb, '{}'::jsonb
+                        'on_demand', 'worker', $5::jsonb, '{}'::jsonb
                     )
                     """,
                     resp.pool_id,
