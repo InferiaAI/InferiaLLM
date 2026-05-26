@@ -353,6 +353,20 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                 pool_id=UUID(pool_id) if isinstance(pool_id, str) else pool_id,
                 org_id=org_id,
             )
+            # Per-pool inference token. The worker container exits with
+            # "INFERENCE_TOKEN is required" without it. Generate-or-fetch
+            # via the existing pool_repo SQL pattern.
+            import secrets
+            pool_uuid = UUID(pool_id) if isinstance(pool_id, str) else pool_id
+            inference_token = await db_conn.fetchval(
+                "UPDATE compute_pools "
+                "SET inference_token = COALESCE(inference_token, $2), "
+                "    updated_at = now() "
+                "WHERE id = $1 "
+                "RETURNING inference_token",
+                pool_uuid,
+                secrets.token_urlsafe(32),
+            )
         finally:
             if owned_conn:
                 try:
@@ -367,6 +381,7 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             pool_id=pool_id,
             image=settings.worker_image,
             image_tag=image_tag,
+            inference_token=inference_token,
         )
 
         program = build_ec2_program(
@@ -515,13 +530,20 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                 # on (provider, provider_instance_id) and finds the same row,
                 # flipping state -> ready.
                 if instance_id:
+                    # Predict the node_name the worker will register with
+                    # so its upsert finds this placeholder (matches on
+                    # pool_id + node_name) instead of inserting a fresh
+                    # row. Format must mirror build_user_data:
+                    #   node_name = f"node-{bootstrap_id[:8]}"
+                    expected_node_name = f"node-{str(bootstrap_id)[:8]}"
                     await self._db.execute(
                         "UPDATE compute_inventory "
                         "SET provider_instance_id = $1, hostname = $2, "
-                        "    updated_at = now() "
-                        "WHERE pool_id = $3 AND provider_instance_id LIKE 'placeholder:%'",
+                        "    node_name = $3, updated_at = now() "
+                        "WHERE pool_id = $4 AND provider_instance_id LIKE 'placeholder:%'",
                         instance_id,
                         public_dns or "",
+                        expected_node_name,
                         UUID(pool_id),
                     )
             await writer.write_async("worker_bootstrap", "running")

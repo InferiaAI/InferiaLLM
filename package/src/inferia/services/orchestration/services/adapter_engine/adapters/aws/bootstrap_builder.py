@@ -54,6 +54,21 @@ docker rm -f inferia-worker 2>/dev/null || true
 GPU_FLAG=""
 if lspci 2>/dev/null | grep -qi nvidia; then GPU_FLAG="--gpus=all"; fi
 
+# Discover the EC2 public hostname so we can build WORKER_ADVERTISE_URL.
+# IMDSv2 is required on modern AMIs; fall back to IMDSv1 if the token
+# request fails (older AMIs / non-AWS clones).
+IMDS_TOKEN=$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 300" http://169.254.169.254/latest/api/token 2>/dev/null || true)
+if [ -n "$IMDS_TOKEN" ]; then
+  PUBLIC_HOST=$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || true)
+else
+  PUBLIC_HOST=$(curl -fsS http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || true)
+fi
+if [ -z "$PUBLIC_HOST" ]; then
+  # No public DNS (instance without a public IP). Fall back to private IP.
+  PUBLIC_HOST=$(hostname -I | awk '{{print $1}}')
+fi
+echo "[inferia-bootstrap] WORKER_ADVERTISE_URL host = $PUBLIC_HOST"
+
 docker run -d --name inferia-worker --restart=always $GPU_FLAG \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/lib/inferia-worker:/var/lib/inferia-worker \
@@ -62,8 +77,23 @@ docker run -d --name inferia-worker --restart=always $GPU_FLAG \
   -e CONTROL_PLANE_URL={control_plane_url} \
   -e NODE_NAME={node_name} \
   -e POOL_ID={pool_id} \
+  -e WORKER_ADVERTISE_URL="http://$PUBLIC_HOST:8080" \
+  -e INFERENCE_TOKEN={inference_token} \
   {image_full}
 
+# --- inferia diagnostic block (cloud-init console output) ---------------------
+# Reachability checks + worker container logs piped to the cloud-init console
+# so an operator without SSH/SSM access can read them via ec2.get_console_output.
+echo "[inferia-diag] DNS lookup of control plane:"
+getent hosts $(echo {control_plane_url} | sed -E 's|^https?://||' | cut -d/ -f1 | cut -d: -f1) || true
+echo "[inferia-diag] reachability probe:"
+curl -sS --max-time 10 -o /dev/null -w 'HTTP %{{http_code}} in %{{time_total}}s\n' {control_plane_url}/health || true
+echo "[inferia-diag] giving worker container 30s to start..."
+sleep 30
+echo "[inferia-diag] docker ps:"
+docker ps --format '{{{{.Names}}}} {{{{.Status}}}}' || true
+echo "[inferia-diag] inferia-worker logs (tail 80):"
+docker logs --tail 80 inferia-worker 2>&1 || true
 echo "[inferia-bootstrap] done at $(date -Is)"
 """
 
@@ -76,6 +106,7 @@ def build_user_data(
     pool_id: str,
     image: str,
     image_tag: str,
+    inference_token: str,
 ) -> str:
     """Build a shell-safe cloud-init user-data script.
 
@@ -87,6 +118,10 @@ def build_user_data(
         pool_id: UUID of the node pool this worker belongs to.
         image: Container image name (without tag).
         image_tag: Container image tag.
+        inference_token: Per-pool token the control plane uses to
+            authenticate inbound CP→worker traffic. Without it the
+            inferia-worker container exits with
+            ``INFERENCE_TOKEN is required``.
 
     Returns:
         A ``#!/bin/bash`` script suitable for use as EC2 user-data.
@@ -101,6 +136,7 @@ def build_user_data(
     pool_id = _validate("pool_id", pool_id)
     image = _validate("image", image)
     image_tag = _validate("image_tag", image_tag)
+    inference_token = _validate("inference_token", inference_token)
 
     image_full = shlex.quote(f"{image}:{image_tag}")
     return _TEMPLATE.format(
@@ -109,4 +145,5 @@ def build_user_data(
         node_name=shlex.quote(node_name),
         pool_id=shlex.quote(pool_id),
         image_full=image_full,
+        inference_token=shlex.quote(inference_token),
     )

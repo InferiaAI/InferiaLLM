@@ -84,6 +84,10 @@ services:
       - "8000:8000"   # Filtration Gateway (external API)
       - "8001:8001"   # Inference Gateway (external API)
       - "3001:3001"   # Dashboard (web UI)
+      # Extra publish so a port-forwarded dev box can expose the control
+      # plane on a single port from outside (mc.wlan0.in:8110 → 8000).
+      # Cloud workers dial this from the public internet.
+      - "8110:8000"
     deploy:
       resources:
         limits:

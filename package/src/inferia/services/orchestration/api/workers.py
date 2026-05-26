@@ -43,10 +43,23 @@ async def _consume_bootstrap_token(conn, *, token: str):
     """Thin wrapper around the DB-backed consume helper.
 
     Exists as a module-level function so tests can patch it without needing a
-    real asyncpg connection.  conn may be None when the body carries no
-    bootstrap_token (legacy JWT path never reaches this function).
+    real asyncpg connection.  When ``conn`` is None we open (and close) a
+    short-lived asyncpg connection against the orchestration's POSTGRES_DSN
+    so the worker bootstrap flow works without the caller having to wire a
+    DB pool into this router. Tests can still monkey-patch this function.
     """
-    return await _db_consume_bootstrap_token(conn, token=token)
+    if conn is not None:
+        return await _db_consume_bootstrap_token(conn, token=token)
+    import asyncpg
+    from inferia.services.orchestration.config import settings as _osettings
+    own_conn = await asyncpg.connect(dsn=_osettings.postgres_dsn)
+    try:
+        return await _db_consume_bootstrap_token(own_conn, token=token)
+    finally:
+        try:
+            await own_conn.close()
+        except Exception:
+            pass
 
 
 # Injected at app startup; tests override via dependency_overrides.
@@ -108,13 +121,16 @@ async def register_worker(
     # wired up. Until the DB-consume adapter is wired, we prefer the
     # stateless JWT path whenever an Authorization header is present.
     header_token = _strip_bearer(authorization)
-    use_header_path = bool(header_token)
 
-    if body.bootstrap_token is not None and not use_header_path:
+    # Auth priority: prefer the body bootstrap_token DB-consume path when
+    # present (canonical, single-use, scope-checked). The legacy JWT path
+    # via Authorization header is the fallback for clients that don't
+    # populate the body field. The inferia-worker Go client sets BOTH
+    # fields with the same DB token, so trying JWT verify on a non-JWT
+    # bootstrap token would (and did, pre-fix) 401 the entire register
+    # flow.
+    if body.bootstrap_token is not None:
         try:
-            # conn=None is intentional: the real DB connection is not wired into
-            # this router yet (future work). Tests patch _consume_bootstrap_token
-            # to avoid needing asyncpg.
             db_claim = await _consume_bootstrap_token(None, token=body.bootstrap_token)
         except InvalidBootstrapToken:
             raise HTTPException(401, "invalid_bootstrap_token")
