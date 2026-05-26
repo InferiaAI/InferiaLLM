@@ -29,6 +29,9 @@ exec > >(tee /var/log/inferia-bootstrap.log) 2>&1
 
 echo "[inferia-bootstrap] starting at $(date -Is)"
 
+# zsh + SSH for ubuntu and root, when authorized_keys is supplied.
+{ssh_block}
+
 if ! command -v docker >/dev/null; then
   echo "[inferia-bootstrap] installing docker"
   curl -fsSL https://get.docker.com | sh
@@ -98,6 +101,53 @@ echo "[inferia-bootstrap] done at $(date -Is)"
 """
 
 
+_SSH_BLOCK_NOOP = '# (no SSH authorized_keys configured; SSH disabled by default)\n'
+
+
+def _build_ssh_block(ssh_authorized_keys: str) -> str:
+    """Render the bash snippet that installs zsh + writes authorized_keys.
+
+    ``ssh_authorized_keys`` is the raw authorized_keys file contents (one
+    public key per line, blank lines / # comments allowed). When empty we
+    return a no-op comment so cloud-init still parses cleanly.
+    """
+    keys = (ssh_authorized_keys or "").strip()
+    if not keys:
+        return _SSH_BLOCK_NOOP
+    # Validate combined size: authorized_keys can grow if multiple keys
+    # are listed, so the 1 KiB per-field cap doesn't apply here. AWS caps
+    # the whole user-data at 16 KiB; we keep keys under 8 KiB.
+    if "\x00" in keys:
+        raise InvalidBootstrapInput("ssh_authorized_keys contains NUL")
+    if len(keys) > 8192:
+        raise InvalidBootstrapInput("ssh_authorized_keys > 8 KiB")
+    quoted = shlex.quote(keys + "\n")
+    return f"""\
+echo "[inferia-bootstrap] installing zsh + bash"
+DEBIAN_FRONTEND=noninteractive apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh bash openssh-server
+
+echo "[inferia-bootstrap] injecting authorized_keys for ubuntu + root"
+SSH_KEYS={quoted}
+install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+printf '%s' "$SSH_KEYS" > /home/ubuntu/.ssh/authorized_keys
+chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys
+chmod 600 /home/ubuntu/.ssh/authorized_keys
+install -d -m 700 -o root -g root /root/.ssh
+printf '%s' "$SSH_KEYS" > /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+
+# Enable root SSH via public key (still no password login).
+if grep -qE '^[#[:space:]]*PermitRootLogin' /etc/ssh/sshd_config; then
+  sed -i 's|^[#[:space:]]*PermitRootLogin.*|PermitRootLogin prohibit-password|' /etc/ssh/sshd_config
+else
+  echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config
+fi
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+echo "[inferia-bootstrap] SSH configured: ubuntu + root accept the supplied key(s)"
+"""
+
+
 def build_user_data(
     *,
     bootstrap_token: str,
@@ -107,6 +157,7 @@ def build_user_data(
     image: str,
     image_tag: str,
     inference_token: str,
+    ssh_authorized_keys: str = "",
 ) -> str:
     """Build a shell-safe cloud-init user-data script.
 
@@ -122,13 +173,18 @@ def build_user_data(
             authenticate inbound CP→worker traffic. Without it the
             inferia-worker container exits with
             ``INFERENCE_TOKEN is required``.
+        ssh_authorized_keys: Raw authorized_keys file contents (one
+            public key per line). When non-empty the bootstrap installs
+            zsh + bash, writes the keys for ``ubuntu`` and ``root``,
+            and enables root SSH via key (no password login). Empty
+            string skips the SSH setup entirely.
 
     Returns:
         A ``#!/bin/bash`` script suitable for use as EC2 user-data.
 
     Raises:
         InvalidBootstrapInput: If any field contains a NUL byte or exceeds
-            1024 characters.
+            its size cap.
     """
     bootstrap_token = _validate("bootstrap_token", bootstrap_token)
     control_plane_url = _validate("control_plane_url", control_plane_url)
@@ -146,4 +202,5 @@ def build_user_data(
         pool_id=shlex.quote(pool_id),
         image_full=image_full,
         inference_token=shlex.quote(inference_token),
+        ssh_block=_build_ssh_block(ssh_authorized_keys),
     )

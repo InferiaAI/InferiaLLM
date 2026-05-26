@@ -59,6 +59,26 @@ PROJECT_NAME = "inferia-aws"
 # the next provision without needing a separate refresh path.
 _TUNNEL_URL_FILE = "/var/lib/inferia/tunnel/url"
 
+# Operator-supplied SSH authorized_keys mounted into the orchestration
+# container (see deploy/docker-compose.yml). Each line is one public
+# key; when non-empty the EC2 bootstrap installs zsh + writes the
+# keys for both `ubuntu` and `root` users.
+_SSH_AUTHORIZED_KEYS_FILE = "/var/lib/inferia/ssh/authorized_keys"
+
+
+def _resolve_ssh_authorized_keys() -> str:
+    """Read the operator-supplied authorized_keys file if present.
+
+    Returns the file contents or "" when no file (or unreadable). The
+    bootstrap_builder treats empty as "skip SSH setup entirely", so a
+    misconfigured mount degrades gracefully.
+    """
+    try:
+        with open(_SSH_AUTHORIZED_KEYS_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
+
 # Hosts the EC2 worker can NEVER reach, even though they may be set in
 # settings.control_plane_external_url (typically through docker-compose
 # defaults). Reject these upfront so we don't burn an EC2 instance only
@@ -388,6 +408,12 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
                 except Exception:
                     pass
 
+        ssh_keys = _resolve_ssh_authorized_keys()
+        if ssh_keys.strip():
+            await writer.write_async(
+                "prepare", "log",
+                f"SSH provisioning: {len(ssh_keys.strip().splitlines())} key(s) for ubuntu+root",
+            )
         user_data = build_user_data(
             bootstrap_token=token,
             control_plane_url=control_plane_url,
@@ -396,6 +422,7 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             image=settings.worker_image,
             image_tag=image_tag,
             inference_token=inference_token,
+            ssh_authorized_keys=ssh_keys,
         )
 
         program = build_ec2_program(

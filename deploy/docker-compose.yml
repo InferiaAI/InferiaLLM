@@ -80,6 +80,12 @@ services:
       # Read the public control-plane URL written by the cloudflared sidecar.
       # See the `cloudflared` service definition below. Read-only.
       - tunnel-shared:/var/lib/inferia/tunnel:ro
+      # SSH authorized_keys to install on every provisioned EC2 worker.
+      # Operator drops one or more public keys (one per line) into the
+      # host file; Pulumi reads it at provision time and bakes it into
+      # the cloud-init user-data for the ubuntu + root users.
+      # Override the host path with INFERIA_SSH_AUTHORIZED_KEYS_FILE.
+      - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-/home/ankit/.ssh/id_ed25519_gh.pub}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
       - "8000:8000"   # Filtration Gateway (external API)
       - "8001:8001"   # Inference Gateway (external API)

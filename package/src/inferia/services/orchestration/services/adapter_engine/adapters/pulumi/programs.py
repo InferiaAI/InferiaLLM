@@ -72,6 +72,13 @@ def build_ec2_program(
                         cidr_blocks=["0.0.0.0/0"],
                         description="control plane WS reach-back",
                     ),
+                    aws.ec2.SecurityGroupIngressArgs(
+                        protocol="tcp",
+                        from_port=22,
+                        to_port=22,
+                        cidr_blocks=["0.0.0.0/0"],
+                        description="operator SSH access (ubuntu + root via key)",
+                    ),
                 ],
                 egress=[
                     aws.ec2.SecurityGroupEgressArgs(
