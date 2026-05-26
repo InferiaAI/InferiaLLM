@@ -51,6 +51,43 @@ def build_ec2_program(
             kwargs["subnet_id"] = subnet_id
         if security_group_ids:
             kwargs["vpc_security_group_ids"] = security_group_ids
+        else:
+            # No operator-provided SG → create a dedicated one that lets the
+            # control plane dial back into the worker. Without this the
+            # EC2's default SG only accepts traffic from the same SG, so
+            # /v1/admin/workers/<id>/logs and /shell time out with
+            # "upstream connect failed: timed out during opening handshake".
+            #
+            # 8080 is the worker's control port (see WORKER_ADVERTISE_URL in
+            # bootstrap_builder). 22 stays closed by default — operators who
+            # want SSH access add their own SG via providers config.
+            sg = aws.ec2.SecurityGroup(
+                f"inferia-worker-sg-{pool_id}",
+                description="Inferia worker - control-plane reach-back",
+                ingress=[
+                    aws.ec2.SecurityGroupIngressArgs(
+                        protocol="tcp",
+                        from_port=8080,
+                        to_port=8080,
+                        cidr_blocks=["0.0.0.0/0"],
+                        description="control plane WS reach-back",
+                    ),
+                ],
+                egress=[
+                    aws.ec2.SecurityGroupEgressArgs(
+                        protocol="-1",
+                        from_port=0,
+                        to_port=0,
+                        cidr_blocks=["0.0.0.0/0"],
+                        description="all outbound",
+                    ),
+                ],
+                tags={
+                    "Name": f"inferia-worker-sg-{pool_id}",
+                    "InferiaPoolId": pool_id,
+                },
+            )
+            kwargs["vpc_security_group_ids"] = [sg.id]
         if iam_instance_profile:
             kwargs["iam_instance_profile"] = iam_instance_profile
         if use_spot:
