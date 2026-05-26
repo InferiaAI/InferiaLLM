@@ -471,25 +471,31 @@ export default function NewPool() {
                 payload.allowed_gpu_types = ["any"];
                 payload.max_cost_per_hour = 0;
                 payload.provider_pool_id = `worker:${poolName}`;
+            } else if (selectedProvider === "aws" && isClusterProvider) {
+                // AWS via Pulumi — allowed_gpu_types[0] must be the EC2
+                // instance type (e.g. "g4dn.xlarge"), NOT the semantic GPU
+                // name ("T4"). Prefer provider_resource_id when the user
+                // picked from the live resource catalog; fall back to
+                // gpu_type and let the backend's GPU-name → instance-type
+                // map resolve it.
+                const instanceType =
+                    selectedResource.provider_resource_id || selectedResource.gpu_type;
+                payload.allowed_gpu_types = [instanceType];
+                payload.region_constraint = [selectedRegion];
+                payload.use_spot = useSpot;
+                payload.gpu_count = gpuCount;
+                payload.max_cost_per_hour =
+                    selectedResource.price_per_hour ||
+                    estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
+                payload.provider_pool_id = `aws/${instanceType}`;
             } else if (isClusterProvider) {
-                // Cluster-based provider (GCP/AWS/Azure via Pulumi) - include region and spot settings
+                // GCP / Azure via Pulumi — semantic gpu_type stays meaningful.
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
                 payload.region_constraint = [selectedRegion];
                 payload.use_spot = useSpot;
                 payload.gpu_count = gpuCount;
-                // Estimate cost (for GCP, we don't have real-time pricing without API call)
                 payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
                 payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
-            } else if (selectedProvider === "aws") {
-                // AWS via Pulumi — the orchestration manager passes
-                // allowed_gpu_types[0] to provision_cluster as 'gpu_type'.
-                // For Pulumi-AWS that value IS the EC2 instance type, so
-                // forward provider_resource_id (e.g. "t3.micro", "g5.xlarge")
-                // rather than the semantic gpu name ("A10G" / "N/A").
-                payload.allowed_gpu_types = [selectedResource.provider_resource_id];
-                payload.max_cost_per_hour = selectedResource.price_per_hour || 0;
-                payload.provider_pool_id = `aws/${selectedResource.provider_resource_id}`;
-                payload.gpu_count = selectedResource.gpu_count || 1;
             } else {
                 // Job-based provider (Nosana, Akash)
                 payload.allowed_gpu_types = [selectedResource.gpu_type];

@@ -21,7 +21,7 @@ class AMILookupError(RuntimeError):
 
 _DLAMI_PARAMETER = (
     "/aws/service/deeplearning/ami/x86_64/"
-    "oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
+    "base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
 )
 # Generic Ubuntu 22.04 AMI for CPU-only instances (no NVIDIA driver).
 _UBUNTU_PARAMETER = (

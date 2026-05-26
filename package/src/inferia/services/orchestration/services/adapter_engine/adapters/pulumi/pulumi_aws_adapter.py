@@ -53,6 +53,41 @@ logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "inferia-aws"
 
+# Map semantic GPU names → a sensible default EC2 instance type. Defensive
+# layer for callers (dashboards, scripts) that pass a GPU name like "T4"
+# where AWS expects an instance type like "g4dn.xlarge". A real instance
+# type always contains a '.'; everything that doesn't is treated as a GPU
+# name candidate. Choose the smallest/cheapest variant per family so this
+# is safe to apply silently on smoke tests; operators wanting bigger
+# variants pass the full instance type explicitly.
+_GPU_NAME_TO_INSTANCE: Dict[str, str] = {
+    "T4":    "g4dn.xlarge",
+    "A10G":  "g5.xlarge",
+    "L4":    "g6.xlarge",
+    "L40S":  "g6e.xlarge",
+    "V100":  "p3.2xlarge",
+    "A100":  "p4d.24xlarge",
+    "H100":  "p5.48xlarge",
+    "H200":  "p5e.48xlarge",
+}
+
+
+def _resolve_instance_type(value: str) -> tuple[str, Optional[str]]:
+    """Return (instance_type, mapped_from_gpu_name_or_None).
+
+    If `value` already looks like an EC2 instance type (contains '.'),
+    pass it through. Otherwise look it up in the GPU-name table. If the
+    name isn't recognized, return it unchanged — Pulumi will surface
+    AWS's InvalidParameterValue error in pulumi_up/failed, which the
+    new UX captures cleanly.
+    """
+    if not value or "." in value:
+        return value, None
+    mapped = _GPU_NAME_TO_INSTANCE.get(value.upper())
+    if mapped:
+        return mapped, value
+    return value, None
+
 
 class ProvisionError(Exception):
     """Surface-safe provisioning error (no internal stack text)."""
@@ -123,6 +158,20 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         writer = progress_writer or _NoopWriter()
 
         await writer.write_async("prepare", "running")
+
+        # Defensive: callers occasionally pass a GPU name ("T4") where an
+        # EC2 instance type ("g4dn.xlarge") is required. Map it before
+        # building the Pulumi program so AWS doesn't return
+        # InvalidParameterValue. Emit a prepare/log so the dashboard
+        # shows the substitution.
+        resolved_type, mapped_from = _resolve_instance_type(provider_resource_id)
+        if mapped_from:
+            await writer.write_async(
+                "prepare", "log",
+                f"mapped GPU name {mapped_from!r} -> EC2 instance type {resolved_type!r}",
+            )
+            provider_resource_id = resolved_type
+
         try:
             cfg = await load_providers_config()
             env_vars = resolve_aws_env(cfg)  # raises MissingCredentialsError
@@ -231,21 +280,25 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         self.ensure_state_dir()  # raises PulumiStateError
 
         await writer.write_async("pulumi_init", "running")
-        opts = self.local_workspace_opts(env_vars=env_vars)
-        stack = pulumi.automation.create_or_select_stack(
-            stack_name=self.stack_name_for_pool(pool_id),
-            project_name=self.project_name,
-            program=program,
-            opts=pulumi.automation.LocalWorkspaceOptions(
-                work_dir=opts.work_dir,
-                env_vars=opts.env_vars,
-                project_settings=pulumi.automation.ProjectSettings(
-                    name=self.project_name,
-                    runtime="python",
+        try:
+            opts = self.local_workspace_opts(env_vars=env_vars)
+            stack = pulumi.automation.create_or_select_stack(
+                stack_name=self.stack_name_for_pool(pool_id),
+                project_name=self.project_name,
+                program=program,
+                opts=pulumi.automation.LocalWorkspaceOptions(
+                    work_dir=opts.work_dir,
+                    env_vars=opts.env_vars,
+                    project_settings=pulumi.automation.ProjectSettings(
+                        name=self.project_name,
+                        runtime="python",
+                    ),
                 ),
-            ),
-        )
-        stack.set_config("aws:region", pulumi.automation.ConfigValue(region))
+            )
+            stack.set_config("aws:region", pulumi.automation.ConfigValue(region))
+        except Exception as e:
+            await writer.write_async("pulumi_init", "failed", str(e))
+            raise
         await writer.write_async("pulumi_init", "succeeded")
 
         await writer.write_async("pulumi_up", "running")

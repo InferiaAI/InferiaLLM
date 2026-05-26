@@ -99,6 +99,12 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
             and adapter
             and capabilities
             and capabilities.supports_cluster_mode
+            # AWS provisioning runs via /createpool's _kick_aws_provision
+            # so a per-call adapter instance gets the progress writer and
+            # owns its own asyncpg connection. Running this gRPC-side
+            # cluster task in parallel would race on the same Pulumi stack
+            # and emit no progress events.
+            and request.provider != "aws"
         ):
             # Background the provisioning for cluster-based providers
             asyncio.create_task(

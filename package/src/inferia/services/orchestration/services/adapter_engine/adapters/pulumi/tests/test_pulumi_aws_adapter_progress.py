@@ -394,3 +394,106 @@ async def test_pulumi_up_failure_calls_stack_destroy():
         if any(s == "failed" for _, s, _ in writer.calls):
             break
     assert fake_stack.destroy.called, "stack.destroy must be called on pulumi_up failure"
+
+
+# ---------------------------------------------------------------------------
+# GPU-name → EC2 instance-type mapping (defensive layer)
+# ---------------------------------------------------------------------------
+
+def test_resolve_instance_type_passthrough_for_real_instance():
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _resolve_instance_type,
+    )
+    inst, mapped = _resolve_instance_type("g4dn.xlarge")
+    assert inst == "g4dn.xlarge"
+    assert mapped is None
+
+
+def test_resolve_instance_type_maps_t4():
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _resolve_instance_type,
+    )
+    inst, mapped = _resolve_instance_type("T4")
+    assert inst == "g4dn.xlarge"
+    assert mapped == "T4"
+
+
+def test_resolve_instance_type_unknown_gpu_passes_through():
+    """Unknown values pass through unchanged — Pulumi will surface the
+    AWS error via pulumi_up/failed, which the new UX captures."""
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _resolve_instance_type,
+    )
+    inst, mapped = _resolve_instance_type("MADEUP_GPU")
+    assert inst == "MADEUP_GPU"
+    assert mapped is None
+
+
+def test_resolve_instance_type_is_case_insensitive():
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        _resolve_instance_type,
+    )
+    inst, mapped = _resolve_instance_type("t4")
+    assert inst == "g4dn.xlarge"
+    assert mapped == "t4"
+
+
+@pytest.mark.asyncio
+async def test_provision_node_maps_gpu_name_to_instance_type():
+    """When provider_resource_id is a GPU name like 'T4', provision_node
+    rewrites it to the mapped EC2 instance type and emits a prepare/log
+    event documenting the substitution."""
+    adapter = PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+    fake_stack = MagicMock()
+    fake_stack.up.return_value = MagicMock(outputs=_ok_outputs())
+
+    with patch.object(adapter, "ensure_state_dir"), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.load_providers_config",
+               new=AsyncMock(return_value=_fake_providers_config())), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.mint_bootstrap_token",
+               new=AsyncMock(return_value=("tok", uuid4()))), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.pulumi.automation.create_or_select_stack",
+               return_value=fake_stack), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.build_ec2_program") as bp:
+        await adapter.provision_node(
+            provider_resource_id="T4",
+            pool_id=str(uuid4()), org_id=str(uuid4()),
+            progress_writer=writer,
+        )
+    # prepare/log must record the mapping
+    logs = [c for c in writer.calls if c[0] == "prepare" and c[1] == "log"]
+    assert len(logs) == 1
+    assert "T4" in (logs[0][2] or "")
+    assert "g4dn.xlarge" in (logs[0][2] or "")
+    # The Pulumi program builder must have received the mapped instance type
+    assert bp.call_args.kwargs["instance_type"] == "g4dn.xlarge"
+
+
+@pytest.mark.asyncio
+async def test_provision_node_passes_through_explicit_instance_type():
+    """When provider_resource_id is already an EC2 instance type
+    (contains '.'), no mapping log fires."""
+    adapter = PulumiAWSAdapter(state_dir="/tmp/pulumi-test")
+    adapter._db = AsyncMock()
+    writer = RecordingWriter()
+    fake_stack = MagicMock()
+    fake_stack.up.return_value = MagicMock(outputs=_ok_outputs())
+
+    with patch.object(adapter, "ensure_state_dir"), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.load_providers_config",
+               new=AsyncMock(return_value=_fake_providers_config())), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.mint_bootstrap_token",
+               new=AsyncMock(return_value=("tok", uuid4()))), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.pulumi.automation.create_or_select_stack",
+               return_value=fake_stack), \
+         patch("inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter.build_ec2_program") as bp:
+        await adapter.provision_node(
+            provider_resource_id="g5.xlarge",
+            pool_id=str(uuid4()), org_id=str(uuid4()),
+            progress_writer=writer,
+        )
+    logs = [c for c in writer.calls if c[0] == "prepare" and c[1] == "log"]
+    assert logs == []
+    assert bp.call_args.kwargs["instance_type"] == "g5.xlarge"
