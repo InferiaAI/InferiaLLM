@@ -89,8 +89,29 @@ export async function patchLabels(
   return res.data;
 }
 
-export async function deleteNode(nodeId: string): Promise<void> {
-  await computeApi.delete(`/nodes/${nodeId}`);
+export interface DeleteNodeResult {
+  /** True when the backend kicked off an asynchronous EC2 destroy (202). */
+  terminating: boolean;
+  /** New row state when terminating=true. Always "terminating" today. */
+  state?: string;
+  /** node_id echoed by the backend on 202. */
+  nodeId?: string;
+}
+
+export async function deleteNode(nodeId: string): Promise<DeleteNodeResult> {
+  // The orchestration service returns 202 with a JSON body for AWS nodes
+  // (background EC2 destroy is in flight) and 204 No Content for every
+  // other provider. Both are success; we discriminate on the status to
+  // tell the UI whether to start polling for terminal state.
+  const res = await computeApi.delete(`/nodes/${nodeId}`);
+  if (res.status === 202 && res.data) {
+    return {
+      terminating: true,
+      state: res.data.state,
+      nodeId: res.data.node_id,
+    };
+  }
+  return { terminating: false };
 }
 
 export async function addWorkerNode(

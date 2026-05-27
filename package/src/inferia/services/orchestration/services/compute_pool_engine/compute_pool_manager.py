@@ -6,7 +6,24 @@ import uuid as uuid_module
 import asyncio
 from typing import Optional
 from inferia.services.orchestration.v1 import compute_pool_pb2, compute_pool_pb2_grpc
-from inferia.services.orchestration.services.adapter_engine.registry import get_adapter
+
+
+def _get_adapter(provider: str):
+    """Lazy proxy for ``adapter_engine.registry.get_adapter``.
+
+    Imported on demand so loading this module does not trigger the
+    full Pulumi/boto3 chain. The behaviour is identical — same return
+    type, same ``ValueError`` semantics — at the cost of one extra
+    import on the first call.
+    """
+    from inferia.services.orchestration.services.adapter_engine.registry import (
+        get_adapter,
+    )
+    return get_adapter(provider)
+
+
+# Backwards-compat alias for any caller that imports the symbol directly.
+get_adapter = _get_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +287,55 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                 logger.error(
                     f"Error during deployment cascade cleanup for pool {pool_id}: {e}"
                 )
+
+        # AWS branch: destroy the underlying EC2 stacks before we drop
+        # the pool row. We intentionally block grpc until every node's
+        # destroy task settles (each takes ~60-90s for a single t3.micro,
+        # longer for GPU AMIs). The alternative — fire-and-forget plus
+        # background pool finalization — leaves the dashboard in a
+        # confusing half-deleted state and is harder to debug; the
+        # simple synchronous tear-down keeps the state machine linear.
+        # Operators on slow links should bump the grpc deadline.
+        if pool.get("provider") == "aws":
+            try:
+                inventory = await self.repo.list_pool_inventory(pool_id)
+            except Exception as e:
+                logger.error(
+                    "list_pool_inventory failed during AWS pool delete: %s", e,
+                )
+                inventory = []
+            db_pool = getattr(self.repo, "db", None)
+            if db_pool is not None and inventory:
+                # Lazy import keeps test discovery cheap.
+                from inferia.services.orchestration.services.adapter_engine import (
+                    aws_deprovision,
+                )
+                pending = []
+                for row in inventory:
+                    state = (
+                        row.get("state") if hasattr(row, "get")
+                        else dict(row).get("state")
+                    )
+                    if state == "terminated":
+                        continue
+                    node_id = (
+                        row.get("node_id") if hasattr(row, "get")
+                        else dict(row).get("node_id")
+                    )
+                    if not node_id:
+                        continue
+                    task = aws_deprovision._spawn_destroy(
+                        pool_id=str(pool_id),
+                        node_id=str(node_id),
+                        db_pool=db_pool,
+                    )
+                    pending.append(task)
+                if pending:
+                    # asyncio.gather waits for all destroys to finish; the
+                    # gathered tasks tolerate individual failures because
+                    # deprovision_aws_node already records destroy_failed
+                    # to the row metadata and does not re-raise.
+                    await asyncio.gather(*pending, return_exceptions=True)
 
         await self.repo.soft_delete_pool(pool_id)
         return compute_pool_pb2.poolEmpty()

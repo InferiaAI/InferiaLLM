@@ -111,13 +111,21 @@ export default function InstanceDetail() {
 
   const handleDelete = async () => {
     if (!id || !node) return;
-    if (!window.confirm(`Delete node ${node.node_name || id}? This is a soft delete (state → terminated).`)) {
+    const isAwsNode = node.provider === "aws";
+    const prompt = isAwsNode
+      ? `Delete node ${node.node_name || id}? This terminates the EC2 instance and stops billing. Takes up to 90 seconds.`
+      : `Delete node ${node.node_name || id}? The row will be marked terminated.`;
+    if (!window.confirm(prompt)) {
       return;
     }
     setDeleting(true);
     try {
-      await deleteNode(id);
-      toast.success("Node deleted");
+      const result = await deleteNode(id);
+      toast.success(
+        result.terminating
+          ? "Termination started. EC2 destroy may take up to 90 seconds."
+          : "Node deleted",
+      );
       navigate("/dashboard/compute/nodes", { replace: true });
     } catch (e: unknown) {
       const detail =

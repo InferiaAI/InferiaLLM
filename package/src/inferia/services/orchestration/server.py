@@ -208,6 +208,7 @@ async def serve():
             "CONTROL_PLANE_EXTERNAL_URL", ""
         ),
         require_permission=_permit_all,
+        db_pool=db_pool,
     )
 
     # /v1/nodes/* — the new node-centric API. Wires only those adapters that
@@ -247,6 +248,7 @@ async def serve():
         adapters=nodes_adapters,
         require_permission=_permit_all,
         provisioning_repo=provisioning_repo,
+        db_pool=db_pool,
     )
 
     # ---------------- FastAPI App ----------------

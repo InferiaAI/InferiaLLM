@@ -717,7 +717,33 @@ async def _soft_delete_node_impl(self, *, node_id):
         )
 
 
+async def _mark_terminating_node_impl(self, *, node_id):
+    """Mark a node as terminating ahead of an async destroy task.
+
+    The node_state Postgres enum does NOT yet include 'terminating'
+    (see global_schema.sql); rather than push a destructive migration
+    we record the transition by stamping ``metadata.terminating=true``
+    so the dashboard can render the in-flight state. The actual SQL
+    enum still reads 'ready' or 'provisioning' until the destroy
+    completes and ``soft_delete_node`` / the deprovision helper sets
+    'terminated'. Idempotent.
+    """
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                           || jsonb_build_object('terminating', true,
+                                                 'terminating_at', now()::text),
+                updated_at = now()
+            WHERE id = $1
+            """,
+            node_id,
+        )
+
+
 InventoryRepository.list_nodes = _list_nodes_impl
 InventoryRepository.get_node = _get_node_impl
 InventoryRepository.set_labels = _set_labels_impl
 InventoryRepository.soft_delete_node = _soft_delete_node_impl
+InventoryRepository.mark_terminating_node = _mark_terminating_node_impl

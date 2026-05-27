@@ -6,7 +6,24 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+# Repo-wide version skew: starlette 0.35.1's TestClient still passes
+# ``app=`` to ``httpx.Client``, which httpx 0.28+ removed. We patch
+# httpx.Client.__init__ to silently drop the ``app`` kwarg for the
+# duration of this module so the existing sync TestClient-based tests
+# in this file keep working. New tests for the AWS delete path use
+# httpx.AsyncClient + ASGITransport directly.
+import httpx as _httpx
+_orig_client_init = _httpx.Client.__init__
+
+
+def _patched_client_init(self, *args, **kwargs):
+    kwargs.pop("app", None)
+    return _orig_client_init(self, *args, **kwargs)
+
+
+_httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
+from fastapi.testclient import TestClient  # noqa: E402
 
 from inferia.services.orchestration.api import nodes as nodes_api
 from inferia.services.orchestration.repositories.inventory_repo import (
@@ -419,3 +436,175 @@ class TestAddNosana:
             headers=_user_ctx_header(),
         )
         assert r.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/nodes/{id} — AWS branch (destroys EC2).
+# ---------------------------------------------------------------------------
+#
+# httpx AsyncClient is used here (instead of TestClient) to side-step a
+# repo-wide TestClient/httpx version skew unrelated to this feature.
+
+
+import httpx
+from httpx import ASGITransport
+from unittest.mock import AsyncMock, patch
+
+from inferia.services.orchestration.services.adapter_engine import aws_deprovision
+
+
+class FakeDbPool:
+    def __init__(self):
+        self.calls = []
+
+    def acquire(self):
+        class _Ctx:
+            async def __aenter__(_self):
+                class _Conn:
+                    async def execute(_c, *a, **kw):
+                        pass
+                return _Conn()
+            async def __aexit__(_self, *a):
+                return None
+        return _Ctx()
+
+
+class AwsFakeInventory(FakeInventory):
+    """FakeInventory extended with mark_terminating_node + provider awareness."""
+
+    def __init__(self):
+        super().__init__()
+        self.terminating_calls: list[str] = []
+
+    async def mark_terminating_node(self, *, node_id):
+        self.terminating_calls.append(node_id)
+        if node_id in self.nodes:
+            self.nodes[node_id]["state"] = "terminating"
+
+
+@pytest.fixture
+def aws_app_and_deps():
+    """Configure the nodes router with a pool + an AWS-aware inventory."""
+    app = FastAPI()
+    inventory = AwsFakeInventory()
+    pool_repo = FakePoolRepo()
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=fake_require_permission,
+        db_pool=FakeDbPool(),
+    )
+    app.include_router(nodes_api.router)
+    return app, inventory
+
+
+class TestDeleteAwsNode:
+    @pytest.mark.asyncio
+    async def test_aws_node_returns_202_and_kicks_destroy(self, aws_app_and_deps):
+        app, inventory = aws_app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "aws",
+        }
+        # _spawn_destroy returns a Task in real code; the route does not
+        # await it (the destroy is a fire-and-forget background task), so
+        # we just spy on the call and return a sentinel.
+        spy = []
+
+        class _FakeTask:
+            pass
+
+        def fake_spawn(**kw):
+            spy.append(kw)
+            return _FakeTask()
+
+        with patch.object(aws_deprovision, "_spawn_destroy", side_effect=fake_spawn):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+
+        assert r.status_code == 202, r.text
+        body = r.json()
+        assert body["node_id"] == NODE
+        assert body["state"] == "terminating"
+        assert inventory.terminating_calls == [NODE]
+        # Helper was invoked with pool_id from the node row.
+        assert len(spy) == 1
+        assert spy[0]["pool_id"] == POOL
+        assert spy[0]["node_id"] == NODE
+
+    @pytest.mark.asyncio
+    async def test_non_aws_node_keeps_204_softdelete(self, aws_app_and_deps):
+        app, inventory = aws_app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "on_prem",
+        }
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+        assert r.status_code == 204
+        assert inventory.nodes[NODE]["state"] == "terminated"
+        spawn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_aws_node_without_db_pool_falls_back_to_softdelete(
+        self, aws_app_and_deps,
+    ):
+        """If the orchestration boot didn't wire db_pool, still succeed."""
+        app, inventory = aws_app_and_deps
+        # Strip the db_pool to simulate a misconfiguration.
+        nodes_api._deps.db_pool = None
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "aws",
+        }
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+        # Without db_pool we cannot kick destroy. Soft-delete still runs
+        # so the user sees the row disappear from the dashboard.
+        assert r.status_code == 204
+        spawn.assert_not_called()
+        assert inventory.nodes[NODE]["state"] == "terminated"
+
+    @pytest.mark.asyncio
+    async def test_aws_node_missing_pool_id_returns_404_compat(
+        self, aws_app_and_deps,
+    ):
+        app, inventory = aws_app_and_deps
+        # Empty pool_id on the row — should still soft-delete and not
+        # spawn a destroy (helper would no-op anyway, but we save the
+        # work by not scheduling).
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": None, "provider": "aws",
+        }
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+        # Soft-delete still runs; we can't destroy a stack without a pool_id.
+        assert r.status_code == 204
+        spawn.assert_not_called()

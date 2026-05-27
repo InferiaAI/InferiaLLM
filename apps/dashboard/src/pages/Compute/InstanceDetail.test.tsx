@@ -106,3 +106,47 @@ describe("InstanceDetail (AWS provisioning)", () => {
     expect(getNode).toHaveBeenCalledTimes(2);
   });
 });
+
+
+describe("InstanceDetail delete confirmation copy", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    (getProvisioning as any).mockResolvedValue({
+      current_phase: null, terminal: true, phases: [],
+    });
+  });
+  afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+
+  it("AWS provider gets the EC2-terminates copy", async () => {
+    (getNode as any).mockResolvedValue(baseNode({
+      state: "ready", provider: "aws", agent_kind: null,
+    }));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderAt("n1");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const deleteBtn = screen.getByRole("button", { name: /Delete/i });
+    deleteBtn.click();
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const msg = confirmSpy.mock.calls[0][0] as string;
+    expect(msg).toMatch(/terminates the EC2 instance/i);
+    expect(msg).toMatch(/up to 90 seconds/i);
+    expect(msg).not.toMatch(/soft delete/i);
+    confirmSpy.mockRestore();
+  });
+
+  it("non-AWS provider gets the legacy soft-delete-ish copy", async () => {
+    (getNode as any).mockResolvedValue(baseNode({
+      state: "ready", provider: "on_prem", agent_kind: "worker",
+    }));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderAt("n1");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const deleteBtn = screen.getByRole("button", { name: /Delete/i });
+    deleteBtn.click();
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const msg = confirmSpy.mock.calls[0][0] as string;
+    expect(msg).toMatch(/marked terminated/i);
+    expect(msg).not.toMatch(/EC2/i);
+    confirmSpy.mockRestore();
+  });
+});

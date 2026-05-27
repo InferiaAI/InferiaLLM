@@ -49,6 +49,7 @@ class _Deps:
     adapters: dict[str, Any] = {}
     require_permission: Callable[[str], Any] | None = None
     provisioning_repo: Any = None
+    db_pool: Any = None
 
 
 _deps = _Deps()
@@ -63,6 +64,7 @@ def configure(
     adapters: dict[str, Any],
     require_permission,
     provisioning_repo=None,
+    db_pool=None,
 ) -> None:
     _deps.inventory_repo = inventory_repo
     _deps.pool_repo = pool_repo
@@ -71,6 +73,7 @@ def configure(
     _deps.adapters = dict(adapters)
     _deps.require_permission = require_permission
     _deps.provisioning_repo = provisioning_repo
+    _deps.db_pool = db_pool
 
 
 def _need_perm(perm: str):
@@ -299,7 +302,7 @@ async def patch_labels(
     return _to_view(row)
 
 
-@router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{node_id}")
 async def delete_node(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:delete")),
@@ -307,6 +310,41 @@ async def delete_node(
     existing = await _deps.inventory_repo.get_node(node_id=node_id)
     if not existing:
         raise HTTPException(404, "node not found")
+    provider = existing.get("provider")
+    pool_id = existing.get("pool_id")
+    # AWS nodes must destroy the underlying EC2 stack before the row
+    # disappears from inventory. Non-AWS providers (worker/on_prem,
+    # nosana, akash, gcp/azure for now) keep the original soft-delete
+    # 204 behaviour.
+    if provider == "aws" and _deps.db_pool is not None and pool_id:
+        from inferia.services.orchestration.services.adapter_engine import (
+            aws_deprovision,
+        )
+        # Synchronous flip to terminating so the dashboard sees the
+        # state transition immediately. mark_terminating_node falls
+        # back to soft_delete_node when the inventory repo predates
+        # the new state — defensive against partial deploys.
+        if hasattr(_deps.inventory_repo, "mark_terminating_node"):
+            await _deps.inventory_repo.mark_terminating_node(node_id=node_id)
+        aws_deprovision._spawn_destroy(
+            pool_id=str(pool_id),
+            node_id=str(node_id),
+            db_pool=_deps.db_pool,
+        )
+        return Response(
+            content=__import__("json").dumps(
+                {"node_id": str(node_id), "state": "terminating"},
+            ),
+            media_type="application/json",
+            status_code=status.HTTP_202_ACCEPTED,
+        )
+
+    # Non-AWS path (or AWS with no db_pool / pool_id available).
+    if provider == "aws":
+        logger.warning(
+            "AWS node %s deleted without destroy: db_pool=%s pool_id=%s",
+            node_id, _deps.db_pool is not None, pool_id,
+        )
     await _deps.inventory_repo.soft_delete_node(node_id=node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
