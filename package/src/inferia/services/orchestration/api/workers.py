@@ -22,8 +22,13 @@ from inferia.services.orchestration.services.worker_controller.auth import (
 from inferia.services.orchestration.services.worker_controller.protocol import (
     CommandResultBody,
     Envelope,
+    LogsEndBody,
+    LogsLineBody,
     RegisterRequest,
     RegisterResponse,
+    ShellErrorBody,
+    ShellExitBody,
+    ShellOutputBody,
 )
 from inferia.services.orchestration.services.worker_controller.registry import (
     WorkerConn,
@@ -234,9 +239,11 @@ async def worker_channel(
             ).model_dump()
         )
 
-        # Read loop: route Heartbeat / CommandResult into the registry +
-        # inventory. The control plane never *sends* unsolicited messages
-        # here (only commands, which are initiated via WorkerController).
+        # Read loop: route Heartbeat / CommandResult / shell+logs stream
+        # frames into the registry + inventory. The control plane sends
+        # unsolicited messages here ONLY for LoadModel/UnloadModel commands
+        # and shell/logs open/input/resize/close envelopes — the worker
+        # never sees those in this read direction.
         while True:
             data = await ws.receive_json()
             env_type = data.get("type")
@@ -253,8 +260,21 @@ async def worker_channel(
                 registry.deliver_command_result(
                     CommandResultBody(**body),
                 )
+            elif env_type == "ShellOutput":
+                registry.deliver_stream_frame(ShellOutputBody(**body))
+            elif env_type == "ShellExit":
+                registry.deliver_stream_frame(ShellExitBody(**body))
+            elif env_type == "ShellError":
+                registry.deliver_stream_frame(ShellErrorBody(**body))
+            elif env_type == "LogsLine":
+                registry.deliver_stream_frame(LogsLineBody(**body))
+            elif env_type == "LogsEnd":
+                registry.deliver_stream_frame(LogsEndBody(**body))
             # Other types ignored: clients aren't expected to send Hello/Ping
-            # in the MVP direction.
+            # in the MVP direction. Malformed bodies for known types raise
+            # ValidationError, which we let propagate so the worker
+            # disconnects + retries (the alternative — swallow + log —
+            # masks protocol drift).
     except WebSocketDisconnect:
         logger.info("worker %s disconnected", claims.sub)
     finally:

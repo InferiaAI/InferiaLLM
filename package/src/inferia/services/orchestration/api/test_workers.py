@@ -9,7 +9,23 @@ from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+# Repo-wide version skew: starlette 0.35.1's TestClient still passes
+# ``app=`` to ``httpx.Client``, which httpx 0.28+ removed. Drop the kwarg
+# silently for the duration of this module so the existing sync
+# TestClient-based tests in this file keep working. The proper fix is a
+# starlette / httpx upgrade — tracked separately.
+import httpx as _httpx
+_orig_client_init = _httpx.Client.__init__
+
+
+def _patched_client_init(self, *args, **kwargs):
+    kwargs.pop("app", None)
+    return _orig_client_init(self, *args, **kwargs)
+
+
+_httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
+from fastapi.testclient import TestClient  # noqa: E402
 
 from inferia.services.orchestration.api import workers
 from inferia.services.orchestration.services.worker_controller.auth import (
@@ -464,3 +480,197 @@ async def _park(registry: WorkerRegistry, envelope_id: str):
 
 async def _await(fut):
     return await fut
+
+
+# ---------------------------------------------------------------------------
+# Stream-frame dispatch — ShellOutput/ShellExit/ShellError/LogsLine/LogsEnd
+#
+# The /v1/workers/channel read loop must parse these worker→CP envelopes,
+# convert them into the right body type, and hand them off to
+# registry.deliver_stream_frame so the admin-shell/logs proxy can drain
+# them out to the dashboard. These tests register a node, open a stream
+# via the registry directly, push each envelope kind through the WS, and
+# assert the body lands on the stream's queue in the correct shape.
+# ---------------------------------------------------------------------------
+
+
+def _open_shell_stream_sync(registry, *, node_id, stream_id):
+    """Sync helper: open a shell stream on the running event loop.
+
+    The proxy normally opens streams from an async handler; in this test
+    file we run inside TestClient's sync context so we drive the loop
+    via run_until_complete on a fresh loop.
+    """
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        ShellOpenBody,
+    )
+    loop = asyncio.new_event_loop()
+    handle = loop.run_until_complete(
+        registry.open_shell_stream(
+            node_id,
+            ShellOpenBody(stream_id=stream_id, shell="/bin/sh"),
+        ),
+    )
+    return handle, loop
+
+
+def _drain_one(loop, queue, timeout=2.0):
+    return loop.run_until_complete(asyncio.wait_for(queue.get(), timeout))
+
+
+def test_channel_routes_shell_output_to_stream_queue(app_and_deps):
+    """ShellOutput envelope must land on the stream's incoming queue as a
+    ShellOutputBody, not a raw dict."""
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        ShellOutputBody,
+    )
+    app, auth, registry, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-shell-out", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        handle, loop = _open_shell_stream_sync(
+            registry, node_id="node-shell-out", stream_id="s-out",
+        )
+        ws.send_json({
+            "type": "ShellOutput",
+            "id": "f1",
+            "body": {"stream_id": "s-out", "data": "hello\n"},
+        })
+        body = _drain_one(loop, handle.incoming)
+        assert isinstance(body, ShellOutputBody)
+        assert body.stream_id == "s-out"
+        assert body.data == "hello\n"
+        loop.close()
+
+
+def test_channel_routes_shell_exit_sets_closed_event(app_and_deps):
+    """ShellExit must arrive at the queue AND set the closed event so the
+    proxy's drain loop terminates cleanly."""
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        ShellExitBody,
+    )
+    app, auth, registry, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-shell-exit", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        handle, loop = _open_shell_stream_sync(
+            registry, node_id="node-shell-exit", stream_id="s-exit",
+        )
+        ws.send_json({
+            "type": "ShellExit",
+            "id": "f2",
+            "body": {"stream_id": "s-exit", "exit_code": 137, "reason": "SIGKILL"},
+        })
+        body = _drain_one(loop, handle.incoming)
+        assert isinstance(body, ShellExitBody)
+        assert body.exit_code == 137
+        assert body.reason == "SIGKILL"
+        assert handle.closed.is_set()
+        loop.close()
+
+
+def test_channel_routes_shell_error_sets_closed_event(app_and_deps):
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        ShellErrorBody,
+    )
+    app, auth, registry, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-shell-err", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        handle, loop = _open_shell_stream_sync(
+            registry, node_id="node-shell-err", stream_id="s-err",
+        )
+        ws.send_json({
+            "type": "ShellError",
+            "id": "f3",
+            "body": {"stream_id": "s-err", "message": "exec: no such file"},
+        })
+        body = _drain_one(loop, handle.incoming)
+        assert isinstance(body, ShellErrorBody)
+        assert body.message == "exec: no such file"
+        assert handle.closed.is_set()
+        loop.close()
+
+
+def test_channel_routes_logs_line_and_end(app_and_deps):
+    """LogsLine then LogsEnd must arrive in order, with End setting closed."""
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        LogsEndBody,
+        LogsLineBody,
+        LogsOpenBody,
+    )
+    app, auth, registry, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-logs", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        loop = asyncio.new_event_loop()
+        handle = loop.run_until_complete(
+            registry.open_logs_stream(
+                "node-logs",
+                LogsOpenBody(stream_id="s-logs"),
+            ),
+        )
+        ws.send_json({
+            "type": "LogsLine",
+            "id": "fL1",
+            "body": {"stream_id": "s-logs", "stream": "stderr", "data": "boom"},
+        })
+        body = _drain_one(loop, handle.incoming)
+        assert isinstance(body, LogsLineBody)
+        assert body.stream == "stderr"
+        assert body.data == "boom"
+        ws.send_json({
+            "type": "LogsEnd",
+            "id": "fL2",
+            "body": {"stream_id": "s-logs", "reason": "container exited"},
+        })
+        end = _drain_one(loop, handle.incoming)
+        assert isinstance(end, LogsEndBody)
+        assert end.reason == "container exited"
+        assert handle.closed.is_set()
+        loop.close()
+
+
+def test_channel_unknown_stream_id_is_dropped_not_fatal(app_and_deps):
+    """A ShellOutput for an unknown stream must NOT crash the channel.
+    Worker raced ahead (sent output before the open-frame round-trip);
+    log + drop is the correct behavior."""
+    app, auth, _reg, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-orphan", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        ws.send_json({
+            "type": "ShellOutput",
+            "id": "ghost",
+            "body": {"stream_id": "no-such-stream", "data": "huh"},
+        })
+        # Verify the channel is still alive by sending a heartbeat after.
+        ws.send_json({
+            "type": "Heartbeat",
+            "id": "hb-after-orphan",
+            "body": {"used": {}, "loaded_models": []},
+        })
+        import time as _t
+        _t.sleep(0.1)
+    # If the channel had crashed, the context exit would have raised.
+    assert True

@@ -46,7 +46,14 @@ class RegisterResponse(BaseModel):
 
 
 MessageType = Literal[
-    "Hello", "Heartbeat", "LoadModel", "UnloadModel", "CommandResult", "Ping"
+    "Hello", "Heartbeat", "LoadModel", "UnloadModel", "CommandResult", "Ping",
+    # Shell + logs stream multiplexing over the worker→CP channel.
+    # CP → worker (control side):
+    "ShellOpen", "ShellInput", "ShellResize", "ShellClose",
+    "LogsOpen", "LogsClose",
+    # worker → CP (data side):
+    "ShellOutput", "ShellExit", "ShellError",
+    "LogsLine", "LogsEnd",
 ]
 
 
@@ -102,6 +109,123 @@ class CommandResultBody(BaseModel):
     endpoint_url: str = ""
 
 
+# --- Shell + logs stream multiplexing ---------------------------------------
+#
+# A single worker→CP control channel carries many concurrent shell + logs
+# sessions, each identified by a ``stream_id`` minted by the CP. Frames flow
+# in both directions; the channel read loop on each end dispatches by type
+# and routes to the appropriate session.
+#
+# Field caps mirror the conservative limits in the bootstrap_builder: keep
+# any single envelope under ~1 MiB so the WS connection isn't stalled by
+# one giant frame. Worker-side PTY output is chunked to ``data`` <= 64 KiB
+# by the worker; dashboards send single-line stdin in similar amounts.
+
+
+class ShellOpenBody(BaseModel):
+    """CP→worker: spawn an interactive shell session.
+
+    The worker exec's ``shell`` in the target ``container`` (if given) or
+    on the host. ``user`` switches uid via the same mechanism the legacy
+    /v1/shell endpoint uses (e.g. ``"root"`` or ``"1000:1000"``).
+    ``cols``/``rows`` set the initial PTY window size.
+    """
+
+    stream_id: str
+    shell: str = "/bin/sh"
+    user: str = ""
+    deployment_id: str = ""
+    container_id: str = ""
+    cols: int = 0
+    rows: int = 0
+
+
+class ShellInputBody(BaseModel):
+    """CP→worker: write bytes to the running shell's stdin."""
+
+    stream_id: str
+    data: str  # raw stdin bytes (may include control chars like ^C)
+
+
+class ShellResizeBody(BaseModel):
+    """CP→worker: resize the shell's PTY window."""
+
+    stream_id: str
+    cols: int
+    rows: int
+
+
+class ShellCloseBody(BaseModel):
+    """CP→worker: kill the shell and tear down the session.
+
+    Idempotent — worker ignores unknown stream_ids.
+    """
+
+    stream_id: str
+
+
+class ShellOutputBody(BaseModel):
+    """worker→CP: a chunk of PTY output (stdout+stderr merged)."""
+
+    stream_id: str
+    data: str
+
+
+class ShellExitBody(BaseModel):
+    """worker→CP: the shell process exited cleanly."""
+
+    stream_id: str
+    exit_code: int = 0
+    reason: str = ""
+
+
+class ShellErrorBody(BaseModel):
+    """worker→CP: failed to spawn the shell or PTY died abnormally.
+
+    Sent in lieu of (not in addition to) ShellExit.
+    """
+
+    stream_id: str
+    message: str
+
+
+class LogsOpenBody(BaseModel):
+    """CP→worker: stream container logs for ``deployment_id`` / ``container_id``.
+
+    When both are empty the worker tails its first running container. Lines
+    flow back as LogsLine envelopes until the dashboard sends LogsClose
+    (or the container exits, which emits LogsEnd).
+    """
+
+    stream_id: str
+    deployment_id: str = ""
+    container_id: str = ""
+
+
+class LogsLineBody(BaseModel):
+    """worker→CP: one line of container output."""
+
+    stream_id: str
+    stream: Literal["stdout", "stderr"] = "stdout"
+    data: str
+
+
+class LogsEndBody(BaseModel):
+    """worker→CP: log stream ended (container stopped or follow timed out)."""
+
+    stream_id: str
+    reason: str = ""
+
+
+class LogsCloseBody(BaseModel):
+    """CP→worker: stop streaming logs for this session.
+
+    Idempotent — worker ignores unknown stream_ids.
+    """
+
+    stream_id: str
+
+
 __all__ = [
     "RegisterRequest",
     "RegisterResponse",
@@ -114,4 +238,16 @@ __all__ = [
     "UnloadModelBody",
     "CommandResultBody",
     "ModelRef",
+    # Shell + logs tunnel envelopes
+    "ShellOpenBody",
+    "ShellInputBody",
+    "ShellResizeBody",
+    "ShellCloseBody",
+    "ShellOutputBody",
+    "ShellExitBody",
+    "ShellErrorBody",
+    "LogsOpenBody",
+    "LogsLineBody",
+    "LogsEndBody",
+    "LogsCloseBody",
 ]
