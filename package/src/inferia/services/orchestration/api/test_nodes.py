@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
+import time
+import uuid
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+# Repo-wide version skew: starlette 0.35.1's TestClient still passes
+# ``app=`` to ``httpx.Client``, which httpx 0.28+ removed. We patch
+# httpx.Client.__init__ to silently drop the ``app`` kwarg for the
+# duration of this module so the existing sync TestClient-based tests
+# in this file keep working. New tests for the AWS delete path use
+# httpx.AsyncClient + ASGITransport directly.
+import httpx as _httpx
+_orig_client_init = _httpx.Client.__init__
+
+
+def _patched_client_init(self, *args, **kwargs):
+    kwargs.pop("app", None)
+    return _orig_client_init(self, *args, **kwargs)
+
+
+_httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
+from fastapi.testclient import TestClient  # noqa: E402
 
 from inferia.services.orchestration.api import nodes as nodes_api
 from inferia.services.orchestration.repositories.inventory_repo import (
@@ -419,3 +439,686 @@ class TestAddNosana:
             headers=_user_ctx_header(),
         )
         assert r.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/nodes/add/aws — thin enqueue path.
+# ---------------------------------------------------------------------------
+#
+# The AWS branch is fundamentally different from nosana/akash: it does NOT
+# call adapter.provision_single_node (which would block on Pulumi for many
+# seconds). Instead it validates the spec, writes a 'provisioning'
+# placeholder row, enqueues a provisioning_jobs row, and returns. The
+# reconciler picks the job up out-of-band.
+
+
+class _FakeProvisioningRepo:
+    """Captures enqueue() calls. Mirrors the prod async interface so
+    AsyncMock isn't required for the happy-path test."""
+
+    def __init__(self):
+        self.enqueued: list[dict] = []
+
+    async def enqueue(self, *, node_id, pool_id, org_id, provider, spec):
+        job_id = uuid.uuid4()
+        self.enqueued.append({
+            "job_id": job_id,
+            "node_id": node_id,
+            "pool_id": pool_id,
+            "org_id": org_id,
+            "provider": provider,
+            "spec": spec,
+        })
+        return job_id
+
+
+@pytest.fixture
+def aws_add_app_and_deps():
+    """Configure the nodes router for the AWS thin-enqueue tests.
+
+    Note: nodes_api.configure() reassigns _deps for every call, so this
+    fixture overwrites any state left behind by the app_and_deps /
+    aws_app_and_deps fixtures. As a defensive measure each test that
+    overrides individual _deps fields (e.g. db_pool=None) reconfigures
+    here from scratch — pytest tears the fixture down between tests so
+    no cross-test leakage is possible.
+    """
+    app = FastAPI()
+    inventory = FakeInventory()
+    # Wire the placeholder-creator as an AsyncMock so we can assert on
+    # the call args without writing a real implementation in FakeInventory.
+    placeholder_id = uuid.UUID(NODE)
+    inventory.create_provisioning_placeholder = AsyncMock(
+        return_value=placeholder_id,
+    )
+    pool_repo = FakePoolRepo()
+    provisioning_repo = _FakeProvisioningRepo()
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},  # aws goes through the enqueue path, not the adapter
+        require_permission=fake_require_permission,
+        provisioning_repo=provisioning_repo,
+    )
+    app.include_router(nodes_api.router)
+    return app, inventory, provisioning_repo
+
+
+class TestAddAwsNode:
+    def test_add_aws_node_returns_node_id_and_job_id_in_under_one_second(
+        self, aws_add_app_and_deps,
+    ):
+        """The HTTP path must NOT block on Pulumi; should return
+        immediately. We give a generous 1s budget for the FastAPI
+        round-trip; the real path runs in ~200ms."""
+        app, inventory, provisioning_repo = aws_add_app_and_deps
+        client = TestClient(app)
+        body = {
+            "spec": {
+                "instance_class": "normal_gpu",
+                "instance_type":  "g6.xlarge",
+                "region":         "us-east-1",
+            },
+        }
+        start = time.monotonic()
+        resp = client.post(
+            "/v1/nodes/add/aws", json=body, headers=_user_ctx_header(),
+        )
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0, f"add/aws took {elapsed:.2f}s"
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert "node_id" in data
+        assert "job_id" in data
+        assert data["node_id"] == NODE
+        assert data["provider"] == "aws"
+        assert data["provider_instance_id"] is None
+        assert data["state"] == "provisioning"
+        # Inventory placeholder was created exactly once.
+        inventory.create_provisioning_placeholder.assert_awaited_once()
+        kwargs = inventory.create_provisioning_placeholder.call_args.kwargs
+        assert kwargs["provider"] == "aws"
+        assert kwargs["instance_class"] == "normal_gpu"
+        assert kwargs["instance_type"] == "g6.xlarge"
+        assert kwargs["pool_id"] == POOL
+        # Provisioning job enqueued exactly once.
+        assert len(provisioning_repo.enqueued) == 1
+        job = provisioning_repo.enqueued[0]
+        assert job["provider"] == "aws"
+        assert job["node_id"] == uuid.UUID(NODE)
+        assert job["pool_id"] == POOL
+        assert job["spec"]["instance_class"] == "normal_gpu"
+        assert job["spec"]["instance_type"] == "g6.xlarge"
+        assert job["spec"]["region"] == "us-east-1"
+        # job_id is the one the fake returned.
+        assert data["job_id"] == str(job["job_id"])
+
+    def test_add_aws_node_rejects_missing_instance_class(
+        self, aws_add_app_and_deps,
+    ):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_type": "g6.xlarge",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "instance_class" in resp.text
+
+    def test_add_aws_node_rejects_missing_instance_type(
+        self, aws_add_app_and_deps,
+    ):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "instance_type" in resp.text
+
+    def test_add_aws_node_rejects_missing_region(self, aws_add_app_and_deps):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "g6.xlarge"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "region" in resp.text
+
+    def test_add_aws_node_rejects_unknown_instance_type(
+        self, aws_add_app_and_deps,
+    ):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "x99.unknown",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "x99.unknown" in resp.text
+
+    def test_add_aws_node_rejects_class_type_mismatch(
+        self, aws_add_app_and_deps,
+    ):
+        """c6i.xlarge is a CPU type. Pairing it with normal_gpu must 422."""
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "c6i.xlarge",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_add_aws_node_503_when_provisioning_repo_unconfigured(
+        self, aws_add_app_and_deps,
+    ):
+        """If the orchestration boot did not wire provisioning_repo,
+        fail loudly instead of silently dropping the job."""
+        app, *_ = aws_add_app_and_deps
+        nodes_api._deps.provisioning_repo = None
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "g6.xlarge",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 503, resp.text
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/nodes/{id} — AWS branch (destroys EC2).
+# ---------------------------------------------------------------------------
+#
+# httpx AsyncClient is used here (instead of TestClient) to side-step a
+# repo-wide TestClient/httpx version skew unrelated to this feature.
+
+
+import httpx
+from httpx import ASGITransport
+from unittest.mock import AsyncMock, patch
+
+from inferia.services.orchestration.services.adapter_engine import aws_deprovision
+
+
+class FakeDbPool:
+    def __init__(self):
+        self.calls = []
+
+    def acquire(self):
+        class _Ctx:
+            async def __aenter__(_self):
+                class _Conn:
+                    async def execute(_c, *a, **kw):
+                        pass
+                return _Conn()
+            async def __aexit__(_self, *a):
+                return None
+        return _Ctx()
+
+
+class AwsFakeInventory(FakeInventory):
+    """FakeInventory extended with mark_terminating_node + provider awareness."""
+
+    def __init__(self):
+        super().__init__()
+        self.terminating_calls: list[str] = []
+
+    async def mark_terminating_node(self, *, node_id):
+        self.terminating_calls.append(node_id)
+        if node_id in self.nodes:
+            self.nodes[node_id]["state"] = "terminating"
+
+
+@pytest.fixture
+def aws_app_and_deps():
+    """Configure the nodes router with a pool + an AWS-aware inventory."""
+    app = FastAPI()
+    inventory = AwsFakeInventory()
+    pool_repo = FakePoolRepo()
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=fake_require_permission,
+        db_pool=FakeDbPool(),
+    )
+    app.include_router(nodes_api.router)
+    return app, inventory
+
+
+class TestDeleteAwsNode:
+    @pytest.mark.asyncio
+    async def test_aws_node_returns_202_and_kicks_destroy(self, aws_app_and_deps):
+        app, inventory = aws_app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "aws",
+        }
+        # _spawn_destroy returns a Task in real code; the route does not
+        # await it (the destroy is a fire-and-forget background task), so
+        # we just spy on the call and return a sentinel.
+        spy = []
+
+        class _FakeTask:
+            pass
+
+        def fake_spawn(**kw):
+            spy.append(kw)
+            return _FakeTask()
+
+        with patch.object(aws_deprovision, "_spawn_destroy", side_effect=fake_spawn):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+
+        assert r.status_code == 202, r.text
+        body = r.json()
+        assert body["node_id"] == NODE
+        assert body["state"] == "terminating"
+        assert inventory.terminating_calls == [NODE]
+        # Helper was invoked with pool_id from the node row.
+        assert len(spy) == 1
+        assert spy[0]["pool_id"] == POOL
+        assert spy[0]["node_id"] == NODE
+
+    @pytest.mark.asyncio
+    async def test_non_aws_node_keeps_204_softdelete(self, aws_app_and_deps):
+        app, inventory = aws_app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "on_prem",
+        }
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+        assert r.status_code == 204
+        assert inventory.nodes[NODE]["state"] == "terminated"
+        spawn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_aws_node_without_db_pool_falls_back_to_softdelete(
+        self, aws_app_and_deps,
+    ):
+        """If the orchestration boot didn't wire db_pool, still succeed."""
+        app, inventory = aws_app_and_deps
+        # Strip the db_pool to simulate a misconfiguration.
+        nodes_api._deps.db_pool = None
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "aws",
+        }
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+        # Without db_pool we cannot kick destroy. Soft-delete still runs
+        # so the user sees the row disappear from the dashboard.
+        assert r.status_code == 204
+        spawn.assert_not_called()
+        assert inventory.nodes[NODE]["state"] == "terminated"
+
+    @pytest.mark.asyncio
+    async def test_aws_node_missing_pool_id_returns_404_compat(
+        self, aws_app_and_deps,
+    ):
+        app, inventory = aws_app_and_deps
+        # Empty pool_id on the row — should still soft-delete and not
+        # spawn a destroy (helper would no-op anyway, but we save the
+        # work by not scheduling).
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": None, "provider": "aws",
+        }
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
+                )
+        # Soft-delete still runs; we can't destroy a stack without a pool_id.
+        assert r.status_code == 204
+        spawn.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/provisioning — extended response (T24).
+# ---------------------------------------------------------------------------
+#
+# The Overview tab on the UI side consumes three new fields:
+#   error          — populated when provisioning_jobs.last_error_code is set
+#   aws_metadata   — populated for provider=aws from inventory + stack outputs
+#   attempt_count  — current attempt number (powers the "Retry N" subtitle)
+#
+# The tests below use the FakeInventory at module scope and inject a
+# MagicMock provisioning_repo with get_by_node wired as an AsyncMock.
+# RBAC is bypassed by passing a permissive require_permission stub that
+# accepts any caller — the focus of these tests is the response shape,
+# not the auth path (covered elsewhere).
+
+
+def _open_require_permission(perm: str):
+    """Grant every caller. Used by the T24 tests so we don't have to
+    thread deployment:list permission claims through Bearer tokens just
+    to exercise the response shape."""
+    async def dep(authorization: str | None = None):
+        return True
+    return dep
+
+
+def test_get_provisioning_includes_error_and_aws_metadata():
+    """Response gains error, aws_metadata, attempt_count fields."""
+    from inferia.services.orchestration.services.provisioning.jobs.model import (
+        ErrorClass, Phase,
+    )
+
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    job.phase = Phase.FAILED
+    job.attempt_count = 3
+    job.last_error_code = "PULUMI_CLI_MISSING"
+    job.last_error_message = "no pulumi binary"
+    job.last_error_hint = "install via curl"
+    job.error_class = ErrorClass.PERMANENT
+    job.pulumi_stack_outputs = {
+        "instance_id": "i-abc",
+        "public_dns":  "ec2-1.compute.amazonaws.com",
+        "region":      "us-east-1",
+        "ami_id":      "ami-x",
+    }
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "failed", "instance_class": "normal_gpu",
+        "instance_type": "g6.xlarge",
+    }
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=job)
+    # No phase summary in this test — empty list is fine, the assertion
+    # is on the new fields, not on the phases array.
+    provisioning_repo.summarize_phases = AsyncMock(return_value=[])
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=FakePoolRepo(),
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+        provisioning_repo=provisioning_repo,
+    )
+
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.get(f"/v1/nodes/{nid}/provisioning", headers=auth)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["error"] == {
+        "code": "PULUMI_CLI_MISSING",
+        "message": "no pulumi binary",
+        "hint": "install via curl",
+        "class": "PERMANENT",
+    }
+    assert body["aws_metadata"]["instance_id"] == "i-abc"
+    assert body["aws_metadata"]["instance_class"] == "normal_gpu"
+    assert body["aws_metadata"]["instance_type"] == "g6.xlarge"
+    assert body["aws_metadata"]["region"] == "us-east-1"
+    assert body["aws_metadata"]["ami_id"] == "ami-x"
+    assert body["aws_metadata"]["public_dns"] == "ec2-1.compute.amazonaws.com"
+    assert body["attempt_count"] == 3
+    assert body["job_id"] == str(job.id)
+    assert body["current_phase"] == "failed"
+    assert body["terminal"] is True
+
+
+def test_get_provisioning_returns_404_when_node_missing():
+    """Missing inventory row → 404 before any provisioning lookup."""
+    inventory = FakeInventory()  # no nodes inserted
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=FakePoolRepo(),
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+        provisioning_repo=MagicMock(),
+    )
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.get(
+        "/v1/nodes/00000000-0000-0000-0000-000000000000/provisioning",
+        headers=auth,
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/nodes/{id}/provisioning/retry (T25) and DELETE cancellation (T26).
+# ---------------------------------------------------------------------------
+#
+# Retry takes a job in phase='failed' and re-enqueues it (phase='pending',
+# attempt_count=0, error fields cleared). Inventory state flips
+# failed → provisioning so the dashboard reacts immediately. Delete now
+# distinguishes a non-terminal job (request_cancel for the reconciler's
+# CancelHandler) from a terminal one (idempotent soft-delete via set_state).
+
+
+def _configure_with_provisioning_repo(inventory, provisioning_repo):
+    """Wire up the nodes router with a fake inventory + provisioning repo
+    plus the permissive permission stub used by T24-T26 tests."""
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=FakePoolRepo(),
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+        provisioning_repo=provisioning_repo,
+    )
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    return app
+
+
+def test_retry_provisioning_on_failed_job_returns_200_and_requeues():
+    """Job is in 'failed' phase; POST /retry resets it to 'pending' and
+    flips inventory.state failed → provisioning."""
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    job.phase = MagicMock(value="pending")
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "failed",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.reset_for_retry = AsyncMock(return_value=job)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.post(
+        f"/v1/nodes/{nid}/provisioning/retry", headers=auth,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["job_id"] == str(job.id)
+    assert body["phase"] == "pending"
+    # repo.reset_for_retry was called with the node UUID exactly once.
+    provisioning_repo.reset_for_retry.assert_awaited_once()
+    call_kwargs = provisioning_repo.reset_for_retry.await_args.kwargs
+    assert call_kwargs["node_id"] == uuid.UUID(nid)
+    # Inventory state was flipped to 'provisioning'.
+    inventory.set_state.assert_awaited_once()
+    state_kwargs = inventory.set_state.await_args.kwargs
+    assert state_kwargs["state"] == "provisioning"
+    assert state_kwargs["node_id"] == nid
+
+
+def test_retry_provisioning_on_non_failed_job_returns_409():
+    """When the latest job is not in 'failed' phase, reset_for_retry
+    returns None and the endpoint surfaces 409."""
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "ready",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.reset_for_retry = AsyncMock(return_value=None)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.post(
+        f"/v1/nodes/{nid}/provisioning/retry", headers=auth,
+    )
+    assert resp.status_code == 409
+    # Inventory state must NOT be touched on the 409 path.
+    inventory.set_state.assert_not_called()
+
+
+def test_retry_provisioning_on_missing_node_returns_404():
+    """get_node returns None → 404 before any provisioning lookup."""
+    inventory = FakeInventory()  # no nodes inserted
+    provisioning_repo = MagicMock()
+    provisioning_repo.reset_for_retry = AsyncMock(return_value=None)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.post(
+        f"/v1/nodes/{uuid.uuid4()}/provisioning/retry", headers=auth,
+    )
+    assert resp.status_code == 404
+    # We bailed before calling the provisioning repo.
+    provisioning_repo.reset_for_retry.assert_not_called()
+
+
+def test_delete_non_terminal_node_enqueues_cancellation():
+    """A non-terminal job for the node → request_cancel + 204. The
+    legacy AWS destroy spawn must NOT fire because the CancelHandler
+    drives teardown via the state machine."""
+    job = MagicMock()
+    job.phase = MagicMock()
+    job.phase.is_terminal = False
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "provisioning",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=job)
+    provisioning_repo.request_cancel = AsyncMock(return_value=True)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.delete(f"/v1/nodes/{nid}", headers=auth)
+    assert resp.status_code in (200, 204), resp.text
+    # Cancellation was enqueued exactly once with the right node UUID.
+    provisioning_repo.request_cancel.assert_awaited_once()
+    call_kwargs = provisioning_repo.request_cancel.await_args.kwargs
+    assert call_kwargs["node_id"] == uuid.UUID(nid)
+    # set_state was NOT called on the cancellation path (the
+    # CancelHandler owns terminating the inventory row).
+    inventory.set_state.assert_not_called()
+
+
+def test_delete_terminated_node_is_idempotent_204():
+    """A terminal job for the node → soft-delete via set_state and 204.
+    No cancellation enqueue (the CancelHandler already ran, or the job
+    failed terminally without provisioning anything)."""
+    job = MagicMock()
+    job.phase = MagicMock()
+    job.phase.is_terminal = True
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "failed",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=job)
+    provisioning_repo.request_cancel = AsyncMock(return_value=True)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.delete(f"/v1/nodes/{nid}", headers=auth)
+    assert resp.status_code in (200, 204), resp.text
+    # set_state was called with 'terminated' on the idempotent path.
+    inventory.set_state.assert_awaited_once()
+    state_kwargs = inventory.set_state.await_args.kwargs
+    assert state_kwargs["state"] == "terminated"
+    # No cancellation enqueue — the job is already terminal.
+    provisioning_repo.request_cancel.assert_not_called()
+
+
+def test_delete_missing_node_returns_404_with_provisioning_repo():
+    """get_node returns None → 404. Distinct from the legacy
+    TestDeleteNode.test_not_found because here a provisioning_repo IS
+    wired — we must still 404 before consulting it."""
+    inventory = FakeInventory()  # no nodes inserted
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=None)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.delete(f"/v1/nodes/{uuid.uuid4()}", headers=auth)
+    assert resp.status_code == 404
+    # We bailed before consulting the provisioning repo.
+    provisioning_repo.get_by_node.assert_not_called()

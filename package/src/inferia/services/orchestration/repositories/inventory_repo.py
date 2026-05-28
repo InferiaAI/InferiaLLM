@@ -1,3 +1,4 @@
+import uuid
 from uuid import UUID
 import json
 from inferia.services.orchestration.constants import NodeState
@@ -239,6 +240,64 @@ class InventoryRepository:
                 expose_url,
             )
             return row["id"] if row else None
+
+    async def create_provisioning_placeholder(
+        self,
+        *,
+        pool_id,
+        provider: str,
+        instance_class: str,
+        instance_type: str,
+        node_name: str | None = None,
+    ) -> UUID:
+        """Insert a 'provisioning' placeholder row into compute_inventory.
+
+        Used by the thin-enqueue POST /v1/nodes/add/aws path: the HTTP
+        handler must return a node_id immediately so the dashboard can
+        link to /nodes/{id} while the reconciler does the actual Pulumi
+        work asynchronously.
+
+        The provider_instance_id is set to a unique 'placeholder:<uuid>'
+        sentinel because the real EC2 instance-id is not known until the
+        Pulumi up phase completes — and the UNIQUE(provider,
+        provider_instance_id) constraint on compute_inventory means we
+        cannot leave it NULL or share a value across rows. The
+        PulumiUpHandler swaps this value for the real i-XXXXXXXXXXX when
+        the stack reaches 'ec2_running'.
+
+        agent_kind is set to 'worker' because AWS-provisioned VMs run the
+        inferia-worker agent (the worker bootstrap phase installs it).
+
+        Returns the generated node_id (UUID).
+        """
+        placeholder_instance_id = f"placeholder:{uuid.uuid4()}"
+        hostname = node_name or placeholder_instance_id
+        async with self.db.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO compute_inventory (
+                    pool_id,
+                    provider,
+                    provider_instance_id,
+                    hostname,
+                    state,
+                    agent_kind,
+                    instance_class,
+                    instance_type,
+                    node_name
+                )
+                VALUES ($1, $2, $3, $4, 'provisioning', 'worker', $5, $6, $7)
+                RETURNING id
+                """,
+                pool_id,
+                provider,
+                placeholder_instance_id,
+                hostname,
+                instance_class,
+                instance_type,
+                node_name,
+            )
+            return row["id"]
 
     async def mark_ready(self, *, node_id, last_heartbeat):
         await self.db.execute(
@@ -717,7 +776,55 @@ async def _soft_delete_node_impl(self, *, node_id):
         )
 
 
+async def _set_state_impl(self, *, node_id, state):
+    """Set compute_inventory.state to an arbitrary node_state enum value.
+
+    Used by the POST /provisioning/retry path (failed → provisioning) and
+    the DELETE /nodes/{id} fallback path (terminal job → terminated).
+    The caller is responsible for ensuring the value is a valid
+    node_state enum member; invalid values surface as Postgres errors.
+    Accepts node_id as either a str or a UUID for convenience.
+    """
+    nid = uuid.UUID(node_id) if isinstance(node_id, str) else node_id
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET state = $2, updated_at = now()
+            WHERE id = $1
+            """,
+            nid, state,
+        )
+
+
+async def _mark_terminating_node_impl(self, *, node_id):
+    """Mark a node as terminating ahead of an async destroy task.
+
+    The node_state Postgres enum does NOT yet include 'terminating'
+    (see global_schema.sql); rather than push a destructive migration
+    we record the transition by stamping ``metadata.terminating=true``
+    so the dashboard can render the in-flight state. The actual SQL
+    enum still reads 'ready' or 'provisioning' until the destroy
+    completes and ``soft_delete_node`` / the deprovision helper sets
+    'terminated'. Idempotent.
+    """
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                           || jsonb_build_object('terminating', true,
+                                                 'terminating_at', now()::text),
+                updated_at = now()
+            WHERE id = $1
+            """,
+            node_id,
+        )
+
+
 InventoryRepository.list_nodes = _list_nodes_impl
 InventoryRepository.get_node = _get_node_impl
 InventoryRepository.set_labels = _set_labels_impl
 InventoryRepository.soft_delete_node = _soft_delete_node_impl
+InventoryRepository.mark_terminating_node = _mark_terminating_node_impl
+InventoryRepository.set_state = _set_state_impl

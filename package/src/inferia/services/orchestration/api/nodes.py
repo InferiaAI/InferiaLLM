@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from typing import Any, Callable
 
 from fastapi import (
@@ -48,6 +49,17 @@ class _Deps:
     control_plane_external_url: str = ""
     adapters: dict[str, Any] = {}
     require_permission: Callable[[str], Any] | None = None
+    # provisioning_repo is the new state-machine queue
+    # (ProvisioningJobRepository). It exposes enqueue / get_by_node /
+    # reset_for_retry / request_cancel.
+    provisioning_repo: Any = None
+    # node_events_repo is the legacy append-only event log
+    # (NodeProvisioningRepo). It exposes summarize_phases / current_phase
+    # / list_events_after / append_event. Kept separately so the new
+    # state-machine endpoints and the legacy phase-summary view can
+    # coexist without method-name collisions.
+    node_events_repo: Any = None
+    db_pool: Any = None
 
 
 _deps = _Deps()
@@ -61,6 +73,9 @@ def configure(
     control_plane_external_url: str,
     adapters: dict[str, Any],
     require_permission,
+    provisioning_repo=None,
+    node_events_repo=None,
+    db_pool=None,
 ) -> None:
     _deps.inventory_repo = inventory_repo
     _deps.pool_repo = pool_repo
@@ -68,6 +83,15 @@ def configure(
     _deps.control_plane_external_url = control_plane_external_url
     _deps.adapters = dict(adapters)
     _deps.require_permission = require_permission
+    _deps.provisioning_repo = provisioning_repo
+    # node_events_repo defaults to provisioning_repo for back-compat with
+    # callers that haven't yet been updated to pass both. If a MagicMock
+    # is wired as provisioning_repo with both new-repo and legacy-repo
+    # methods attached, this preserves the existing behaviour.
+    _deps.node_events_repo = (
+        node_events_repo if node_events_repo is not None else provisioning_repo
+    )
+    _deps.db_pool = db_pool
 
 
 def _need_perm(perm: str):
@@ -193,6 +217,54 @@ class AddProviderNodeResponse(BaseModel):
     provider: str
     provider_instance_id: str | None = None
     state: str
+    # Present only for providers that use the async provisioning queue
+    # (aws today). Other providers (nosana, akash) still use the
+    # legacy fire-and-forget adapter path and return job_id=None.
+    job_id: str | None = None
+
+
+class ProvisioningPhase(BaseModel):
+    phase: str
+    status: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    last_message: str | None = None
+
+
+class ProvisioningSummary(BaseModel):
+    current_phase: str | None = None
+    terminal: bool
+    phases: list[ProvisioningPhase]
+    # The UI consumes these on the Overview tab: error → red banner with hint
+    # + Retry button, aws_metadata → metadata grid, attempt_count → "Retry N"
+    # subtitle. job_id surfaced so the UI can call POST .../provisioning/retry
+    # without an extra round-trip.
+    #
+    # error is a free-form dict (not a sub-model) because the contract uses
+    # the key "class" — a reserved Python word that's awkward as a Pydantic
+    # field name. The shape is locked to {code, message, hint, class}.
+    attempt_count: int = 0
+    error: dict[str, Any] | None = None
+    aws_metadata: dict[str, Any] | None = None
+    job_id: str | None = None
+
+
+class ProvisioningEvent(BaseModel):
+    id: int
+    phase: str
+    status: str
+    message: str | None = None
+    created_at: str
+
+
+class ProvisioningLogsResponse(BaseModel):
+    events: list[ProvisioningEvent]
+    next_after: int | None = None
+
+
+class EC2ConsoleResponse(BaseModel):
+    logs: list[str]
+    fetched_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +336,7 @@ async def patch_labels(
     return _to_view(row)
 
 
-@router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{node_id}")
 async def delete_node(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:delete")),
@@ -272,8 +344,110 @@ async def delete_node(
     existing = await _deps.inventory_repo.get_node(node_id=node_id)
     if not existing:
         raise HTTPException(404, "node not found")
+    provider = existing.get("provider")
+    pool_id = existing.get("pool_id")
+
+    # T26: if a non-terminal provisioning job exists for this node, mark
+    # it for cancellation and return 204. The reconciler's CancelHandler
+    # owns the actual teardown (pulumi destroy + state machine progress).
+    # This path supersedes the legacy AWS destroy spawn below because the
+    # state machine is the new authoritative driver for terminating
+    # AWS nodes that went through the provisioning_jobs queue.
+    try:
+        nuuid = uuid.UUID(str(node_id))
+    except (ValueError, TypeError):
+        nuuid = None
+    if _deps.provisioning_repo is not None and nuuid is not None and hasattr(
+        _deps.provisioning_repo, "get_by_node",
+    ):
+        job = await _deps.provisioning_repo.get_by_node(node_id=nuuid)
+        if job is not None and not job.phase.is_terminal:
+            await _deps.provisioning_repo.request_cancel(node_id=nuuid)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        # Terminal job → fall through to the idempotent soft-delete path
+        # below. We do NOT re-spawn pulumi destroy for terminal jobs;
+        # the CancelHandler already ran (or the job failed terminally
+        # without ever spinning up infra, in which case there is nothing
+        # to destroy).
+        if job is not None and job.phase.is_terminal:
+            await _deps.inventory_repo.set_state(
+                node_id=node_id, state="terminated",
+            )
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # AWS nodes must destroy the underlying EC2 stack before the row
+    # disappears from inventory. Non-AWS providers (worker/on_prem,
+    # nosana, akash, gcp/azure for now) keep the original soft-delete
+    # 204 behaviour.
+    if provider == "aws" and _deps.db_pool is not None and pool_id:
+        from inferia.services.orchestration.services.adapter_engine import (
+            aws_deprovision,
+        )
+        # Synchronous flip to terminating so the dashboard sees the
+        # state transition immediately. mark_terminating_node falls
+        # back to soft_delete_node when the inventory repo predates
+        # the new state — defensive against partial deploys.
+        if hasattr(_deps.inventory_repo, "mark_terminating_node"):
+            await _deps.inventory_repo.mark_terminating_node(node_id=node_id)
+        aws_deprovision._spawn_destroy(
+            pool_id=str(pool_id),
+            node_id=str(node_id),
+            db_pool=_deps.db_pool,
+        )
+        return Response(
+            content=__import__("json").dumps(
+                {"node_id": str(node_id), "state": "terminating"},
+            ),
+            media_type="application/json",
+            status_code=status.HTTP_202_ACCEPTED,
+        )
+
+    # Non-AWS path (or AWS with no db_pool / pool_id available).
+    if provider == "aws":
+        logger.warning(
+            "AWS node %s deleted without destroy: db_pool=%s pool_id=%s",
+            node_id, _deps.db_pool is not None, pool_id,
+        )
     await _deps.inventory_repo.soft_delete_node(node_id=node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{node_id}/provisioning/retry")
+async def retry_provisioning(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:create")),
+):
+    """Re-enqueue a failed provisioning job.
+
+    Resets the job row to phase='pending', attempt_count=0, and clears
+    all error fields so the reconciler picks it up on the next claim
+    tick. Inventory state transitions failed → provisioning so the
+    dashboard reflects the requeue immediately.
+
+    Returns 409 if the job is not in 'failed' state (e.g. the user
+    races a still-running job by clicking Retry while it's already
+    re-trying on its own), 404 if the node row is missing, or 503 if
+    the provisioning queue is not configured.
+    """
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    if _deps.provisioning_repo is None:
+        raise HTTPException(503, "provisioning queue not configured")
+    try:
+        nuuid = uuid.UUID(str(node_id))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "node_id is not a valid uuid")
+    job = await _deps.provisioning_repo.reset_for_retry(node_id=nuuid)
+    if job is None:
+        raise HTTPException(409, "no failed job to retry")
+    # Reset inventory state too (failed → provisioning) so the UI's
+    # Overview pane stops showing the failed banner the instant the
+    # retry POST returns.
+    await _deps.inventory_repo.set_state(
+        node_id=node_id, state="provisioning",
+    )
+    return {"job_id": str(job.id), "phase": job.phase.value}
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +553,91 @@ async def add_provider_node(
     if provider == "worker":
         # The dedicated /add/worker endpoint above handles this.
         raise HTTPException(404, "use POST /v1/nodes/add/worker for worker nodes")
+
+    # ------------------------------------------------------------------
+    # AWS path: thin enqueue. Validate the spec, create a 'provisioning'
+    # placeholder row, enqueue a provisioning_jobs row. Return
+    # (node_id, job_id) in well under one second. The reconciler does
+    # the actual Pulumi up + bootstrap work asynchronously.
+    # ------------------------------------------------------------------
+    if provider == "aws":
+        spec = dict(body.spec or {})
+        instance_class = spec.get("instance_class")
+        instance_type = spec.get("instance_type")
+        region = spec.get("region")
+        missing = [
+            name for name, val in (
+                ("instance_class", instance_class),
+                ("instance_type", instance_type),
+                ("region", region),
+            )
+            if not val
+        ]
+        if missing:
+            raise HTTPException(
+                422,
+                f"aws spec missing required fields: {', '.join(missing)}",
+            )
+
+        # Catalog lookup. Reject types that the wizard never offered, and
+        # reject class/type mismatches so the catalogue stays the single
+        # source of truth.
+        from inferia.services.orchestration.services.adapter_engine.adapters.aws import (
+            instance_catalog,
+        )
+        it = instance_catalog.lookup(instance_type)
+        if it is None:
+            raise HTTPException(
+                422,
+                f"unknown instance_type: {instance_type!r} (not in catalog)",
+            )
+        if it.cls != instance_class:
+            raise HTTPException(
+                422,
+                f"instance_class mismatch: spec says {instance_class!r} but "
+                f"{instance_type!r} is class {it.cls!r}",
+            )
+
+        if _deps.provisioning_repo is None:
+            raise HTTPException(503, "provisioning queue not configured")
+
+        org_id = _org_id_from_headers(authorization, x_organization_id)
+        pool_id = await _deps.pool_repo.ensure_default_pool(org_id=org_id)
+        # Fold convenience fields into spec so adapters/reconciler see
+        # them uniformly.
+        if body.node_name is not None:
+            spec.setdefault("node_name", body.node_name)
+        if body.labels:
+            spec["labels"] = body.labels
+        if body.credential_name is not None:
+            spec.setdefault("credential_name", body.credential_name)
+
+        node_id = await _deps.inventory_repo.create_provisioning_placeholder(
+            pool_id=pool_id,
+            provider="aws",
+            instance_class=instance_class,
+            instance_type=instance_type,
+            node_name=body.node_name,
+        )
+        job_id = await _deps.provisioning_repo.enqueue(
+            node_id=node_id,
+            pool_id=pool_id,
+            org_id=org_id,
+            provider="aws",
+            spec=spec,
+        )
+        return AddProviderNodeResponse(
+            node_id=str(node_id),
+            provider="aws",
+            provider_instance_id=None,
+            state="provisioning",
+            job_id=str(job_id),
+        )
+
+    # ------------------------------------------------------------------
+    # Legacy adapter path (nosana, akash). Calls the synchronous
+    # provision_single_node which still blocks on the provider SDK.
+    # ------------------------------------------------------------------
     adapter = _deps.adapters.get(provider)
     if adapter is None:
         raise HTTPException(404, f"unknown provider: {provider}")
@@ -416,6 +675,166 @@ async def add_provider_node(
         provider=node.get("provider", provider),
         provider_instance_id=node.get("provider_instance_id"),
         state=node.get("state", "provisioning"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provisioning / EC2 console endpoints.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{node_id}/provisioning", response_model=ProvisioningSummary)
+async def get_provisioning(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    pool_id = row.get("pool_id")
+
+    # Pull the most-recent provisioning_jobs row for this node. The new
+    # state-machine path uses this row as the authoritative source of
+    # current_phase / attempt_count / error_*; the legacy event-log path
+    # below only contributes the phase history list.
+    job = None
+    if _deps.provisioning_repo is not None and hasattr(
+        _deps.provisioning_repo, "get_by_node",
+    ):
+        try:
+            node_uuid = uuid.UUID(str(node_id))
+        except (ValueError, TypeError):
+            node_uuid = None
+        if node_uuid is not None:
+            job = await _deps.provisioning_repo.get_by_node(node_id=node_uuid)
+
+    # Build the error block. Populated only when a job exists AND its
+    # last_error_code is set — i.e. the reconciler classified an error
+    # against it. Default error_class to PERMANENT for the rare case
+    # where a code/message is recorded without a classification.
+    error_block: dict[str, Any] | None = None
+    if job is not None and getattr(job, "last_error_code", None):
+        ec = getattr(job, "error_class", None)
+        error_block = {
+            "code": job.last_error_code,
+            "message": getattr(job, "last_error_message", None),
+            "hint": getattr(job, "last_error_hint", None),
+            "class": ec.value if ec is not None else "PERMANENT",
+        }
+
+    # AWS metadata grid. Always shaped for aws nodes (even pre-pulumi);
+    # outputs that haven't landed yet show up as None and the UI hides
+    # individual rows. instance_class / instance_type come from the
+    # inventory row (committed at add-node time); region / ami_id /
+    # instance_id / public_dns come from the Pulumi stack outputs once
+    # PulumiUpHandler has merged them in.
+    aws_metadata: dict[str, Any] | None = None
+    if row.get("provider") == "aws":
+        outs = (getattr(job, "pulumi_stack_outputs", None) or {}) if job else {}
+        aws_metadata = {
+            "instance_class": row.get("instance_class"),
+            "instance_type":  row.get("instance_type"),
+            "region":         outs.get("region"),
+            "ami_id":         outs.get("ami_id"),
+            "instance_id":    outs.get("instance_id"),
+            "public_dns":     outs.get("public_dns"),
+        }
+
+    # Phases summary via the legacy node_provisioning_events log. Repo
+    # may be None for nodes that predate the event log entirely
+    # (worker / nosana / akash), in which case the phases list is empty.
+    phases: list[ProvisioningPhase] = []
+    if _deps.node_events_repo is not None and pool_id and hasattr(
+        _deps.node_events_repo, "summarize_phases",
+    ):
+        summary = await _deps.node_events_repo.summarize_phases(pool_id=pool_id)
+        phases = [ProvisioningPhase(
+            phase=p["phase"], status=p["status"],
+            started_at=p["started_at"].isoformat() if p["started_at"] else None,
+            ended_at=p["ended_at"].isoformat() if p["ended_at"] else None,
+            last_message=p["last_message"],
+        ) for p in summary]
+
+    # current_phase / terminal: prefer the job row when present (the
+    # state-machine path), fall back to the legacy current_phase repo
+    # call for nodes that don't have a job row (worker / nosana / akash).
+    if job is not None:
+        current_phase = job.phase.value
+        terminal = job.phase.is_terminal
+    elif _deps.node_events_repo is not None and pool_id and hasattr(
+        _deps.node_events_repo, "current_phase",
+    ):
+        current_phase = await _deps.node_events_repo.current_phase(pool_id=pool_id)
+        node_state = row.get("state")
+        terminal = current_phase is None or node_state in ("ready", "terminated")
+    else:
+        current_phase = None
+        terminal = True
+
+    return ProvisioningSummary(
+        current_phase=current_phase,
+        terminal=terminal,
+        phases=phases,
+        attempt_count=getattr(job, "attempt_count", 0) if job is not None else 0,
+        error=error_block,
+        aws_metadata=aws_metadata,
+        job_id=str(job.id) if job is not None else None,
+    )
+
+
+@router.get("/{node_id}/provisioning-logs", response_model=ProvisioningLogsResponse)
+async def get_provisioning_logs(
+    node_id: str = Path(...),
+    after: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=2000),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    pool_id = row.get("pool_id")
+    if _deps.node_events_repo is None or not pool_id or not hasattr(
+        _deps.node_events_repo, "list_events_after",
+    ):
+        return ProvisioningLogsResponse(events=[], next_after=None)
+    events = await _deps.node_events_repo.list_events_after(
+        pool_id=pool_id, after_id=after, limit=limit,
+    )
+    next_after = events[-1]["id"] if events else None
+    return ProvisioningLogsResponse(
+        events=[ProvisioningEvent(
+            id=e["id"], phase=e["phase"], status=e["status"],
+            message=e["message"],
+            created_at=e["created_at"].isoformat(),
+        ) for e in events],
+        next_after=next_after,
+    )
+
+
+@router.get("/{node_id}/ec2-console", response_model=EC2ConsoleResponse)
+async def get_ec2_console(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    from datetime import datetime, timezone
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    if row.get("provider") != "aws":
+        raise HTTPException(404, "ec2 console only available for aws provider")
+    adapters = getattr(_deps, "adapters", None) or {}
+    adapter = adapters.get("aws")
+    if adapter is None:
+        raise HTTPException(503, "aws adapter not configured")
+    instance_id = row.get("provider_instance_id") or ""
+    if not instance_id or instance_id.startswith("placeholder:"):
+        return EC2ConsoleResponse(
+            logs=[], fetched_at=datetime.now(timezone.utc).isoformat(),
+        )
+    result = await adapter.get_logs(provider_instance_id=instance_id)
+    return EC2ConsoleResponse(
+        logs=result.get("logs", []),
+        fetched_at=datetime.now(timezone.utc).isoformat(),
     )
 
 

@@ -16,10 +16,9 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from typing import Any, Callable
-from urllib.parse import urlsplit, urlunsplit
 
-import websockets
 from fastapi import (
     APIRouter,
     Depends,
@@ -36,7 +35,17 @@ from pydantic import BaseModel, Field
 from inferia.services.orchestration.services.worker_controller.auth import (
     WorkerAuth,
 )
+from inferia.services.orchestration.services.worker_controller.protocol import (
+    LogsEndBody,
+    LogsLineBody,
+    LogsOpenBody,
+    ShellErrorBody,
+    ShellExitBody,
+    ShellOpenBody,
+    ShellOutputBody,
+)
 from inferia.services.orchestration.services.worker_controller.registry import (
+    WorkerNotConnectedError,
     WorkerRegistry,
 )
 
@@ -57,6 +66,7 @@ class _Deps:
     pool_repo: Any = None
     control_plane_external_url: str = ""
     require_permission: Callable[[str], Any] | None = None
+    db_pool: Any = None
 
 
 _deps = _Deps()
@@ -70,6 +80,7 @@ def configure(
     pool_repo,
     control_plane_external_url: str,
     require_permission: Callable[[str], Any],
+    db_pool: Any = None,
 ) -> None:
     """Wire dependencies at startup. Idempotent."""
     _deps.worker_auth = worker_auth
@@ -78,6 +89,7 @@ def configure(
     _deps.pool_repo = pool_repo
     _deps.control_plane_external_url = control_plane_external_url
     _deps.require_permission = require_permission
+    _deps.db_pool = db_pool
 
 
 def _need_perm(perm: str):
@@ -229,7 +241,7 @@ async def list_workers(
     return ListResponse(workers=workers)
 
 
-@router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{node_id}")
 async def revoke_worker(
     node_id: str,
     _granted: bool = Depends(_need_perm("deployment:delete")),
@@ -239,6 +251,41 @@ async def revoke_worker(
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
 
+    # AWS branch: kick the destroy task and return 202 instead of the
+    # legacy 204 "soft delete only" path. The EC2 stack tear-down can
+    # take up to 90s and runs in the background.
+    provider = node.get("provider") if isinstance(node, dict) else None
+    pool_id = node.get("pool_id") if isinstance(node, dict) else None
+    if provider == "aws" and _deps.db_pool is not None and pool_id:
+        from inferia.services.orchestration.services.adapter_engine import (
+            aws_deprovision,
+        )
+        if hasattr(_inventory(), "mark_terminating_node"):
+            await _inventory().mark_terminating_node(node_id=node_id)
+        # Also tear down the open WS now so the worker stops heartbeating.
+        conn = _registry().get(node_id)
+        if conn is not None:
+            try:
+                await conn.ws.close(1008, "revoked by admin")
+            except Exception:
+                pass
+            try:
+                await _registry().detach(node_id, conn.ws)
+            except Exception:
+                pass
+        aws_deprovision._spawn_destroy(
+            pool_id=str(pool_id),
+            node_id=str(node_id),
+            db_pool=_deps.db_pool,
+        )
+        import json as _json
+        return Response(
+            content=_json.dumps({"node_id": str(node_id), "state": "terminating"}),
+            media_type="application/json",
+            status_code=status.HTTP_202_ACCEPTED,
+        )
+
+    # Legacy path (workers, nosana, akash, gcp/azure for now).
     await _inventory().mark_terminated_worker(node_id=node_id)
 
     conn = _registry().get(node_id)
@@ -262,148 +309,243 @@ async def revoke_worker(
 # The dashboard opens ws://<gateway>/api/v1/admin/workers/{node_id}/logs (and
 # /shell) over its existing user-JWT auth. The gateway proxies WS frames to
 # orchestration's /v1/admin/workers/{node_id}/logs, and this endpoint then
-# forwards them to the worker's own ws://<worker>/v1/logs endpoint, which is
-# authenticated with the worker pool's INFERENCE_TOKEN. The dashboard never
-# sees that token — it stays server-side.
+# multiplexes those frames over the long-lived worker→CP control channel
+# (``/v1/workers/channel``) using a CP-minted ``stream_id``.
+#
+# The wire format the dashboard speaks is preserved verbatim:
+#   inbound (CP → dashboard):
+#     {"type": "output",  "data": "..."}        # shell stdout/stderr chunk
+#     {"type": "exit",    "exit_code": N, "reason": "..."}
+#     {"type": "log",     "stream": "stdout"|"stderr", "data": "..."}
+#     {"type": "error",   "message": "..."}
+#   outbound (dashboard → CP):
+#     {"type": "stdin",   "data": "..."}        # shell only
+#     {"type": "resize",  "rows": N, "cols": N} # shell only
+#
+# We never expose the inference token or the worker's public 8080 anymore —
+# the long-lived worker WS does both jobs.
 
 
-async def _resolve_worker_ws_base(node_id: str) -> tuple[str, str]:
-    """Return (ws_base_url, inference_token) for the worker that owns node_id.
-
-    Raises HTTPException if the node doesn't exist or has no reachable URL.
-    The advertise_url may legitimately be http://localhost:8080 in a
-    same-host dev setup; from inside the orchestration container that
-    resolves to orchestration itself, so we substitute with the worker
-    compose service name `inferia-worker:8080` when localhost is detected.
-    Operators in production should set WORKER_ADVERTISE_URL to a routable
-    URL that the orchestration container can resolve.
-    """
-    node = await _inventory().get_node_by_id(node_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="node not found")
-    if node.get("agent_kind") != "worker":
-        raise HTTPException(status_code=400, detail="not a worker node")
-
-    raw = node.get("advertise_url") or ""
-    if not raw:
-        raise HTTPException(
-            status_code=409,
-            detail="worker has no advertise_url; logs/shell are unavailable",
-        )
-
-    parts = urlsplit(raw)
-    host = parts.hostname or ""
-    port = parts.port or 8080
-    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
-        # Dev fallback — see docstring. Without this every same-host docker
-        # compose user would have to manually rewrite their .env.
-        host = os.getenv("WORKER_LOCAL_FALLBACK_HOST", "inferia-worker")
-
-    scheme = "wss" if parts.scheme == "https" else "ws"
-    ws_base = urlunsplit((scheme, f"{host}:{port}", "", "", ""))
-
-    pool_id = node.get("pool_id")
-    if not pool_id:
-        raise HTTPException(status_code=500, detail="worker missing pool_id")
-    pool_repo = _deps.pool_repo
-    if pool_repo is None:
-        raise HTTPException(503, "pool repo not configured")
-    token = await pool_repo.get_or_generate_inference_token(pool_id=str(pool_id))
-    return ws_base, token
-
-
-async def _proxy_ws_text(client_ws: WebSocket, upstream_url: str, headers: dict[str, str]) -> None:
-    """Bi-directional text/binary WebSocket relay.
-
-    Closes both sides on first disconnect. Used by /logs and /shell.
-    """
+def _qparam_int(ws: WebSocket, key: str, default: int = 0) -> int:
+    """Pluck an integer query param, falling back to ``default`` on missing or
+    malformed values. Used for ``cols`` / ``rows`` on the shell open."""
+    raw = ws.query_params.get(key)
+    if raw is None or raw == "":
+        return default
     try:
-        upstream = await websockets.connect(upstream_url, additional_headers=headers)
-    except Exception as e:
-        await client_ws.send_json({"type": "error", "message": f"upstream connect failed: {e}"})
-        await client_ws.close()
-        return
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
 
-    async def c2u():
-        try:
-            while True:
-                msg = await client_ws.receive()
-                t = msg.get("type")
-                if t == "websocket.disconnect":
-                    break
-                if msg.get("text") is not None:
-                    await upstream.send(msg["text"])
-                elif msg.get("bytes") is not None:
-                    await upstream.send(msg["bytes"])
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.warning("c2u relay error: %s", e)
-        finally:
-            await upstream.close()
 
-    async def u2c():
-        try:
-            async for frame in upstream:
-                if isinstance(frame, bytes):
-                    await client_ws.send_bytes(frame)
-                else:
-                    await client_ws.send_text(frame)
-        except Exception as e:
-            logger.warning("u2c relay error: %s", e)
-        finally:
+async def _run_until_either(*coros) -> None:
+    """Run two coroutines concurrently; cancel the other as soon as one
+    completes. Exceptions are logged but never propagated — the caller
+    (a WS handler) just needs both tasks definitely-stopped so it can
+    close the socket.
+
+    Without this the WS proxy would deadlock: the worker→dashboard pump
+    breaks on a terminal frame and the dashboard→worker pump stays
+    blocked on receive() until the client closes — which it can't,
+    because the handler hasn't released the WS yet.
+    """
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        _done, pending = await asyncio.wait(
+            tasks, return_when=asyncio.FIRST_COMPLETED,
+        )
+        for p in pending:
+            p.cancel()
+        # Drain cancellations so we don't leave "Task was destroyed
+        # but it is pending" warnings on the event loop.
+        for p in pending:
             try:
-                await client_ws.close()
-            except Exception:
+                await p
+            except (asyncio.CancelledError, Exception):
                 pass
-
-    await asyncio.gather(c2u(), u2c(), return_exceptions=True)
+    except Exception as e:
+        logger.warning("_run_until_either crashed: %s", e)
 
 
 @router.websocket("/{node_id}/logs")
 async def proxy_worker_logs(ws: WebSocket, node_id: str):
-    """Forward the dashboard's /logs WebSocket through to the worker."""
+    """Multiplex a live container logs stream over the worker's control WS.
+
+    Opens a logs stream via the registry, drains worker→CP LogsLine / LogsEnd
+    bodies into the dashboard wire format, and tears the stream down on
+    either side disconnect.
+    """
     await ws.accept()
+
+    stream_id = str(uuid.uuid4())
+    deployment_id = ws.query_params.get("deployment", "")
+    container_id = ws.query_params.get("container", "")
+    body = LogsOpenBody(
+        stream_id=stream_id,
+        deployment_id=deployment_id,
+        container_id=container_id,
+    )
+
     try:
-        ws_base, token = await _resolve_worker_ws_base(node_id)
-    except HTTPException as e:
-        await ws.send_json({"type": "error", "message": e.detail})
-        await ws.close()
+        handle = await _registry().open_logs_stream(node_id, body)
+    except WorkerNotConnectedError:
+        await ws.send_json({"type": "error", "message": "worker offline"})
+        await ws.close(code=1011)
         return
 
-    # Forward every query param the dashboard sent through to the worker —
-    # `deployment` / `container` pick the target, `shell` / `user` are
-    # exec knobs honoured by the worker's /v1/shell handler, and any
-    # future query params (e.g. `cwd`) survive automatically without
-    # touching this proxy.
-    qs_pairs = [(k, v) for k, v in ws.query_params.items()]
-    qs = ("?" + "&".join(f"{k}={v}" for k, v in qs_pairs)) if qs_pairs else ""
-    upstream_url = f"{ws_base}/v1/logs{qs}"
-    headers = {"Authorization": f"Bearer {token}"}
-    await _proxy_ws_text(ws, upstream_url, headers)
+    async def dashboard_to_worker():
+        """The dashboard never sends control frames on the logs WS today,
+        but we still drain to detect disconnect."""
+        try:
+            while True:
+                msg = await ws.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    break
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.warning("logs dashboard->worker drain error: %s", e)
+
+    async def worker_to_dashboard():
+        try:
+            while True:
+                frame = await handle.incoming.get()
+                if isinstance(frame, LogsLineBody):
+                    await ws.send_json({
+                        "type": "log",
+                        "stream": frame.stream,
+                        "data": frame.data,
+                    })
+                elif isinstance(frame, LogsEndBody):
+                    await ws.send_json({
+                        "type": "exit",
+                        "reason": frame.reason,
+                    })
+                    break
+                elif isinstance(frame, ShellErrorBody):
+                    # Synthetic error injected by registry.detach when the
+                    # worker disconnects.
+                    await ws.send_json({
+                        "type": "error",
+                        "message": frame.message,
+                    })
+                    break
+                else:
+                    logger.warning(
+                        "proxy_worker_logs: unexpected frame type=%s",
+                        type(frame).__name__,
+                    )
+        except Exception as e:
+            logger.warning("logs worker->dashboard drain error: %s", e)
+
+    await _run_until_either(dashboard_to_worker(), worker_to_dashboard())
+    await _registry().close_stream(stream_id)
+    try:
+        await ws.close()
+    except Exception:
+        pass
 
 
 @router.websocket("/{node_id}/shell")
 async def proxy_worker_shell(ws: WebSocket, node_id: str):
-    """Forward the dashboard's /shell WebSocket through to the worker."""
+    """Multiplex an interactive shell over the worker's control WS.
+
+    Opens a shell stream via the registry, translates the dashboard's
+    ``stdin`` / ``resize`` frames into ShellInput / ShellResize envelopes,
+    and the worker's ShellOutput / ShellExit / ShellError frames back into
+    the dashboard wire format.
+    """
     await ws.accept()
+
+    stream_id = str(uuid.uuid4())
+    deployment_id = ws.query_params.get("deployment", "")
+    container_id = ws.query_params.get("container", "")
+    shell = ws.query_params.get("shell", "/bin/sh")
+    user = ws.query_params.get("user", "")
+    cols = _qparam_int(ws, "cols", 0)
+    rows = _qparam_int(ws, "rows", 0)
+    body = ShellOpenBody(
+        stream_id=stream_id,
+        shell=shell,
+        user=user,
+        deployment_id=deployment_id,
+        container_id=container_id,
+        cols=cols,
+        rows=rows,
+    )
+
     try:
-        ws_base, token = await _resolve_worker_ws_base(node_id)
-    except HTTPException as e:
-        await ws.send_json({"type": "error", "message": e.detail})
-        await ws.close()
+        handle = await _registry().open_shell_stream(node_id, body)
+    except WorkerNotConnectedError:
+        await ws.send_json({"type": "error", "message": "worker offline"})
+        await ws.close(code=1011)
         return
 
-    # Forward every query param the dashboard sent through to the worker —
-    # `deployment` / `container` pick the target, `shell` / `user` are
-    # exec knobs honoured by the worker's /v1/shell handler, and any
-    # future query params (e.g. `cwd`) survive automatically without
-    # touching this proxy.
-    qs_pairs = [(k, v) for k, v in ws.query_params.items()]
-    qs = ("?" + "&".join(f"{k}={v}" for k, v in qs_pairs)) if qs_pairs else ""
-    upstream_url = f"{ws_base}/v1/shell{qs}"
-    headers = {"Authorization": f"Bearer {token}"}
-    await _proxy_ws_text(ws, upstream_url, headers)
+    async def dashboard_to_worker():
+        try:
+            while True:
+                payload = await ws.receive_json()
+                kind = payload.get("type")
+                if kind == "stdin":
+                    data = payload.get("data", "")
+                    if not isinstance(data, str):
+                        continue
+                    await _registry().send_shell_input(stream_id, data)
+                elif kind == "resize":
+                    # The dashboard sends rows + cols directly. Tolerate
+                    # zero / missing values — the worker treats 0 as "leave
+                    # alone".
+                    try:
+                        cols_in = int(payload.get("cols") or 0)
+                        rows_in = int(payload.get("rows") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    await _registry().send_shell_resize(
+                        stream_id, cols_in, rows_in,
+                    )
+                # Unknown frame types are silently ignored — the wire format
+                # is small and any extension is a worker-side concern.
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.warning("shell dashboard->worker drain error: %s", e)
+
+    async def worker_to_dashboard():
+        try:
+            while True:
+                frame = await handle.incoming.get()
+                if isinstance(frame, ShellOutputBody):
+                    await ws.send_json({
+                        "type": "output",
+                        "data": frame.data,
+                    })
+                elif isinstance(frame, ShellExitBody):
+                    await ws.send_json({
+                        "type": "exit",
+                        "exit_code": frame.exit_code,
+                        "reason": frame.reason,
+                    })
+                    break
+                elif isinstance(frame, ShellErrorBody):
+                    await ws.send_json({
+                        "type": "error",
+                        "message": frame.message,
+                    })
+                    break
+                else:
+                    logger.warning(
+                        "proxy_worker_shell: unexpected frame type=%s",
+                        type(frame).__name__,
+                    )
+        except Exception as e:
+            logger.warning("shell worker->dashboard drain error: %s", e)
+
+    await _run_until_either(dashboard_to_worker(), worker_to_dashboard())
+    await _registry().close_stream(stream_id)
+    try:
+        await ws.close()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,8 @@
 """Tests for credential resolution — ProvidersConfig → Pulumi env vars."""
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from inferia.services.api_gateway.config import (
@@ -125,3 +129,75 @@ def test_resolve_azure_env_missing_secret_raises():
     ))
     with pytest.raises(MissingCredentialsError):
         resolve_azure_env(cfg)
+
+
+# --- verify_credentials tests --------------------------------------------
+# Preflight check that hits sts:GetCallerIdentity.
+
+from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.credentials import (
+    AWSCredentials,
+    verify_credentials,
+)
+from inferia.services.orchestration.services.provisioning.errors import (
+    InvalidCredentialsError, NetworkError,
+)
+
+
+def _creds(**over) -> AWSCredentials:
+    base = dict(
+        access_key_id="AKIA...",
+        secret_access_key="secret",
+        region="us-east-1",
+        session_token=None,
+    )
+    base.update(over)
+    return AWSCredentials(**base)
+
+
+def test_verify_credentials_returns_caller_identity_on_success():
+    fake_client = MagicMock()
+    fake_client.get_caller_identity.return_value = {
+        "UserId": "AIDA...", "Account": "123456789012",
+        "Arn": "arn:aws:iam::123:user/test",
+    }
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.credentials._boto3_sts_client",
+        return_value=fake_client,
+    ):
+        ident = verify_credentials(_creds())
+    assert ident["Account"] == "123456789012"
+
+
+def test_verify_credentials_raises_invalid_credentials_on_authfailure():
+    from botocore.exceptions import ClientError
+    err = ClientError(
+        error_response={"Error": {
+            "Code": "InvalidClientTokenId",
+            "Message": "The security token included in the request is invalid.",
+        }},
+        operation_name="GetCallerIdentity",
+    )
+    fake_client = MagicMock()
+    fake_client.get_caller_identity.side_effect = err
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.credentials._boto3_sts_client",
+        return_value=fake_client,
+    ):
+        with pytest.raises(InvalidCredentialsError):
+            verify_credentials(_creds())
+
+
+def test_verify_credentials_raises_network_error_on_endpoint_failure():
+    from botocore.exceptions import EndpointConnectionError
+    err = EndpointConnectionError(endpoint_url="https://sts.us-east-1.amazonaws.com/")
+    fake_client = MagicMock()
+    fake_client.get_caller_identity.side_effect = err
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.credentials._boto3_sts_client",
+        return_value=fake_client,
+    ):
+        with pytest.raises(NetworkError):
+            verify_credentials(_creds())

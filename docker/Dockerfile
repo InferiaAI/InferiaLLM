@@ -99,6 +99,18 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Pulumi CLI binary. The pulumi Python package alone is NOT
+# enough — pulumi.automation.create_or_select_stack(...) shells out to
+# the `pulumi` binary, and provisioning fails with
+# ``FileNotFoundError: [Errno 2] No such file or directory: 'pulumi'``
+# if it isn't on PATH. Copy the binaries to /usr/local/bin so they're
+# visible to every uid inside the container (the installer drops them
+# in /root/.pulumi/bin which is otherwise root-only).
+RUN curl -fsSL https://get.pulumi.com | sh \
+    && cp /root/.pulumi/bin/pulumi* /usr/local/bin/ \
+    && rm -rf /root/.pulumi \
+    && pulumi version
+
 
 EXPOSE 8080 3000 50051
 

@@ -7,7 +7,8 @@ import { useAuth } from "@/context/AuthContext"
 import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
 import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
-import { addWorkerNode, type AddWorkerNodeResponse } from "@/services/nodeService"
+import { addWorkerNode, listNodes, type AddWorkerNodeResponse } from "@/services/nodeService"
+import { useInstanceCatalog, type InstanceType } from "@/hooks/useInstanceCatalog"
 
 // Provider icons mapping
 const providerIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -59,6 +60,81 @@ const gcpGpuTypes = [
     { gpu_type: "V100", gpu_memory_gb: 16, vcpu: 8, ram_gb: 61, description: "NVIDIA V100 16GB" },
 ]
 
+// AWS instance catalog is fetched at runtime from the orchestration
+// service (see hooks/useInstanceCatalog.ts). Adding a new EC2 type is
+// a one-file change in the backend catalog module — no frontend edit
+// needed. The catalog groups by class:
+//   - normal_gpu  → single-GPU instances for routine inference
+//   - heavy_gpu   → multi-GPU and high-end (A100/H100/H200) instances
+//   - cpu         → no-GPU instances for control-plane / cheap test pools
+// us-east-1 list prices come from the backend dataclass and are
+// approximate — UI prefixes them with "≈". The spot toggle applies a
+// 0.4x multiplier identical to estimateGcpCost's discount factor.
+type InstanceTier = "normal_gpu" | "heavy_gpu" | "cpu";
+
+const TIER_LABELS: Record<InstanceTier, string> = {
+    normal_gpu: "Normal GPU",
+    heavy_gpu: "Heavy GPU",
+    cpu: "No GPU (CPU)",
+};
+
+const TIER_HINTS: Record<InstanceTier, string> = {
+    normal_gpu: "Single-GPU instances for routine inference. Default.",
+    heavy_gpu:  "Multi-GPU and high-end (A100/H100/H200). Check your account's G/P quota first.",
+    cpu:        "No-GPU compute — useful for control-plane testing, host-shell, or cheap smoke runs.",
+};
+
+const TIER_ORDER: InstanceTier[] = ["normal_gpu", "heavy_gpu", "cpu"];
+
+/**
+ * Translate a catalog row (from useInstanceCatalog) into the
+ * legacy `selectedResource` shape the rest of NewPool consumes
+ * (payload construction, cost summary, gcpFallback). Keeping the
+ * shape stable avoids touching every downstream usage just to
+ * rename a field.
+ */
+function catalogRowToSelectedResource(inst: InstanceType) {
+    return {
+        gpu_type: inst.gpu_model || "(none)",
+        gpu_memory_gb: inst.gpu_ram_gb,
+        vcpu: inst.vcpu,
+        ram_gb: inst.ram_gb,
+        price_per_hour: inst.price_per_hour,
+        provider_resource_id: inst.name,
+    };
+}
+
+/**
+ * Compute the hourly cost for the cluster-provider Step 2 summary + the
+ * Spot toggle's "savings" line.
+ *
+ * - AWS entries (mapped from useInstanceCatalog rows via
+ *   catalogRowToSelectedResource) always carry an explicit
+ *   `price_per_hour`. We use that directly and apply the same 0.4x
+ *   spot multiplier estimateGcpCost uses, so the savings figure stays
+ *   consistent between paths. Multiplying by gpuCount is a no-op for
+ *   tiers that already represent the whole multi-GPU instance (p4d/p5),
+ *   so the GPU Count selector is preserved on heavy AND clamped to 1
+ *   on CPU via the reducer.
+ * - GCP / Azure entries don't have `price_per_hour` set (the static
+ *   gcpGpuTypes only declares the GPU). They fall back to the
+ *   semantic-name lookup table inside estimateGcpCost.
+ */
+function computeHourlyCost(
+    resource: { price_per_hour?: number; gpu_type?: string } | null | undefined,
+    isSpot: boolean,
+    gpuCount: number,
+    gcpFallback: (gpuType: string, isSpot: boolean) => number,
+): number {
+    if (!resource) return 0;
+    const safeCount = gpuCount > 0 ? gpuCount : 1;
+    if (typeof resource.price_per_hour === "number") {
+        const spotMul = isSpot ? 0.4 : 1.0;
+        return resource.price_per_hour * spotMul * safeCount;
+    }
+    return gcpFallback(resource.gpu_type || "A100", isSpot) * safeCount;
+}
+
 interface NewPoolState {
     step: number;
     selectedProvider: string;
@@ -84,6 +160,10 @@ interface NewPoolState {
     useSpot: boolean;
     isClusterProvider: boolean;
     gpuCount: number;
+    // AWS instance tier selector (Step 2, cluster path, AWS only).
+    // Switching the tier clears any selectedResource — same precedent as
+    // the gpu vendor filter chips (`SET_GPU_VENDOR_FILTER`).
+    instanceTier: InstanceTier;
 }
 
 type NewPoolAction =
@@ -104,7 +184,8 @@ type NewPoolAction =
     | { type: "SET_USE_SPOT"; payload: boolean }
     | { type: "SET_CLUSTER_PROVIDER"; payload: boolean }
     | { type: "SET_GPU_COUNT"; payload: number }
-    | { type: "SET_GPU_VENDOR_FILTER"; payload: NewPoolState["gpuVendorFilter"] };
+    | { type: "SET_GPU_VENDOR_FILTER"; payload: NewPoolState["gpuVendorFilter"] }
+    | { type: "SET_INSTANCE_TIER"; payload: InstanceTier };
 
 const initialState: NewPoolState = {
     step: 1,
@@ -125,6 +206,7 @@ const initialState: NewPoolState = {
     useSpot: false,
     isClusterProvider: false,
     gpuCount: 1,
+    instanceTier: "normal_gpu",
 };
 
 function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
@@ -147,6 +229,17 @@ function poolReducer(state: NewPoolState, action: NewPoolAction): NewPoolState {
         case "SET_CLUSTER_PROVIDER": return { ...state, isClusterProvider: action.payload };
         case "SET_GPU_COUNT": return { ...state, gpuCount: action.payload };
         case "SET_GPU_VENDOR_FILTER": return { ...state, gpuVendorFilter: action.payload, selectedResource: null };
+        // Switching tiers clears selectedResource (same precedent as
+        // SET_GPU_VENDOR_FILTER) and force-resets gpuCount to 1 when the
+        // user moves to CPU (no GPU to count). Heavy/Normal preserve the
+        // existing gpuCount so a user toggling between them keeps their
+        // multi-GPU choice.
+        case "SET_INSTANCE_TIER": return {
+            ...state,
+            instanceTier: action.payload,
+            selectedResource: null,
+            gpuCount: action.payload === "cpu" ? 1 : state.gpuCount,
+        };
         default: return state;
     }
 }
@@ -175,6 +268,7 @@ export default function NewPool() {
         isClusterProvider,
         gpuCount,
         gpuVendorFilter,
+        instanceTier,
     } = state;
 
     // Fetch provider configuration
@@ -182,6 +276,14 @@ export default function NewPool() {
         queryKey: ["providerConfig"],
         queryFn: () => ConfigService.getProviderConfig()
     })
+
+    // Live AWS instance catalog. Replaces the previously hard-coded
+    // awsInstanceTiers constant — adding a new EC2 type is now a backend
+    // catalog change with no frontend edit. The fetch is cheap and the
+    // hook caches for 5 minutes, so this is safe to call unconditionally
+    // (the catalog block is only rendered when selectedProvider === 'aws'
+    // anyway).
+    const { data: awsCatalog, isLoading: loadingAwsCatalog } = useInstanceCatalog()
 
     // NEW: Fetch registered providers dynamically from API
     const { data: providersData, isLoading: loadingProviders } = useQuery({
@@ -471,25 +573,42 @@ export default function NewPool() {
                 payload.allowed_gpu_types = ["any"];
                 payload.max_cost_per_hour = 0;
                 payload.provider_pool_id = `worker:${poolName}`;
+            } else if (selectedProvider === "aws" && isClusterProvider) {
+                // AWS via Pulumi — allowed_gpu_types[0] must be the EC2
+                // instance type (e.g. "g6.xlarge"), NOT the semantic GPU
+                // name ("L4"). The catalog rows from useInstanceCatalog
+                // populate provider_resource_id via
+                // catalogRowToSelectedResource, so the first branch
+                // (price_per_hour set) always wins. The gpu_type fallback
+                // remains for forwards-compatibility with any other
+                // selectedResource shape that might land here.
+                //
+                // The provider_resource_id is ALWAYS set on the selected
+                // card — whether it's "c6i.xlarge" (cpu), "g6.xlarge"
+                // (normal_gpu), or "p5.48xlarge" (heavy_gpu). All three
+                // values flow through this branch unchanged: the backend
+                // receives the EC2 instance type and Pulumi launches it.
+                // No special-casing of the CPU tier is needed because
+                // selectedResource.price_per_hour is always populated
+                // from the catalog row's price_per_hour.
+                const instanceType =
+                    selectedResource.provider_resource_id || selectedResource.gpu_type;
+                payload.allowed_gpu_types = [instanceType];
+                payload.region_constraint = [selectedRegion];
+                payload.use_spot = useSpot;
+                payload.gpu_count = gpuCount;
+                payload.max_cost_per_hour =
+                    selectedResource.price_per_hour ||
+                    estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
+                payload.provider_pool_id = `aws/${instanceType}`;
             } else if (isClusterProvider) {
-                // Cluster-based provider (GCP/AWS/Azure via Pulumi) - include region and spot settings
+                // GCP / Azure via Pulumi — semantic gpu_type stays meaningful.
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
                 payload.region_constraint = [selectedRegion];
                 payload.use_spot = useSpot;
                 payload.gpu_count = gpuCount;
-                // Estimate cost (for GCP, we don't have real-time pricing without API call)
                 payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
                 payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
-            } else if (selectedProvider === "aws") {
-                // AWS via Pulumi — the orchestration manager passes
-                // allowed_gpu_types[0] to provision_cluster as 'gpu_type'.
-                // For Pulumi-AWS that value IS the EC2 instance type, so
-                // forward provider_resource_id (e.g. "t3.micro", "g5.xlarge")
-                // rather than the semantic gpu name ("A10G" / "N/A").
-                payload.allowed_gpu_types = [selectedResource.provider_resource_id];
-                payload.max_cost_per_hour = selectedResource.price_per_hour || 0;
-                payload.provider_pool_id = `aws/${selectedResource.provider_resource_id}`;
-                payload.gpu_count = selectedResource.gpu_count || 1;
             } else {
                 // Job-based provider (Nosana, Akash)
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
@@ -515,6 +634,25 @@ export default function NewPool() {
                         ? `/dashboard/compute/nodes/${newPoolId}?tab=workers`
                         : "/dashboard/compute/nodes",
                 );
+            } else if (selectedProvider === "aws" && newPoolId) {
+                // The /createpool handler inserts the placeholder inventory row inline,
+                // so the node should be discoverable immediately. Short retry guards
+                // against eventual-consistency in the gateway proxy.
+                toast.success("AWS pool created — provisioning EC2 instance…");
+                let nodeId: string | null = null;
+                for (let i = 0; i < 5 && !nodeId; i++) {
+                    try {
+                        const nodes = await listNodes();
+                        const match = nodes.find(n => n.pool_id === newPoolId);
+                        if (match) nodeId = match.id;
+                    } catch { /* swallow */ }
+                    if (!nodeId) await new Promise(r => setTimeout(r, 300));
+                }
+                if (nodeId) {
+                    navigate(`/dashboard/compute/nodes/${nodeId}?tab=overview`, { replace: true });
+                } else {
+                    navigate("/dashboard/compute/nodes");
+                }
             } else if (isClusterProvider) {
                 toast.success(`Pool created! GPU cluster provisioning in ${selectedRegion}...`)
                 navigate("/dashboard/compute/nodes")
@@ -693,6 +831,37 @@ export default function NewPool() {
                              'Cluster'} Configuration
                         </h3>
 
+                        {/* Instance Tier selector — AWS only. Sits above the
+                            AWS-config blue note and Region row so the user
+                            picks the tier first, then sees a tier-filtered
+                            instance grid further down. Switching the tier
+                            clears any previously selected instance via
+                            SET_INSTANCE_TIER (see reducer). */}
+                        {selectedProvider === "aws" && (
+                            <div className="mb-6" data-testid="tier-selector">
+                                <label className="text-sm font-medium mb-2 block">Instance Tier</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {TIER_ORDER.map((t) => (
+                                        <button
+                                            key={t}
+                                            type="button"
+                                            data-testid={`tier-btn-${t}`}
+                                            onClick={() => dispatch({ type: "SET_INSTANCE_TIER", payload: t })}
+                                            className={cn(
+                                                "p-3 rounded-lg border text-sm font-medium transition-colors",
+                                                instanceTier === t
+                                                    ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
+                                                    : "border-border hover:border-ember-400"
+                                            )}
+                                        >
+                                            {TIER_LABELS[t]}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">{TIER_HINTS[instanceTier]}</p>
+                            </div>
+                        )}
+
                         {selectedProvider === "aws" && (
                             <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg text-xs text-blue-700 dark:text-blue-200">
                                 AWS provisioning details (subnet, security groups, AMI,
@@ -725,54 +894,119 @@ export default function NewPool() {
                             </div>
                         </div>
 
-                        {/* GPU Selection */}
+                        {/* GPU / Instance Selection.
+                            AWS pulls the live catalog from
+                            useInstanceCatalog (T22 endpoint) and filters
+                            by the active instanceTier; GCP/Azure stay on
+                            the existing gcpGpuTypes table (semantic GPU
+                            names only — Pulumi maps them to instance types
+                            at apply time). The hook's 5-min staleTime
+                            means switching tier tabs never re-fetches. */}
                         <div className="mb-6">
-                            <label className="text-sm font-medium mb-2 block">Select GPU Type</label>
+                            <label className="text-sm font-medium mb-2 block">
+                                {selectedProvider === "aws" && instanceTier === "cpu"
+                                    ? "Select Instance Type"
+                                    : "Select GPU Type"}
+                            </label>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                {gcpGpuTypes.map((gpu) => (
-                                    <button
-                                        key={gpu.gpu_type}
-                                        onClick={() => dispatch({ type: "SET_RESOURCE", payload: { gpu_type: gpu.gpu_type, gpu_memory_gb: gpu.gpu_memory_gb, vcpu: gpu.vcpu, ram_gb: gpu.ram_gb, price_per_hour: estimateGcpCost(gpu.gpu_type, useSpot) }})}
-                                        className={cn(
-                                            "p-3 rounded-lg border text-left transition-colors",
-                                            selectedResource?.gpu_type === gpu.gpu_type
-                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
-                                                : "border-border hover:border-ember-400"
-                                        )}
-                                    >
-                                        <div className="font-bold">{gpu.gpu_type}</div>
-                                        <div className="text-xs text-muted-foreground">{gpu.gpu_memory_gb}GB VRAM</div>
-                                        <div className="text-xs text-muted-foreground">{gpu.vcpu} vCPU</div>
-                                    </button>
-                                ))}
+                                {selectedProvider === "aws" ? (
+                                    loadingAwsCatalog && !awsCatalog ? (
+                                        <div className="col-span-full text-sm text-muted-foreground py-4 text-center">
+                                            Loading instance catalog…
+                                        </div>
+                                    ) : (
+                                        (awsCatalog?.[instanceTier] ?? []).map((inst) => (
+                                            <button
+                                                key={inst.name}
+                                                type="button"
+                                                data-testid={`aws-inst-${inst.name}`}
+                                                onClick={() => dispatch({
+                                                    type: "SET_RESOURCE",
+                                                    payload: catalogRowToSelectedResource(inst),
+                                                })}
+                                                className={cn(
+                                                    "p-3 rounded-lg border text-left transition-colors",
+                                                    selectedResource?.provider_resource_id === inst.name
+                                                        ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
+                                                        : "border-border hover:border-ember-400"
+                                                )}
+                                            >
+                                                <div className="font-bold">{inst.name}</div>
+                                                {instanceTier === "cpu" ? (
+                                                    <div className="text-xs text-muted-foreground">
+                                                        {inst.vcpu} vCPU / {inst.ram_gb}GB RAM
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        <div className="text-xs text-muted-foreground">
+                                                            {inst.gpu_model ?? "GPU"} • {inst.gpu_ram_gb}GB VRAM
+                                                        </div>
+                                                        <div className="text-xs text-muted-foreground">
+                                                            {inst.gpu_count} GPU{inst.gpu_count === 1 ? "" : "s"}
+                                                        </div>
+                                                    </>
+                                                )}
+                                                <div className="text-xs text-muted-foreground mt-1">
+                                                    {inst.vcpu} vCPU • {inst.ram_gb}GB RAM
+                                                </div>
+                                                <div className="text-xs text-ember-700 dark:text-ember-300 mt-1">
+                                                    ≈${inst.price_per_hour.toFixed(3)}/hr
+                                                </div>
+                                            </button>
+                                        ))
+                                    )
+                                ) : (
+                                    gcpGpuTypes.map((gpu) => (
+                                        <button
+                                            key={gpu.gpu_type}
+                                            onClick={() => dispatch({ type: "SET_RESOURCE", payload: { gpu_type: gpu.gpu_type, gpu_memory_gb: gpu.gpu_memory_gb, vcpu: gpu.vcpu, ram_gb: gpu.ram_gb, price_per_hour: estimateGcpCost(gpu.gpu_type, useSpot) }})}
+                                            className={cn(
+                                                "p-3 rounded-lg border text-left transition-colors",
+                                                selectedResource?.gpu_type === gpu.gpu_type
+                                                    ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
+                                                    : "border-border hover:border-ember-400"
+                                            )}
+                                        >
+                                            <div className="font-bold">{gpu.gpu_type}</div>
+                                            <div className="text-xs text-muted-foreground">{gpu.gpu_memory_gb}GB VRAM</div>
+                                            <div className="text-xs text-muted-foreground">{gpu.vcpu} vCPU</div>
+                                        </button>
+                                    ))
+                                )}
                             </div>
                         </div>
 
-                        {/* GPU Count Selection */}
-                        <div className="mb-6">
-                            <label className="text-sm font-medium mb-2 block">Number of GPUs</label>
-                            <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
-                                {[1, 2, 4, 8].map((count) => (
-                                    <button
-                                        key={count}
-                                        onClick={() => dispatch({ type: "SET_GPU_COUNT", payload: count })}
-                                        className={cn(
-                                            "p-3 rounded-lg border text-center font-bold transition-colors",
-                                            gpuCount === count
-                                                ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
-                                                : "border-border hover:border-ember-400"
-                                        )}
-                                    >
-                                        {count}x
-                                    </button>
-                                ))}
+                        {/* GPU Count Selection — hidden on the CPU tier
+                            because there's no GPU to count. SET_INSTANCE_TIER
+                            also force-resets gpuCount=1 in the reducer when
+                            switching to CPU so the submitted payload is
+                            sane. */}
+                        {!(selectedProvider === "aws" && instanceTier === "cpu") && (
+                            <div className="mb-6" data-testid="gpu-count">
+                                <label className="text-sm font-medium mb-2 block">Number of GPUs</label>
+                                <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
+                                    {[1, 2, 4, 8].map((count) => (
+                                        <button
+                                            key={count}
+                                            onClick={() => dispatch({ type: "SET_GPU_COUNT", payload: count })}
+                                            className={cn(
+                                                "p-3 rounded-lg border text-center font-bold transition-colors",
+                                                gpuCount === count
+                                                    ? "border-ember-600 bg-ember-50 dark:bg-ember-900/20"
+                                                    : "border-border hover:border-ember-400"
+                                            )}
+                                        >
+                                            {count}x
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    {gpuCount > 1
+                                        ? `${gpuCount} GPUs will be provisioned on a single node (multi-GPU).`
+                                        : "Single GPU per node."}
+                                </p>
                             </div>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                {gpuCount > 1
-                                    ? `${gpuCount} GPUs will be provisioned on a single node (multi-GPU).`
-                                    : "Single GPU per node."}
-                            </p>
-                        </div>
+                        )}
 
                         {/* Spot Toggle */}
                         <div className="p-4 rounded-lg border border-border bg-card">
@@ -796,20 +1030,30 @@ export default function NewPool() {
                             </div>
                             {useSpot && (
                                 <div className="mt-2 text-xs text-ember-600">
-                                    Estimated cost: ~${(estimateGcpCost(selectedResource?.gpu_type || 'A100', true) * gpuCount).toFixed(2)}/hr (60% savings)
+                                    Estimated cost: ~${(computeHourlyCost(selectedResource, useSpot, gpuCount, estimateGcpCost)).toFixed(2)}/hr (60% savings)
                                 </div>
                             )}
                         </div>
 
-                        {/* Summary */}
+                        {/* Summary. For AWS entries (and any other case
+                            where price_per_hour is set on the selected
+                            resource) we use that directly — the spot
+                            discount is applied multiplicatively to match
+                            estimateGcpCost's 0.4x. GCP entries with no
+                            explicit price still fall through to the
+                            semantic-name lookup table. */}
                         {selectedRegion && selectedResource && (
                             <div className="mt-4 p-4 rounded-lg bg-ember-50 dark:bg-ember-900/20 border border-ember-200 dark:border-ember-800">
                                 <div className="text-sm font-medium text-ember-800 dark:text-ember-200">
-                                    Summary: {gpuCount}x {selectedResource.gpu_type} in {selectedRegion}
+                                    Summary: {gpuCount}x{" "}
+                                    {selectedProvider === "aws" && selectedResource.provider_resource_id
+                                        ? selectedResource.provider_resource_id
+                                        : selectedResource.gpu_type}
+                                    {" "}in {selectedRegion}
                                     {useSpot && " (Spot)"}
                                 </div>
                                 <div className="text-xs text-ember-600 dark:text-ember-400">
-                                    Estimated: ${(estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount).toFixed(2)}/hr
+                                    Estimated: ${computeHourlyCost(selectedResource, useSpot, gpuCount, estimateGcpCost).toFixed(2)}/hr
                                 </div>
                             </div>
                         )}

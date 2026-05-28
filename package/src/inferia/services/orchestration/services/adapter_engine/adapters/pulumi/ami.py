@@ -21,7 +21,7 @@ class AMILookupError(RuntimeError):
 
 _DLAMI_PARAMETER = (
     "/aws/service/deeplearning/ami/x86_64/"
-    "oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
+    "base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
 )
 # Generic Ubuntu 22.04 AMI for CPU-only instances (no NVIDIA driver).
 _UBUNTU_PARAMETER = (
@@ -74,3 +74,40 @@ def latest_dlami_ami(
 # Re-exported so callers can switch to the plain Ubuntu image for CPU-only
 # instance types (NVIDIA driver isn't useful on a t3.micro).
 PLAIN_UBUNTU_PARAMETER = _UBUNTU_PARAMETER
+
+
+# Instance classes that need an NVIDIA-driver-bearing AMI. Anything not
+# in this set falls back to the plain Ubuntu AMI (cheaper, smaller, no
+# wasted driver init time on a CPU instance).
+_GPU_INSTANCE_CLASSES: frozenset[str] = frozenset({"normal_gpu", "heavy_gpu"})
+
+
+def resolve_ami(
+    *,
+    region: str,
+    instance_class: str,
+    creds: "AWSCredentials | None" = None,  # noqa: F821  (forward ref)
+) -> str:
+    """Resolve the right AMI for an ``instance_class`` in ``region``.
+
+    GPU classes (``normal_gpu``, ``heavy_gpu``) → latest DLAMI Ubuntu 22.04
+    + NVIDIA driver. CPU class → plain Ubuntu 22.04. Used by the
+    PreflightHandler so the operator gets an AMI mismatch error within
+    seconds rather than after a long ``stack.up()`` retry storm.
+
+    The ``creds`` argument is the AWSCredentials bundle the reconciler
+    builds from ProvidersConfig. When None, falls back to the boto3
+    default credential chain (useful for tests).
+    """
+    aws_access_key_id = creds.access_key_id if creds is not None else None
+    aws_secret_access_key = creds.secret_access_key if creds is not None else None
+    parameter = (
+        _DLAMI_PARAMETER if instance_class in _GPU_INSTANCE_CLASSES
+        else _UBUNTU_PARAMETER
+    )
+    return latest_dlami_ami(
+        region,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        parameter_name=parameter,
+    )

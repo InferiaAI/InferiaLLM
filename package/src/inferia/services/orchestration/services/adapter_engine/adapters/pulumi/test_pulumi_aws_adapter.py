@@ -1,16 +1,30 @@
-"""Tests for PulumiAWSAdapter — happy provision + edge cases."""
-import asyncio
+"""Tests for run_pulumi_up_sync — the pure sync function that replaces
+provision_node + _provision_async.
+
+Pre-T10, this module also tested PulumiAWSAdapter.provision_node /
+_provision_async / provision_cluster. Those methods were deleted in T10
+because their DB-write side effects move to the reconciler in T15+.
+Only tests for the pure run_pulumi_up_sync helper and the surviving
+adapter methods (wait_for_ready, deprovision_node, discover_resources,
+get_logs) remain.
+"""
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
 
 import pytest
 
-from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.credentials import (
-    MissingCredentialsError,
-)
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
     PulumiAWSAdapter,
     ProvisionError,
+    StackOutputs,
+    run_pulumi_up_sync,
+)
+from inferia.services.orchestration.services.provisioning.errors import (
+    AMINotFoundError,
+    InvalidCredentialsError,
+    PulumiCliMissingError,
+    PulumiTransientError,
 )
 
 
@@ -39,139 +53,330 @@ def fake_db():
 @pytest.fixture
 def aws_config():
     from inferia.services.api_gateway.config import (
-        AWSConfig, CloudConfig, ProvidersConfig,
+        AWSConfig,
+        CloudConfig,
+        ProvidersConfig,
     )
+
     return ProvidersConfig(cloud=CloudConfig(aws=AWSConfig(**_aws_cfg_dict())))
 
 
-@pytest.mark.asyncio
-async def test_provision_node_kicks_off_async_task(fake_db, aws_config, tmp_path):
-    """provision_node returns immediately with state=provisioning and
-    schedules a background task that calls asyncio.to_thread(stack.up)."""
-    pool_id = "00000000-0000-0000-0000-000000000001"
-    org_id = "11111111-1111-1111-1111-111111111111"
+# ---------------------------------------------------------------------------
+# T10: run_pulumi_up_sync — the pure synchronous Pulumi-up function.
+# ---------------------------------------------------------------------------
 
+
+def test_run_pulumi_up_sync_returns_stack_outputs_on_success():
+    """A successful stack.up() returns a StackOutputs dataclass."""
     fake_stack = MagicMock()
-    fake_stack.up = MagicMock(return_value=MagicMock(outputs={}))
-    fake_stack.set_config = MagicMock()
-
+    fake_stack.up.return_value = MagicMock(outputs={
+        "instance_id": MagicMock(value="i-abc"),
+        "public_dns": MagicMock(value="ec2-1-2-3-4.compute-1.amazonaws.com"),
+        "region": MagicMock(value="us-east-1"),
+        "ami_id": MagicMock(value="ami-deadbeef"),
+    })
     with patch(
-        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
-        "pulumi.automation.create_or_select_stack",
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
-    ), patch(
-        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
-        "load_providers_config",
-        return_value=aws_config,
-    ), patch(
-        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
-        "mint_bootstrap_token",
-        new=AsyncMock(return_value=("tok-xyz", UUID(int=42))),
     ):
-        adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
-        result = await adapter.provision_node(
-            provider_resource_id="g5.xlarge",
-            pool_id=pool_id,
-            org_id=org_id,
-            region="us-east-1",
+        out = run_pulumi_up_sync(
+            stack_name="org-pool-node",
+            program=lambda: None,
+            env={"AWS_ACCESS_KEY_ID": "x", "AWS_SECRET_ACCESS_KEY": "y"},
+        )
+    assert isinstance(out, StackOutputs)
+    assert out.instance_id == "i-abc"
+    assert out.region == "us-east-1"
+
+
+def test_run_pulumi_up_sync_raises_pulumi_cli_missing_on_filenotfounderror():
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        side_effect=FileNotFoundError("[Errno 2] No such file or directory: 'pulumi'"),
+    ):
+        with pytest.raises(PulumiCliMissingError):
+            run_pulumi_up_sync(
+                stack_name="s", program=lambda: None, env={},
+            )
+
+
+def test_run_pulumi_up_sync_raises_invalid_credentials_on_auth_failure():
+    """Pulumi up surfacing an AWS AuthFailure becomes InvalidCredentialsError."""
+    fake_stack = MagicMock()
+    err = Exception(
+        "operation failed: AuthFailure: AWS was not able to validate "
+        "the provided access credentials"
+    )
+    fake_stack.up.side_effect = err
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ):
+        with pytest.raises(InvalidCredentialsError):
+            run_pulumi_up_sync(
+                stack_name="s", program=lambda: None, env={},
+            )
+
+
+def test_run_pulumi_up_sync_raises_ami_not_found():
+    fake_stack = MagicMock()
+    fake_stack.up.side_effect = Exception(
+        "InvalidAMIID.NotFound: The image id '[ami-deadbeef]' does not exist"
+    )
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ):
+        with pytest.raises(AMINotFoundError):
+            run_pulumi_up_sync(
+                stack_name="s", program=lambda: None, env={},
+            )
+
+
+def test_run_pulumi_up_sync_uses_local_workspace_with_env():
+    """Env vars are passed into local_workspace_opts so Pulumi inherits them."""
+    fake_stack = MagicMock()
+    fake_stack.up.return_value = MagicMock(outputs={
+        "instance_id": MagicMock(value="i-x"),
+    })
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ) as mk:
+        run_pulumi_up_sync(
+            stack_name="s",
+            program=lambda: None,
+            env={"AWS_ACCESS_KEY_ID": "K", "AWS_SECRET_ACCESS_KEY": "S"},
+        )
+    kwargs = mk.call_args.kwargs
+    assert kwargs["env"] == {"AWS_ACCESS_KEY_ID": "K", "AWS_SECRET_ACCESS_KEY": "S"}
+
+
+def test_run_pulumi_up_sync_passes_project_name_and_state_dir():
+    """_make_stack receives project_name + state_dir; project name comes
+    from PROJECT_NAME constant by default. This is the Critical-1 path
+    surfaced in T10 review: ``auto.create_or_select_stack`` requires a
+    project_name for inline programs, and the reconciler must pass a
+    persistent state_dir so deprovision_node can later reopen the same
+    stack."""
+    fake_stack = MagicMock()
+    fake_stack.up.return_value = MagicMock(outputs={
+        "instance_id": MagicMock(value="i-x"),
+    })
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ) as mk:
+        run_pulumi_up_sync(
+            stack_name="s",
+            program=lambda: None,
+            env={"AWS_ACCESS_KEY_ID": "K", "AWS_SECRET_ACCESS_KEY": "S"},
+            state_dir="/var/lib/inferia/pulumi",
+        )
+    kwargs = mk.call_args.kwargs
+    assert kwargs["project_name"] == "inferia-aws"
+    assert kwargs["state_dir"] == "/var/lib/inferia/pulumi"
+
+
+def test_make_stack_merges_pulumi_env_from_process_env(monkeypatch):
+    """If the caller doesn't pass PULUMI_BACKEND_URL/etc, _make_stack
+    pulls them from the process environment (Critical-2 from T10 review).
+    Without this merge the stack would land on Pulumi cloud (or fail)
+    and the state wouldn't be reusable across pulumi up + deprovision_node.
+
+    Patches LocalWorkspaceOptions + create_or_select_stack directly so
+    no real pulumi.automation imports happen (the auto module is already
+    available via pulumi.automation at module import time)."""
+    monkeypatch.setenv("PULUMI_BACKEND_URL", "file:///tmp/pulumi-state")
+    monkeypatch.setenv("PULUMI_CONFIG_PASSPHRASE", "test-pass")
+    monkeypatch.setenv("PULUMI_HOME", "/tmp/pulumi-home")
+
+    captured: dict = {}
+
+    def fake_local_workspace_options(**kw):
+        captured["lwo"] = kw
+        return MagicMock()
+
+    def fake_create_or_select_stack(**kw):
+        captured["cos"] = kw
+        return MagicMock()
+
+    def fake_project_settings(**kw):
+        captured["ps"] = kw
+        return MagicMock()
+
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as adapter_mod,
+    )
+    with patch.object(
+        adapter_mod, "pulumi", MagicMock()
+    ), patch(
+        "pulumi.automation.LocalWorkspaceOptions", side_effect=fake_local_workspace_options
+    ), patch(
+        "pulumi.automation.create_or_select_stack", side_effect=fake_create_or_select_stack
+    ), patch(
+        "pulumi.automation.ProjectSettings", side_effect=fake_project_settings
+    ):
+        adapter_mod._make_stack(
+            stack_name="s",
+            program=lambda: None,
+            env={"AWS_ACCESS_KEY_ID": "K"},
         )
 
-    assert result["provider"] == "aws"
-    assert result["lifecycle_state"] == "provisioning"
-    assert result["region"] == "us-east-1"
-    assert result["metadata"]["pulumi_stack"] == f"inferia-pool-{pool_id}"
-
-    # The background task must have been created. Cancel/await so the
-    # test doesn't leak.
-    for t in list(asyncio.all_tasks()):
-        if t.get_coro() and t.get_coro().__name__ == "_provision_async":
-            t.cancel()
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
+    # AWS creds preserved; Pulumi backend env merged in from process env.
+    env_vars = captured["lwo"]["env_vars"]
+    assert env_vars["AWS_ACCESS_KEY_ID"] == "K"
+    assert env_vars["PULUMI_BACKEND_URL"] == "file:///tmp/pulumi-state"
+    assert env_vars["PULUMI_CONFIG_PASSPHRASE"] == "test-pass"
+    assert env_vars["PULUMI_HOME"] == "/tmp/pulumi-home"
+    # project_name + workspace project_settings carry "inferia-aws".
+    assert captured["cos"]["project_name"] == "inferia-aws"
+    assert captured["ps"]["name"] == "inferia-aws"
 
 
-@pytest.mark.asyncio
-async def test_provision_node_missing_creds_raises(fake_db, tmp_path):
-    from inferia.services.api_gateway.config import (
-        AWSConfig, CloudConfig, ProvidersConfig,
+def test_make_stack_caller_pulumi_env_wins_over_process_env(monkeypatch):
+    """If the caller explicitly puts a PULUMI_* var in `env`, _make_stack
+    must NOT overwrite it with the process-env value. The merge is a
+    fallback for missing keys, not a force-set."""
+    monkeypatch.setenv("PULUMI_BACKEND_URL", "file:///process/pulumi-state")
+    captured: dict = {}
+
+    def fake_local_workspace_options(**kw):
+        captured["lwo"] = kw
+        return MagicMock()
+
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as adapter_mod,
     )
-    empty_cfg = ProvidersConfig(cloud=CloudConfig(aws=AWSConfig()))
     with patch(
-        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
-        "load_providers_config",
-        return_value=empty_cfg,
+        "pulumi.automation.LocalWorkspaceOptions", side_effect=fake_local_workspace_options
+    ), patch(
+        "pulumi.automation.create_or_select_stack", return_value=MagicMock()
+    ), patch(
+        "pulumi.automation.ProjectSettings", return_value=MagicMock()
     ):
-        adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
-        with pytest.raises(MissingCredentialsError):
-            await adapter.provision_node(
-                provider_resource_id="g5.xlarge",
-                pool_id="x",
-                org_id="x",
-                region="us-east-1",
-            )
-    # Crucially: NO bootstrap token DB write happened.
-    fake_db.execute.assert_not_called()
+        adapter_mod._make_stack(
+            stack_name="s",
+            program=lambda: None,
+            env={
+                "AWS_ACCESS_KEY_ID": "K",
+                "PULUMI_BACKEND_URL": "file:///caller/pulumi-state",
+            },
+        )
+
+    assert captured["lwo"]["env_vars"]["PULUMI_BACKEND_URL"] == "file:///caller/pulumi-state"
 
 
-@pytest.mark.asyncio
-async def test_provision_node_invalid_metadata_rejected(fake_db, aws_config, tmp_path):
-    """A pool with metadata={subnet_id: 'bogus'} must be rejected by
-    AWSPoolMetadata before any AWS call."""
+# ---------------------------------------------------------------------------
+# Edge cases for the run_pulumi_up_sync error-classification heuristic.
+# These cover throttling (-> PulumiTransientError) and unknown errors
+# (-> re-raise so the reconciler's classifier sees them as UNCLASSIFIED).
+# ---------------------------------------------------------------------------
+
+
+def test_run_pulumi_up_sync_raises_transient_on_throttling():
+    fake_stack = MagicMock()
+    fake_stack.up.side_effect = Exception(
+        "RequestLimitExceeded: Request rate limit exceeded"
+    )
     with patch(
-        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
-        "load_providers_config",
-        return_value=aws_config,
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
     ):
-        adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
-        with pytest.raises(ProvisionError):
-            await adapter.provision_node(
-                provider_resource_id="g5.xlarge",
-                pool_id="x",
-                org_id="x",
-                region="us-east-1",
-                metadata={"subnet_id": "bogus", "security_group_ids": ["sg-abcdef012"]},
+        with pytest.raises(PulumiTransientError):
+            run_pulumi_up_sync(
+                stack_name="s", program=lambda: None, env={},
             )
 
 
-@pytest.mark.asyncio
-async def test_provision_async_failure_marks_pool_failed(fake_db, aws_config, tmp_path):
-    """When asyncio.to_thread(stack.up) raises, the pool moves to lifecycle_state='failed'
-    and the error message lands in metadata.error."""
+def test_run_pulumi_up_sync_raises_transient_on_throttling_keyword():
     fake_stack = MagicMock()
-    fake_stack.up = MagicMock(side_effect=Exception("InsufficientInstanceCapacity"))
-    fake_stack.destroy = MagicMock(return_value=None)
-    adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
-    await adapter._provision_async(fake_stack, "00000000-0000-0000-0000-000000000001", "boot-1")
-    # _db.execute called with UPDATE compute_pools ... lifecycle_state='failed'
-    failed_call = any(
-        "lifecycle_state" in str(c) and "'failed'" in str(c)
-        for c in fake_db.execute.call_args_list
+    fake_stack.up.side_effect = Exception(
+        "operation failed: Throttling: rate exceeded"
     )
-    assert failed_call, fake_db.execute.call_args_list
-    fake_stack.destroy.assert_called_once()
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ):
+        with pytest.raises(PulumiTransientError):
+            run_pulumi_up_sync(
+                stack_name="s", program=lambda: None, env={},
+            )
 
 
-@pytest.mark.asyncio
-async def test_provision_async_success_writes_outputs(fake_db, aws_config, tmp_path):
-    """On asyncio.to_thread(stack.up) success, instance_id/public_dns/private_ip go into
-    compute_pools.metadata via a jsonb-merge UPDATE."""
+def test_run_pulumi_up_sync_reraises_unknown_error():
+    """Errors that don't match any heuristic pattern propagate unchanged so
+    the reconciler's classifier maps them to UNCLASSIFIED PERMANENT."""
     fake_stack = MagicMock()
-    fake_output = lambda v: MagicMock(value=v)
-    fake_stack.up = MagicMock(return_value=MagicMock(outputs={
-        "instance_id": fake_output("i-abc"),
-        "public_dns":  fake_output("ec2-1-2-3.amazon.com"),
-        "private_ip":  fake_output("10.0.0.5"),
-    }))
-    adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
-    await adapter._provision_async(fake_stack, "00000000-0000-0000-0000-000000000001", "boot-1")
-    write_call = next(
-        c for c in fake_db.execute.call_args_list
-        if "compute_pools" in str(c) and "metadata" in str(c)
-    )
-    body = str(write_call)
-    assert "i-abc" in body and "10.0.0.5" in body
+    fake_stack.up.side_effect = RuntimeError("some unfamiliar pulumi failure")
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ):
+        with pytest.raises(RuntimeError, match="some unfamiliar pulumi failure"):
+            run_pulumi_up_sync(
+                stack_name="s", program=lambda: None, env={},
+            )
+
+
+def test_run_pulumi_up_sync_propagates_provisioning_errors():
+    """A ProvisioningError raised from inside stack.up() is propagated
+    unchanged — the classifier (already running upstream) is the source of
+    truth for that case."""
+    fake_stack = MagicMock()
+    fake_stack.up.side_effect = AMINotFoundError("ami already classified")
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ):
+        with pytest.raises(AMINotFoundError, match="ami already classified"):
+            run_pulumi_up_sync(
+                stack_name="s", program=lambda: None, env={},
+            )
+
+
+# ---------------------------------------------------------------------------
+# StackOutputs dataclass: handles missing keys and raw (non-Reference) values.
+# ---------------------------------------------------------------------------
+
+
+def test_stack_outputs_from_pulumi_outputs_handles_missing_keys():
+    out = StackOutputs.from_pulumi_outputs({})
+    assert out.instance_id is None
+    assert out.public_dns is None
+    assert out.region is None
+    assert out.ami_id is None
+
+
+def test_stack_outputs_from_pulumi_outputs_handles_raw_values():
+    """Outputs may be raw scalars (no `.value` attribute) in unit tests
+    that bypass pulumi.automation.OutputValue. Verify the helper accepts
+    both shapes."""
+    out = StackOutputs.from_pulumi_outputs({
+        "instance_id": "i-raw",
+        "public_dns": MagicMock(value="dns-wrapped"),
+    })
+    assert out.instance_id == "i-raw"
+    assert out.public_dns == "dns-wrapped"
+    assert out.region is None
+    assert out.ami_id is None
+
+
+# ---------------------------------------------------------------------------
+# Surviving adapter methods — wait_for_ready, deprovision_node, discover,
+# get_logs. These don't write to compute_pools.metadata; the reconciler
+# owns lifecycle.
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

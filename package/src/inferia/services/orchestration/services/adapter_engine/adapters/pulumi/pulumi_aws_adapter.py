@@ -1,40 +1,39 @@
-"""Pulumi-backed AWS EC2 provisioning adapter.
+"""Pulumi AWS adapter — pure functions, no DB writes.
 
-provision_node returns immediately with lifecycle_state='provisioning'
-and schedules an asyncio background task that calls asyncio.to_thread(stack.up)().
+Pre-refactor (May 2026), this module held a fire-and-forget asyncio task
+that ran ``stack.up()`` and wrote outputs to ``compute_pools.metadata``.
+That swallowed errors. Post-refactor (T10 of the AWS-EC2-node-allocation
+plan), the public entry point for Pulumi work is ``run_pulumi_up_sync``
+— a synchronous function that returns ``StackOutputs`` or raises a typed
+``ProvisioningError``. The reconciler (T15+) is responsible for wrapping
+calls in ``asyncio.to_thread(...)`` and writing outcomes to the
+``provisioning_jobs`` table.
+
+The ``PulumiAWSAdapter`` class still exists because the orchestrator
+constructs it for ``deprovision_node`` / ``wait_for_ready`` /
+``discover_resources`` / ``get_logs``. Its ``provision_node`` and
+``provision_cluster`` methods now raise ``NotImplementedError`` —
+callers must go through the reconciler instead. ``add_provider_node``
+in ``api/nodes.py`` is rewritten in T23 to enqueue a provisioning job
+rather than call ``provision_node`` directly.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from typing import Any, Dict, List, Optional
-from uuid import UUID
+import os
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
 
 import pulumi.automation
 
 from inferia.services.api_gateway.config import ProvidersConfig
 from inferia.services.orchestration.config import settings
-from inferia.services.orchestration.services.adapter_engine.adapters.aws.bootstrap_builder import (
-    build_user_data,
-)
-from inferia.services.orchestration.services.adapter_engine.adapters.aws.pool_metadata import (
-    AWSPoolMetadata,
-)
-from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
-    AMILookupError,
-    latest_dlami_ami,
-)
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.base import (
     PulumiProvisioningBase,
-    PulumiStateError,
 )
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.credentials import (
-    MissingCredentialsError,
     resolve_aws_env,
-)
-from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.programs import (
-    build_ec2_program,
 )
 from inferia.services.orchestration.services.adapter_engine.base import (
     AdapterType,
@@ -42,17 +41,176 @@ from inferia.services.orchestration.services.adapter_engine.base import (
     ProviderAdapter,
     ProviderCapabilities,
 )
-from inferia.services.orchestration.services.worker_controller.auth import (
-    mint_bootstrap_token,
+from inferia.services.orchestration.services.provisioning.errors import (
+    AMINotFoundError,
+    InvalidCredentialsError,
+    ProvisioningError,
+    PulumiCliMissingError,
+    PulumiTransientError,
 )
 
 logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "inferia-aws"
 
+# Where the cloudflared sidecar (deploy/docker-compose.yml) writes the
+# ephemeral public tunnel URL. Read at provision time, NOT at startup,
+# so a control-plane restart picks up a freshly-rotated tunnel URL on
+# the next provision without needing a separate refresh path.
+_TUNNEL_URL_FILE = "/var/lib/inferia/tunnel/url"
+
+# Operator-supplied SSH authorized_keys mounted into the orchestration
+# container (see deploy/docker-compose.yml). Each line is one public
+# key; when non-empty the EC2 bootstrap installs zsh + writes the
+# keys for both `ubuntu` and `root` users.
+_SSH_AUTHORIZED_KEYS_FILE = "/var/lib/inferia/ssh/authorized_keys"
+
+
+def _resolve_ssh_authorized_keys() -> str:
+    """Read the operator-supplied authorized_keys file if present.
+
+    Returns the file contents or "" when no file (or unreadable). The
+    bootstrap_builder treats empty as "skip SSH setup entirely", so a
+    misconfigured mount degrades gracefully.
+    """
+    try:
+        with open(_SSH_AUTHORIZED_KEYS_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
+
+# Hosts the EC2 worker can NEVER reach, even though they may be set in
+# settings.control_plane_external_url (typically through docker-compose
+# defaults). Reject these upfront so we don't burn an EC2 instance only
+# to have it hang at the worker_bootstrap phase.
+_UNREACHABLE_HOSTS = (
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "inferia-app",   # docker-compose service hostname; only resolves inside the compose network
+)
+
+
+def _resolve_control_plane_url() -> Optional[str]:
+    """Determine the public URL the cloud worker should call back to.
+
+    Priority:
+      1. ``settings.control_plane_external_url`` when it points at a
+         public host (i.e. passes ``_validate_control_plane_url``).
+         Operators override via INFERIA_CONTROL_PLANE_EXTERNAL_URL.
+      2. The URL the cloudflared sidecar writes to ``/var/lib/inferia/tunnel/url``.
+    The settings default is the docker-compose service hostname
+    ``http://api-gateway:8000``; that fails validation and falls
+    through to the sidecar file automatically — so the typical dev
+    flow (just bring up the stack with cloudflared) works without
+    setting any env var.
+
+    Returns ``None`` when neither produces a public URL; the caller
+    fails the prepare phase with a helpful message.
+    """
+    explicit = (settings.control_plane_external_url or "").strip()
+    if explicit and _validate_control_plane_url(explicit) is None:
+        return explicit
+    try:
+        with open(_TUNNEL_URL_FILE, "r", encoding="utf-8") as f:
+            url = f.read().strip()
+        return url or None
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
+
+
+def _validate_control_plane_url(url: Optional[str]) -> Optional[str]:
+    """Return an error message if the URL is not reachable from the public
+    internet (i.e. would leave the worker stuck at worker_bootstrap), or
+    None when it looks valid.
+
+    Catches both the obvious bad hosts (localhost, 127.0.0.1, the
+    docker-compose service names we know about) AND any unqualified
+    hostname (no dot in the host portion). Public DNS hostnames always
+    contain at least one dot — anything else is a docker / k8s service
+    name that an EC2 instance can never resolve.
+    """
+    if not url:
+        return (
+            "CONTROL_PLANE_EXTERNAL_URL is not configured. Cloud workers cannot "
+            "phone home. Either set the INFERIA_CONTROL_PLANE_EXTERNAL_URL env "
+            "var on the control plane, or start the bundled `cloudflared` "
+            "service (see deploy/docker-compose.yml) to auto-generate a public "
+            "tunnel URL."
+        )
+    lowered = url.lower()
+    if not (lowered.startswith("http://") or lowered.startswith("https://")):
+        return f"CONTROL_PLANE_EXTERNAL_URL={url!r} must include a scheme (http:// or https://)."
+    # Pull out the host portion ("host" or "host:port") between "//" and the
+    # first "/" or end-of-string.
+    after_scheme = lowered.split("//", 1)[1]
+    host_with_port = after_scheme.split("/", 1)[0]
+    host = host_with_port.split(":", 1)[0]
+    if host in _UNREACHABLE_HOSTS:
+        return (
+            f"CONTROL_PLANE_EXTERNAL_URL={url!r} points at {host!r}, which "
+            "is not reachable from a cloud EC2 instance. Use a public "
+            "hostname (ngrok / cloudflared / your routable DNS) instead."
+        )
+    # A public DNS hostname always has a dot (`example.com`,
+    # `tunnel.trycloudflare.com`); IPv4 addresses have dots too. Anything
+    # else is a docker / k8s service name and cannot be resolved from EC2.
+    # IPv6 hostnames would contain ':' which we already split out.
+    if "." not in host:
+        return (
+            f"CONTROL_PLANE_EXTERNAL_URL={url!r} uses an unqualified hostname "
+            f"({host!r}). A cloud EC2 instance cannot resolve it. Set "
+            "INFERIA_CONTROL_PLANE_EXTERNAL_URL to a public URL (e.g. via the "
+            "cloudflared sidecar in deploy/docker-compose.yml)."
+        )
+    return None
+
+# Map semantic GPU names → a sensible default EC2 instance type. Defensive
+# layer for callers (dashboards, scripts) that pass a GPU name like "T4"
+# where AWS expects an instance type like "g4dn.xlarge". A real instance
+# type always contains a '.'; everything that doesn't is treated as a GPU
+# name candidate. Choose the smallest/cheapest variant per family so this
+# is safe to apply silently on smoke tests; operators wanting bigger
+# variants pass the full instance type explicitly.
+_GPU_NAME_TO_INSTANCE: Dict[str, str] = {
+    "T4":    "g4dn.xlarge",
+    "A10G":  "g5.xlarge",
+    "L4":    "g6.xlarge",
+    "L40S":  "g6e.xlarge",
+    "V100":  "p3.2xlarge",
+    "A100":  "p4d.24xlarge",
+    "H100":  "p5.48xlarge",
+    "H200":  "p5e.48xlarge",
+}
+
+
+def _resolve_instance_type(value: str) -> tuple[str, Optional[str]]:
+    """Return (instance_type, mapped_from_gpu_name_or_None).
+
+    If `value` already looks like an EC2 instance type (contains '.'),
+    pass it through. Otherwise look it up in the GPU-name table. If the
+    name isn't recognized, return it unchanged — Pulumi will surface
+    AWS's InvalidParameterValue error in pulumi_up/failed, which the
+    new UX captures cleanly.
+    """
+    if not value or "." in value:
+        return value, None
+    mapped = _GPU_NAME_TO_INSTANCE.get(value.upper())
+    if mapped:
+        return mapped, value
+    return value, None
+
 
 class ProvisionError(Exception):
-    """Surface-safe provisioning error (no internal stack text)."""
+    """Surface-safe provisioning error (no internal stack text).
+
+    Kept for callers that still raise/catch this type via the surviving
+    adapter methods (wait_for_ready / deprovision_node fallbacks). New
+    code should use the typed hierarchy in
+    ``inferia.services.orchestration.services.provisioning.errors``
+    instead.
+    """
 
 
 async def load_providers_config() -> ProvidersConfig:
@@ -69,6 +227,211 @@ async def load_providers_config() -> ProvidersConfig:
         data = await config_manager.load_config(db) or {}
     raw = data.get("providers") or {}
     return ProvidersConfig.model_validate(raw)
+
+
+# ---------------------------------------------------------------------------
+# Pure Pulumi-up entry point (T10).
+#
+# The reconciler calls ``run_pulumi_up_sync`` from inside
+# ``asyncio.to_thread(...)``. It owns the DB writes, retry policy, and
+# lease ownership; this function only knows how to drive ``pulumi up``
+# and translate AWS errors into the typed exception hierarchy from
+# ``inferia.services.orchestration.services.provisioning.errors``.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StackOutputs:
+    """What the reconciler stores into ``provisioning_jobs.pulumi_stack_outputs``.
+
+    Every field is optional because Pulumi outputs can be missing on a
+    partially-created stack (e.g. when AWS returned an error mid-way and
+    we are inspecting the rollback state). Callers MUST handle ``None``.
+    """
+
+    instance_id: str | None
+    public_dns: str | None
+    region: str | None
+    ami_id: str | None
+
+    @classmethod
+    def from_pulumi_outputs(cls, outputs: dict[str, Any]) -> "StackOutputs":
+        def _v(key: str) -> str | None:
+            ref = outputs.get(key)
+            if ref is None:
+                return None
+            return getattr(ref, "value", ref)
+        return cls(
+            instance_id=_v("instance_id"),
+            public_dns=_v("public_dns"),
+            region=_v("region"),
+            ami_id=_v("ami_id"),
+        )
+
+
+def _make_stack(
+    *,
+    stack_name: str,
+    program: Callable,
+    env: dict[str, str],
+    state_dir: str | None = None,
+    project_name: str = PROJECT_NAME,
+):
+    """Wraps ``pulumi.automation.create_or_select_stack`` with our
+    local-backend env. Extracted so tests can mock it; production calls
+    into ``pulumi.automation`` here.
+
+    ``env`` carries the AWS credentials (resolve_aws_env). Pulumi-side
+    env vars (``PULUMI_BACKEND_URL``, ``PULUMI_CONFIG_PASSPHRASE``,
+    ``PULUMI_HOME``) are merged in from the process environment if not
+    already in ``env`` so the local-backend Pulumi sees them. Without
+    these the stack would land on Pulumi cloud (or fail), and the
+    state wouldn't be reachable by the later deprovision_node call.
+
+    ``state_dir`` overrides the workspace working directory; if
+    ``None``, Pulumi creates a fresh temp dir per call (correct only
+    for tests). Production callers (PulumiUpHandler via the reconciler
+    in T15) MUST pass a persistent ``state_dir`` so subsequent
+    ``deprovision_node`` calls can find the stack.
+
+    ``project_name`` is required by ``create_or_select_stack`` for
+    inline programs; defaults to the module-level ``PROJECT_NAME``
+    constant (``"inferia-aws"``) — the same name used by the surviving
+    ``_select_stack`` method so a stack created here is reopen-able
+    there.
+
+    The wrapped call may raise ``FileNotFoundError`` when the ``pulumi``
+    CLI binary isn't on PATH (memory:
+    feedback_pulumi_cli_binary_required) — ``run_pulumi_up_sync`` catches
+    that and re-raises as ``PulumiCliMissingError``.
+    """
+    from pulumi import automation as auto
+    # Merge Pulumi backend env from the process if the caller didn't supply.
+    full_env = dict(env)
+    for k in ("PULUMI_BACKEND_URL", "PULUMI_CONFIG_PASSPHRASE", "PULUMI_HOME"):
+        if k not in full_env and (v := os.environ.get(k)):
+            full_env[k] = v
+    workspace_opts = auto.LocalWorkspaceOptions(
+        env_vars=full_env,
+        work_dir=state_dir,
+        project_settings=auto.ProjectSettings(
+            name=project_name, runtime="python",
+        ),
+    )
+    return auto.create_or_select_stack(
+        stack_name=stack_name,
+        project_name=project_name,
+        program=program,
+        opts=workspace_opts,
+    )
+
+
+def run_pulumi_up_sync(
+    *,
+    stack_name: str,
+    program: Callable[[], None],
+    env: dict[str, str],
+    state_dir: str | None = None,
+    project_name: str = PROJECT_NAME,
+) -> StackOutputs:
+    """Run ``pulumi up`` synchronously and return the named outputs.
+
+    Raises a typed ``ProvisioningError`` on known failures; the
+    reconciler's classifier maps everything else (including
+    ``pulumi.automation`` internals) to UNCLASSIFIED PERMANENT.
+
+    ``state_dir`` is forwarded to ``_make_stack`` so production
+    callers (PulumiUpHandler in T15) can pin Pulumi to a persistent
+    working directory; without it, deprovision_node would not be
+    able to reopen the stack. ``project_name`` defaults to the
+    module-level ``PROJECT_NAME`` so a stack created here is reachable
+    via ``PulumiAWSAdapter._select_stack`` later.
+
+    This function MUST stay sync. The reconciler wraps it in
+    ``asyncio.to_thread(...)`` because the Pulumi Python SDK has no
+    ``up_async`` (memory: feedback_pulumi_python_sdk_sync).
+    """
+    try:
+        stack = _make_stack(
+            stack_name=stack_name,
+            program=program,
+            env=env,
+            state_dir=state_dir,
+            project_name=project_name,
+        )
+    except FileNotFoundError as e:
+        # `pulumi` binary not on PATH — classic deploy-time failure
+        # (memory: feedback_pulumi_cli_binary_required).
+        raise PulumiCliMissingError(
+            f"pulumi binary missing: {e}",
+        ) from e
+
+    try:
+        result = stack.up()
+    except ProvisioningError:
+        # The classifier (or upstream callers) already chose a code.
+        raise
+    except Exception as e:
+        msg = str(e).lower()
+        # Heuristic mapping for AWS errors that surface through Pulumi's
+        # generic exception type. Classifier handles unknown cases via
+        # UNCLASSIFIED PERMANENT.
+        if "authfailure" in msg or "credentials" in msg or "unauthorized" in msg:
+            raise InvalidCredentialsError(str(e)) from e
+        if "invalidamiid.notfound" in msg or "image id" in msg:
+            raise AMINotFoundError(str(e)) from e
+        if "throttling" in msg or "requestlimitexceeded" in msg:
+            raise PulumiTransientError(str(e)) from e
+        raise  # let the classifier deal with UNCLASSIFIED
+
+    return StackOutputs.from_pulumi_outputs(result.outputs or {})
+
+
+def run_pulumi_destroy_sync(
+    *,
+    stack_name: str,
+    program: Callable[[], None],
+    env: dict[str, str],
+    state_dir: str | None = None,
+    project_name: str = PROJECT_NAME,
+) -> None:
+    """Run ``pulumi destroy`` synchronously. Idempotent — destroying a
+    stack that doesn't exist is treated as success.
+
+    Used by the reconciler's CancelHandler (T17) when a user deletes a
+    node mid-provisioning. The reconciler wraps this in
+    ``asyncio.to_thread(...)`` because the Pulumi Python SDK has no
+    ``destroy_async`` (memory: feedback_pulumi_python_sdk_sync).
+
+    Raises ``PulumiCliMissingError`` when the ``pulumi`` binary isn't on
+    PATH (memory: feedback_pulumi_cli_binary_required). Any other
+    exception that doesn't look like a "no stack" error propagates so
+    the reconciler's classifier can decide retry vs fail.
+    """
+    try:
+        stack = _make_stack(
+            stack_name=stack_name,
+            program=program,
+            env=env,
+            state_dir=state_dir,
+            project_name=project_name,
+        )
+    except FileNotFoundError as e:
+        raise PulumiCliMissingError(f"pulumi binary missing: {e}") from e
+    try:
+        stack.destroy()
+    except Exception as e:
+        if "no stack named" in str(e).lower():
+            return
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Adapter — surviving lifecycle helpers (deprovision, wait_for_ready,
+# discover_resources, get_logs). The reconciler owns provision_node,
+# so the methods that previously drove pulumi.up() are now stubs that
+# raise NotImplementedError pointing at the reconciler.
+# ---------------------------------------------------------------------------
 
 
 class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
@@ -95,224 +458,32 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         )
         self._db = db
 
-    async def provision_node(
-        self,
-        *,
-        provider_resource_id: str,
-        pool_id: str,
-        org_id: str,
-        region: Optional[str] = None,
-        use_spot: bool = False,
-        metadata: Optional[Dict[str, Any]] = None,
-        provider_credential_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        cfg = await load_providers_config()
-        env_vars = resolve_aws_env(cfg)  # raises MissingCredentialsError
+    async def provision_node(self, **_kwargs: Any) -> Dict[str, Any]:
+        """Deprecated since T10. The reconciler owns provisioning.
 
-        pool_meta = dict(metadata or {})
-        if pool_meta:
-            try:
-                AWSPoolMetadata(**pool_meta)
-            except Exception as e:
-                raise ProvisionError(f"invalid AWS metadata: {e}") from e
-
-        account = cfg.cloud.aws
-        region = region or account.region or "us-east-1"
-        subnet_id = pool_meta.get("subnet_id") or account.subnet_id
-        sg_ids = pool_meta.get("security_group_ids") or account.security_group_ids
-        ami_id = pool_meta.get("ami_id") or account.ami_id
-        iam_arn = pool_meta.get("iam_instance_profile") or account.iam_instance_profile
-        root_gb = pool_meta.get("root_volume_gb") or account.root_volume_gb or 100
-        image_tag = (
-            pool_meta.get("worker_image_tag")
-            or account.worker_image_tag
-            or settings.worker_image_tag
-        )
-
-        if not ami_id:
-            # CPU-only instances (t/m/c/r families) don't need the NVIDIA
-            # DLAMI — fall back to plain Ubuntu 22.04, which boots faster
-            # and avoids "instance type doesn't support GPU AMI" errors.
-            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
-                PLAIN_UBUNTU_PARAMETER,
-            )
-            is_gpu_family = provider_resource_id.split(".")[0].lower() in {
-                "g5", "g5g", "g6", "g6e", "g6f", "g4dn", "g4ad", "p4d", "p4de",
-                "p5", "p5e", "p5en", "p3", "p3dn", "p2", "dl1", "dl2q", "trn1",
-                "trn1n", "trn2",
-            }
-            param = None if is_gpu_family else PLAIN_UBUNTU_PARAMETER
-            try:
-                ami_id = latest_dlami_ami(
-                    region,
-                    aws_access_key_id=env_vars["AWS_ACCESS_KEY_ID"],
-                    aws_secret_access_key=env_vars["AWS_SECRET_ACCESS_KEY"],
-                    parameter_name=param,
-                )
-            except AMILookupError as e:
-                raise ProvisionError(f"AMI lookup failed: {e}") from e
-
-        self.ensure_state_dir()  # raises PulumiStateError
-
-        # When constructed via the registry the adapter has no db handle —
-        # mint the bootstrap token through a short-lived asyncpg connection
-        # opened on demand against the orchestration's POSTGRES_DSN.
-        db_conn = self._db
-        owned_conn = False
-        if db_conn is None:
-            import asyncpg
-            db_conn = await asyncpg.connect(dsn=settings.postgres_dsn)
-            owned_conn = True
-        try:
-            token, bootstrap_id = await mint_bootstrap_token(
-                db_conn,
-                pool_id=UUID(pool_id) if isinstance(pool_id, str) else pool_id,
-                org_id=org_id,
-            )
-        finally:
-            if owned_conn:
-                try:
-                    await db_conn.close()
-                except Exception:
-                    pass
-
-        user_data = build_user_data(
-            bootstrap_token=token,
-            control_plane_url=settings.control_plane_external_url,
-            node_name=f"node-{str(bootstrap_id)[:8]}",
-            pool_id=pool_id,
-            image=settings.worker_image,
-            image_tag=image_tag,
-        )
-
-        program = build_ec2_program(
-            pool_id=pool_id,
-            org_id=org_id,
-            bootstrap_id=str(bootstrap_id),
-            instance_type=provider_resource_id,
-            region=region,
-            ami_id=ami_id,
-            subnet_id=subnet_id,
-            security_group_ids=list(sg_ids) if sg_ids else None,
-            iam_instance_profile=iam_arn,
-            root_volume_gb=int(root_gb),
-            user_data=user_data,
-            use_spot=use_spot,
-        )
-        opts = self.local_workspace_opts(env_vars=env_vars)
-        stack = pulumi.automation.create_or_select_stack(
-            stack_name=self.stack_name_for_pool(pool_id),
-            project_name=self.project_name,
-            program=program,
-            opts=pulumi.automation.LocalWorkspaceOptions(
-                work_dir=opts.work_dir,
-                env_vars=opts.env_vars,
-                project_settings=pulumi.automation.ProjectSettings(
-                    name=self.project_name,
-                    runtime="python",
-                ),
-            ),
-        )
-        stack.set_config("aws:region", pulumi.automation.ConfigValue(region))
-
-        asyncio.create_task(self._provision_async(stack, pool_id, str(bootstrap_id)))
-
-        return {
-            "provider": "aws",
-            "provider_instance_id": None,
-            "region": region,
-            "lifecycle_state": "provisioning",
-            "metadata": {
-                "pulumi_stack": self.stack_name_for_pool(pool_id),
-                "bootstrap_id": str(bootstrap_id),
-            },
-        }
-
-    async def provision_cluster(
-        self,
-        *,
-        cluster_name: str,
-        gpu_type: str,
-        gpu_count: int,
-        region: Optional[str] = None,
-        use_spot: bool = False,
-        provider_credential_name: Optional[str] = None,
-        pool_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-        **_ignored: Any,
-    ) -> Dict[str, Any]:
-        """Provision a 1-instance "cluster" — one EC2 instance per pool.
-
-        The compute_pool_manager calls this for cloud providers with
-        supports_cluster_mode=True. We translate the cluster-shaped args
-        into a provision_node call. gpu_type carries the EC2 instance type
-        (the dashboard's resource-card path puts the real instance_id
-        like 't3.micro' / 'g5.xlarge' in allowed_gpu_types[0], which the
-        manager passes here as gpu_type).
+        Callers used to hit this and watch lifecycle_state via the DB.
+        After T10, ``run_pulumi_up_sync`` (module-level) is the only
+        Pulumi entry point and the reconciler in
+        ``services/provisioning/`` drives it. T23 rewrites the only
+        production caller (``api/nodes.py::add_provider_node``) to
+        enqueue a provisioning job instead.
         """
-        if not pool_id or not org_id:
-            raise ProvisionError(
-                "provision_cluster requires pool_id and org_id — update the manager"
-            )
-        result = await self.provision_node(
-            provider_resource_id=gpu_type,
-            pool_id=pool_id,
-            org_id=org_id,
-            region=region,
-            use_spot=use_spot,
-            provider_credential_name=provider_credential_name,
+        raise NotImplementedError(
+            "PulumiAWSAdapter.provision_node was removed in T10. "
+            "Enqueue a provisioning job via the reconciler instead "
+            "(see services/orchestration/services/provisioning/). The "
+            "module-level helper run_pulumi_up_sync is the only "
+            "Pulumi entry point now."
         )
-        return {
-            "cluster_id": cluster_name,
-            "hostname": result.get("metadata", {}).get("public_dns", ""),
-            "ip_address": result.get("metadata", {}).get("private_ip", ""),
-            "provider_instance_id": result.get("provider_instance_id"),
-        }
 
-    async def _provision_async(self, stack: Any, pool_id: str, bootstrap_id: str) -> None:
-        """Run pulumi up. On success, write outputs into compute_pools.metadata.
-        On failure, set lifecycle_state='failed' and record the error."""
-        try:
-            result = await asyncio.to_thread(stack.up)
-            outputs = result.outputs or {}
-            meta_update = {
-                "instance_id": self._extract_output(outputs, "instance_id"),
-                "public_dns":  self._extract_output(outputs, "public_dns"),
-                "private_ip":  self._extract_output(outputs, "private_ip"),
-            }
-            if self._db is not None:
-                await self._db.execute(
-                    "UPDATE compute_pools "
-                    "SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2",
-                    json.dumps(meta_update),
-                    UUID(pool_id),
-                )
-            logger.info("Pulumi up succeeded for pool %s: instance %s",
-                        pool_id, meta_update["instance_id"])
-        except Exception as e:
-            err = str(e)
-            logger.error("Pulumi up failed for pool %s: %s", pool_id, err)
-            if self._db is not None:
-                await self._db.execute(
-                    "UPDATE compute_pools "
-                    "SET lifecycle_state = 'failed', "
-                    "    metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2",
-                    json.dumps({"error": err}),
-                    UUID(pool_id),
-                )
-            try:
-                await asyncio.to_thread(stack.destroy)
-            except Exception as de:
-                logger.warning("destroy failed after up failure: %s", de)
-
-    @staticmethod
-    def _extract_output(outputs: Dict[str, Any], key: str) -> Any:
-        v = outputs.get(key)
-        if v is None:
-            return None
-        return v.value if hasattr(v, "value") else v
+    async def provision_cluster(self, **_kwargs: Any) -> Dict[str, Any]:
+        """Deprecated since T10. The single-node-per-pool model is now
+        handled end-to-end by the reconciler — no separate cluster
+        codepath. See ``provision_node`` docstring."""
+        raise NotImplementedError(
+            "PulumiAWSAdapter.provision_cluster was removed in T10. "
+            "Enqueue a provisioning job via the reconciler instead."
+        )
 
     async def _select_stack(self, pool_id: str) -> Any:
         """Open an existing stack (no program) for wait_for_ready/deprovision.

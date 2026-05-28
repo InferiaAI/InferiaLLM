@@ -23,6 +23,10 @@ import {
 import LabelEditor from "@/components/nodes/LabelEditor";
 import NodeLogs from "@/components/nodes/NodeLogs";
 import NodeShell from "@/components/nodes/NodeShell";
+import ProvisioningStatus from "@/components/nodes/ProvisioningStatus";
+import { AWSMetadataGrid } from "@/components/nodes/AWSMetadataGrid";
+import { RetryProvisioningButton } from "@/components/nodes/RetryProvisioningButton";
+import { getProvisioning, type ProvisioningSummary } from "@/services/provisioningService";
 
 type Tab = "overview" | "labels" | "logs" | "shell";
 
@@ -46,6 +50,7 @@ export default function InstanceDetail() {
   const [node, setNode] = useState<NodeView | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [provisioning, setProvisioning] = useState<ProvisioningSummary | null>(null);
 
   const fetchNode = useCallback(async (silent = false) => {
     if (!id) return;
@@ -67,11 +72,32 @@ export default function InstanceDetail() {
     }
   }, [id, navigate]);
 
+  // Initial load — fires once per id change (fetchNode identity changes when id changes).
   useEffect(() => {
     void fetchNode();
-    const interval = window.setInterval(() => void fetchNode(true), 15_000);
-    return () => window.clearInterval(interval);
   }, [fetchNode]);
+
+  // Adaptive polling interval — re-creates the interval when state changes.
+  useEffect(() => {
+    const period =
+      (node?.state === "provisioning" || node?.state === "ordered") ? 2000 : 15000;
+    const interval = window.setInterval(() => void fetchNode(true), period);
+    return () => window.clearInterval(interval);
+  }, [fetchNode, node?.state]);
+
+  useEffect(() => {
+    if (!id || !node || node.provider !== "aws") return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await getProvisioning(id);
+        if (!cancelled) setProvisioning(r);
+      } catch { /* swallow */ }
+    };
+    void tick();
+    const h = window.setInterval(() => void tick(), 2000);
+    return () => { cancelled = true; window.clearInterval(h); };
+  }, [id, node?.provider]);
 
   const handleAddLabel = async (k: string, v: string) => {
     if (!id) return;
@@ -87,13 +113,21 @@ export default function InstanceDetail() {
 
   const handleDelete = async () => {
     if (!id || !node) return;
-    if (!window.confirm(`Delete node ${node.node_name || id}? This is a soft delete (state → terminated).`)) {
+    const isAwsNode = node.provider === "aws";
+    const prompt = isAwsNode
+      ? `Delete node ${node.node_name || id}? This terminates the EC2 instance and stops billing. Takes up to 90 seconds.`
+      : `Delete node ${node.node_name || id}? The row will be marked terminated.`;
+    if (!window.confirm(prompt)) {
       return;
     }
     setDeleting(true);
     try {
-      await deleteNode(id);
-      toast.success("Node deleted");
+      const result = await deleteNode(id);
+      toast.success(
+        result.terminating
+          ? "Termination started. EC2 destroy may take up to 90 seconds."
+          : "Node deleted",
+      );
       navigate("/dashboard/compute/nodes", { replace: true });
     } catch (e: unknown) {
       const detail =
@@ -110,6 +144,9 @@ export default function InstanceDetail() {
   if (!node) return null;
 
   const isWorker = node.agent_kind === "worker";
+  const isAws = node.provider === "aws";
+  const isProvisioning = node.state === "provisioning";
+  const showLogsAndShell = isWorker || isAws;
   const isConnected =
     isWorker &&
     node.last_heartbeat &&
@@ -198,12 +235,10 @@ export default function InstanceDetail() {
         {([
           { label: "Overview", value: "overview" as const, icon: null },
           { label: "Labels", value: "labels" as const, icon: Tag },
-          // Logs + Shell only make sense for nodes the control plane can
-          // reach via a WS proxy. Workers always qualify (advertise_url +
-          // inference_token are set during /v1/nodes/add/worker). Other
-          // providers (Nosana, Akash placeholders) hide these tabs until
-          // they have a per-deployment terminal log surface.
-          ...(isWorker
+          // Logs + Shell are shown for workers (advertise_url + inference_token
+          // set during /v1/nodes/add/worker) and AWS nodes (provisioning logs
+          // and shell surface available via the orchestration service).
+          ...(showLogsAndShell
             ? [
                 { label: "Logs", value: "logs" as const, icon: ScrollText },
                 { label: "Shell", value: "shell" as const, icon: Terminal },
@@ -229,6 +264,34 @@ export default function InstanceDetail() {
       <div className="space-y-6">
         {activeTab === "overview" && (
           <div className="grid grid-cols-1 gap-6">
+            {isAws && provisioning &&
+              (isProvisioning || provisioning.phases.some(p => p.status === "failed")) && (
+              <ProvisioningStatus
+                summary={provisioning}
+                attemptCount={provisioning.attempt_count ?? 0}
+              />
+            )}
+            {isAws && provisioning?.error && id && (
+              <div
+                className="rounded-lg border border-red-400 bg-red-50 dark:bg-red-950/30 p-4"
+                role="alert"
+              >
+                <h3 className="font-medium text-red-900 dark:text-red-200">
+                  {provisioning.error.message ?? "Provisioning failed"}
+                </h3>
+                {provisioning.error.hint && (
+                  <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                    {provisioning.error.hint}
+                  </p>
+                )}
+                <div className="mt-3">
+                  <RetryProvisioningButton nodeId={id} />
+                </div>
+              </div>
+            )}
+            {isAws && provisioning?.aws_metadata && (
+              <AWSMetadataGrid metadata={provisioning.aws_metadata} />
+            )}
             <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
               <h3 className="font-mono text-sm font-semibold mb-4">Node Information</h3>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 text-sm">
@@ -296,17 +359,17 @@ export default function InstanceDetail() {
           </div>
         )}
 
-        {activeTab === "logs" && isWorker && (
+        {activeTab === "logs" && showLogsAndShell && (
           <div className="space-y-3">
             <div className="text-xs text-muted-foreground">
               Live tail of the most recent model container managed by this worker. If
               no deployment is loaded yet, the stream waits for one to start.
             </div>
-            <NodeLogs nodeId={node.id} />
+            <NodeLogs nodeId={node.id} nodeProvider={node.provider ?? undefined} nodeState={node.state} />
           </div>
         )}
 
-        {activeTab === "shell" && isWorker && (
+        {activeTab === "shell" && showLogsAndShell && (
           <div className="space-y-3">
             <div className="text-xs text-muted-foreground">
               Interactive shell inside the most recent model container. Type
@@ -314,7 +377,11 @@ export default function InstanceDetail() {
               press <kbd className="px-1 py-0.5 rounded border bg-muted text-[10px]">Ctrl</kbd>+
               <kbd className="px-1 py-0.5 rounded border bg-muted text-[10px]">C</kbd> to interrupt.
             </div>
-            <NodeShell nodeId={node.id} />
+            <NodeShell
+              nodeId={node.id}
+              nodeState={node.state}
+              currentPhase={provisioning?.current_phase ?? null}
+            />
           </div>
         )}
 

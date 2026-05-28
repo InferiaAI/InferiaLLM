@@ -23,7 +23,10 @@ from inferia.services.orchestration.v1 import (
 from inferia.services.orchestration.repositories.provider_repo import (
     ProviderResourceRepository,
 )
-from inferia.services.orchestration.services.adapter_engine.registry import get_adapter
+from inferia.services.orchestration.services.adapter_engine.registry import (
+    get_adapter,
+    ADAPTER_REGISTRY,
+)
 from inferia.services.orchestration.services.model_deployment.log_store import (
     DeploymentLogStore,
     DeploymentLogBuffer,
@@ -32,6 +35,11 @@ from inferia.services.orchestration.config import settings as orch_settings
 from typing import Any, Optional
 
 import os
+
+# Strong references to background tasks spawned by /createpool. Without
+# this, CPython may GC them before they run. Tasks self-discard on done.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
 
 def _resolve_postgres_dsn() -> str:
     """Return a raw asyncpg-compatible DSN.
@@ -996,6 +1004,44 @@ async def delete_deployment(deployment_id: str):
     }
 
 
+async def _kick_aws_provision(adapter, req, pool_id, writer, conn_to_close):
+    """Drive the AWS Pulumi provisioning in the background.
+
+    Awaits the adapter's internal `_provision_async` so we can close
+    `conn_to_close` after all UPDATEs settle. Errors from the prep
+    phases are already emitted by the adapter's own try/except — we
+    only log here, no duplicate `prepare/failed` write.
+    """
+    try:
+        await adapter.provision_node(
+            provider_resource_id=(req.allowed_gpu_types[0] if req.allowed_gpu_types else "t3.micro"),
+            pool_id=pool_id,
+            org_id=req.owner_id,
+            region=getattr(req, "region_constraint", None) or None,
+            use_spot=bool(getattr(req, "use_spot", False)),
+            progress_writer=writer,
+        )
+        # Wait for the adapter's spawned _provision_async task so we
+        # can safely close the asyncpg connection it's been using for
+        # the placeholder-swap UPDATEs.
+        prov_task = getattr(adapter, "_last_provision_task", None)
+        if prov_task is not None:
+            try:
+                await prov_task
+            except Exception:
+                pass  # already logged inside _provision_async
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger("deployment-server").exception(
+            "aws provisioning kickoff failed: %s", e,
+        )
+    finally:
+        try:
+            await conn_to_close.close()
+        except Exception:
+            pass
+
+
 @router.post("/createpool")
 async def create_pool(req: CreatePoolRequest, request: Request):
     # Validate provider exists before creating pool
@@ -1073,27 +1119,86 @@ async def create_pool(req: CreatePoolRequest, request: Request):
                 raise HTTPException(status_code=409, detail=e.details())
             raise HTTPException(status_code=500, detail=e.details())
 
-    # Node-centric refactor: insert a placeholder compute_inventory row so the
-    # newly-created provider pool shows up in the Compute Nodes list right
-    # away. For DePIN providers (nosana, akash) and cluster providers
-    # (gcp/aws/etc.) we write a placeholder row marked state='ready' —
-    # there is no real provisioning lifecycle to track on the placeholder
-    # itself; the actual node is created lazily at deploy time. Placement
-    # filters out rows whose provider_instance_id starts with 'placeholder:'
-    # so they're advertised in the UI as available without competing for
-    # real scheduling decisions. For the on_prem path (legacy "Self-hosted"
-    # pool option) we skip — /v1/nodes/add/worker writes its own row.
+    # Provider placeholder + (for AWS) eager provisioning kickoff.
+    # For DePIN providers (nosana, akash) and other clouds we keep the
+    # legacy state='ready' placeholder. For AWS we mark the placeholder
+    # state='provisioning' with gpu_total=0 (so placement never targets
+    # it while Pulumi runs) and schedule provision_node in the background.
     try:
-        if req.provider in ("nosana", "akash", "gcp", "aws", "azure", "lambda", "runpod", "k8s"):
-            from uuid import UUID as _UUID
-            import asyncpg as _asyncpg
-            import os as _os
-            dsn = (
-                _os.getenv("POSTGRES_DSN")
-                or (_os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
-                or "postgresql://inferia:inferia@postgres:5432/inferia"
+        from uuid import UUID as _UUID
+        dsn = (
+            os.getenv("POSTGRES_DSN")
+            or (os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
+            or "postgresql://inferia:inferia@postgres:5432/inferia"
+        )
+        if req.provider == "aws":
+            conn = await asyncpg.connect(dsn=dsn, timeout=5)
+            try:
+                gpu_type = (req.allowed_gpu_types[0] if req.allowed_gpu_types else "any")
+                await conn.execute(
+                    """
+                    INSERT INTO compute_inventory (
+                        pool_id, provider, provider_instance_id, hostname,
+                        gpu_total, vcpu_total, ram_gb_total, state,
+                        node_class, agent_kind, metadata, labels
+                    )
+                    VALUES (
+                        $1::uuid, $2::provider_type, $3, $4,
+                        0, 0, 0, 'provisioning',
+                        'on_demand', 'worker', $5::jsonb, '{}'::jsonb
+                    )
+                    """,
+                    resp.pool_id,
+                    req.provider,
+                    f"placeholder:{resp.pool_id}",
+                    req.pool_name,
+                    json.dumps({
+                        "gpu_type": gpu_type,
+                        "provider_pool_id": req.provider_pool_id,
+                        "placeholder": True,
+                        "requested_gpu_count": req.gpu_count or 1,
+                    }),
+                )
+            finally:
+                await conn.close()
+
+            # Schedule the background provisioning kickoff. Uses a fresh
+            # asyncpg connection wrapped to look like a minimal pool — the
+            # adapter expects fetch/fetchval/execute. The connection is
+            # closed when the kickoff finishes (success or failure).
+            from inferia.services.orchestration.repositories.node_provisioning_repo import (
+                NodeProvisioningRepo,
             )
-            conn = await _asyncpg.connect(dsn=dsn, timeout=5)
+            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.progress_writer import (
+                ProgressWriter,
+            )
+            pool_conn = await asyncpg.connect(dsn=dsn, timeout=5)
+
+            class _SingleConnPool:
+                def __init__(self, c): self._c = c
+                async def fetchval(self, *a, **kw): return await self._c.fetchval(*a, **kw)
+                async def fetch(self,    *a, **kw): return await self._c.fetch(*a, **kw)
+                async def execute(self,  *a, **kw): return await self._c.execute(*a, **kw)
+
+            prov_repo = NodeProvisioningRepo(_SingleConnPool(pool_conn))
+            writer = ProgressWriter(
+                prov_repo,
+                pool_id=_UUID(resp.pool_id),
+                node_id=None,
+            )
+            # Construct a per-call adapter instance so concurrent /createpool
+            # requests don't race on the shared adapter._db field.
+            aws_cls = ADAPTER_REGISTRY.get("aws")
+            if aws_cls is None:
+                raise Exception("aws adapter not registered")
+            adapter = aws_cls(db=pool_conn)
+            _t = asyncio.create_task(_kick_aws_provision(
+                adapter, req, resp.pool_id, writer, pool_conn,
+            ))
+            _BACKGROUND_TASKS.add(_t)
+            _t.add_done_callback(_BACKGROUND_TASKS.discard)
+        elif req.provider in ("nosana", "akash", "gcp", "azure", "lambda", "runpod", "k8s"):
+            conn = await asyncpg.connect(dsn=dsn, timeout=5)
             try:
                 gpu_type = (req.allowed_gpu_types[0] if req.allowed_gpu_types else "any")
                 await conn.execute(
@@ -1105,8 +1210,8 @@ async def create_pool(req: CreatePoolRequest, request: Request):
                     )
                     VALUES (
                         $1::uuid, $2::provider_type, $3, $4,
-                        $5, $6, $7, 'ready',
-                        'on_demand', $8::jsonb, '{}'::jsonb
+                        $5, 0, 0, 'ready',
+                        'on_demand', $6::jsonb, '{}'::jsonb
                     )
                     """,
                     resp.pool_id,
@@ -1114,8 +1219,7 @@ async def create_pool(req: CreatePoolRequest, request: Request):
                     f"placeholder:{resp.pool_id}",
                     req.pool_name,
                     req.gpu_count or 1,
-                    0, 0,
-                    __import__("json").dumps({
+                    json.dumps({
                         "gpu_type": gpu_type,
                         "provider_pool_id": req.provider_pool_id,
                         "placeholder": True,
@@ -1124,11 +1228,9 @@ async def create_pool(req: CreatePoolRequest, request: Request):
             finally:
                 await conn.close()
     except Exception as e:
-        # Non-fatal: pool creation already succeeded. Log and continue so the
-        # request remains a 200 even if the placeholder insert hiccups.
         import logging as _logging
         _logging.getLogger("deployment-server").warning(
-            "createpool: placeholder inventory insert failed: %s", e,
+            "createpool: placeholder/provisioning kickoff failed: %s", e,
         )
 
     # Persist metadata + org_id (alias of owner_id for AWS adapter queries)
@@ -1136,14 +1238,12 @@ async def create_pool(req: CreatePoolRequest, request: Request):
     # migration will add them.
     if req.metadata or True:  # always update org_id
         try:
-            import asyncpg as _asyncpg2
-            import os as _os2
             dsn2 = (
-                _os2.getenv("POSTGRES_DSN")
-                or (_os2.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
+                os.getenv("POSTGRES_DSN")
+                or (os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
                 or "postgresql://inferia:inferia@postgres:5432/inferia"
             )
-            conn2 = await _asyncpg2.connect(dsn=dsn2, timeout=5)
+            conn2 = await asyncpg.connect(dsn=dsn2, timeout=5)
             try:
                 await conn2.execute(
                     """

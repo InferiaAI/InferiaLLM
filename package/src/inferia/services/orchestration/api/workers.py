@@ -22,8 +22,13 @@ from inferia.services.orchestration.services.worker_controller.auth import (
 from inferia.services.orchestration.services.worker_controller.protocol import (
     CommandResultBody,
     Envelope,
+    LogsEndBody,
+    LogsLineBody,
     RegisterRequest,
     RegisterResponse,
+    ShellErrorBody,
+    ShellExitBody,
+    ShellOutputBody,
 )
 from inferia.services.orchestration.services.worker_controller.registry import (
     WorkerConn,
@@ -43,10 +48,23 @@ async def _consume_bootstrap_token(conn, *, token: str):
     """Thin wrapper around the DB-backed consume helper.
 
     Exists as a module-level function so tests can patch it without needing a
-    real asyncpg connection.  conn may be None when the body carries no
-    bootstrap_token (legacy JWT path never reaches this function).
+    real asyncpg connection.  When ``conn`` is None we open (and close) a
+    short-lived asyncpg connection against the orchestration's POSTGRES_DSN
+    so the worker bootstrap flow works without the caller having to wire a
+    DB pool into this router. Tests can still monkey-patch this function.
     """
-    return await _db_consume_bootstrap_token(conn, token=token)
+    if conn is not None:
+        return await _db_consume_bootstrap_token(conn, token=token)
+    import asyncpg
+    from inferia.services.orchestration.config import settings as _osettings
+    own_conn = await asyncpg.connect(dsn=_osettings.postgres_dsn)
+    try:
+        return await _db_consume_bootstrap_token(own_conn, token=token)
+    finally:
+        try:
+            await own_conn.close()
+        except Exception:
+            pass
 
 
 # Injected at app startup; tests override via dependency_overrides.
@@ -108,13 +126,16 @@ async def register_worker(
     # wired up. Until the DB-consume adapter is wired, we prefer the
     # stateless JWT path whenever an Authorization header is present.
     header_token = _strip_bearer(authorization)
-    use_header_path = bool(header_token)
 
-    if body.bootstrap_token is not None and not use_header_path:
+    # Auth priority: prefer the body bootstrap_token DB-consume path when
+    # present (canonical, single-use, scope-checked). The legacy JWT path
+    # via Authorization header is the fallback for clients that don't
+    # populate the body field. The inferia-worker Go client sets BOTH
+    # fields with the same DB token, so trying JWT verify on a non-JWT
+    # bootstrap token would (and did, pre-fix) 401 the entire register
+    # flow.
+    if body.bootstrap_token is not None:
         try:
-            # conn=None is intentional: the real DB connection is not wired into
-            # this router yet (future work). Tests patch _consume_bootstrap_token
-            # to avoid needing asyncpg.
             db_claim = await _consume_bootstrap_token(None, token=body.bootstrap_token)
         except InvalidBootstrapToken:
             raise HTTPException(401, "invalid_bootstrap_token")
@@ -218,9 +239,11 @@ async def worker_channel(
             ).model_dump()
         )
 
-        # Read loop: route Heartbeat / CommandResult into the registry +
-        # inventory. The control plane never *sends* unsolicited messages
-        # here (only commands, which are initiated via WorkerController).
+        # Read loop: route Heartbeat / CommandResult / shell+logs stream
+        # frames into the registry + inventory. The control plane sends
+        # unsolicited messages here ONLY for LoadModel/UnloadModel commands
+        # and shell/logs open/input/resize/close envelopes — the worker
+        # never sees those in this read direction.
         while True:
             data = await ws.receive_json()
             env_type = data.get("type")
@@ -237,8 +260,21 @@ async def worker_channel(
                 registry.deliver_command_result(
                     CommandResultBody(**body),
                 )
+            elif env_type == "ShellOutput":
+                registry.deliver_stream_frame(ShellOutputBody(**body))
+            elif env_type == "ShellExit":
+                registry.deliver_stream_frame(ShellExitBody(**body))
+            elif env_type == "ShellError":
+                registry.deliver_stream_frame(ShellErrorBody(**body))
+            elif env_type == "LogsLine":
+                registry.deliver_stream_frame(LogsLineBody(**body))
+            elif env_type == "LogsEnd":
+                registry.deliver_stream_frame(LogsEndBody(**body))
             # Other types ignored: clients aren't expected to send Hello/Ping
-            # in the MVP direction.
+            # in the MVP direction. Malformed bodies for known types raise
+            # ValidationError, which we let propagate so the worker
+            # disconnects + retries (the alternative — swallow + log —
+            # masks protocol drift).
     except WebSocketDisconnect:
         logger.info("worker %s disconnected", claims.sub)
     finally:

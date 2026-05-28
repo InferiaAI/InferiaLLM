@@ -5,10 +5,27 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+# Repo-wide version skew: starlette 0.35.1 still passes ``app=`` to
+# ``httpx.Client``, which httpx 0.28+ removed. Patch the httpx Client
+# constructor to drop the ``app`` kwarg for the duration of this test
+# module so the existing sync TestClient-based tests keep working.
+import httpx as _httpx
+_orig_client_init = _httpx.Client.__init__
+
+
+def _patched_client_init(self, *args, **kwargs):
+    kwargs.pop("app", None)
+    return _orig_client_init(self, *args, **kwargs)
+
+
+_httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
+from fastapi.testclient import TestClient  # noqa: E402
+from httpx import ASGITransport  # noqa: E402
 
 from inferia.services.orchestration.api import admin_workers
 from inferia.services.orchestration.services.worker_controller.auth import (
@@ -337,3 +354,141 @@ class TestRevokeWorker:
             headers={"Authorization": "Bearer some_other_perm"},
         )
         assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/admin/workers/{node_id} — AWS branch (destroys EC2).
+# ---------------------------------------------------------------------------
+
+
+from inferia.services.orchestration.services.adapter_engine import aws_deprovision  # noqa: E402
+
+
+class AwsFakeInventory(FakeInventory):
+    """FakeInventory extended with mark_terminating_node + provider awareness."""
+
+    def __init__(self):
+        super().__init__()
+        self.terminating_calls: list[str] = []
+
+    async def mark_terminating_node(self, *, node_id):
+        self.terminating_calls.append(node_id)
+
+
+class FakeDbPool:
+    def acquire(self):
+        class _Ctx:
+            async def __aenter__(_self):
+                class _Conn:
+                    async def execute(_c, *a, **kw):
+                        pass
+                return _Conn()
+            async def __aexit__(_self, *a):
+                return None
+        return _Ctx()
+
+
+@pytest.fixture
+def aws_app_and_deps():
+    from inferia.services.orchestration.api import admin_workers as _aw
+    from inferia.services.orchestration.services.worker_controller.auth import (
+        WorkerAuth,
+    )
+    from inferia.services.orchestration.services.worker_controller.registry import (
+        WorkerRegistry,
+    )
+
+    app = FastAPI()
+    auth = WorkerAuth(secret_key=SECRET, algorithm="HS256")
+    registry = WorkerRegistry()
+    inventory = AwsFakeInventory()
+    pool_repo = FakePoolRepo(pool={
+        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running",
+    })
+    _aw.configure(
+        worker_auth=auth,
+        worker_registry=registry,
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        control_plane_external_url="https://control.example.com",
+        require_permission=fake_require_permission,
+        db_pool=FakeDbPool(),
+    )
+    app.include_router(_aw.router)
+    return app, inventory
+
+
+class TestRevokeAwsWorker:
+    @pytest.mark.asyncio
+    async def test_aws_worker_kicks_destroy_and_returns_202(self, aws_app_and_deps):
+        app, inventory = aws_app_and_deps
+        inventory.workers = [{
+            "id": NODE_ID, "agent_kind": "worker",
+            "provider": "aws", "pool_id": POOL_ID, "state": "ready",
+        }]
+        spy: list[dict] = []
+
+        class _T:
+            pass
+
+        def fake_spawn(**kw):
+            spy.append(kw)
+            return _T()
+
+        with patch.object(aws_deprovision, "_spawn_destroy", side_effect=fake_spawn):
+            transport = ASGITransport(app=app)
+            async with _httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/admin/workers/{NODE_ID}",
+                    headers={"Authorization": "Bearer deployment:delete"},
+                )
+
+        assert r.status_code == 202, r.text
+        body = r.json()
+        assert body["node_id"] == NODE_ID
+        assert body["state"] == "terminating"
+        assert NODE_ID in inventory.terminating_calls
+        assert len(spy) == 1
+        assert spy[0]["pool_id"] == POOL_ID
+        assert spy[0]["node_id"] == NODE_ID
+
+    @pytest.mark.asyncio
+    async def test_non_aws_worker_keeps_legacy_path(self, aws_app_and_deps):
+        app, inventory = aws_app_and_deps
+        inventory.workers = [{
+            "id": NODE_ID, "agent_kind": "worker",
+            "provider": "on_prem", "pool_id": POOL_ID,
+        }]
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with _httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/admin/workers/{NODE_ID}",
+                    headers={"Authorization": "Bearer deployment:delete"},
+                )
+        assert r.status_code == 204
+        spawn.assert_not_called()
+        assert NODE_ID in inventory.terminated
+
+    @pytest.mark.asyncio
+    async def test_aws_worker_no_pool_id_falls_back(self, aws_app_and_deps):
+        app, inventory = aws_app_and_deps
+        inventory.workers = [{
+            "id": NODE_ID, "agent_kind": "worker",
+            "provider": "aws", "pool_id": None,
+        }]
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with _httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/admin/workers/{NODE_ID}",
+                    headers={"Authorization": "Bearer deployment:delete"},
+                )
+        assert r.status_code == 204
+        spawn.assert_not_called()

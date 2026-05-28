@@ -3,11 +3,13 @@ import { getToken } from "@/lib/tokenStore";
 import { API_GATEWAY_URL } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-interface Props {
+interface NodeShellProps {
   nodeId: string;
   deploymentId?: string;
   containerId?: string;
   className?: string;
+  nodeState?: string;
+  currentPhase?: string | null;
 }
 
 // Strip ANSI escape sequences. Container shells (bash/sh) emit a lot of
@@ -35,7 +37,30 @@ const USER_OPTIONS: { label: string; value: string }[] = [
   { label: "Custom…", value: "__custom__" },
 ];
 
-export default function NodeShell({ nodeId, deploymentId, containerId, className }: Props) {
+// Public wrapper — conditionally renders a placeholder or the live WS shell.
+// Keeping the early-return in this thin wrapper (which has NO hooks) avoids
+// the React "Rendered more hooks than during the previous render" crash that
+// occurs when a component transitions between two code-paths that call
+// different numbers of hooks.
+export default function NodeShell({ nodeId, deploymentId, containerId, className, nodeState, currentPhase }: NodeShellProps) {
+  if (nodeState && nodeState !== "ready") {
+    return (
+      <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
+        Shell available once the worker registers. Currently {currentPhase ?? "pending"}…
+      </div>
+    );
+  }
+  return <NodeShellWS nodeId={nodeId} deploymentId={deploymentId} containerId={containerId} className={className} />;
+}
+
+// All hooks and WS plumbing live here. This component is only ever mounted
+// when nodeState is "ready" (or absent), so hook count is always stable.
+function NodeShellWS({ nodeId, deploymentId, containerId, className }: {
+  nodeId: string;
+  deploymentId?: string;
+  containerId?: string;
+  className?: string;
+}) {
   const [output, setOutput] = useState<string>("");
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
