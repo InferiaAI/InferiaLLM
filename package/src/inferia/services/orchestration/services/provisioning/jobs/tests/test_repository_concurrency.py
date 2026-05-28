@@ -26,7 +26,7 @@ MIGRATIONS = [
 ]
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def test_database_url() -> str:
     url = os.environ.get("INFERIA_TEST_DATABASE_URL")
     if not url:
@@ -35,6 +35,11 @@ def test_database_url() -> str:
 
 
 async def _apply_migrations(pool):
+    # WARNING: same fragility as tests/integration/test_migration.py — we split
+    # each .sql file on ';' to mirror cli_init.py's statement boundaries. If a
+    # future migration adds a $$-quoted block (PL/pgSQL, escaped string) the
+    # split will break here. The migration headers in 20260528{a,b} call this
+    # out; keep that constraint in mind when editing this helper.
     async with pool.acquire() as conn:
         for path in MIGRATIONS:
             sql = path.read_text()
@@ -42,9 +47,9 @@ async def _apply_migrations(pool):
                 await conn.execute(stmt)
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="module")
 async def pool(test_database_url):
-    pool = await asyncpg.create_pool(test_database_url, min_size=2, max_size=20)
+    pool = await asyncpg.create_pool(test_database_url, min_size=2, max_size=25)
     await _apply_migrations(pool)
     yield pool
     await pool.close()
@@ -68,8 +73,8 @@ async def _seed_job(pool, *, n: int = 20):
                  lifecycle_state, org_id
                )
                VALUES (
-                 $1, 'p-concurrency', 'organization', 'aws', '{}'::jsonb,
-                 'running', 'org-concurrency'
+                 $1, 'p-concurrency-' || $1::text, 'organization', 'aws',
+                 '{}'::jsonb, 'running', 'org-concurrency'
                )
                ON CONFLICT (id) DO NOTHING""",
             pool_id,
@@ -94,26 +99,31 @@ async def _seed_job(pool, *, n: int = 20):
     return ids, pool_id
 
 
-@pytest.mark.asyncio
-async def test_no_double_claim_under_20_concurrent_claimers(pool):
-    """20 workers all calling claim_next_job → each gets a unique job."""
-    job_ids, pool_id = await _seed_job(pool, n=20)
-    repo = ProvisioningJobRepository(PoolDB(pool))
-
-    async def claim(holder: str):
-        return await repo.claim_next_job(lease_holder=holder, lease_seconds=300)
-
-    results = await asyncio.gather(
-        *[claim(f"worker-{i}") for i in range(20)]
-    )
-    claimed_ids = [job.id for job in results if job is not None]
-    assert len(claimed_ids) == 20
-    assert len(set(claimed_ids)) == 20  # all unique — no double-claim
-
+async def _cleanup(pool, job_ids, pool_id):
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM provisioning_jobs WHERE id = ANY($1)", job_ids)
         await conn.execute("DELETE FROM compute_inventory WHERE pool_id = $1", pool_id)
         await conn.execute("DELETE FROM compute_pools WHERE id = $1", pool_id)
+
+
+@pytest.mark.asyncio
+async def test_no_double_claim_under_20_concurrent_claimers(pool):
+    """20 workers all calling claim_next_job → each gets a unique job."""
+    job_ids, pool_id = await _seed_job(pool, n=20)
+    try:
+        repo = ProvisioningJobRepository(PoolDB(pool))
+
+        async def claim(holder: str):
+            return await repo.claim_next_job(lease_holder=holder, lease_seconds=300)
+
+        results = await asyncio.gather(
+            *[claim(f"worker-{i}") for i in range(20)]
+        )
+        claimed_ids = [job.id for job in results if job is not None]
+        assert len(claimed_ids) == 20
+        assert len(set(claimed_ids)) == 20  # all unique — no double-claim
+    finally:
+        await _cleanup(pool, job_ids, pool_id)
 
 
 @pytest.mark.asyncio
@@ -121,59 +131,53 @@ async def test_claim_skips_leased_jobs(pool):
     """A job already leased by holder A is not claimable by holder B until
     the lease expires."""
     job_ids, pool_id = await _seed_job(pool, n=1)
-    repo = ProvisioningJobRepository(PoolDB(pool))
+    try:
+        repo = ProvisioningJobRepository(PoolDB(pool))
 
-    first = await repo.claim_next_job(lease_holder="A", lease_seconds=300)
-    assert first is not None
-    second = await repo.claim_next_job(lease_holder="B", lease_seconds=300)
-    assert second is None
-
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM provisioning_jobs WHERE id = ANY($1)", job_ids)
-        await conn.execute("DELETE FROM compute_inventory WHERE pool_id = $1", pool_id)
-        await conn.execute("DELETE FROM compute_pools WHERE id = $1", pool_id)
+        first = await repo.claim_next_job(lease_holder="A", lease_seconds=300)
+        assert first is not None
+        second = await repo.claim_next_job(lease_holder="B", lease_seconds=300)
+        assert second is None
+    finally:
+        await _cleanup(pool, job_ids, pool_id)
 
 
 @pytest.mark.asyncio
 async def test_claim_picks_up_expired_lease(pool):
     """If a lease's lease_expires_at < now(), another reconciler claims it."""
     job_ids, pool_id = await _seed_job(pool, n=1)
-    repo = ProvisioningJobRepository(PoolDB(pool))
+    try:
+        repo = ProvisioningJobRepository(PoolDB(pool))
 
-    # Holder A grabs it but with a 0-second lease (already expired).
-    first = await repo.claim_next_job(lease_holder="A", lease_seconds=0)
-    assert first is not None
+        # Holder A grabs it but with a 0-second lease (already expired).
+        first = await repo.claim_next_job(lease_holder="A", lease_seconds=0)
+        assert first is not None
 
-    # Holder B claims because A's lease is already expired.
-    second = await repo.claim_next_job(lease_holder="B", lease_seconds=300)
-    assert second is not None
-    assert second.id == first.id
-    assert second.lease_holder == "B"
-
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM provisioning_jobs WHERE id = ANY($1)", job_ids)
-        await conn.execute("DELETE FROM compute_inventory WHERE pool_id = $1", pool_id)
-        await conn.execute("DELETE FROM compute_pools WHERE id = $1", pool_id)
+        # Holder B claims because A's lease is already expired.
+        second = await repo.claim_next_job(lease_holder="B", lease_seconds=300)
+        assert second is not None
+        assert second.id == first.id
+        assert second.lease_holder == "B"
+    finally:
+        await _cleanup(pool, job_ids, pool_id)
 
 
 @pytest.mark.asyncio
 async def test_cancelling_jobs_have_priority(pool):
     """Jobs in 'cancelling' phase are claimed before plain 'pending' jobs."""
     job_ids, pool_id = await _seed_job(pool, n=2)
-    repo = ProvisioningJobRepository(PoolDB(pool))
+    try:
+        repo = ProvisioningJobRepository(PoolDB(pool))
 
-    # Mark one job as 'cancelling' (the second).
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE provisioning_jobs SET phase='cancelling' WHERE id=$1",
-            job_ids[1],
-        )
+        # Mark one job as 'cancelling' (the second).
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE provisioning_jobs SET phase='cancelling' WHERE id=$1",
+                job_ids[1],
+            )
 
-    claimed = await repo.claim_next_job(lease_holder="W", lease_seconds=300)
-    assert claimed is not None
-    assert claimed.id == job_ids[1]
-
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM provisioning_jobs WHERE id = ANY($1)", job_ids)
-        await conn.execute("DELETE FROM compute_inventory WHERE pool_id = $1", pool_id)
-        await conn.execute("DELETE FROM compute_pools WHERE id = $1", pool_id)
+        claimed = await repo.claim_next_job(lease_holder="W", lease_seconds=300)
+        assert claimed is not None
+        assert claimed.id == job_ids[1]
+    finally:
+        await _cleanup(pool, job_ids, pool_id)
