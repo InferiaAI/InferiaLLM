@@ -11,8 +11,15 @@ CREATE TABLE IF NOT EXISTS node_provisioning_events (
     phase      TEXT        NOT NULL,
     status     TEXT        NOT NULL,
     message    TEXT,
+    extra      JSONB       NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- For environments where the table predates the `extra` column, add it
+-- idempotently. New environments will already have it from the CREATE
+-- above; this is a no-op for them.
+ALTER TABLE node_provisioning_events
+    ADD COLUMN IF NOT EXISTS extra JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS ix_node_provisioning_events_pool_id_id
     ON node_provisioning_events (pool_id, id);
