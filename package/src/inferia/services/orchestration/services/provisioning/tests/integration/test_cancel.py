@@ -8,16 +8,10 @@ End-to-end:
    'cancelling' (the route returns 204).
 3. The next reconciler tick claims the cancelling job; CancelHandler
    runs (patched) run_pulumi_destroy_sync and transitions to terminated.
-4. Assert destroy was called AND the job row is in phase='terminated'.
-
-Note: the current production code does NOT also update
-compute_inventory.state to 'terminated' when the CancelHandler runs.
-The compute_inventory row stays in the state it was in (provisioning).
-This is a known gap — the test deliberately only checks the job row's
-phase so it documents the *current* contract, not the aspirational
-"inventory also flips to terminated" version in the plan. T33 / a
-follow-up should patch the CancelHandler (or the reconciler post-
-hook) to also call inventory_repo.set_state(..., 'terminated').
+4. Assert destroy was called AND the job row is in phase='terminated'
+   AND compute_inventory.state == 'terminated' (the reconciler mirrors
+   terminal phases onto inventory so the dashboard's "is this node
+   alive" view stays consistent with the state-machine outcome).
 """
 from __future__ import annotations
 
@@ -90,7 +84,8 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
         # jobs ahead of fresh work so this picks up our job immediately.
         await rec.tick_once()
 
-        # 4. Assert destroy ran + the job row reached the terminated phase.
+        # 4. Assert destroy ran + the job row reached the terminated phase
+        # + compute_inventory.state mirrored the terminal phase.
         assert destroy_called["value"], (
             "run_pulumi_destroy_sync was not invoked by CancelHandler"
         )
@@ -99,4 +94,12 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
                 "SELECT phase FROM provisioning_jobs WHERE node_id=$1",
                 uuid.UUID(node_id),
             )
+            inventory_state = await conn.fetchval(
+                "SELECT state FROM compute_inventory WHERE id=$1",
+                uuid.UUID(node_id),
+            )
         assert phase == "terminated"
+        assert inventory_state == "terminated", (
+            f"compute_inventory.state should mirror terminal phase; "
+            f"got {inventory_state!r}"
+        )

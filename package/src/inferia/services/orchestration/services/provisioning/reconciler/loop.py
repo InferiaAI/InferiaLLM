@@ -68,6 +68,7 @@ class ProvisioningReconciler:
         renew_interval_s: float = 60.0,
         lease_holder: str = "inferia-app",
         load_aws_context: Callable[[ProvisioningJob], Awaitable[tuple[Any, dict[str, str]]]] | None = None,
+        inventory_repo: Any = None,
     ):
         self.repo = repo
         self.handlers = handlers
@@ -79,8 +80,37 @@ class ProvisioningReconciler:
         self.renew_interval_s = renew_interval_s
         self.lease_holder = lease_holder
         self.load_aws_context = load_aws_context
+        # inventory_repo bridges the provisioning_jobs state machine to
+        # compute_inventory.state. On every terminal transition (ready /
+        # terminated) and on _fail_loud (failed) the reconciler calls
+        # inventory_repo.set_state(node_id, terminal_state) so the
+        # dashboard's "is this node alive" view (which reads from
+        # compute_inventory.state) reflects the state machine outcome.
+        # Optional: tests pass None to skip the bridge.
+        self.inventory_repo = inventory_repo
         self.now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
         self._pool: WorkerPool | None = None
+
+    async def _inventory_set_state(
+        self, *, node_id: Any, state: str,
+    ) -> None:
+        """Mirror a terminal phase onto compute_inventory.state.
+
+        Best-effort: logs and swallows on failure so a stuck inventory
+        UPDATE never blocks the state machine from finishing. The
+        provisioning_jobs row is the authoritative source of truth;
+        compute_inventory is the user-facing mirror.
+        """
+        if self.inventory_repo is None:
+            return
+        try:
+            await self.inventory_repo.set_state(node_id=node_id, state=state)
+        except Exception:
+            logger.exception(
+                "inventory_repo.set_state(%s, %s) failed; "
+                "compute_inventory may diverge from provisioning_jobs",
+                node_id, state,
+            )
 
     async def run(self) -> None:
         """Run until cancelled. Starts a WorkerPool of `concurrency`
@@ -259,6 +289,16 @@ class ProvisioningReconciler:
                 "skipping event emission",
             )
             return
+        # Mirror terminal phases onto compute_inventory.state so the
+        # dashboard's "is this node alive" check (which reads inventory,
+        # not provisioning_jobs) reflects the state machine outcome.
+        # Phase.FAILED is handled separately in _fail_loud.
+        if result.next_phase == Phase.READY:
+            await self._inventory_set_state(node_id=job.node_id, state="ready")
+        elif result.next_phase == Phase.TERMINATED:
+            await self._inventory_set_state(
+                node_id=job.node_id, state="terminated",
+            )
         if result.event is not None:
             await self.emit_event(
                 pool_id=job.pool_id, node_id=job.node_id,
@@ -322,6 +362,10 @@ class ProvisioningReconciler:
                 "fail rejected (lease/phase guard); skipping event emission",
             )
             return
+        # Mirror the terminal failure onto compute_inventory.state so the
+        # dashboard's failed banner renders without waiting for a manual
+        # poll/refresh of the provisioning_jobs row.
+        await self._inventory_set_state(node_id=job.node_id, state="failed")
         await self.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=job.phase,
             status="failed", message=ce.message,

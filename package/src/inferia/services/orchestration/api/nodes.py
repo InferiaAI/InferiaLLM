@@ -49,7 +49,16 @@ class _Deps:
     control_plane_external_url: str = ""
     adapters: dict[str, Any] = {}
     require_permission: Callable[[str], Any] | None = None
+    # provisioning_repo is the new state-machine queue
+    # (ProvisioningJobRepository). It exposes enqueue / get_by_node /
+    # reset_for_retry / request_cancel.
     provisioning_repo: Any = None
+    # node_events_repo is the legacy append-only event log
+    # (NodeProvisioningRepo). It exposes summarize_phases / current_phase
+    # / list_events_after / append_event. Kept separately so the new
+    # state-machine endpoints and the legacy phase-summary view can
+    # coexist without method-name collisions.
+    node_events_repo: Any = None
     db_pool: Any = None
 
 
@@ -65,6 +74,7 @@ def configure(
     adapters: dict[str, Any],
     require_permission,
     provisioning_repo=None,
+    node_events_repo=None,
     db_pool=None,
 ) -> None:
     _deps.inventory_repo = inventory_repo
@@ -74,6 +84,13 @@ def configure(
     _deps.adapters = dict(adapters)
     _deps.require_permission = require_permission
     _deps.provisioning_repo = provisioning_repo
+    # node_events_repo defaults to provisioning_repo for back-compat with
+    # callers that haven't yet been updated to pass both. If a MagicMock
+    # is wired as provisioning_repo with both new-repo and legacy-repo
+    # methods attached, this preserves the existing behaviour.
+    _deps.node_events_repo = (
+        node_events_repo if node_events_repo is not None else provisioning_repo
+    )
     _deps.db_pool = db_pool
 
 
@@ -723,14 +740,14 @@ async def get_provisioning(
             "public_dns":     outs.get("public_dns"),
         }
 
-    # Phases summary via the existing event log. Repo may be None for
-    # nodes that predate the provisioning queue (worker / nosana / akash),
-    # in which case the phases list is empty.
+    # Phases summary via the legacy node_provisioning_events log. Repo
+    # may be None for nodes that predate the event log entirely
+    # (worker / nosana / akash), in which case the phases list is empty.
     phases: list[ProvisioningPhase] = []
-    if _deps.provisioning_repo is not None and pool_id and hasattr(
-        _deps.provisioning_repo, "summarize_phases",
+    if _deps.node_events_repo is not None and pool_id and hasattr(
+        _deps.node_events_repo, "summarize_phases",
     ):
-        summary = await _deps.provisioning_repo.summarize_phases(pool_id=pool_id)
+        summary = await _deps.node_events_repo.summarize_phases(pool_id=pool_id)
         phases = [ProvisioningPhase(
             phase=p["phase"], status=p["status"],
             started_at=p["started_at"].isoformat() if p["started_at"] else None,
@@ -744,10 +761,10 @@ async def get_provisioning(
     if job is not None:
         current_phase = job.phase.value
         terminal = job.phase.is_terminal
-    elif _deps.provisioning_repo is not None and pool_id and hasattr(
-        _deps.provisioning_repo, "current_phase",
+    elif _deps.node_events_repo is not None and pool_id and hasattr(
+        _deps.node_events_repo, "current_phase",
     ):
-        current_phase = await _deps.provisioning_repo.current_phase(pool_id=pool_id)
+        current_phase = await _deps.node_events_repo.current_phase(pool_id=pool_id)
         node_state = row.get("state")
         terminal = current_phase is None or node_state in ("ready", "terminated")
     else:
@@ -776,9 +793,11 @@ async def get_provisioning_logs(
     if not row:
         raise HTTPException(404, "node not found")
     pool_id = row.get("pool_id")
-    if _deps.provisioning_repo is None or not pool_id:
+    if _deps.node_events_repo is None or not pool_id or not hasattr(
+        _deps.node_events_repo, "list_events_after",
+    ):
         return ProvisioningLogsResponse(events=[], next_after=None)
-    events = await _deps.provisioning_repo.list_events_after(
+    events = await _deps.node_events_repo.list_events_after(
         pool_id=pool_id, after_id=after, limit=limit,
     )
     next_after = events[-1]["id"] if events else None

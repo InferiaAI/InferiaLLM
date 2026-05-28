@@ -142,6 +142,7 @@ async def start_reconciler(
     stop_event: asyncio.Event,
     lease_holder: str,
     poll_for_lock_s: float = 15.0,
+    inventory_repo=None,
 ) -> None:
     """Single-active reconciler loop.
 
@@ -193,6 +194,7 @@ async def start_reconciler(
                     lease_seconds=300,
                     renew_interval_s=60.0,
                     lease_holder=lease_holder,
+                    inventory_repo=inventory_repo,
                 )
                 run_task = asyncio.create_task(rec.run())
                 try:
@@ -317,8 +319,20 @@ async def serve():
     from inferia.services.orchestration.repositories.node_provisioning_repo import (
         NodeProvisioningRepo,
     )
-    # provisioning repo shares the existing inventory_repo's db pool
-    provisioning_repo = NodeProvisioningRepo(inventory_repo.db)
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+    # The new state-machine endpoints (POST /add/aws thin enqueue, POST
+    # /provisioning/retry, DELETE cancellation, and the job-row read in
+    # GET /provisioning) need ProvisioningJobRepository's enqueue /
+    # get_by_node / reset_for_retry / request_cancel methods. The legacy
+    # phase-summary view (GET /provisioning's phases list, GET
+    # /provisioning-logs) still reads from the append-only event log via
+    # NodeProvisioningRepo's summarize_phases / current_phase /
+    # list_events_after. Wire both side-by-side; api/nodes.py routes each
+    # call to the appropriate attribute.
+    provisioning_repo = ProvisioningJobRepository(db_pool)
+    node_events_repo = NodeProvisioningRepo(inventory_repo.db)
 
     # /v1/nodes/{id}/ec2-console requires an AWS adapter instance to
     # proxy boto3 console_output fetches. Best-effort instantiation.
@@ -337,6 +351,7 @@ async def serve():
         adapters=nodes_adapters,
         require_permission=_permit_all,
         provisioning_repo=provisioning_repo,
+        node_events_repo=node_events_repo,
         db_pool=db_pool,
     )
 
@@ -583,6 +598,7 @@ async def serve():
                     lease_holder=(
                         f"inferia-app-{os.getpid()}-{_socket.gethostname()}"
                     ),
+                    inventory_repo=inventory_repo,
                 )
             )
             app.state.reconciler_stop = reconciler_stop

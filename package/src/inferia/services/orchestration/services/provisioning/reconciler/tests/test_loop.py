@@ -87,7 +87,18 @@ class _RaisingHandler:
         raise self.exc
 
 
-def _make_reconciler(repo, handlers):
+def _make_reconciler(repo, handlers, inventory_repo=None):
+    """Construct a ProvisioningReconciler with sensible defaults for tests.
+
+    ``inventory_repo`` defaults to a MagicMock whose ``set_state`` is
+    an AsyncMock — this exercises the new compute_inventory.state mirror
+    code path on terminal transitions (READY / TERMINATED / FAILED)
+    without forcing every test to instantiate a real InventoryRepository.
+    Callers that want to assert on set_state args can pass their own mock.
+    """
+    if inventory_repo is None:
+        inventory_repo = MagicMock()
+        inventory_repo.set_state = AsyncMock()
     return ProvisioningReconciler(
         repo=repo,
         handlers={h.name: h for h in handlers},
@@ -99,6 +110,7 @@ def _make_reconciler(repo, handlers):
         renew_interval_s=10.0,
         lease_holder="test-rec",
         load_aws_context=AsyncMock(return_value=(MagicMock(), {})),
+        inventory_repo=inventory_repo,
     )
 
 
@@ -249,3 +261,139 @@ async def test_transient_below_max_attempts_still_retries():
     await rec.tick_once()
     assert len(repo.retries) == 1
     assert repo.retries[0]["attempt_count"] == 4
+
+
+# ---------------------------------------------------------------------------
+# compute_inventory.state mirror on terminal transitions.
+#
+# The reconciler bridges the provisioning_jobs state machine onto the
+# inventory row's user-facing state field so the dashboard's "is this
+# node alive" view stays in sync without an extra polling join. The
+# bridge fires on every terminal transition: READY (via transition_to),
+# TERMINATED (via transition_to in CancelHandler), FAILED (via _fail_loud).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_terminal_ready_mirrors_to_inventory_state_ready():
+    """transition_to(READY) → inventory.set_state(node_id, 'ready')."""
+    job = _job(Phase.BOOTSTRAPPING)
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.BOOTSTRAPPING, Phase.READY)
+    inventory_repo = MagicMock()
+    inventory_repo.set_state = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    await rec.tick_once()
+
+    inventory_repo.set_state.assert_awaited_once_with(
+        node_id=job.node_id, state="ready",
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_terminated_mirrors_to_inventory_state_terminated():
+    """transition_to(TERMINATED) → inventory.set_state(node_id, 'terminated').
+
+    This is the cancel path: CancelHandler returns PhaseResult(next_phase=
+    TERMINATED) after pulumi destroy completes, and the reconciler must
+    mirror the terminal phase onto compute_inventory.state so the
+    dashboard stops showing the node as 'provisioning'.
+    """
+    job = _job(Phase.CANCELLING)
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
+    inventory_repo = MagicMock()
+    inventory_repo.set_state = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    await rec.tick_once()
+
+    inventory_repo.set_state.assert_awaited_once_with(
+        node_id=job.node_id, state="terminated",
+    )
+
+
+@pytest.mark.asyncio
+async def test_permanent_error_mirrors_failed_to_inventory_state():
+    """_fail_loud → inventory.set_state(node_id, 'failed')."""
+    job = _job(Phase.PREFLIGHT)
+    repo = _FakeRepo([job])
+    h = _RaisingHandler(Phase.PREFLIGHT, InvalidCredentialsError("bad"))
+    inventory_repo = MagicMock()
+    inventory_repo.set_state = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    await rec.tick_once()
+
+    inventory_repo.set_state.assert_awaited_once_with(
+        node_id=job.node_id, state="failed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_terminal_transition_does_not_call_inventory_set_state():
+    """transition_to(PROVISIONING) (non-terminal) → no inventory write.
+
+    Only READY / TERMINATED / FAILED transitions mirror to compute_inventory.
+    Mid-flow transitions (preflight → provisioning etc.) leave
+    inventory.state alone (it stays at 'provisioning' from add-node time).
+    """
+    job = _job(Phase.PREFLIGHT)
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.PREFLIGHT, Phase.PROVISIONING)
+    inventory_repo = MagicMock()
+    inventory_repo.set_state = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    await rec.tick_once()
+
+    inventory_repo.set_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_inventory_set_state_failure_swallowed():
+    """A failing inventory.set_state must NOT abort the state machine.
+
+    The provisioning_jobs row is the source of truth; an inventory write
+    failure is logged and swallowed so the job still records its terminal
+    phase. Without this, a transient DB blip during the inventory UPDATE
+    would leave the job row in an inconsistent state.
+    """
+    job = _job(Phase.BOOTSTRAPPING)
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.BOOTSTRAPPING, Phase.READY)
+    inventory_repo = MagicMock()
+    inventory_repo.set_state = AsyncMock(side_effect=RuntimeError("DB blip"))
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    await rec.tick_once()
+    # The transition was still recorded — repo.transitions has the entry.
+    assert len(repo.transitions) == 1
+    assert repo.transitions[0]["next_phase"] == Phase.READY
+
+
+@pytest.mark.asyncio
+async def test_inventory_repo_none_skips_set_state_without_crashing():
+    """inventory_repo=None (test compat) → no inventory write, no crash."""
+    job = _job(Phase.BOOTSTRAPPING)
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.BOOTSTRAPPING, Phase.READY)
+    # Explicitly pass a MagicMock that has no .set_state and verify the
+    # rec.inventory_repo=None branch instead.
+    rec = ProvisioningReconciler(
+        repo=repo,
+        handlers={h.name: h for h in [h]},
+        emit_event=AsyncMock(),
+        db=MagicMock(),
+        concurrency=1,
+        poll_interval_s=0.01,
+        lease_seconds=300,
+        renew_interval_s=10.0,
+        lease_holder="test-rec",
+        load_aws_context=AsyncMock(return_value=(MagicMock(), {})),
+        inventory_repo=None,
+    )
+
+    await rec.tick_once()
+    assert len(repo.transitions) == 1

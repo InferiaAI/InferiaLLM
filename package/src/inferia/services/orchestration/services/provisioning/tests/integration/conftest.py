@@ -83,16 +83,20 @@ def _build_app(db_pool, *, reconciler) -> FastAPI:
 
     inventory_repo = InventoryRepository(db_pool)
     pool_repo = ComputePoolRepository(db_pool)
-    # Use the new state-machine repo so the thin-enqueue path + retry +
-    # cancel routes resolve against the same provisioning_jobs row the
-    # reconciler claims. Note: production server.py wires NodeProvisioningRepo
-    # (event log) here; that's a known plan-drift item flagged in the
-    # task notes — the test fixture deliberately deviates so it exercises
-    # the integration contract the new endpoints actually depend on.
+    # Wire BOTH repos: ProvisioningJobRepository (new state-machine queue,
+    # used by POST /add/aws thin enqueue + retry + cancel + the job-row
+    # read in GET /provisioning) and NodeProvisioningRepo (legacy event
+    # log, used for the phase-summary view and GET /provisioning-logs).
+    # Production server.py wires both side-by-side; the integration test
+    # mirrors that wiring so we exercise the same code paths.
+    from inferia.services.orchestration.repositories.node_provisioning_repo import (
+        NodeProvisioningRepo,
+    )
     from inferia.services.orchestration.services.provisioning.jobs.repository import (
         ProvisioningJobRepository,
     )
     provisioning_repo = ProvisioningJobRepository(db_pool)
+    node_events_repo = NodeProvisioningRepo(db_pool)
 
     def _permit_all(_perm):
         async def _check(_authorization=None):
@@ -107,6 +111,7 @@ def _build_app(db_pool, *, reconciler) -> FastAPI:
         adapters={},
         require_permission=_permit_all,
         provisioning_repo=provisioning_repo,
+        node_events_repo=node_events_repo,
         db_pool=db_pool,
     )
 
@@ -193,6 +198,10 @@ async def app_with_real_db(test_database_url) -> AsyncIterator[tuple]:
             lease_seconds=30,
             renew_interval_s=5.0,
             lease_holder="test-reconciler",
+            # Mirror terminal phases (ready / terminated / failed) onto
+            # compute_inventory.state so the integration tests can assert
+            # the dashboard-visible state matches the job row's phase.
+            inventory_repo=inventory_repo,
         )
 
         app = _build_app(pool, reconciler=reconciler)
