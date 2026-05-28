@@ -1,43 +1,38 @@
-"""Pulumi-backed AWS EC2 provisioning adapter.
+"""Pulumi AWS adapter — pure functions, no DB writes.
 
-provision_node returns immediately with lifecycle_state='provisioning'
-and schedules an asyncio background task that calls asyncio.to_thread(stack.up)().
+Pre-refactor (May 2026), this module held a fire-and-forget asyncio task
+that ran ``stack.up()`` and wrote outputs to ``compute_pools.metadata``.
+That swallowed errors. Post-refactor (T10 of the AWS-EC2-node-allocation
+plan), the public entry point for Pulumi work is ``run_pulumi_up_sync``
+— a synchronous function that returns ``StackOutputs`` or raises a typed
+``ProvisioningError``. The reconciler (T15+) is responsible for wrapping
+calls in ``asyncio.to_thread(...)`` and writing outcomes to the
+``provisioning_jobs`` table.
+
+The ``PulumiAWSAdapter`` class still exists because the orchestrator
+constructs it for ``deprovision_node`` / ``wait_for_ready`` /
+``discover_resources`` / ``get_logs``. Its ``provision_node`` and
+``provision_cluster`` methods now raise ``NotImplementedError`` —
+callers must go through the reconciler instead. ``add_provider_node``
+in ``api/nodes.py`` is rewritten in T23 to enqueue a provisioning job
+rather than call ``provision_node`` directly.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from typing import Any, Dict, List, Optional
-from uuid import UUID
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
 
 import pulumi.automation
 
 from inferia.services.api_gateway.config import ProvidersConfig
 from inferia.services.orchestration.config import settings
-from inferia.services.orchestration.services.adapter_engine.adapters.aws.bootstrap_builder import (
-    build_user_data,
-)
-from inferia.services.orchestration.services.adapter_engine.adapters.aws.pool_metadata import (
-    AWSPoolMetadata,
-)
-from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
-    AMILookupError,
-    latest_dlami_ami,
-)
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.base import (
     PulumiProvisioningBase,
-    PulumiStateError,
 )
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.credentials import (
-    MissingCredentialsError,
     resolve_aws_env,
-)
-from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.programs import (
-    build_ec2_program,
-)
-from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.progress_writer import (
-    ProgressWriter,
 )
 from inferia.services.orchestration.services.adapter_engine.base import (
     AdapterType,
@@ -45,8 +40,12 @@ from inferia.services.orchestration.services.adapter_engine.base import (
     ProviderAdapter,
     ProviderCapabilities,
 )
-from inferia.services.orchestration.services.worker_controller.auth import (
-    mint_bootstrap_token,
+from inferia.services.orchestration.services.provisioning.errors import (
+    AMINotFoundError,
+    InvalidCredentialsError,
+    ProvisioningError,
+    PulumiCliMissingError,
+    PulumiTransientError,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,14 +202,14 @@ def _resolve_instance_type(value: str) -> tuple[str, Optional[str]]:
 
 
 class ProvisionError(Exception):
-    """Surface-safe provisioning error (no internal stack text)."""
+    """Surface-safe provisioning error (no internal stack text).
 
-
-class _NoopWriter:
-    """Drop-in no-op for callers that don't provide a progress writer
-    (e.g. the legacy lazy-deploy path)."""
-    async def write_async(self, *a, **kw): pass
-    def write(self, *a, **kw): pass
+    Kept for callers that still raise/catch this type via the surviving
+    adapter methods (wait_for_ready / deprovision_node fallbacks). New
+    code should use the typed hierarchy in
+    ``inferia.services.orchestration.services.provisioning.errors``
+    instead.
+    """
 
 
 async def load_providers_config() -> ProvidersConfig:
@@ -227,6 +226,119 @@ async def load_providers_config() -> ProvidersConfig:
         data = await config_manager.load_config(db) or {}
     raw = data.get("providers") or {}
     return ProvidersConfig.model_validate(raw)
+
+
+# ---------------------------------------------------------------------------
+# Pure Pulumi-up entry point (T10).
+#
+# The reconciler calls ``run_pulumi_up_sync`` from inside
+# ``asyncio.to_thread(...)``. It owns the DB writes, retry policy, and
+# lease ownership; this function only knows how to drive ``pulumi up``
+# and translate AWS errors into the typed exception hierarchy from
+# ``inferia.services.orchestration.services.provisioning.errors``.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StackOutputs:
+    """What the reconciler stores into ``provisioning_jobs.pulumi_stack_outputs``.
+
+    Every field is optional because Pulumi outputs can be missing on a
+    partially-created stack (e.g. when AWS returned an error mid-way and
+    we are inspecting the rollback state). Callers MUST handle ``None``.
+    """
+
+    instance_id: str | None
+    public_dns: str | None
+    region: str | None
+    ami_id: str | None
+
+    @classmethod
+    def from_pulumi_outputs(cls, outputs: dict[str, Any]) -> "StackOutputs":
+        def _v(key: str) -> str | None:
+            ref = outputs.get(key)
+            if ref is None:
+                return None
+            return getattr(ref, "value", ref)
+        return cls(
+            instance_id=_v("instance_id"),
+            public_dns=_v("public_dns"),
+            region=_v("region"),
+            ami_id=_v("ami_id"),
+        )
+
+
+def _make_stack(*, stack_name: str, program: Callable, env: dict[str, str]):
+    """Wraps ``pulumi.automation.create_or_select_stack`` with our
+    local-backend env. Extracted so tests can mock it; production calls
+    into ``pulumi.automation`` here.
+
+    The wrapped call may raise ``FileNotFoundError`` when the ``pulumi``
+    CLI binary isn't on PATH (memory:
+    feedback_pulumi_cli_binary_required) — ``run_pulumi_up_sync`` catches
+    that and re-raises as ``PulumiCliMissingError``.
+    """
+    from pulumi import automation as auto
+    workspace_opts = auto.LocalWorkspaceOptions(env_vars=env)
+    return auto.create_or_select_stack(
+        stack_name=stack_name,
+        program=program,
+        opts=workspace_opts,
+    )
+
+
+def run_pulumi_up_sync(
+    *,
+    stack_name: str,
+    program: Callable[[], None],
+    env: dict[str, str],
+) -> StackOutputs:
+    """Run ``pulumi up`` synchronously and return the named outputs.
+
+    Raises a typed ``ProvisioningError`` on known failures; the
+    reconciler's classifier maps everything else (including
+    ``pulumi.automation`` internals) to UNCLASSIFIED PERMANENT.
+
+    This function MUST stay sync. The reconciler wraps it in
+    ``asyncio.to_thread(...)`` because the Pulumi Python SDK has no
+    ``up_async`` (memory: feedback_pulumi_python_sdk_sync).
+    """
+    try:
+        stack = _make_stack(stack_name=stack_name, program=program, env=env)
+    except FileNotFoundError as e:
+        # `pulumi` binary not on PATH — classic deploy-time failure
+        # (memory: feedback_pulumi_cli_binary_required).
+        raise PulumiCliMissingError(
+            f"pulumi binary missing: {e}",
+        ) from e
+
+    try:
+        result = stack.up()
+    except ProvisioningError:
+        # The classifier (or upstream callers) already chose a code.
+        raise
+    except Exception as e:
+        msg = str(e).lower()
+        # Heuristic mapping for AWS errors that surface through Pulumi's
+        # generic exception type. Classifier handles unknown cases via
+        # UNCLASSIFIED PERMANENT.
+        if "authfailure" in msg or "credentials" in msg or "unauthorized" in msg:
+            raise InvalidCredentialsError(str(e)) from e
+        if "invalidamiid.notfound" in msg or "image id" in msg:
+            raise AMINotFoundError(str(e)) from e
+        if "throttling" in msg or "requestlimitexceeded" in msg:
+            raise PulumiTransientError(str(e)) from e
+        raise  # let the classifier deal with UNCLASSIFIED
+
+    return StackOutputs.from_pulumi_outputs(result.outputs or {})
+
+
+# ---------------------------------------------------------------------------
+# Adapter — surviving lifecycle helpers (deprovision, wait_for_ready,
+# discover_resources, get_logs). The reconciler owns provision_node,
+# so the methods that previously drove pulumi.up() are now stubs that
+# raise NotImplementedError pointing at the reconciler.
+# ---------------------------------------------------------------------------
 
 
 class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
@@ -252,376 +364,33 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
             passphrase=passphrase if passphrase is not None else settings.pulumi_passphrase,
         )
         self._db = db
-        # Holds a strong reference to the background _provision_async task so
-        # callers can await it and CPython cannot GC it prematurely.
-        self._last_provision_task: Optional[asyncio.Task] = None
 
-    async def provision_node(
-        self,
-        *,
-        provider_resource_id: str,
-        pool_id: str,
-        org_id: str,
-        region: Optional[str] = None,
-        use_spot: bool = False,
-        metadata: Optional[Dict[str, Any]] = None,
-        provider_credential_name: Optional[str] = None,
-        progress_writer: Any = None,
-    ) -> Dict[str, Any]:
-        writer = progress_writer or _NoopWriter()
+    async def provision_node(self, **_kwargs: Any) -> Dict[str, Any]:
+        """Deprecated since T10. The reconciler owns provisioning.
 
-        await writer.write_async("prepare", "running")
-
-        # Resolve the public URL the EC2 worker will call back to. If this
-        # is empty / points at localhost / a docker-internal hostname the
-        # worker will silently hang at worker_bootstrap — fail prepare now
-        # with a helpful message instead of burning an EC2 instance.
-        control_plane_url = _resolve_control_plane_url()
-        cp_err = _validate_control_plane_url(control_plane_url)
-        if cp_err:
-            await writer.write_async("prepare", "failed", cp_err)
-            raise ProvisionError(cp_err)
-        await writer.write_async(
-            "prepare", "log",
-            f"control plane URL: {control_plane_url}",
-        )
-
-        # Defensive: callers occasionally pass a GPU name ("T4") where an
-        # EC2 instance type ("g4dn.xlarge") is required. Map it before
-        # building the Pulumi program so AWS doesn't return
-        # InvalidParameterValue. Emit a prepare/log so the dashboard
-        # shows the substitution.
-        resolved_type, mapped_from = _resolve_instance_type(provider_resource_id)
-        if mapped_from:
-            await writer.write_async(
-                "prepare", "log",
-                f"mapped GPU name {mapped_from!r} -> EC2 instance type {resolved_type!r}",
-            )
-            provider_resource_id = resolved_type
-
-        try:
-            cfg = await load_providers_config()
-            env_vars = resolve_aws_env(cfg)  # raises MissingCredentialsError
-
-            pool_meta = dict(metadata or {})
-            if pool_meta:
-                try:
-                    AWSPoolMetadata(**pool_meta)
-                except Exception as e:
-                    await writer.write_async("prepare", "failed", str(e))
-                    raise ProvisionError(f"invalid AWS metadata: {e}") from e
-
-            account = cfg.cloud.aws
-            region = region or account.region or "us-east-1"
-            subnet_id = pool_meta.get("subnet_id") or account.subnet_id
-            sg_ids = pool_meta.get("security_group_ids") or account.security_group_ids
-            ami_id = pool_meta.get("ami_id") or account.ami_id
-            iam_arn = pool_meta.get("iam_instance_profile") or account.iam_instance_profile
-            root_gb = pool_meta.get("root_volume_gb") or account.root_volume_gb or 100
-            image_tag = (
-                pool_meta.get("worker_image_tag")
-                or account.worker_image_tag
-                or settings.worker_image_tag
-            )
-
-        except ProvisionError:
-            raise
-        except Exception as e:
-            await writer.write_async("prepare", "failed", str(e))
-            raise
-
-        await writer.write_async("prepare", "succeeded")
-
-        if not ami_id:
-            # CPU-only instances (t/m/c/r families) don't need the NVIDIA
-            # DLAMI — fall back to plain Ubuntu 22.04, which boots faster
-            # and avoids "instance type doesn't support GPU AMI" errors.
-            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
-                PLAIN_UBUNTU_PARAMETER,
-            )
-            is_gpu_family = provider_resource_id.split(".")[0].lower() in {
-                "g5", "g5g", "g6", "g6e", "g6f", "g4dn", "g4ad", "p4d", "p4de",
-                "p5", "p5e", "p5en", "p3", "p3dn", "p2", "dl1", "dl2q", "trn1",
-                "trn1n", "trn2",
-            }
-            param = None if is_gpu_family else PLAIN_UBUNTU_PARAMETER
-            await writer.write_async("ami_lookup", "running")
-            try:
-                ami_id = latest_dlami_ami(
-                    region,
-                    aws_access_key_id=env_vars["AWS_ACCESS_KEY_ID"],
-                    aws_secret_access_key=env_vars["AWS_SECRET_ACCESS_KEY"],
-                    parameter_name=param,
-                )
-                await writer.write_async("ami_lookup", "succeeded", ami_id)
-            except AMILookupError as e:
-                await writer.write_async("ami_lookup", "failed", str(e))
-                raise ProvisionError(f"AMI lookup failed: {e}") from e
-
-        # When constructed via the registry the adapter has no db handle —
-        # mint the bootstrap token through a short-lived asyncpg connection
-        # opened on demand against the orchestration's POSTGRES_DSN.
-        db_conn = self._db
-        owned_conn = False
-        if db_conn is None:
-            import asyncpg
-            db_conn = await asyncpg.connect(dsn=settings.postgres_dsn)
-            owned_conn = True
-        try:
-            token, bootstrap_id = await mint_bootstrap_token(
-                db_conn,
-                pool_id=UUID(pool_id) if isinstance(pool_id, str) else pool_id,
-                org_id=org_id,
-            )
-            # Per-pool inference token. The worker container exits with
-            # "INFERENCE_TOKEN is required" without it. Generate-or-fetch
-            # via the existing pool_repo SQL pattern.
-            import secrets
-            pool_uuid = UUID(pool_id) if isinstance(pool_id, str) else pool_id
-            inference_token = await db_conn.fetchval(
-                "UPDATE compute_pools "
-                "SET inference_token = COALESCE(inference_token, $2), "
-                "    updated_at = now() "
-                "WHERE id = $1 "
-                "RETURNING inference_token",
-                pool_uuid,
-                secrets.token_urlsafe(32),
-            )
-            # Pre-set the placeholder's node_name to the value build_user_data
-            # bakes into the cloud-init script. This needs to land BEFORE
-            # cloud-init runs on the EC2 (the worker's register POST is keyed
-            # on pool_id+node_name; a missing node_name on the placeholder
-            # would cause the worker to insert a fresh row instead of
-            # updating the placeholder in place).
-            expected_node_name = f"node-{str(bootstrap_id)[:8]}"
-            await db_conn.execute(
-                "UPDATE compute_inventory "
-                "SET node_name = $1, updated_at = now() "
-                "WHERE pool_id = $2 AND provider_instance_id LIKE 'placeholder:%'",
-                expected_node_name,
-                pool_uuid,
-            )
-        finally:
-            if owned_conn:
-                try:
-                    await db_conn.close()
-                except Exception:
-                    pass
-
-        ssh_keys = _resolve_ssh_authorized_keys()
-        if ssh_keys.strip():
-            await writer.write_async(
-                "prepare", "log",
-                f"SSH provisioning: {len(ssh_keys.strip().splitlines())} key(s) for ubuntu+root",
-            )
-        user_data = build_user_data(
-            bootstrap_token=token,
-            control_plane_url=control_plane_url,
-            node_name=f"node-{str(bootstrap_id)[:8]}",
-            pool_id=pool_id,
-            image=settings.worker_image,
-            image_tag=image_tag,
-            inference_token=inference_token,
-            ssh_authorized_keys=ssh_keys,
-        )
-
-        program = build_ec2_program(
-            pool_id=pool_id,
-            org_id=org_id,
-            bootstrap_id=str(bootstrap_id),
-            instance_type=provider_resource_id,
-            region=region,
-            ami_id=ami_id,
-            subnet_id=subnet_id,
-            security_group_ids=list(sg_ids) if sg_ids else None,
-            iam_instance_profile=iam_arn,
-            root_volume_gb=int(root_gb),
-            user_data=user_data,
-            use_spot=use_spot,
-        )
-
-        self.ensure_state_dir()  # raises PulumiStateError
-
-        await writer.write_async("pulumi_init", "running")
-        try:
-            opts = self.local_workspace_opts(env_vars=env_vars)
-            stack = pulumi.automation.create_or_select_stack(
-                stack_name=self.stack_name_for_pool(pool_id),
-                project_name=self.project_name,
-                program=program,
-                opts=pulumi.automation.LocalWorkspaceOptions(
-                    work_dir=opts.work_dir,
-                    env_vars=opts.env_vars,
-                    project_settings=pulumi.automation.ProjectSettings(
-                        name=self.project_name,
-                        runtime="python",
-                    ),
-                ),
-            )
-            stack.set_config("aws:region", pulumi.automation.ConfigValue(region))
-        except Exception as e:
-            await writer.write_async("pulumi_init", "failed", str(e))
-            raise
-        await writer.write_async("pulumi_init", "succeeded")
-
-        await writer.write_async("pulumi_up", "running")
-        self._last_provision_task = asyncio.create_task(
-            self._provision_async(stack, pool_id, str(bootstrap_id), writer)
-        )
-
-        return {
-            "provider": "aws",
-            "provider_instance_id": None,
-            "region": region,
-            "lifecycle_state": "provisioning",
-            "metadata": {
-                "pulumi_stack": self.stack_name_for_pool(pool_id),
-                "bootstrap_id": str(bootstrap_id),
-            },
-        }
-
-    async def provision_cluster(
-        self,
-        *,
-        cluster_name: str,
-        gpu_type: str,
-        gpu_count: int,
-        region: Optional[str] = None,
-        use_spot: bool = False,
-        provider_credential_name: Optional[str] = None,
-        pool_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-        **_ignored: Any,
-    ) -> Dict[str, Any]:
-        """Provision a 1-instance "cluster" — one EC2 instance per pool.
-
-        The compute_pool_manager calls this for cloud providers with
-        supports_cluster_mode=True. We translate the cluster-shaped args
-        into a provision_node call. gpu_type carries the EC2 instance type
-        (the dashboard's resource-card path puts the real instance_id
-        like 't3.micro' / 'g5.xlarge' in allowed_gpu_types[0], which the
-        manager passes here as gpu_type).
+        Callers used to hit this and watch lifecycle_state via the DB.
+        After T10, ``run_pulumi_up_sync`` (module-level) is the only
+        Pulumi entry point and the reconciler in
+        ``services/provisioning/`` drives it. T23 rewrites the only
+        production caller (``api/nodes.py::add_provider_node``) to
+        enqueue a provisioning job instead.
         """
-        if not pool_id or not org_id:
-            raise ProvisionError(
-                "provision_cluster requires pool_id and org_id — update the manager"
-            )
-        result = await self.provision_node(
-            provider_resource_id=gpu_type,
-            pool_id=pool_id,
-            org_id=org_id,
-            region=region,
-            use_spot=use_spot,
-            provider_credential_name=provider_credential_name,
+        raise NotImplementedError(
+            "PulumiAWSAdapter.provision_node was removed in T10. "
+            "Enqueue a provisioning job via the reconciler instead "
+            "(see services/orchestration/services/provisioning/). The "
+            "module-level helper run_pulumi_up_sync is the only "
+            "Pulumi entry point now."
         )
-        return {
-            "cluster_id": cluster_name,
-            "hostname": result.get("metadata", {}).get("public_dns", ""),
-            "ip_address": result.get("metadata", {}).get("private_ip", ""),
-            "provider_instance_id": result.get("provider_instance_id"),
-        }
 
-    async def _provision_async(
-        self,
-        stack: Any,
-        pool_id: str,
-        bootstrap_id: str,
-        writer: Any = None,
-    ) -> None:
-        """Run pulumi up. On success, write outputs into compute_pools.metadata.
-        On failure, set lifecycle_state='failed' and record the error."""
-        writer = writer or _NoopWriter()
-
-        def _on_event(ev):
-            try:
-                kind = next(
-                    (k for k in ("resource_pre_event", "res_outputs_event",
-                                 "diagnostic_event", "summary_event")
-                     if hasattr(ev, k) and getattr(ev, k) is not None),
-                    "engine_event",
-                )
-                payload = str(getattr(ev, kind, ev))
-                writer.write("pulumi_up", "log", f"{kind}: {payload}")
-            except Exception:
-                pass
-
-        try:
-            result = await asyncio.to_thread(stack.up, on_event=_on_event)
-            outputs = result.outputs or {}
-            instance_id = self._extract_output(outputs, "instance_id")
-            public_dns  = self._extract_output(outputs, "public_dns")
-            private_ip  = self._extract_output(outputs, "private_ip")
-            meta_update = {
-                "instance_id": instance_id,
-                "public_dns":  public_dns,
-                "private_ip":  private_ip,
-            }
-            await writer.write_async("pulumi_up", "succeeded", instance_id)
-            await writer.write_async("ec2_running", "succeeded", public_dns)
-            if self._db is not None:
-                await self._db.execute(
-                    "UPDATE compute_pools "
-                    "SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2",
-                    json.dumps(meta_update),
-                    UUID(pool_id),
-                )
-                # Promote the placeholder inventory row to point at the real
-                # EC2 instance. The worker's later register_worker call upserts
-                # on (provider, provider_instance_id) and finds the same row,
-                # flipping state -> ready.
-                if instance_id:
-                    # Predict the node_name the worker will register with
-                    # so its upsert finds this placeholder (matches on
-                    # pool_id + node_name) instead of inserting a fresh
-                    # row. Format must mirror build_user_data:
-                    #   node_name = f"node-{bootstrap_id[:8]}"
-                    expected_node_name = f"node-{str(bootstrap_id)[:8]}"
-                    await self._db.execute(
-                        "UPDATE compute_inventory "
-                        "SET provider_instance_id = $1, hostname = $2, "
-                        "    node_name = $3, updated_at = now() "
-                        "WHERE pool_id = $4 AND provider_instance_id LIKE 'placeholder:%'",
-                        instance_id,
-                        public_dns or "",
-                        expected_node_name,
-                        UUID(pool_id),
-                    )
-            await writer.write_async("worker_bootstrap", "running")
-            logger.info("Pulumi up succeeded for pool %s: instance %s",
-                        pool_id, instance_id)
-        except Exception as e:
-            err = str(e)
-            await writer.write_async("pulumi_up", "failed", err)
-            logger.error("Pulumi up failed for pool %s: %s", pool_id, err)
-            if self._db is not None:
-                await self._db.execute(
-                    "UPDATE compute_pools "
-                    "SET lifecycle_state = 'failed', "
-                    "    metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
-                    "WHERE id = $2",
-                    json.dumps({"error": err}),
-                    UUID(pool_id),
-                )
-                await self._db.execute(
-                    "UPDATE compute_inventory "
-                    "SET state = 'terminated', updated_at = now(), "
-                    "    metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
-                    "WHERE pool_id = $2 AND provider_instance_id LIKE 'placeholder:%'",
-                    json.dumps({"failure_reason": err}),
-                    UUID(pool_id),
-                )
-            try:
-                await asyncio.to_thread(stack.destroy)
-            except Exception as de:
-                logger.warning("destroy failed after up failure: %s", de)
-
-    @staticmethod
-    def _extract_output(outputs: Dict[str, Any], key: str) -> Any:
-        v = outputs.get(key)
-        if v is None:
-            return None
-        return v.value if hasattr(v, "value") else v
+    async def provision_cluster(self, **_kwargs: Any) -> Dict[str, Any]:
+        """Deprecated since T10. The single-node-per-pool model is now
+        handled end-to-end by the reconciler — no separate cluster
+        codepath. See ``provision_node`` docstring."""
+        raise NotImplementedError(
+            "PulumiAWSAdapter.provision_cluster was removed in T10. "
+            "Enqueue a provisioning job via the reconciler instead."
+        )
 
     async def _select_stack(self, pool_id: str) -> Any:
         """Open an existing stack (no program) for wait_for_ready/deprovision.
