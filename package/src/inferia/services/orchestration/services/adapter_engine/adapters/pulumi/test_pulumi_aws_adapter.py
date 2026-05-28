@@ -157,6 +157,122 @@ def test_run_pulumi_up_sync_uses_local_workspace_with_env():
     assert kwargs["env"] == {"AWS_ACCESS_KEY_ID": "K", "AWS_SECRET_ACCESS_KEY": "S"}
 
 
+def test_run_pulumi_up_sync_passes_project_name_and_state_dir():
+    """_make_stack receives project_name + state_dir; project name comes
+    from PROJECT_NAME constant by default. This is the Critical-1 path
+    surfaced in T10 review: ``auto.create_or_select_stack`` requires a
+    project_name for inline programs, and the reconciler must pass a
+    persistent state_dir so deprovision_node can later reopen the same
+    stack."""
+    fake_stack = MagicMock()
+    fake_stack.up.return_value = MagicMock(outputs={
+        "instance_id": MagicMock(value="i-x"),
+    })
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        return_value=fake_stack,
+    ) as mk:
+        run_pulumi_up_sync(
+            stack_name="s",
+            program=lambda: None,
+            env={"AWS_ACCESS_KEY_ID": "K", "AWS_SECRET_ACCESS_KEY": "S"},
+            state_dir="/var/lib/inferia/pulumi",
+        )
+    kwargs = mk.call_args.kwargs
+    assert kwargs["project_name"] == "inferia-aws"
+    assert kwargs["state_dir"] == "/var/lib/inferia/pulumi"
+
+
+def test_make_stack_merges_pulumi_env_from_process_env(monkeypatch):
+    """If the caller doesn't pass PULUMI_BACKEND_URL/etc, _make_stack
+    pulls them from the process environment (Critical-2 from T10 review).
+    Without this merge the stack would land on Pulumi cloud (or fail)
+    and the state wouldn't be reusable across pulumi up + deprovision_node.
+
+    Patches LocalWorkspaceOptions + create_or_select_stack directly so
+    no real pulumi.automation imports happen (the auto module is already
+    available via pulumi.automation at module import time)."""
+    monkeypatch.setenv("PULUMI_BACKEND_URL", "file:///tmp/pulumi-state")
+    monkeypatch.setenv("PULUMI_CONFIG_PASSPHRASE", "test-pass")
+    monkeypatch.setenv("PULUMI_HOME", "/tmp/pulumi-home")
+
+    captured: dict = {}
+
+    def fake_local_workspace_options(**kw):
+        captured["lwo"] = kw
+        return MagicMock()
+
+    def fake_create_or_select_stack(**kw):
+        captured["cos"] = kw
+        return MagicMock()
+
+    def fake_project_settings(**kw):
+        captured["ps"] = kw
+        return MagicMock()
+
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as adapter_mod,
+    )
+    with patch.object(
+        adapter_mod, "pulumi", MagicMock()
+    ), patch(
+        "pulumi.automation.LocalWorkspaceOptions", side_effect=fake_local_workspace_options
+    ), patch(
+        "pulumi.automation.create_or_select_stack", side_effect=fake_create_or_select_stack
+    ), patch(
+        "pulumi.automation.ProjectSettings", side_effect=fake_project_settings
+    ):
+        adapter_mod._make_stack(
+            stack_name="s",
+            program=lambda: None,
+            env={"AWS_ACCESS_KEY_ID": "K"},
+        )
+
+    # AWS creds preserved; Pulumi backend env merged in from process env.
+    env_vars = captured["lwo"]["env_vars"]
+    assert env_vars["AWS_ACCESS_KEY_ID"] == "K"
+    assert env_vars["PULUMI_BACKEND_URL"] == "file:///tmp/pulumi-state"
+    assert env_vars["PULUMI_CONFIG_PASSPHRASE"] == "test-pass"
+    assert env_vars["PULUMI_HOME"] == "/tmp/pulumi-home"
+    # project_name + workspace project_settings carry "inferia-aws".
+    assert captured["cos"]["project_name"] == "inferia-aws"
+    assert captured["ps"]["name"] == "inferia-aws"
+
+
+def test_make_stack_caller_pulumi_env_wins_over_process_env(monkeypatch):
+    """If the caller explicitly puts a PULUMI_* var in `env`, _make_stack
+    must NOT overwrite it with the process-env value. The merge is a
+    fallback for missing keys, not a force-set."""
+    monkeypatch.setenv("PULUMI_BACKEND_URL", "file:///process/pulumi-state")
+    captured: dict = {}
+
+    def fake_local_workspace_options(**kw):
+        captured["lwo"] = kw
+        return MagicMock()
+
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi import (
+        pulumi_aws_adapter as adapter_mod,
+    )
+    with patch(
+        "pulumi.automation.LocalWorkspaceOptions", side_effect=fake_local_workspace_options
+    ), patch(
+        "pulumi.automation.create_or_select_stack", return_value=MagicMock()
+    ), patch(
+        "pulumi.automation.ProjectSettings", return_value=MagicMock()
+    ):
+        adapter_mod._make_stack(
+            stack_name="s",
+            program=lambda: None,
+            env={
+                "AWS_ACCESS_KEY_ID": "K",
+                "PULUMI_BACKEND_URL": "file:///caller/pulumi-state",
+            },
+        )
+
+    assert captured["lwo"]["env_vars"]["PULUMI_BACKEND_URL"] == "file:///caller/pulumi-state"
+
+
 # ---------------------------------------------------------------------------
 # Edge cases for the run_pulumi_up_sync error-classification heuristic.
 # These cover throttling (-> PulumiTransientError) and unknown errors

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -268,10 +269,36 @@ class StackOutputs:
         )
 
 
-def _make_stack(*, stack_name: str, program: Callable, env: dict[str, str]):
+def _make_stack(
+    *,
+    stack_name: str,
+    program: Callable,
+    env: dict[str, str],
+    state_dir: str | None = None,
+    project_name: str = PROJECT_NAME,
+):
     """Wraps ``pulumi.automation.create_or_select_stack`` with our
     local-backend env. Extracted so tests can mock it; production calls
     into ``pulumi.automation`` here.
+
+    ``env`` carries the AWS credentials (resolve_aws_env). Pulumi-side
+    env vars (``PULUMI_BACKEND_URL``, ``PULUMI_CONFIG_PASSPHRASE``,
+    ``PULUMI_HOME``) are merged in from the process environment if not
+    already in ``env`` so the local-backend Pulumi sees them. Without
+    these the stack would land on Pulumi cloud (or fail), and the
+    state wouldn't be reachable by the later deprovision_node call.
+
+    ``state_dir`` overrides the workspace working directory; if
+    ``None``, Pulumi creates a fresh temp dir per call (correct only
+    for tests). Production callers (PulumiUpHandler via the reconciler
+    in T15) MUST pass a persistent ``state_dir`` so subsequent
+    ``deprovision_node`` calls can find the stack.
+
+    ``project_name`` is required by ``create_or_select_stack`` for
+    inline programs; defaults to the module-level ``PROJECT_NAME``
+    constant (``"inferia-aws"``) — the same name used by the surviving
+    ``_select_stack`` method so a stack created here is reopen-able
+    there.
 
     The wrapped call may raise ``FileNotFoundError`` when the ``pulumi``
     CLI binary isn't on PATH (memory:
@@ -279,9 +306,21 @@ def _make_stack(*, stack_name: str, program: Callable, env: dict[str, str]):
     that and re-raises as ``PulumiCliMissingError``.
     """
     from pulumi import automation as auto
-    workspace_opts = auto.LocalWorkspaceOptions(env_vars=env)
+    # Merge Pulumi backend env from the process if the caller didn't supply.
+    full_env = dict(env)
+    for k in ("PULUMI_BACKEND_URL", "PULUMI_CONFIG_PASSPHRASE", "PULUMI_HOME"):
+        if k not in full_env and (v := os.environ.get(k)):
+            full_env[k] = v
+    workspace_opts = auto.LocalWorkspaceOptions(
+        env_vars=full_env,
+        work_dir=state_dir,
+        project_settings=auto.ProjectSettings(
+            name=project_name, runtime="python",
+        ),
+    )
     return auto.create_or_select_stack(
         stack_name=stack_name,
+        project_name=project_name,
         program=program,
         opts=workspace_opts,
     )
@@ -292,6 +331,8 @@ def run_pulumi_up_sync(
     stack_name: str,
     program: Callable[[], None],
     env: dict[str, str],
+    state_dir: str | None = None,
+    project_name: str = PROJECT_NAME,
 ) -> StackOutputs:
     """Run ``pulumi up`` synchronously and return the named outputs.
 
@@ -299,12 +340,25 @@ def run_pulumi_up_sync(
     reconciler's classifier maps everything else (including
     ``pulumi.automation`` internals) to UNCLASSIFIED PERMANENT.
 
+    ``state_dir`` is forwarded to ``_make_stack`` so production
+    callers (PulumiUpHandler in T15) can pin Pulumi to a persistent
+    working directory; without it, deprovision_node would not be
+    able to reopen the stack. ``project_name`` defaults to the
+    module-level ``PROJECT_NAME`` so a stack created here is reachable
+    via ``PulumiAWSAdapter._select_stack`` later.
+
     This function MUST stay sync. The reconciler wraps it in
     ``asyncio.to_thread(...)`` because the Pulumi Python SDK has no
     ``up_async`` (memory: feedback_pulumi_python_sdk_sync).
     """
     try:
-        stack = _make_stack(stack_name=stack_name, program=program, env=env)
+        stack = _make_stack(
+            stack_name=stack_name,
+            program=program,
+            env=env,
+            state_dir=state_dir,
+            project_name=project_name,
+        )
     except FileNotFoundError as e:
         # `pulumi` binary not on PATH — classic deploy-time failure
         # (memory: feedback_pulumi_cli_binary_required).
