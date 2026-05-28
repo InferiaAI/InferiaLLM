@@ -1,0 +1,28 @@
+-- Migration 20260528a_node_state_failed.sql (idempotent)
+--
+-- WHY THIS IS A SEPARATE FILE:
+-- cli_init.py wraps every migration file in a single BEGIN/COMMIT transaction
+-- (see package/src/inferia/cli_init.py:99-106). Postgres >= 12 allows
+-- ALTER TYPE ADD VALUE inside a transaction, but the new value cannot be
+-- referenced (e.g. by UPDATE compute_inventory SET state = 'failed') in
+-- the same transaction -- that raises:
+--     ERROR: unsafe use of new value "failed" of enum type node_state
+--     (SQLSTATE 55P04)
+--
+-- The new enum value must commit before any statement uses it. That is why
+-- this migration is split:
+--   20260528a_node_state_failed.sql  -> just ALTER TYPE (commits first)
+--   20260528b_provisioning_jobs.sql  -> schema changes + backfill that
+--                                       reference 'failed' (commits second)
+-- File names are date-suffixed ('a' / 'b') so the alphabetical ordering used
+-- by cli_init.py applies them in the correct order.
+--
+-- WARNING: tests/integration/test_migration.py splits this file on ';'.
+-- Do not introduce $$-quoted blocks here without updating the test
+-- to use a real statement splitter.
+
+-- Extend node_state enum with 'failed'. This is intentionally NOT
+-- overloaded onto 'unhealthy' (which already means "registered worker
+-- stopped heartbeating") -- 'failed' specifically marks nodes whose
+-- provisioning never completed.
+ALTER TYPE node_state ADD VALUE IF NOT EXISTS 'failed';

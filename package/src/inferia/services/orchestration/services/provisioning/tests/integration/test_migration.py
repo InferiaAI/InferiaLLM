@@ -1,8 +1,14 @@
-"""Smoke-tests the 20260528_provisioning_jobs migration against a real PG.
+"""Smoke-tests the 20260528 provisioning_jobs migrations against a real PG.
 
 Run with INFERIA_TEST_DATABASE_URL pointing at an empty test DB that has
 the existing global_schema.sql + all prior migrations applied. Skipped
 if that env var is not set.
+
+The migration is split across two files (20260528a / 20260528b) because
+cli_init.py wraps every migration file in a single BEGIN/COMMIT and
+Postgres forbids referencing a newly-added enum value in the same
+transaction it was created in. We apply both files in alphabetical
+order here -- exactly mirroring cli_init.py's production order.
 """
 from __future__ import annotations
 
@@ -13,7 +19,25 @@ from pathlib import Path
 import asyncpg
 import pytest
 
-MIGRATION = Path(__file__).resolve().parents[6] / "infra" / "schema" / "migrations" / "20260528_provisioning_jobs.sql"
+_MIGRATIONS_DIR = Path(__file__).resolve().parents[6] / "infra" / "schema" / "migrations"
+MIGRATIONS = [
+    _MIGRATIONS_DIR / "20260528a_node_state_failed.sql",
+    _MIGRATIONS_DIR / "20260528b_provisioning_jobs.sql",
+]
+
+
+async def _apply_migrations(conn: asyncpg.Connection) -> None:
+    """Apply both migration files in order, splitting each on ';'.
+
+    The naive split on ';' is fine for the SQL in these files. The
+    files include a WARNING comment forbidding $$-quoted blocks; if
+    that ever becomes necessary, swap this for a real statement
+    splitter.
+    """
+    for path in MIGRATIONS:
+        sql = path.read_text()
+        for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
+            await conn.execute(stmt)
 
 
 @pytest.fixture
@@ -27,13 +51,9 @@ def test_database_url() -> str:
 @pytest.mark.asyncio
 async def test_migration_applies_cleanly(test_database_url):
     """Running the migration on a fresh DB produces the expected schema."""
-    sql = MIGRATION.read_text()
     conn = await asyncpg.connect(test_database_url)
     try:
-        # Migrator runs statements in autocommit, so split on ';' boundaries
-        # that terminate full statements (naive but adequate for our SQL).
-        for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-            await conn.execute(stmt)
+        await _apply_migrations(conn)
 
         # 'failed' is now a node_state enum value.
         rows = await conn.fetch(
@@ -78,12 +98,10 @@ async def test_migration_applies_cleanly(test_database_url):
 @pytest.mark.asyncio
 async def test_migration_is_idempotent(test_database_url):
     """Re-running the migration on an already-migrated DB is a no-op."""
-    sql = MIGRATION.read_text()
     conn = await asyncpg.connect(test_database_url)
     try:
         for _ in range(2):
-            for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-                await conn.execute(stmt)
+            await _apply_migrations(conn)
     finally:
         await conn.close()
 
@@ -115,9 +133,7 @@ async def test_migration_marks_inflight_inventory_as_failed(test_database_url):
             node_id, pool_id,
         )
         # Apply the migration.
-        sql = MIGRATION.read_text()
-        for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-            await conn.execute(stmt)
+        await _apply_migrations(conn)
         # Assert: inventory row now 'failed', a job row exists.
         state = await conn.fetchval(
             "SELECT state::text FROM compute_inventory WHERE id=$1", node_id

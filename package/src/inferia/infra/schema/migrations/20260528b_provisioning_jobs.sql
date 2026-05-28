@@ -1,19 +1,25 @@
--- Migration 20260528_provisioning_jobs.sql (idempotent)
--- Postgres ≥ 12 allows ALTER TYPE ADD VALUE inside a transaction, but the
--- new value cannot be USED in the same transaction. The split-file migrator
--- runs each .sql file in autocommit, so each statement below commits independently.
+-- Migration 20260528b_provisioning_jobs.sql (idempotent)
+--
+-- WHY THIS IS A SEPARATE FILE:
+-- cli_init.py wraps every migration file in a single BEGIN/COMMIT transaction
+-- (see package/src/inferia/cli_init.py:99-106). The previous file
+-- (20260528a_node_state_failed.sql) committed the 'failed' addition to the
+-- node_state enum. Postgres >= 12 forbids referencing a newly-added enum
+-- value in the same transaction that created it (SQLSTATE 55P04), so the
+-- UPDATE compute_inventory SET state = 'failed' below MUST live in a
+-- separate file that runs after 20260528a has committed.
+--
+-- WARNING: tests/integration/test_migration.py splits this file on ';'.
+-- Do not introduce $$-quoted blocks here without updating the test
+-- to use a real statement splitter.
 
--- 1. Extend node_state enum with 'failed' (does NOT overload 'unhealthy',
---    which already means "registered worker stopped heartbeating").
-ALTER TYPE node_state ADD VALUE IF NOT EXISTS 'failed';
-
--- 2. Extend compute_inventory with class/type columns.
+-- 1. Extend compute_inventory with class/type columns.
 ALTER TABLE compute_inventory
     ADD COLUMN IF NOT EXISTS instance_class TEXT
         CHECK (instance_class IN ('normal_gpu','heavy_gpu','cpu')),
     ADD COLUMN IF NOT EXISTS instance_type  TEXT;
 
--- 3. Create the provisioning_jobs queue table.
+-- 2. Create the provisioning_jobs queue table.
 CREATE TABLE IF NOT EXISTS provisioning_jobs (
     id                   UUID PRIMARY KEY,
     node_id              UUID NOT NULL REFERENCES compute_inventory(id) ON DELETE CASCADE,
@@ -41,7 +47,9 @@ CREATE TABLE IF NOT EXISTS provisioning_jobs (
 
     CONSTRAINT provisioning_jobs_phase_check
         CHECK (phase IN ('pending','preflight','provisioning','bootstrapping',
-                         'ready','failed','cancelling','terminated'))
+                         'ready','failed','cancelling','terminated')),
+    CONSTRAINT provisioning_jobs_error_class_check
+        CHECK (error_class IS NULL OR error_class IN ('TRANSIENT','PERMANENT','INFRASTRUCTURE'))
 );
 
 CREATE INDEX IF NOT EXISTS provisioning_jobs_claimable_idx
@@ -51,9 +59,11 @@ CREATE INDEX IF NOT EXISTS provisioning_jobs_claimable_idx
 CREATE INDEX IF NOT EXISTS provisioning_jobs_node_id_idx
     ON provisioning_jobs (node_id);
 
--- 4. One-time backfill: any in-flight compute_inventory rows under the old
+-- 3. One-time backfill: any in-flight compute_inventory rows under the old
 --    fire-and-forget adapter get a 'failed/UPGRADE_ABANDONED' job + the
---    inventory row transitions to 'failed'.
+--    inventory row transitions to 'failed'. The 'failed' enum value was
+--    committed by 20260528a_node_state_failed.sql, so it is safe to use
+--    here.
 INSERT INTO provisioning_jobs (
     id, node_id, pool_id, org_id, provider, spec,
     phase, last_error_code, last_error_message, last_error_hint,
@@ -80,3 +90,11 @@ UPDATE compute_inventory SET state = 'failed', updated_at = now()
 WHERE state = 'provisioning'
   AND agent_kind = 'worker'
   AND id IN (SELECT node_id FROM provisioning_jobs WHERE last_error_code = 'UPGRADE_ABANDONED');
+
+-- 4. Column-intent documentation. These COMMENT statements record design
+--    decisions that are otherwise invisible at the schema level.
+COMMENT ON COLUMN provisioning_jobs.spec IS
+    'JSONB payload from POST /api/v1/nodes/add/{provider}; NOT NULL with no default -- every enqueue path must provide it explicitly (use ''{}''::jsonb if truly empty).';
+
+COMMENT ON COLUMN provisioning_jobs.provider IS
+    'Provider identifier. Today only ''aws'' is exercised by the reconciler; deliberately unconstrained TEXT for forward compatibility with future providers.';
