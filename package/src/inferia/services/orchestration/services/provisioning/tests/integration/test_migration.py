@@ -98,8 +98,14 @@ async def test_migration_marks_inflight_inventory_as_failed(test_database_url):
         node_id = uuid.uuid4()
         # Set up a pool + inventory row in 'provisioning'.
         await conn.execute(
-            """INSERT INTO compute_pools (id, org_id, name, provider, lifecycle_state)
-               VALUES ($1, 'org-test', 'p', 'aws', 'running')""",
+            """INSERT INTO compute_pools (
+                 id, pool_name, owner_type, provider, scheduling_policy,
+                 lifecycle_state, org_id
+               )
+               VALUES (
+                 $1, 'p-test-migration', 'organization', 'aws', '{}'::jsonb,
+                 'running', 'org-test'
+               )""",
             pool_id,
         )
         await conn.execute(
