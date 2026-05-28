@@ -2,6 +2,20 @@
 
 All interpolated values pass through shlex.quote. Inputs containing NUL or
 exceeding 1024 chars are rejected up front.
+
+The script branches on ``instance_class``:
+
+- ``normal_gpu`` / ``heavy_gpu``: install nvidia-container-toolkit, pass
+  ``--gpus all`` to ``docker run``, and advertise ``gpu_count`` to the
+  worker via ``ALLOCATABLE_GPU_OVERRIDE`` so the worker reports its
+  capacity without depending on ``nvidia-smi`` being present in the
+  container image.
+- ``cpu``: skip NVIDIA driver / runtime setup, omit ``--gpus``, and
+  advertise ``ALLOCATABLE_GPU_OVERRIDE=0``.
+
+Anything else raises ``ValueError`` so a malformed tier from the wizard
+fails loud rather than producing a script that silently mismatches the
+EC2 instance type.
 """
 from __future__ import annotations
 
@@ -14,6 +28,8 @@ class InvalidBootstrapInput(ValueError):
 
 _MAX_FIELD_LEN = 1024
 
+_VALID_INSTANCE_CLASSES = frozenset({"normal_gpu", "heavy_gpu", "cpu"})
+
 
 def _validate(name: str, value: str) -> str:
     if "\x00" in value:
@@ -23,21 +39,11 @@ def _validate(name: str, value: str) -> str:
     return value
 
 
-_TEMPLATE = r"""#!/bin/bash
-set -euo pipefail
-exec > >(tee /var/log/inferia-bootstrap.log) 2>&1
-
-echo "[inferia-bootstrap] starting at $(date -Is)"
-
-# zsh + SSH for ubuntu and root, when authorized_keys is supplied.
-{ssh_block}
-
-if ! command -v docker >/dev/null; then
-  echo "[inferia-bootstrap] installing docker"
-  curl -fsSL https://get.docker.com | sh
-fi
-
-if lspci 2>/dev/null | grep -qi nvidia && ! command -v nvidia-ctk >/dev/null; then
+# Bash block that installs the NVIDIA container toolkit. Rendered only on
+# GPU tiers. Kept as a raw string so the outer .format() doesn't get
+# confused by the embedded ${ID}${VERSION_ID} expansions; consumers of
+# _TEMPLATE inject this verbatim via the {nvidia_block} slot.
+_NVIDIA_INSTALL_BLOCK = r"""if lspci 2>/dev/null | grep -qi nvidia && ! command -v nvidia-ctk >/dev/null; then
   echo "[inferia-bootstrap] installing nvidia-container-toolkit"
   distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
@@ -49,14 +55,36 @@ if lspci 2>/dev/null | grep -qi nvidia && ! command -v nvidia-ctk >/dev/null; th
   nvidia-ctk runtime configure --runtime=docker
   systemctl restart docker
 fi
+"""
 
+_NVIDIA_SKIP_BLOCK = "# CPU-only instance: skipping NVIDIA driver / runtime setup\n"
+
+# On GPU tiers we always want --gpus all; on CPU tiers we want no GPU
+# flag at all. We render the literal flag (not the lspci-probed runtime
+# variable) so the user-data is deterministic w.r.t. the wizard tier.
+_GPU_FLAG_LINE = 'GPU_FLAG="--gpus all"\n'
+_CPU_FLAG_LINE = 'GPU_FLAG=""\n'
+
+_TEMPLATE = r"""#!/bin/bash
+set -euo pipefail
+exec > >(tee /var/log/inferia-bootstrap.log) 2>&1
+
+echo "[inferia-bootstrap] starting at $(date -Is) (instance_class={instance_class}, gpu_count={gpu_count_literal})"
+
+# zsh + SSH for ubuntu and root, when authorized_keys is supplied.
+{ssh_block}
+
+if ! command -v docker >/dev/null; then
+  echo "[inferia-bootstrap] installing docker"
+  curl -fsSL https://get.docker.com | sh
+fi
+
+{nvidia_block}
 mkdir -p /var/lib/inferia-worker
 docker pull {image_full}
 docker rm -f inferia-worker 2>/dev/null || true
 
-GPU_FLAG=""
-if lspci 2>/dev/null | grep -qi nvidia; then GPU_FLAG="--gpus=all"; fi
-
+{gpu_flag_line}
 # Discover the EC2 public hostname so we can build WORKER_ADVERTISE_URL.
 # IMDSv2 is required on modern AMIs; fall back to IMDSv1 if the token
 # request fails (older AMIs / non-AWS clones).
@@ -82,6 +110,8 @@ docker run -d --name inferia-worker --restart=always $GPU_FLAG \
   -e POOL_ID={pool_id} \
   -e WORKER_ADVERTISE_URL="http://$PUBLIC_HOST:8080" \
   -e INFERENCE_TOKEN={inference_token} \
+  -e ALLOCATABLE_GPU_OVERRIDE={gpu_count_literal} \
+  -e ALLOCATABLE_GPU_MODELS_OVERRIDE={gpu_models_override} \
   {image_full}
 
 # --- inferia diagnostic block (cloud-init console output) ---------------------
@@ -154,10 +184,13 @@ def build_user_data(
     control_plane_url: str,
     node_name: str,
     pool_id: str,
-    image: str,
-    image_tag: str,
+    image: str = "",
+    image_tag: str = "",
     inference_token: str,
     ssh_authorized_keys: str = "",
+    instance_class: str = "normal_gpu",
+    gpu_count: int = 1,
+    worker_image: str | None = None,
 ) -> str:
     """Build a shell-safe cloud-init user-data script.
 
@@ -167,8 +200,10 @@ def build_user_data(
         control_plane_url: Base URL of the control plane.
         node_name: EC2 instance identifier (e.g. ``i-0abc123``).
         pool_id: UUID of the node pool this worker belongs to.
-        image: Container image name (without tag).
-        image_tag: Container image tag.
+        image: Container image name (without tag). Mutually exclusive
+            with ``worker_image``.
+        image_tag: Container image tag. Mutually exclusive with
+            ``worker_image``.
         inference_token: Per-pool token the control plane uses to
             authenticate inbound CP→worker traffic. Without it the
             inferia-worker container exits with
@@ -178,6 +213,25 @@ def build_user_data(
             zsh + bash, writes the keys for ``ubuntu`` and ``root``,
             and enables root SSH via key (no password login). Empty
             string skips the SSH setup entirely.
+        instance_class: EC2 wizard tier this worker is being provisioned
+            into. Must be one of ``"normal_gpu"``, ``"heavy_gpu"``, or
+            ``"cpu"``.
+
+            * ``normal_gpu`` / ``heavy_gpu``: installs
+              ``nvidia-container-toolkit``, passes ``--gpus all`` to
+              ``docker run``, and advertises ``gpu_count`` to the worker
+              via ``ALLOCATABLE_GPU_OVERRIDE``.
+            * ``cpu``: skips NVIDIA driver / runtime install, omits the
+              ``--gpus`` flag, and advertises ``ALLOCATABLE_GPU_OVERRIDE=0``.
+        gpu_count: Number of GPUs the worker should advertise via
+            ``ALLOCATABLE_GPU_OVERRIDE``. Should be ``0`` for the CPU
+            tier and ``>=1`` for the GPU tiers (the value is not checked
+            against the tier — the wizard / orchestrator is responsible
+            for keeping them consistent).
+        worker_image: Convenience alias for callers that already have
+            ``"image:tag"`` joined into one string (matches the plan
+            sketch's signature). If supplied it overrides ``image`` and
+            ``image_tag``.
 
     Returns:
         A ``#!/bin/bash`` script suitable for use as EC2 user-data.
@@ -185,16 +239,44 @@ def build_user_data(
     Raises:
         InvalidBootstrapInput: If any field contains a NUL byte or exceeds
             its size cap.
+        ValueError: If ``instance_class`` is not one of the supported
+            tiers. We deliberately raise the plain ``ValueError`` (not
+            ``InvalidBootstrapInput``) because a bad tier is a wiring
+            mismatch with the wizard, not an injection attempt; the
+            tests in ``test_bootstrap_builder.py`` rely on this
+            distinction.
     """
+    if instance_class not in _VALID_INSTANCE_CLASSES:
+        raise ValueError(
+            f"unknown instance_class: {instance_class!r} "
+            f"(expected one of {sorted(_VALID_INSTANCE_CLASSES)})"
+        )
+
     bootstrap_token = _validate("bootstrap_token", bootstrap_token)
     control_plane_url = _validate("control_plane_url", control_plane_url)
     node_name = _validate("node_name", node_name)
     pool_id = _validate("pool_id", pool_id)
-    image = _validate("image", image)
-    image_tag = _validate("image_tag", image_tag)
     inference_token = _validate("inference_token", inference_token)
 
-    image_full = shlex.quote(f"{image}:{image_tag}")
+    if worker_image is not None:
+        # Allow the plan-sketch-style single-string worker_image kwarg.
+        # We still run it through _validate so injection attempts
+        # against it are caught at the same boundary as image / image_tag.
+        worker_image = _validate("worker_image", worker_image)
+        image_full = shlex.quote(worker_image)
+    else:
+        image = _validate("image", image)
+        image_tag = _validate("image_tag", image_tag)
+        image_full = shlex.quote(f"{image}:{image_tag}")
+
+    is_gpu = instance_class != "cpu"
+    nvidia_block = _NVIDIA_INSTALL_BLOCK if is_gpu else _NVIDIA_SKIP_BLOCK
+    gpu_flag_line = _GPU_FLAG_LINE if is_gpu else _CPU_FLAG_LINE
+    # ALLOCATABLE_GPU_MODELS_OVERRIDE is read by the worker's recipe
+    # filter. Leave it empty on CPU tiers so the worker won't try to
+    # match GPU-only recipes.
+    gpu_models_override = "NVIDIA" if is_gpu else ""
+
     return _TEMPLATE.format(
         bootstrap_token=shlex.quote(bootstrap_token),
         control_plane_url=shlex.quote(control_plane_url),
@@ -203,4 +285,9 @@ def build_user_data(
         image_full=image_full,
         inference_token=shlex.quote(inference_token),
         ssh_block=_build_ssh_block(ssh_authorized_keys),
+        instance_class=instance_class,
+        gpu_count_literal=int(gpu_count),
+        nvidia_block=nvidia_block,
+        gpu_flag_line=gpu_flag_line,
+        gpu_models_override=gpu_models_override,
     )
