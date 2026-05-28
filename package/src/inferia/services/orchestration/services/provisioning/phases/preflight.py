@@ -1,0 +1,157 @@
+"""PreflightHandler — runs the 8 preflight checks before pulumi up.
+
+Each check raises a typed ProvisioningError if it fails; the classifier
+maps them to PERMANENT (fail-fast) so operators see actionable errors
+immediately rather than after waiting for stack.up().
+
+The helpers (verify_credentials, verify_subnet_exists, ...) are imported
+at module scope so tests can patch them via module path. resolve_ami
+is also imported from the AMI module.
+"""
+from __future__ import annotations
+
+import shutil
+from typing import Any
+
+from inferia.services.orchestration.services.adapter_engine.adapters.aws.instance_catalog import (
+    by_class, lookup,
+)
+from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
+    resolve_ami,
+)
+from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.credentials import (
+    verify_credentials,
+)
+from inferia.services.orchestration.services.provisioning.errors import (
+    AMINotFoundError, InvalidInstanceTypeError, InvalidSpecError,
+    PulumiCliMissingError, SecurityGroupNotFoundError, SubnetNotFoundError,
+)
+from inferia.services.orchestration.services.provisioning.jobs.model import (
+    Phase, PhaseResult, ProvisioningJob,
+)
+from inferia.services.orchestration.services.provisioning.phases.base import (
+    PhaseContext,
+)
+
+
+# Defined here for the same reason as credentials._boto3_sts_client:
+# extracted so tests can patch without bringing boto3 into the import path.
+
+
+def verify_subnet_exists(*, region: str, subnet_id: str, creds: Any) -> None:
+    """Raise SubnetNotFoundError if the subnet does not exist."""
+    from botocore.exceptions import ClientError
+    import boto3
+    ec2 = boto3.client(
+        "ec2", region_name=region,
+        aws_access_key_id=creds.access_key_id,
+        aws_secret_access_key=creds.secret_access_key,
+    )
+    try:
+        ec2.describe_subnets(SubnetIds=[subnet_id])
+    except ClientError as e:
+        code = (e.response.get("Error") or {}).get("Code", "")
+        if code == "InvalidSubnetID.NotFound":
+            raise SubnetNotFoundError(
+                f"subnet {subnet_id!r} not found in {region}"
+            ) from e
+        raise
+
+
+def verify_security_group_exists(*, region: str, sg_id: str, creds: Any) -> None:
+    """Raise SecurityGroupNotFoundError if the security group does not exist."""
+    from botocore.exceptions import ClientError
+    import boto3
+    ec2 = boto3.client(
+        "ec2", region_name=region,
+        aws_access_key_id=creds.access_key_id,
+        aws_secret_access_key=creds.secret_access_key,
+    )
+    try:
+        ec2.describe_security_groups(GroupIds=[sg_id])
+    except ClientError as e:
+        code = (e.response.get("Error") or {}).get("Code", "")
+        if code == "InvalidGroup.NotFound":
+            raise SecurityGroupNotFoundError(
+                f"security group {sg_id!r} not found in {region}"
+            ) from e
+        raise
+
+
+class PreflightHandler:
+    """Phase: PREFLIGHT.
+
+    Validates everything that's cheap to validate before kicking off
+    pulumi up. Any failure here is a fast PERMANENT error with an
+    operator-actionable hint."""
+
+    name = Phase.PREFLIGHT
+
+    async def run(self, job: ProvisioningJob, ctx: PhaseContext) -> PhaseResult:
+        spec = job.spec or {}
+
+        # 1. Pulumi CLI present.
+        if shutil.which("pulumi") is None:
+            raise PulumiCliMissingError(
+                "pulumi binary not found on PATH inside inferia-app"
+            )
+
+        # 2. Required spec fields.
+        for field in ("instance_class", "instance_type", "region"):
+            if not spec.get(field):
+                raise InvalidSpecError(
+                    f"spec is missing required field: {field}"
+                )
+        instance_class = spec["instance_class"]
+        instance_type = spec["instance_type"]
+        region = spec["region"]
+
+        # 3. instance_type ∈ catalog.
+        it = lookup(instance_type)
+        if it is None:
+            raise InvalidInstanceTypeError(
+                f"unknown instance type: {instance_type!r}"
+            )
+
+        # 4. class/type pairing.
+        if it.cls != instance_class:
+            raise InvalidInstanceTypeError(
+                f"instance type {instance_type!r} belongs to class {it.cls!r}, "
+                f"not {instance_class!r}"
+            )
+
+        # 5. Creds work.
+        creds = ctx.aws_creds  # injected by the reconciler before dispatch
+        identity = verify_credentials(creds)
+        await ctx.emit_event(
+            pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
+            status="log",
+            message=f"AWS credentials verified (Account {identity.get('Account','?')})",
+        )
+
+        # 6. Subnet (optional — only if provider config supplies one).
+        if subnet := spec.get("subnet_id"):
+            verify_subnet_exists(region=region, subnet_id=subnet, creds=creds)
+
+        # 7. Security group (optional).
+        if sg := spec.get("security_group_id"):
+            verify_security_group_exists(region=region, sg_id=sg, creds=creds)
+
+        # 8. AMI resolves.
+        try:
+            ami = resolve_ami(region=region, instance_class=instance_class, creds=creds)
+        except Exception as e:
+            raise AMINotFoundError(
+                f"no AMI available for {instance_class} in {region}: {e}"
+            ) from e
+        await ctx.emit_event(
+            pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
+            status="log", message=f"AMI resolved: {ami}",
+        )
+
+        return PhaseResult(
+            next_phase=Phase.PROVISIONING,
+            outputs={"ami_id": ami, "region": region,
+                       "instance_class": instance_class,
+                       "instance_type": instance_type},
+        )
