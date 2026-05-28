@@ -6,7 +6,7 @@ HTTP layer; the dataclasses are used inside handler/reconciler code
 where immutability + value semantics are more natural than Pydantic."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
@@ -96,7 +96,7 @@ class ProvisioningJob(BaseModel):
     or a dict; that translates phase/error_class strings to enum values
     and handles JSONB columns."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+    model_config = ConfigDict(frozen=True)
 
     id: UUID
     node_id: UUID
