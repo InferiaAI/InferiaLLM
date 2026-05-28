@@ -303,6 +303,27 @@ async def proxy_nodes(
 # /pools/* proxy removed in the node-centric refactor (2026-05-14).
 
 
+@router.api_route("/providers/{path:path}", methods=["GET"])
+async def proxy_providers(
+    request: Request,
+    path: str,
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy provider catalog endpoints to the orchestration service.
+
+    Mounted under /api/v1; orchestration exposes the catalog at the
+    literal path /api/v1/providers/aws/instance-catalog (see T22), so
+    we forward verbatim under that prefix. RBAC: any authenticated user
+    can read the catalog — it's static reference data the wizard needs."""
+    return await proxy_request(
+        method=request.method,
+        path=f"api/v1/providers/{path}",
+        request=request,
+        target_url=ORCHESTRATION_URL,
+        user_context=user_context,
+    )
+
+
 @router.api_route("/logs/{path:path}", methods=["GET"])
 async def proxy_logs(
     request: Request,
