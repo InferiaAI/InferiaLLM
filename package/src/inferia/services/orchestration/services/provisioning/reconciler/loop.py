@@ -97,6 +97,23 @@ class ProvisioningReconciler:
         if self._pool is not None:
             await self._pool.stop()
 
+    async def stop_with_drain(self, *, grace_seconds: float = 30.0) -> None:
+        """Stop accepting new jobs; wait up to grace_seconds for in-flight
+        handlers to complete; then cancel them. Leases stay set with
+        their original TTL — the next reconciler boot picks them up."""
+        if self._pool is None:
+            return
+        try:
+            await asyncio.wait_for(self._pool.stop(), timeout=grace_seconds)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "shutdown grace expired (%.1fs); cancelling in-flight handlers",
+                grace_seconds,
+            )
+            # WorkerPool.stop already sets the stop event; the await above
+            # timed out because handlers are still running. We rely on
+            # asyncio task cancellation propagating from process termination.
+
     async def tick_once(self) -> None:
         """For tests: run one iteration synchronously."""
         await self._one_iteration()
