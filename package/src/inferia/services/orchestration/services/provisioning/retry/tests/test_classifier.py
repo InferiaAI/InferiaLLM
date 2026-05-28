@@ -3,16 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from unittest.mock import MagicMock
 
 import pytest
 
 from inferia.services.orchestration.services.provisioning.errors import (
     AMINotFoundError, AWSServerError, AWSThrottledError,
     CapacityUnavailableError, InvalidCredentialsError, InvalidInstanceTypeError,
-    NetworkError, PermanentError, PulumiCliMissingError, PulumiTransientError,
+    NetworkError, PulumiCliMissingError, PulumiTransientError,
     QuotaExceededError, SecurityGroupNotFoundError, SubnetNotFoundError,
-    TransientError,
 )
 from inferia.services.orchestration.services.provisioning.jobs.model import ErrorClass
 from inferia.services.orchestration.services.provisioning.retry.classifier import (
@@ -171,3 +169,41 @@ def test_pulumi_cli_missing_hint_includes_install_command():
     # The typed error may not carry a hint by default; classifier should add one.
     assert ce.hint is not None
     assert "pulumi.com" in ce.hint
+
+
+def test_bare_provisioning_error_classified_as_permanent():
+    """Direct ProvisioningError (not a subclass) → PERMANENT."""
+    from inferia.services.orchestration.services.provisioning.errors import (
+        ProvisioningError,
+    )
+    exc = ProvisioningError("raw error")
+    ce = classify_error(exc)
+    assert ce.error_class == ErrorClass.PERMANENT
+
+
+def test_botocore_unknown_code_with_4xx_status_is_unclassified():
+    """Unknown AWS code + 4xx → UNCLASSIFIED PERMANENT (not AWS_5XX)."""
+    from botocore.exceptions import ClientError
+    exc = ClientError(
+        error_response={
+            "Error": {"Code": "SomeNewCode4xx", "Message": "boom"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        },
+        operation_name="RunInstances",
+    )
+    ce = classify_error(exc)
+    assert ce.code == "UNCLASSIFIED"
+    assert ce.error_class == ErrorClass.PERMANENT
+    assert "SomeNewCode4xx" in ce.message
+
+
+def test_classify_error_safe_against_broken_str():
+    """If exc.__str__ raises, classify_error still returns a ClassifiedError
+    instead of propagating."""
+    class Pathological(Exception):
+        def __str__(self):
+            raise RuntimeError("__str__ broken")
+    ce = classify_error(Pathological())
+    assert ce.error_class == ErrorClass.PERMANENT
+    assert ce.code == "UNCLASSIFIED"
+    assert "Pathological" in ce.message

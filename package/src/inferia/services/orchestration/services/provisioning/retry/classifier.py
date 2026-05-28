@@ -18,12 +18,21 @@ from inferia.services.orchestration.services.provisioning.errors import (
     CapacityUnavailableError, InfrastructureError, InvalidCredentialsError,
     InvalidInstanceTypeError, NetworkError, PermanentError,
     PulumiCliMissingError, PulumiTransientError, ProvisioningError,
-    QuotaExceededError, SecurityGroupNotFoundError, SubnetExhaustedError,
+    QuotaExceededError, SecurityGroupNotFoundError,
     SubnetNotFoundError, TransientError,
 )
 from inferia.services.orchestration.services.provisioning.jobs.model import (
     ClassifiedError, ErrorClass,
 )
+
+
+def _safe_str(exc: BaseException) -> str:
+    """`str(exc)` can raise if the exception's __str__ is broken.
+    The classifier must never compound failures via its own exception."""
+    try:
+        return str(exc)
+    except BaseException:  # noqa: BLE001 - defensive guard
+        return f"<{type(exc).__name__}: __str__ raised>"
 
 
 # Hints attached at classification time for the typed errors that don't
@@ -32,6 +41,9 @@ from inferia.services.orchestration.services.provisioning.jobs.model import (
 _DEFAULT_HINTS: dict[str, str] = {
     "PULUMI_CLI_MISSING":     "Install in the inferia-app container: "
                               "curl -fsSL https://get.pulumi.com | sh",
+    "INVALID_SPEC":           "The provisioning spec is missing required "
+                              "fields or has invalid values. Review the "
+                              "pool configuration in the New Pool wizard.",
     "INVALID_CREDENTIALS":    "Open Settings → Providers → AWS and re-enter "
                               "your access key.",
     "AMI_NOT_FOUND":          "The AMI is not available in the chosen region. "
@@ -89,7 +101,7 @@ def classify_error(exc: BaseException) -> ClassifiedError:
 
     # 1. Typed ProvisioningError → use its declared code + class.
     if isinstance(exc, ProvisioningError):
-        return _build(exc.code, _err_class(exc), str(exc), exc.hint)
+        return _build(exc.code, _err_class(exc), _safe_str(exc), exc.hint)
 
     # 2. botocore.ClientError → map by AWS code, fall back to 5xx detection.
     try:
@@ -103,13 +115,13 @@ def classify_error(exc: BaseException) -> ClassifiedError:
     if isinstance(exc, (socket.gaierror, ConnectionError,
                         ConnectionRefusedError, ConnectionResetError,
                         TimeoutError, asyncio.TimeoutError)):
-        return _build("NETWORK_ERROR", ErrorClass.TRANSIENT, str(exc) or repr(exc))
+        return _build("NETWORK_ERROR", ErrorClass.TRANSIENT, _safe_str(exc) or repr(exc))
 
     # 4. Fall back: UNCLASSIFIED PERMANENT (fail loud, include type for triage).
     return _build(
         "UNCLASSIFIED",
         ErrorClass.PERMANENT,
-        f"{type(exc).__name__}: {exc!s}",
+        f"{type(exc).__name__}: {_safe_str(exc)}",
     )
 
 
@@ -118,14 +130,14 @@ def _classify_aws_client_error(exc: Any) -> ClassifiedError:
     status = (exc.response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
     cls = _AWS_CODE_MAP.get(code)
     if cls is not None:
-        return _build(cls.code, _class_to_error_class(cls), str(exc))
+        return _build(cls.code, _class_to_error_class(cls), _safe_str(exc))
     if isinstance(status, int) and 500 <= status < 600:
-        return _build("AWS_5XX", ErrorClass.TRANSIENT, str(exc))
+        return _build("AWS_5XX", ErrorClass.TRANSIENT, _safe_str(exc))
     # Unknown AWS error → UNCLASSIFIED PERMANENT.
     return _build(
         "UNCLASSIFIED",
         ErrorClass.PERMANENT,
-        f"AWS ClientError code={code} status={status}: {exc}",
+        f"AWS ClientError code={code} status={status}: {_safe_str(exc)}",
     )
 
 
