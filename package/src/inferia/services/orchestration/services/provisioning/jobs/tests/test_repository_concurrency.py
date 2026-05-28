@@ -13,6 +13,7 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from inferia.services.orchestration.services.provisioning.jobs.repository import (
     ProvisioningJobRepository,
@@ -41,7 +42,7 @@ async def _apply_migrations(pool):
                 await conn.execute(stmt)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def pool(test_database_url):
     pool = await asyncpg.create_pool(test_database_url, min_size=2, max_size=20)
     await _apply_migrations(pool)
