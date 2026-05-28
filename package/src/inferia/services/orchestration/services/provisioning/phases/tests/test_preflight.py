@@ -125,6 +125,29 @@ async def test_happy_path_returns_provisioning():
         ):
         result = await PreflightHandler().run(_job(), _ctx())
     assert result.next_phase == Phase.PROVISIONING
+    # T14 code review: outputs must carry the keys T15 PulumiUpHandler
+    # reads back.
+    assert result.outputs == {
+        "ami_id": "ami-abc",
+        "region": "us-east-1",
+        "instance_class": "normal_gpu",
+        "instance_type": "g6.xlarge",
+    }
+
+
+@pytest.mark.parametrize("missing_field", ["instance_class", "instance_type", "region"])
+@pytest.mark.asyncio
+async def test_spec_missing_required_field_raises_invalid_spec(missing_field):
+    """Each of the 3 required fields, when missing, raises InvalidSpecError
+    with the field name in the message."""
+    full_spec = {"instance_class": "normal_gpu", "instance_type": "g6.xlarge",
+                   "region": "us-east-1"}
+    full_spec.pop(missing_field)
+    bad = _job(full_spec)
+    with patch("shutil.which", return_value="/usr/local/bin/pulumi"):
+        with pytest.raises(InvalidSpecError) as exc_info:
+            await PreflightHandler().run(bad, _ctx())
+        assert missing_field in str(exc_info.value)
 
 
 @pytest.mark.asyncio

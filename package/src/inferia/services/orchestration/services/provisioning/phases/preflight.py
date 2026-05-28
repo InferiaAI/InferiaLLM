@@ -14,7 +14,7 @@ import shutil
 from typing import Any
 
 from inferia.services.orchestration.services.adapter_engine.adapters.aws.instance_catalog import (
-    by_class, lookup,
+    lookup,
 )
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
     resolve_ami,
