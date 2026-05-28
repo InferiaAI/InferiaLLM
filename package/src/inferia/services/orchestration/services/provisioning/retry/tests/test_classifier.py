@@ -1,0 +1,173 @@
+"""Tests for the classify_error function."""
+from __future__ import annotations
+
+import asyncio
+import socket
+from unittest.mock import MagicMock
+
+import pytest
+
+from inferia.services.orchestration.services.provisioning.errors import (
+    AMINotFoundError, AWSServerError, AWSThrottledError,
+    CapacityUnavailableError, InvalidCredentialsError, InvalidInstanceTypeError,
+    NetworkError, PermanentError, PulumiCliMissingError, PulumiTransientError,
+    QuotaExceededError, SecurityGroupNotFoundError, SubnetNotFoundError,
+    TransientError,
+)
+from inferia.services.orchestration.services.provisioning.jobs.model import ErrorClass
+from inferia.services.orchestration.services.provisioning.retry.classifier import (
+    classify_error,
+)
+
+
+# ---- typed exception passthrough -----------------------------------------
+
+
+@pytest.mark.parametrize("exc, expected_code, expected_class", [
+    (AWSThrottledError("x"),             "AWS_THROTTLED",         ErrorClass.TRANSIENT),
+    (AWSServerError("x"),                "AWS_5XX",               ErrorClass.TRANSIENT),
+    (PulumiTransientError("x"),          "PULUMI_TRANSIENT",      ErrorClass.TRANSIENT),
+    (NetworkError("x"),                  "NETWORK_ERROR",         ErrorClass.TRANSIENT),
+    (PulumiCliMissingError("x"),         "PULUMI_CLI_MISSING",    ErrorClass.PERMANENT),
+    (InvalidCredentialsError("x"),       "INVALID_CREDENTIALS",   ErrorClass.PERMANENT),
+    (AMINotFoundError("x"),              "AMI_NOT_FOUND",         ErrorClass.PERMANENT),
+    (SubnetNotFoundError("x"),           "SUBNET_NOT_FOUND",      ErrorClass.PERMANENT),
+    (SecurityGroupNotFoundError("x"),    "SG_NOT_FOUND",          ErrorClass.PERMANENT),
+    (InvalidInstanceTypeError("x"),      "INVALID_INSTANCE_TYPE", ErrorClass.PERMANENT),
+    (QuotaExceededError("x"),            "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
+    (CapacityUnavailableError("x"),      "INSUFFICIENT_CAPACITY", ErrorClass.INFRASTRUCTURE),
+])
+def test_typed_provisioning_errors_passthrough(exc, expected_code, expected_class):
+    ce = classify_error(exc)
+    assert ce.code == expected_code
+    assert ce.error_class == expected_class
+
+
+def test_hint_preserved_from_typed_error():
+    exc = AMINotFoundError("ami-x not in us-west-2", hint="try us-east-1")
+    ce = classify_error(exc)
+    assert ce.hint == "try us-east-1"
+
+
+# ---- botocore.ClientError mapping ---------------------------------------
+
+
+def _client_error(code: str, msg: str = "boom"):
+    """Build a fake botocore.ClientError without importing botocore."""
+    from botocore.exceptions import ClientError
+    return ClientError(
+        error_response={"Error": {"Code": code, "Message": msg}},
+        operation_name="RunInstances",
+    )
+
+
+@pytest.mark.parametrize("aws_code, expected_code, expected_class", [
+    ("RequestLimitExceeded",        "AWS_THROTTLED",         ErrorClass.TRANSIENT),
+    ("Throttling",                  "AWS_THROTTLED",         ErrorClass.TRANSIENT),
+    ("ThrottlingException",         "AWS_THROTTLED",         ErrorClass.TRANSIENT),
+    ("AuthFailure",                 "INVALID_CREDENTIALS",   ErrorClass.PERMANENT),
+    ("UnauthorizedOperation",       "INVALID_CREDENTIALS",   ErrorClass.PERMANENT),
+    ("InvalidClientTokenId",        "INVALID_CREDENTIALS",   ErrorClass.PERMANENT),
+    ("SignatureDoesNotMatch",       "INVALID_CREDENTIALS",   ErrorClass.PERMANENT),
+    ("InvalidAMIID.NotFound",       "AMI_NOT_FOUND",         ErrorClass.PERMANENT),
+    ("InvalidSubnetID.NotFound",    "SUBNET_NOT_FOUND",      ErrorClass.PERMANENT),
+    ("InvalidGroup.NotFound",       "SG_NOT_FOUND",          ErrorClass.PERMANENT),
+    ("VcpuLimitExceeded",           "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
+    ("InstanceLimitExceeded",       "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
+    ("InsufficientInstanceCapacity","INSUFFICIENT_CAPACITY", ErrorClass.INFRASTRUCTURE),
+])
+def test_botocore_error_codes_map_correctly(aws_code, expected_code, expected_class):
+    exc = _client_error(aws_code)
+    ce = classify_error(exc)
+    assert ce.code == expected_code, f"AWS code {aws_code} → {ce.code} (expected {expected_code})"
+    assert ce.error_class == expected_class
+
+
+def test_botocore_5xx_unknown_code_maps_to_aws_5xx():
+    """A ClientError with no specific Code but 5xx status → AWS_5XX."""
+    from botocore.exceptions import ClientError
+    exc = ClientError(
+        error_response={
+            "Error": {"Code": "InternalServerError", "Message": "boom"},
+            "ResponseMetadata": {"HTTPStatusCode": 503},
+        },
+        operation_name="RunInstances",
+    )
+    ce = classify_error(exc)
+    assert ce.error_class == ErrorClass.TRANSIENT
+    assert ce.code == "AWS_5XX"
+
+
+def test_botocore_invalid_parameter_value_maps_to_instance_type():
+    """InvalidParameterValue typically means a malformed instance type."""
+    exc = _client_error("InvalidParameterValue", "Invalid instance type: zz")
+    ce = classify_error(exc)
+    assert ce.code == "INVALID_INSTANCE_TYPE"
+
+
+# ---- network errors -----------------------------------------------------
+
+
+def test_socket_gaierror_maps_to_network_error():
+    ce = classify_error(socket.gaierror(-2, "name resolution failed"))
+    assert ce.code == "NETWORK_ERROR"
+    assert ce.error_class == ErrorClass.TRANSIENT
+
+
+def test_connection_refused_maps_to_network_error():
+    ce = classify_error(ConnectionRefusedError("connection refused"))
+    assert ce.code == "NETWORK_ERROR"
+    assert ce.error_class == ErrorClass.TRANSIENT
+
+
+def test_asyncio_timeout_maps_to_network_error():
+    ce = classify_error(asyncio.TimeoutError("upstream timeout"))
+    assert ce.code == "NETWORK_ERROR"
+    assert ce.error_class == ErrorClass.TRANSIENT
+
+
+# ---- unknown → UNCLASSIFIED PERMANENT (fail-loud) -----------------------
+
+
+def test_unknown_exception_is_unclassified_permanent():
+    class Mystery(Exception):
+        pass
+    ce = classify_error(Mystery("something weird"))
+    assert ce.code == "UNCLASSIFIED"
+    assert ce.error_class == ErrorClass.PERMANENT
+    # Message should include the type repr so an operator can file a bug.
+    assert "Mystery" in ce.message
+
+
+# ---- propagation: never classify these as failures ----------------------
+
+
+def test_cancelled_error_propagates():
+    """asyncio.CancelledError must NOT be classified; it bubbles up so
+    handlers and the reconciler can do orderly shutdown."""
+    with pytest.raises(asyncio.CancelledError):
+        classify_error(asyncio.CancelledError())
+
+
+def test_keyboard_interrupt_propagates():
+    with pytest.raises(KeyboardInterrupt):
+        classify_error(KeyboardInterrupt())
+
+
+# ---- hints ----------------------------------------------------------------
+
+
+def test_invalid_credentials_hint_includes_settings_path():
+    """Operator-facing hint must mention where to fix the creds."""
+    exc = _client_error("AuthFailure")
+    ce = classify_error(exc)
+    assert ce.hint is not None
+    assert "Settings" in ce.hint or "Providers" in ce.hint
+
+
+def test_pulumi_cli_missing_hint_includes_install_command():
+    exc = PulumiCliMissingError("no pulumi binary")
+    ce = classify_error(exc)
+    # The typed error may not carry a hint by default; classifier should add one.
+    assert ce.hint is not None
+    assert "pulumi.com" in ce.hint
