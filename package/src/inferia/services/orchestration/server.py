@@ -41,6 +41,7 @@ from inferia.services.orchestration.services.model_deployment.deployment_server 
 from inferia.services.orchestration.api import workers as workers_api
 from inferia.services.orchestration.api import admin_workers as admin_workers_api
 from inferia.services.orchestration.api import nodes as nodes_api
+from inferia.services.orchestration.api import providers as providers_api
 from inferia.services.orchestration.services.adapter_engine.registry import (
     ADAPTER_REGISTRY,
 )
@@ -284,6 +285,7 @@ async def serve():
     app.include_router(workers_api.router)
     app.include_router(admin_workers_api.router)
     app.include_router(nodes_api.router)
+    app.include_router(providers_api.router)
 
     # Share pool with routes
     app.state.pool = db_pool
