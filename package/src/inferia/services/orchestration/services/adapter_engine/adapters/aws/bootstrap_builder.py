@@ -252,16 +252,31 @@ def build_user_data(
             f"(expected one of {sorted(_VALID_INSTANCE_CLASSES)})"
         )
 
+    # T12 code review I-2: catch wiring bugs from T15/T23 at boot-script
+    # generation time rather than at worker-registration time, where the
+    # symptom is much further from the cause.
+    if not isinstance(gpu_count, int) or isinstance(gpu_count, bool):
+        raise ValueError(f"gpu_count must be a non-bool int; got {gpu_count!r}")
+    if gpu_count < 0:
+        raise ValueError(f"gpu_count must be >= 0; got {gpu_count}")
+    if instance_class == "cpu" and gpu_count != 0:
+        raise ValueError(
+            f"instance_class='cpu' requires gpu_count=0; got {gpu_count}"
+        )
+
     bootstrap_token = _validate("bootstrap_token", bootstrap_token)
     control_plane_url = _validate("control_plane_url", control_plane_url)
     node_name = _validate("node_name", node_name)
     pool_id = _validate("pool_id", pool_id)
     inference_token = _validate("inference_token", inference_token)
 
+    # T12 code review I-4: enforce mutual exclusion the docstring claims.
     if worker_image is not None:
-        # Allow the plan-sketch-style single-string worker_image kwarg.
-        # We still run it through _validate so injection attempts
-        # against it are caught at the same boundary as image / image_tag.
+        if image or image_tag:
+            raise ValueError(
+                "worker_image is mutually exclusive with image / image_tag; "
+                "pass one form or the other, not both"
+            )
         worker_image = _validate("worker_image", worker_image)
         image_full = shlex.quote(worker_image)
     else:

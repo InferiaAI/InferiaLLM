@@ -255,3 +255,33 @@ def test_normal_gpu_userdata_passes_gpus_all_to_docker_run():
 def test_unknown_instance_class_raises():
     with pytest.raises(ValueError):
         build_user_data(**_common_kwargs(instance_class="quantum_gpu", gpu_count=99))
+
+
+# --- T12 code review I-2 + I-4 follow-ups: gpu_count + worker_image guards
+
+
+def test_negative_gpu_count_raises():
+    with pytest.raises(ValueError, match="gpu_count must be >= 0"):
+        build_user_data(**_common_kwargs(gpu_count=-1))
+
+
+def test_cpu_with_nonzero_gpu_count_raises():
+    """instance_class='cpu' is incompatible with gpu_count > 0; catch
+    at boot-script generation time rather than worker register time."""
+    with pytest.raises(ValueError, match="cpu.*gpu_count=0"):
+        build_user_data(**_common_kwargs(instance_class="cpu", gpu_count=2))
+
+
+def test_bool_gpu_count_raises():
+    """bool is a subclass of int but passing True/False is almost
+    certainly a wiring bug."""
+    with pytest.raises(ValueError, match="non-bool int"):
+        build_user_data(**_common_kwargs(gpu_count=True))
+
+
+def test_worker_image_mutually_exclusive_with_image_and_image_tag():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        # _common_kwargs uses worker_image; explicitly also pass image
+        # to trigger the new guard.
+        build_user_data(**_common_kwargs(worker_image="repo/x:tag",
+                                            image="repo/x", image_tag="tag"))
