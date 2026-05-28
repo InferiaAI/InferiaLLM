@@ -929,3 +929,196 @@ def test_get_provisioning_returns_404_when_node_missing():
         headers=auth,
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/nodes/{id}/provisioning/retry (T25) and DELETE cancellation (T26).
+# ---------------------------------------------------------------------------
+#
+# Retry takes a job in phase='failed' and re-enqueues it (phase='pending',
+# attempt_count=0, error fields cleared). Inventory state flips
+# failed → provisioning so the dashboard reacts immediately. Delete now
+# distinguishes a non-terminal job (request_cancel for the reconciler's
+# CancelHandler) from a terminal one (idempotent soft-delete via set_state).
+
+
+def _configure_with_provisioning_repo(inventory, provisioning_repo):
+    """Wire up the nodes router with a fake inventory + provisioning repo
+    plus the permissive permission stub used by T24-T26 tests."""
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=FakePoolRepo(),
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+        provisioning_repo=provisioning_repo,
+    )
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    return app
+
+
+def test_retry_provisioning_on_failed_job_returns_200_and_requeues():
+    """Job is in 'failed' phase; POST /retry resets it to 'pending' and
+    flips inventory.state failed → provisioning."""
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    job.phase = MagicMock(value="pending")
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "failed",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.reset_for_retry = AsyncMock(return_value=job)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.post(
+        f"/v1/nodes/{nid}/provisioning/retry", headers=auth,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["job_id"] == str(job.id)
+    assert body["phase"] == "pending"
+    # repo.reset_for_retry was called with the node UUID exactly once.
+    provisioning_repo.reset_for_retry.assert_awaited_once()
+    call_kwargs = provisioning_repo.reset_for_retry.await_args.kwargs
+    assert call_kwargs["node_id"] == uuid.UUID(nid)
+    # Inventory state was flipped to 'provisioning'.
+    inventory.set_state.assert_awaited_once()
+    state_kwargs = inventory.set_state.await_args.kwargs
+    assert state_kwargs["state"] == "provisioning"
+    assert state_kwargs["node_id"] == nid
+
+
+def test_retry_provisioning_on_non_failed_job_returns_409():
+    """When the latest job is not in 'failed' phase, reset_for_retry
+    returns None and the endpoint surfaces 409."""
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "ready",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.reset_for_retry = AsyncMock(return_value=None)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.post(
+        f"/v1/nodes/{nid}/provisioning/retry", headers=auth,
+    )
+    assert resp.status_code == 409
+    # Inventory state must NOT be touched on the 409 path.
+    inventory.set_state.assert_not_called()
+
+
+def test_retry_provisioning_on_missing_node_returns_404():
+    """get_node returns None → 404 before any provisioning lookup."""
+    inventory = FakeInventory()  # no nodes inserted
+    provisioning_repo = MagicMock()
+    provisioning_repo.reset_for_retry = AsyncMock(return_value=None)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.post(
+        f"/v1/nodes/{uuid.uuid4()}/provisioning/retry", headers=auth,
+    )
+    assert resp.status_code == 404
+    # We bailed before calling the provisioning repo.
+    provisioning_repo.reset_for_retry.assert_not_called()
+
+
+def test_delete_non_terminal_node_enqueues_cancellation():
+    """A non-terminal job for the node → request_cancel + 204. The
+    legacy AWS destroy spawn must NOT fire because the CancelHandler
+    drives teardown via the state machine."""
+    job = MagicMock()
+    job.phase = MagicMock()
+    job.phase.is_terminal = False
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "provisioning",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=job)
+    provisioning_repo.request_cancel = AsyncMock(return_value=True)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.delete(f"/v1/nodes/{nid}", headers=auth)
+    assert resp.status_code in (200, 204), resp.text
+    # Cancellation was enqueued exactly once with the right node UUID.
+    provisioning_repo.request_cancel.assert_awaited_once()
+    call_kwargs = provisioning_repo.request_cancel.await_args.kwargs
+    assert call_kwargs["node_id"] == uuid.UUID(nid)
+    # set_state was NOT called on the cancellation path (the
+    # CancelHandler owns terminating the inventory row).
+    inventory.set_state.assert_not_called()
+
+
+def test_delete_terminated_node_is_idempotent_204():
+    """A terminal job for the node → soft-delete via set_state and 204.
+    No cancellation enqueue (the CancelHandler already ran, or the job
+    failed terminally without provisioning anything)."""
+    job = MagicMock()
+    job.phase = MagicMock()
+    job.phase.is_terminal = True
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "failed",
+    }
+    inventory.set_state = AsyncMock()
+
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=job)
+    provisioning_repo.request_cancel = AsyncMock(return_value=True)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.delete(f"/v1/nodes/{nid}", headers=auth)
+    assert resp.status_code in (200, 204), resp.text
+    # set_state was called with 'terminated' on the idempotent path.
+    inventory.set_state.assert_awaited_once()
+    state_kwargs = inventory.set_state.await_args.kwargs
+    assert state_kwargs["state"] == "terminated"
+    # No cancellation enqueue — the job is already terminal.
+    provisioning_repo.request_cancel.assert_not_called()
+
+
+def test_delete_missing_node_returns_404_with_provisioning_repo():
+    """get_node returns None → 404. Distinct from the legacy
+    TestDeleteNode.test_not_found because here a provisioning_repo IS
+    wired — we must still 404 before consulting it."""
+    inventory = FakeInventory()  # no nodes inserted
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=None)
+
+    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.delete(f"/v1/nodes/{uuid.uuid4()}", headers=auth)
+    assert resp.status_code == 404
+    # We bailed before consulting the provisioning repo.
+    provisioning_repo.get_by_node.assert_not_called()

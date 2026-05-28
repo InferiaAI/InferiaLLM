@@ -776,6 +776,27 @@ async def _soft_delete_node_impl(self, *, node_id):
         )
 
 
+async def _set_state_impl(self, *, node_id, state):
+    """Set compute_inventory.state to an arbitrary node_state enum value.
+
+    Used by the POST /provisioning/retry path (failed → provisioning) and
+    the DELETE /nodes/{id} fallback path (terminal job → terminated).
+    The caller is responsible for ensuring the value is a valid
+    node_state enum member; invalid values surface as Postgres errors.
+    Accepts node_id as either a str or a UUID for convenience.
+    """
+    nid = uuid.UUID(node_id) if isinstance(node_id, str) else node_id
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET state = $2, updated_at = now()
+            WHERE id = $1
+            """,
+            nid, state,
+        )
+
+
 async def _mark_terminating_node_impl(self, *, node_id):
     """Mark a node as terminating ahead of an async destroy task.
 
@@ -806,3 +827,4 @@ InventoryRepository.get_node = _get_node_impl
 InventoryRepository.set_labels = _set_labels_impl
 InventoryRepository.soft_delete_node = _soft_delete_node_impl
 InventoryRepository.mark_terminating_node = _mark_terminating_node_impl
+InventoryRepository.set_state = _set_state_impl

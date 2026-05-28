@@ -329,6 +329,35 @@ async def delete_node(
         raise HTTPException(404, "node not found")
     provider = existing.get("provider")
     pool_id = existing.get("pool_id")
+
+    # T26: if a non-terminal provisioning job exists for this node, mark
+    # it for cancellation and return 204. The reconciler's CancelHandler
+    # owns the actual teardown (pulumi destroy + state machine progress).
+    # This path supersedes the legacy AWS destroy spawn below because the
+    # state machine is the new authoritative driver for terminating
+    # AWS nodes that went through the provisioning_jobs queue.
+    try:
+        nuuid = uuid.UUID(str(node_id))
+    except (ValueError, TypeError):
+        nuuid = None
+    if _deps.provisioning_repo is not None and nuuid is not None and hasattr(
+        _deps.provisioning_repo, "get_by_node",
+    ):
+        job = await _deps.provisioning_repo.get_by_node(node_id=nuuid)
+        if job is not None and not job.phase.is_terminal:
+            await _deps.provisioning_repo.request_cancel(node_id=nuuid)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        # Terminal job → fall through to the idempotent soft-delete path
+        # below. We do NOT re-spawn pulumi destroy for terminal jobs;
+        # the CancelHandler already ran (or the job failed terminally
+        # without ever spinning up infra, in which case there is nothing
+        # to destroy).
+        if job is not None and job.phase.is_terminal:
+            await _deps.inventory_repo.set_state(
+                node_id=node_id, state="terminated",
+            )
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     # AWS nodes must destroy the underlying EC2 stack before the row
     # disappears from inventory. Non-AWS providers (worker/on_prem,
     # nosana, akash, gcp/azure for now) keep the original soft-delete
@@ -364,6 +393,44 @@ async def delete_node(
         )
     await _deps.inventory_repo.soft_delete_node(node_id=node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{node_id}/provisioning/retry")
+async def retry_provisioning(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:create")),
+):
+    """Re-enqueue a failed provisioning job.
+
+    Resets the job row to phase='pending', attempt_count=0, and clears
+    all error fields so the reconciler picks it up on the next claim
+    tick. Inventory state transitions failed → provisioning so the
+    dashboard reflects the requeue immediately.
+
+    Returns 409 if the job is not in 'failed' state (e.g. the user
+    races a still-running job by clicking Retry while it's already
+    re-trying on its own), 404 if the node row is missing, or 503 if
+    the provisioning queue is not configured.
+    """
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    if _deps.provisioning_repo is None:
+        raise HTTPException(503, "provisioning queue not configured")
+    try:
+        nuuid = uuid.UUID(str(node_id))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "node_id is not a valid uuid")
+    job = await _deps.provisioning_repo.reset_for_retry(node_id=nuuid)
+    if job is None:
+        raise HTTPException(409, "no failed job to retry")
+    # Reset inventory state too (failed → provisioning) so the UI's
+    # Overview pane stops showing the failed banner the instant the
+    # retry POST returns.
+    await _deps.inventory_repo.set_state(
+        node_id=node_id, state="provisioning",
+    )
+    return {"job_id": str(job.id), "phase": job.phase.value}
 
 
 # ---------------------------------------------------------------------------
