@@ -24,6 +24,16 @@ from inferia.services.orchestration.services.provisioning.jobs.model import (
 )
 
 
+def _affected_one(status: str) -> bool:
+    """asyncpg command-status string is '<COMMAND> <rowcount>' for
+    UPDATE/DELETE and '<COMMAND> <oid> <rowcount>' for INSERT. We only
+    care about the trailing rowcount. Parsing the last whitespace-
+    separated token avoids the 'UPDATE 11'.endswith(' 1') == True
+    false positive."""
+    parts = status.rsplit(" ", 1)
+    return len(parts) == 2 and parts[1] == "1"
+
+
 class ProvisioningJobRepository:
     """Wraps a database pool. The `db` argument must expose `.acquire()`
     as an async context manager that yields an asyncpg connection — this
@@ -56,7 +66,7 @@ class ProvisioningJobRepository:
                 VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'pending', 0, now(), now())
                 RETURNING id
                 """,
-                job_id, node_id, pool_id, org_id, provider, json.dumps(spec),
+                job_id, node_id, pool_id, org_id, provider, json.dumps(spec or {}),
             )
         return job_id
 
@@ -108,7 +118,7 @@ class ProvisioningJobRepository:
                 """,
                 job_id, lease_holder, lease_seconds,
             )
-        return res.endswith(" 1")
+        return _affected_one(res)
 
     async def release_lease(
         self, *, job_id: UUID, lease_holder: str,
@@ -132,11 +142,15 @@ class ProvisioningJobRepository:
         next_phase: Phase,
         lease_holder: str,
         outputs: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Advance the job to next_phase, optionally merging outputs.
-        Phase guard prevents clobbering a concurrent transition."""
+        Phase guard prevents clobbering a concurrent transition.
+
+        Returns True if the transition was applied (1 row affected),
+        False if the row's phase or lease didn't match (concurrent
+        transition by another reconciler)."""
         async with self.db.acquire() as conn:
-            await conn.execute(
+            res = await conn.execute(
                 """
                 UPDATE provisioning_jobs
                 SET phase = $3::text,
@@ -154,6 +168,7 @@ class ProvisioningJobRepository:
                 json.dumps(outputs) if outputs else None,
                 lease_holder,
             )
+        return _affected_one(res)
 
     async def schedule_retry(
         self,
@@ -164,12 +179,16 @@ class ProvisioningJobRepository:
         next_attempt_after: datetime,
         attempt_count: int,
         error: ClassifiedError,
-    ) -> None:
+    ) -> bool:
         """Keep the job in current_phase but bump attempt_count, set
         next_attempt_after, record the error fields, and CLEAR the lease
-        so a future reconciler tick can pick it up after the backoff."""
+        so a future reconciler tick can pick it up after the backoff.
+
+        Returns True if the retry was scheduled, False if phase no
+        longer matches (rare race: cancel landed between handler raise
+        and reconciler write)."""
         async with self.db.acquire() as conn:
-            await conn.execute(
+            res = await conn.execute(
                 """
                 UPDATE provisioning_jobs
                 SET attempt_count = $3,
@@ -186,6 +205,7 @@ class ProvisioningJobRepository:
                 job_id, current_phase.value, attempt_count, next_attempt_after,
                 error.code, error.message, error.hint, error.error_class.value,
             )
+        return _affected_one(res)
 
     async def fail(
         self,
@@ -194,11 +214,14 @@ class ProvisioningJobRepository:
         current_phase: Phase,
         lease_holder: str,
         error: ClassifiedError,
-    ) -> None:
+    ) -> bool:
         """Transition to terminal 'failed' and record the error fields.
-        Lease guard ensures we don't overwrite a concurrent transition."""
+        Lease guard ensures we don't overwrite a concurrent transition.
+
+        Returns True if the fail was applied, False if the row was
+        transitioned out from under us."""
         async with self.db.acquire() as conn:
-            await conn.execute(
+            res = await conn.execute(
                 """
                 UPDATE provisioning_jobs
                 SET phase = 'failed',
@@ -216,6 +239,7 @@ class ProvisioningJobRepository:
                 error.code, error.message, error.hint, error.error_class.value,
                 lease_holder,
             )
+        return _affected_one(res)
 
     async def request_cancel(self, *, node_id: UUID) -> bool:
         """Mark the (non-terminal) job for cancellation. Returns False if
@@ -234,7 +258,7 @@ class ProvisioningJobRepository:
                 """,
                 node_id,
             )
-        return res.endswith(" 1")
+        return _affected_one(res)
 
     async def reset_for_retry(self, *, node_id: UUID) -> ProvisioningJob | None:
         """Re-enqueue a failed job: phase='pending', attempt_count=0, all

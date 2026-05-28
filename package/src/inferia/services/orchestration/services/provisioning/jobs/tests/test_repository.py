@@ -255,3 +255,71 @@ async def test_reset_for_retry_returns_none_when_job_not_failed():
     repo = ProvisioningJobRepository(_make_db_with_conn(conn))
     job = await repo.reset_for_retry(node_id=uuid.uuid4())
     assert job is None
+
+
+@pytest.mark.asyncio
+async def test_transition_to_returns_true_when_update_affects_row():
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 1")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    ok = await repo.transition_to(
+        job_id=uuid.uuid4(), current_phase=Phase.PREFLIGHT,
+        next_phase=Phase.PROVISIONING, lease_holder="me",
+    )
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_transition_to_returns_false_when_stale_phase():
+    """Concurrent reconciler already transitioned this row — our
+    phase guard misses, 0 rows affected, return False."""
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 0")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    ok = await repo.transition_to(
+        job_id=uuid.uuid4(), current_phase=Phase.PREFLIGHT,
+        next_phase=Phase.PROVISIONING, lease_holder="me",
+    )
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_fail_returns_bool():
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 1")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    err = ClassifiedError(ErrorClass.PERMANENT, "X", "m")
+    ok = await repo.fail(
+        job_id=uuid.uuid4(), current_phase=Phase.PREFLIGHT,
+        lease_holder="me", error=err,
+    )
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_schedule_retry_returns_bool():
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 1")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    err = ClassifiedError(ErrorClass.TRANSIENT, "X", "m")
+    ok = await repo.schedule_retry(
+        job_id=uuid.uuid4(), current_phase=Phase.PROVISIONING,
+        lease_holder="me",
+        next_attempt_after=datetime(2026, 5, 28, tzinfo=timezone.utc),
+        attempt_count=1, error=err,
+    )
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_affected_one_does_not_match_multi_digit_counts():
+    """Regression guard for 'UPDATE 11'.endswith(' 1') == True bug."""
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        _affected_one,
+    )
+    assert _affected_one("UPDATE 1") is True
+    assert _affected_one("UPDATE 11") is False
+    assert _affected_one("UPDATE 21") is False
+    assert _affected_one("UPDATE 0") is False
+    assert _affected_one("INSERT 0 1") is True
+    assert _affected_one("INSERT 0 11") is False
