@@ -199,6 +199,10 @@ class AddProviderNodeResponse(BaseModel):
     provider: str
     provider_instance_id: str | None = None
     state: str
+    # Present only for providers that use the async provisioning queue
+    # (aws today). Other providers (nosana, akash) still use the
+    # legacy fire-and-forget adapter path and return job_id=None.
+    job_id: str | None = None
 
 
 class ProvisioningPhase(BaseModel):
@@ -452,6 +456,91 @@ async def add_provider_node(
     if provider == "worker":
         # The dedicated /add/worker endpoint above handles this.
         raise HTTPException(404, "use POST /v1/nodes/add/worker for worker nodes")
+
+    # ------------------------------------------------------------------
+    # AWS path: thin enqueue. Validate the spec, create a 'provisioning'
+    # placeholder row, enqueue a provisioning_jobs row. Return
+    # (node_id, job_id) in well under one second. The reconciler does
+    # the actual Pulumi up + bootstrap work asynchronously.
+    # ------------------------------------------------------------------
+    if provider == "aws":
+        spec = dict(body.spec or {})
+        instance_class = spec.get("instance_class")
+        instance_type = spec.get("instance_type")
+        region = spec.get("region")
+        missing = [
+            name for name, val in (
+                ("instance_class", instance_class),
+                ("instance_type", instance_type),
+                ("region", region),
+            )
+            if not val
+        ]
+        if missing:
+            raise HTTPException(
+                422,
+                f"aws spec missing required fields: {', '.join(missing)}",
+            )
+
+        # Catalog lookup. Reject types that the wizard never offered, and
+        # reject class/type mismatches so the catalogue stays the single
+        # source of truth.
+        from inferia.services.orchestration.services.adapter_engine.adapters.aws import (
+            instance_catalog,
+        )
+        it = instance_catalog.lookup(instance_type)
+        if it is None:
+            raise HTTPException(
+                422,
+                f"unknown instance_type: {instance_type!r} (not in catalog)",
+            )
+        if it.cls != instance_class:
+            raise HTTPException(
+                422,
+                f"instance_class mismatch: spec says {instance_class!r} but "
+                f"{instance_type!r} is class {it.cls!r}",
+            )
+
+        if _deps.provisioning_repo is None:
+            raise HTTPException(503, "provisioning queue not configured")
+
+        org_id = _org_id_from_headers(authorization, x_organization_id)
+        pool_id = await _deps.pool_repo.ensure_default_pool(org_id=org_id)
+        # Fold convenience fields into spec so adapters/reconciler see
+        # them uniformly.
+        if body.node_name is not None:
+            spec.setdefault("node_name", body.node_name)
+        if body.labels:
+            spec["labels"] = body.labels
+        if body.credential_name is not None:
+            spec.setdefault("credential_name", body.credential_name)
+
+        node_id = await _deps.inventory_repo.create_provisioning_placeholder(
+            pool_id=pool_id,
+            provider="aws",
+            instance_class=instance_class,
+            instance_type=instance_type,
+            node_name=body.node_name,
+        )
+        job_id = await _deps.provisioning_repo.enqueue(
+            node_id=node_id,
+            pool_id=pool_id,
+            org_id=org_id,
+            provider="aws",
+            spec=spec,
+        )
+        return AddProviderNodeResponse(
+            node_id=str(node_id),
+            provider="aws",
+            provider_instance_id=None,
+            state="provisioning",
+            job_id=str(job_id),
+        )
+
+    # ------------------------------------------------------------------
+    # Legacy adapter path (nosana, akash). Calls the synchronous
+    # provision_single_node which still blocks on the provider SDK.
+    # ------------------------------------------------------------------
     adapter = _deps.adapters.get(provider)
     if adapter is None:
         raise HTTPException(404, f"unknown provider: {provider}")

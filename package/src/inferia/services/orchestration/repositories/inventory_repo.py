@@ -1,3 +1,4 @@
+import uuid
 from uuid import UUID
 import json
 from inferia.services.orchestration.constants import NodeState
@@ -239,6 +240,64 @@ class InventoryRepository:
                 expose_url,
             )
             return row["id"] if row else None
+
+    async def create_provisioning_placeholder(
+        self,
+        *,
+        pool_id,
+        provider: str,
+        instance_class: str,
+        instance_type: str,
+        node_name: str | None = None,
+    ) -> UUID:
+        """Insert a 'provisioning' placeholder row into compute_inventory.
+
+        Used by the thin-enqueue POST /v1/nodes/add/aws path: the HTTP
+        handler must return a node_id immediately so the dashboard can
+        link to /nodes/{id} while the reconciler does the actual Pulumi
+        work asynchronously.
+
+        The provider_instance_id is set to a unique 'placeholder:<uuid>'
+        sentinel because the real EC2 instance-id is not known until the
+        Pulumi up phase completes — and the UNIQUE(provider,
+        provider_instance_id) constraint on compute_inventory means we
+        cannot leave it NULL or share a value across rows. The
+        PulumiUpHandler swaps this value for the real i-XXXXXXXXXXX when
+        the stack reaches 'ec2_running'.
+
+        agent_kind is set to 'worker' because AWS-provisioned VMs run the
+        inferia-worker agent (the worker bootstrap phase installs it).
+
+        Returns the generated node_id (UUID).
+        """
+        placeholder_instance_id = f"placeholder:{uuid.uuid4()}"
+        hostname = node_name or placeholder_instance_id
+        async with self.db.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO compute_inventory (
+                    pool_id,
+                    provider,
+                    provider_instance_id,
+                    hostname,
+                    state,
+                    agent_kind,
+                    instance_class,
+                    instance_type,
+                    node_name
+                )
+                VALUES ($1, $2, $3, $4, 'provisioning', 'worker', $5, $6, $7)
+                RETURNING id
+                """,
+                pool_id,
+                provider,
+                placeholder_instance_id,
+                hostname,
+                instance_class,
+                instance_type,
+                node_name,
+            )
+            return row["id"]
 
     async def mark_ready(self, *, node_id, last_heartbeat):
         await self.db.execute(

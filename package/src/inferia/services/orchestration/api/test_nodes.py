@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
+import uuid
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -436,6 +439,208 @@ class TestAddNosana:
             headers=_user_ctx_header(),
         )
         assert r.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/nodes/add/aws — thin enqueue path.
+# ---------------------------------------------------------------------------
+#
+# The AWS branch is fundamentally different from nosana/akash: it does NOT
+# call adapter.provision_single_node (which would block on Pulumi for many
+# seconds). Instead it validates the spec, writes a 'provisioning'
+# placeholder row, enqueues a provisioning_jobs row, and returns. The
+# reconciler picks the job up out-of-band.
+
+
+class _FakeProvisioningRepo:
+    """Captures enqueue() calls. Mirrors the prod async interface so
+    AsyncMock isn't required for the happy-path test."""
+
+    def __init__(self):
+        self.enqueued: list[dict] = []
+
+    async def enqueue(self, *, node_id, pool_id, org_id, provider, spec):
+        job_id = uuid.uuid4()
+        self.enqueued.append({
+            "job_id": job_id,
+            "node_id": node_id,
+            "pool_id": pool_id,
+            "org_id": org_id,
+            "provider": provider,
+            "spec": spec,
+        })
+        return job_id
+
+
+@pytest.fixture
+def aws_add_app_and_deps():
+    """Configure the nodes router for the AWS thin-enqueue tests.
+
+    Note: nodes_api.configure() reassigns _deps for every call, so this
+    fixture overwrites any state left behind by the app_and_deps /
+    aws_app_and_deps fixtures. As a defensive measure each test that
+    overrides individual _deps fields (e.g. db_pool=None) reconfigures
+    here from scratch — pytest tears the fixture down between tests so
+    no cross-test leakage is possible.
+    """
+    app = FastAPI()
+    inventory = FakeInventory()
+    # Wire the placeholder-creator as an AsyncMock so we can assert on
+    # the call args without writing a real implementation in FakeInventory.
+    placeholder_id = uuid.UUID(NODE)
+    inventory.create_provisioning_placeholder = AsyncMock(
+        return_value=placeholder_id,
+    )
+    pool_repo = FakePoolRepo()
+    provisioning_repo = _FakeProvisioningRepo()
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},  # aws goes through the enqueue path, not the adapter
+        require_permission=fake_require_permission,
+        provisioning_repo=provisioning_repo,
+    )
+    app.include_router(nodes_api.router)
+    return app, inventory, provisioning_repo
+
+
+class TestAddAwsNode:
+    def test_add_aws_node_returns_node_id_and_job_id_in_under_one_second(
+        self, aws_add_app_and_deps,
+    ):
+        """The HTTP path must NOT block on Pulumi; should return
+        immediately. We give a generous 1s budget for the FastAPI
+        round-trip; the real path runs in ~200ms."""
+        app, inventory, provisioning_repo = aws_add_app_and_deps
+        client = TestClient(app)
+        body = {
+            "spec": {
+                "instance_class": "normal_gpu",
+                "instance_type":  "g6.xlarge",
+                "region":         "us-east-1",
+            },
+        }
+        start = time.monotonic()
+        resp = client.post(
+            "/v1/nodes/add/aws", json=body, headers=_user_ctx_header(),
+        )
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0, f"add/aws took {elapsed:.2f}s"
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert "node_id" in data
+        assert "job_id" in data
+        assert data["node_id"] == NODE
+        assert data["provider"] == "aws"
+        assert data["provider_instance_id"] is None
+        assert data["state"] == "provisioning"
+        # Inventory placeholder was created exactly once.
+        inventory.create_provisioning_placeholder.assert_awaited_once()
+        kwargs = inventory.create_provisioning_placeholder.call_args.kwargs
+        assert kwargs["provider"] == "aws"
+        assert kwargs["instance_class"] == "normal_gpu"
+        assert kwargs["instance_type"] == "g6.xlarge"
+        assert kwargs["pool_id"] == POOL
+        # Provisioning job enqueued exactly once.
+        assert len(provisioning_repo.enqueued) == 1
+        job = provisioning_repo.enqueued[0]
+        assert job["provider"] == "aws"
+        assert job["node_id"] == uuid.UUID(NODE)
+        assert job["pool_id"] == POOL
+        assert job["spec"]["instance_class"] == "normal_gpu"
+        assert job["spec"]["instance_type"] == "g6.xlarge"
+        assert job["spec"]["region"] == "us-east-1"
+        # job_id is the one the fake returned.
+        assert data["job_id"] == str(job["job_id"])
+
+    def test_add_aws_node_rejects_missing_instance_class(
+        self, aws_add_app_and_deps,
+    ):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_type": "g6.xlarge",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "instance_class" in resp.text
+
+    def test_add_aws_node_rejects_missing_instance_type(
+        self, aws_add_app_and_deps,
+    ):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "instance_type" in resp.text
+
+    def test_add_aws_node_rejects_missing_region(self, aws_add_app_and_deps):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "g6.xlarge"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "region" in resp.text
+
+    def test_add_aws_node_rejects_unknown_instance_type(
+        self, aws_add_app_and_deps,
+    ):
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "x99.unknown",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        assert "x99.unknown" in resp.text
+
+    def test_add_aws_node_rejects_class_type_mismatch(
+        self, aws_add_app_and_deps,
+    ):
+        """c6i.xlarge is a CPU type. Pairing it with normal_gpu must 422."""
+        app, *_ = aws_add_app_and_deps
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "c6i.xlarge",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_add_aws_node_503_when_provisioning_repo_unconfigured(
+        self, aws_add_app_and_deps,
+    ):
+        """If the orchestration boot did not wire provisioning_repo,
+        fail loudly instead of silently dropping the job."""
+        app, *_ = aws_add_app_and_deps
+        nodes_api._deps.provisioning_repo = None
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/nodes/add/aws",
+            json={"spec": {"instance_class": "normal_gpu",
+                           "instance_type": "g6.xlarge",
+                           "region": "us-east-1"}},
+            headers=_user_ctx_header(),
+        )
+        assert resp.status_code == 503, resp.text
 
 
 # ---------------------------------------------------------------------------
