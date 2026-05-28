@@ -2,6 +2,19 @@
 
 Each `build_*_program(...)` returns a zero-arg callable suitable for
 passing to `pulumi.automation.create_or_select_stack(program=...)`.
+
+`build_program(spec, stack_outputs)` is the dispatcher used by the
+provisioning reconciler (T15 PulumiUpHandler). It branches on
+``spec["provider"]`` (defaulting to ``"aws"``) and constructs the
+corresponding cloud-specific program from a single ``spec`` dict.
+
+The ``stack_outputs`` argument lets a re-leased job resume after a
+partial ``stack.up()``: if a prior attempt already resolved an
+``ami_id`` (or any other recorded output), pull it from
+``stack_outputs`` before falling back to ``spec``. Without this, a
+crash between AMI resolution and stack.up() would force the
+reconciler to re-resolve the AMI on every attempt — wasteful and
+non-deterministic on AMI-rotation days.
 """
 from __future__ import annotations
 
@@ -239,3 +252,70 @@ def build_azure_vm_program(
         pulumi.export("vm_id", vm.id)
 
     return _program
+
+
+def build_program(
+    *,
+    spec: Dict[str, Any],
+    stack_outputs: Optional[Dict[str, Any]] = None,
+) -> Callable[[], None]:
+    """Dispatch on cloud and return the Pulumi program callable.
+
+    The reconciler calls this from the PROVISIONING handler with the
+    raw ``ProvisioningJob.spec`` JSONB plus
+    ``ProvisioningJob.pulumi_stack_outputs`` (whatever the last run
+    recorded, or an empty dict on the first attempt).
+
+    Resolution order for fields the user might have already resolved
+    on a prior attempt (currently just ``ami_id``):
+
+      1. ``stack_outputs[<key>]`` — set if a previous attempt got past
+         AMI lookup but before / during ``stack.up()``.
+      2. ``spec[<key>]`` — set by PreflightHandler when it resolved
+         AMI for the first attempt.
+
+    This makes re-lease idempotent: a crash mid-``stack.up()`` is
+    safe to retry because the AMI ID stays pinned.
+    """
+    stack_outputs = stack_outputs or {}
+    provider = (spec.get("provider") or "aws").lower()
+
+    if provider == "aws":
+        ami_id = stack_outputs.get("ami_id") or spec.get("ami_id") or ""
+        sg_ids = spec.get("security_group_ids")
+        if sg_ids is None and (sg := spec.get("security_group_id")):
+            sg_ids = [sg]
+        return build_ec2_program(
+            pool_id=str(spec.get("pool_id") or ""),
+            org_id=str(spec.get("org_id") or ""),
+            bootstrap_id=str(spec.get("bootstrap_id") or ""),
+            instance_type=str(spec.get("instance_type") or ""),
+            region=str(spec.get("region") or ""),
+            ami_id=str(ami_id),
+            subnet_id=spec.get("subnet_id"),
+            security_group_ids=sg_ids,
+            iam_instance_profile=spec.get("iam_instance_profile"),
+            root_volume_gb=int(spec.get("root_volume_gb") or 50),
+            user_data=str(spec.get("user_data") or ""),
+            use_spot=bool(spec.get("use_spot") or False),
+        )
+    if provider == "gcp":
+        return build_gce_program(
+            pool_id=str(spec.get("pool_id") or ""),
+            org_id=str(spec.get("org_id") or ""),
+            bootstrap_id=str(spec.get("bootstrap_id") or ""),
+            machine_type=str(spec.get("machine_type") or ""),
+            zone=str(spec.get("zone") or ""),
+            image_uri=str(spec.get("image_uri") or ""),
+            user_data=str(spec.get("user_data") or ""),
+        )
+    if provider == "azure":
+        return build_azure_vm_program(
+            pool_id=str(spec.get("pool_id") or ""),
+            org_id=str(spec.get("org_id") or ""),
+            bootstrap_id=str(spec.get("bootstrap_id") or ""),
+            vm_size=str(spec.get("vm_size") or ""),
+            location=str(spec.get("location") or ""),
+            user_data=str(spec.get("user_data") or ""),
+        )
+    raise ValueError(f"unknown provider in spec: {provider!r}")
