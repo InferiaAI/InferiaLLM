@@ -50,15 +50,19 @@ class _FakeRepo:
 
     async def transition_to(self, **kwargs):
         self.transitions.append(kwargs)
+        return True
 
     async def schedule_retry(self, **kwargs):
         self.retries.append(kwargs)
+        return True
 
     async def fail(self, **kwargs):
         self.failures.append(kwargs)
+        return True
 
     async def release_lease(self, **kwargs):
         self.releases.append(kwargs)
+        return True
 
     async def renew_lease(self, **kwargs):
         self.renew_calls += 1
@@ -185,3 +189,63 @@ async def test_empty_queue_is_a_noop_tick():
     await rec.tick_once()
     assert len(repo.transitions) == 0
     assert len(repo.failures) == 0
+
+
+@pytest.mark.asyncio
+async def test_handler_returning_next_phase_none_schedules_retry():
+    """PhaseResult(next_phase=None) means 'stay in phase'; reconciler
+    bumps attempt_count and schedules a backoff."""
+    job = _job(Phase.BOOTSTRAPPING, attempt_count=0)
+    repo = _FakeRepo([job])
+
+    class _StayHandler:
+        name = Phase.BOOTSTRAPPING
+
+        async def run(self, j, ctx):
+            return PhaseResult(next_phase=None)
+
+    rec = _make_reconciler(repo, [_StayHandler()])
+    await rec.tick_once()
+    assert len(repo.retries) == 1
+    assert repo.retries[0]["attempt_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_renewer_exception_does_not_fail_the_job():
+    """If repo.renew_lease raises, the job's handler outcome shouldn't
+    be misattributed as a handler failure."""
+    job = _job(Phase.PREFLIGHT, attempt_count=0)
+    repo = _FakeRepo([job])
+    repo.renew_lease = AsyncMock(side_effect=RuntimeError("DB blip"))
+    h = _OkHandler(Phase.PREFLIGHT, Phase.PROVISIONING)
+    rec = _make_reconciler(repo, [h])
+    rec.renew_interval_s = 0.001  # tight interval to trigger renew quickly
+    await rec.tick_once()
+    # Job should have either transitioned (if handler completed before
+    # renewer crashed) OR been released without a fail/retry being written.
+    # The key invariant: no spurious fail or schedule_retry.
+    assert len(repo.failures) == 0
+
+
+@pytest.mark.asyncio
+async def test_transient_at_exact_max_attempts_escalates():
+    """attempt_count=4 + new failure (new_attempt=5) MUST escalate."""
+    job = _job(Phase.PROVISIONING, attempt_count=4)
+    repo = _FakeRepo([job])
+    h = _RaisingHandler(Phase.PROVISIONING, AWSThrottledError("rate"))
+    rec = _make_reconciler(repo, [h])
+    await rec.tick_once()
+    assert len(repo.failures) == 1
+    assert repo.failures[0]["error"].code == "RETRIES_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_transient_below_max_attempts_still_retries():
+    """attempt_count=3 + new failure (new_attempt=4) still schedules retry."""
+    job = _job(Phase.PROVISIONING, attempt_count=3)
+    repo = _FakeRepo([job])
+    h = _RaisingHandler(Phase.PROVISIONING, AWSThrottledError("rate"))
+    rec = _make_reconciler(repo, [h])
+    await rec.tick_once()
+    assert len(repo.retries) == 1
+    assert repo.retries[0]["attempt_count"] == 4

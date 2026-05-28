@@ -37,6 +37,21 @@ from inferia.services.orchestration.services.provisioning.retry.classifier impor
 logger = logging.getLogger(__name__)
 
 
+def _select_runner_exception(
+    eg: BaseExceptionGroup, runner: asyncio.Task | None,
+) -> BaseException | None:
+    """Return the exception that originated from the runner task, or None
+    if no runner exception is present (then we treat the renewer's
+    exception as the failure, which is also reasonable)."""
+    if runner is None:
+        return None
+    if runner.done() and not runner.cancelled():
+        rexc = runner.exception()
+        if rexc is not None:
+            return rexc
+    return None
+
+
 class ProvisioningReconciler:
     """The heart of the state machine."""
 
@@ -64,6 +79,7 @@ class ProvisioningReconciler:
         self.renew_interval_s = renew_interval_s
         self.lease_holder = lease_holder
         self.load_aws_context = load_aws_context
+        self.now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
         self._pool: WorkerPool | None = None
 
     async def run(self) -> None:
@@ -120,6 +136,8 @@ class ProvisioningReconciler:
         stop = asyncio.Event()
         result: PhaseResult | None = None
         handler_exc: BaseException | None = None
+        renewer_only_failure: bool = False
+        runner: asyncio.Task | None = None
 
         async def _run_handler() -> PhaseResult:
             try:
@@ -140,24 +158,90 @@ class ProvisioningReconciler:
         except* ProvisioningError as eg:
             # PEP 654: can't `return` from inside except* — capture and handle below.
             stop.set()
-            handler_exc = eg.exceptions[0]
+            runner_exc = _select_runner_exception(eg, runner)
+            if runner_exc is None:
+                # Renewer (or something else) failed but the handler succeeded —
+                # release lease and let next claim pick it up. Log warning.
+                logger.warning(
+                    "Renewer raised; handler outcome lost", exc_info=True,
+                )
+                renewer_only_failure = True
+            else:
+                handler_exc = runner_exc
         except* Exception as eg:
             stop.set()
-            handler_exc = eg.exceptions[0]
+            runner_exc = _select_runner_exception(eg, runner)
+            if runner_exc is None:
+                logger.warning(
+                    "Renewer raised; handler outcome lost", exc_info=True,
+                )
+                renewer_only_failure = True
+            else:
+                handler_exc = runner_exc
 
+        if renewer_only_failure:
+            await self.repo.release_lease(
+                job_id=job.id, lease_holder=self.lease_holder,
+            )
+            return
         if handler_exc is not None:
             await self._handle_error(job, handler_exc)
             return
 
         # Successful PhaseResult — advance phase (or stay).
         if result.next_phase is None:
-            # Handler asked to retry; treat as transient with no exception.
-            await self.repo.release_lease(job_id=job.id, lease_holder=self.lease_holder)
+            # Handler asked to stay in phase (e.g. waiting for an external
+            # condition without raising). Treat as transient retry — bump
+            # attempt_count and schedule a backoff per the documented
+            # contract in PhaseResult's docstring.
+            new_attempt = job.attempt_count + 1
+            ce = ClassifiedError(
+                error_class=ErrorClass.TRANSIENT,
+                code="HANDLER_RETRY_REQUESTED",
+                message=f"{job.phase.value} handler returned next_phase=None",
+                hint=None,
+            )
+            if new_attempt >= TRANSIENT_MAX_ATTEMPTS:
+                escalated = ClassifiedError(
+                    error_class=ErrorClass.PERMANENT,
+                    code="RETRIES_EXHAUSTED",
+                    message=f"gave up after {TRANSIENT_MAX_ATTEMPTS} "
+                            f"retry-requests",
+                    hint=None,
+                )
+                await self._fail_loud(job, escalated)
+                return
+            ok = await self.repo.schedule_retry(
+                job_id=job.id, current_phase=job.phase,
+                lease_holder=self.lease_holder,
+                next_attempt_after=next_attempt_after(
+                    new_attempt, now=self.now(),
+                ),
+                attempt_count=new_attempt, error=ce,
+            )
+            if not ok:
+                logger.warning(
+                    "schedule_retry rejected (lease/phase guard); "
+                    "skipping event emission",
+                )
+                return
+            if result.event is not None:
+                await self.emit_event(
+                    pool_id=job.pool_id, node_id=job.node_id,
+                    phase=result.event.phase, status=result.event.status,
+                    message=result.event.message, extra=result.event.extra,
+                )
             return
-        await self.repo.transition_to(
+        ok = await self.repo.transition_to(
             job_id=job.id, current_phase=job.phase, next_phase=result.next_phase,
             lease_holder=self.lease_holder, outputs=result.outputs,
         )
+        if not ok:
+            logger.warning(
+                "transition_to rejected (lease/phase guard); "
+                "skipping event emission",
+            )
+            return
         if result.event is not None:
             await self.emit_event(
                 pool_id=job.pool_id, node_id=job.node_id,
@@ -174,7 +258,9 @@ class ProvisioningReconciler:
         if ce.error_class == ErrorClass.TRANSIENT:
             new_attempt = job.attempt_count + 1
             if new_attempt >= TRANSIENT_MAX_ATTEMPTS:
-                # Escalate to permanent.
+                # Escalate to permanent — delegate to _fail_loud so the
+                # hint event is emitted consistently with other terminal
+                # failure paths.
                 escalated = ClassifiedError(
                     error_class=ErrorClass.PERMANENT,
                     code="RETRIES_EXHAUSTED",
@@ -182,24 +268,22 @@ class ProvisioningReconciler:
                             f"failures: {ce.message}",
                     hint=ce.hint,
                 )
-                await self.repo.fail(
-                    job_id=job.id, current_phase=job.phase,
-                    lease_holder=self.lease_holder, error=escalated,
-                )
-                await self.emit_event(
-                    pool_id=job.pool_id, node_id=job.node_id, phase=job.phase,
-                    status="failed", message=escalated.message,
-                    extra={"code": escalated.code, "class": "PERMANENT"},
-                )
+                await self._fail_loud(job, escalated)
                 return
             now = job.updated_at.astimezone(timezone.utc) if job.updated_at else None
-            now = now or datetime.now(timezone.utc)
-            await self.repo.schedule_retry(
+            now = now or self.now()
+            ok = await self.repo.schedule_retry(
                 job_id=job.id, current_phase=job.phase,
                 lease_holder=self.lease_holder,
                 next_attempt_after=next_attempt_after(new_attempt, now=now),
                 attempt_count=new_attempt, error=ce,
             )
+            if not ok:
+                logger.warning(
+                    "schedule_retry rejected (lease/phase guard); "
+                    "skipping event emission",
+                )
+                return
             await self.emit_event(
                 pool_id=job.pool_id, node_id=job.node_id, phase=job.phase,
                 status="log",
@@ -212,10 +296,15 @@ class ProvisioningReconciler:
         await self._fail_loud(job, ce)
 
     async def _fail_loud(self, job: ProvisioningJob, ce: ClassifiedError) -> None:
-        await self.repo.fail(
+        ok = await self.repo.fail(
             job_id=job.id, current_phase=job.phase,
             lease_holder=self.lease_holder, error=ce,
         )
+        if not ok:
+            logger.warning(
+                "fail rejected (lease/phase guard); skipping event emission",
+            )
+            return
         await self.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=job.phase,
             status="failed", message=ce.message,
