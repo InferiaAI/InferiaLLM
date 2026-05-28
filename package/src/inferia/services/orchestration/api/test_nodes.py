@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -813,3 +813,119 @@ class TestDeleteAwsNode:
         # Soft-delete still runs; we can't destroy a stack without a pool_id.
         assert r.status_code == 204
         spawn.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/provisioning — extended response (T24).
+# ---------------------------------------------------------------------------
+#
+# The Overview tab on the UI side consumes three new fields:
+#   error          — populated when provisioning_jobs.last_error_code is set
+#   aws_metadata   — populated for provider=aws from inventory + stack outputs
+#   attempt_count  — current attempt number (powers the "Retry N" subtitle)
+#
+# The tests below use the FakeInventory at module scope and inject a
+# MagicMock provisioning_repo with get_by_node wired as an AsyncMock.
+# RBAC is bypassed by passing a permissive require_permission stub that
+# accepts any caller — the focus of these tests is the response shape,
+# not the auth path (covered elsewhere).
+
+
+def _open_require_permission(perm: str):
+    """Grant every caller. Used by the T24 tests so we don't have to
+    thread deployment:list permission claims through Bearer tokens just
+    to exercise the response shape."""
+    async def dep(authorization: str | None = None):
+        return True
+    return dep
+
+
+def test_get_provisioning_includes_error_and_aws_metadata():
+    """Response gains error, aws_metadata, attempt_count fields."""
+    from inferia.services.orchestration.services.provisioning.jobs.model import (
+        ErrorClass, Phase,
+    )
+
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    job.phase = Phase.FAILED
+    job.attempt_count = 3
+    job.last_error_code = "PULUMI_CLI_MISSING"
+    job.last_error_message = "no pulumi binary"
+    job.last_error_hint = "install via curl"
+    job.error_class = ErrorClass.PERMANENT
+    job.pulumi_stack_outputs = {
+        "instance_id": "i-abc",
+        "public_dns":  "ec2-1.compute.amazonaws.com",
+        "region":      "us-east-1",
+        "ami_id":      "ami-x",
+    }
+
+    inventory = FakeInventory()
+    nid = str(uuid.uuid4())
+    inventory.nodes[nid] = {
+        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
+        "state": "failed", "instance_class": "normal_gpu",
+        "instance_type": "g6.xlarge",
+    }
+    provisioning_repo = MagicMock()
+    provisioning_repo.get_by_node = AsyncMock(return_value=job)
+    # No phase summary in this test — empty list is fine, the assertion
+    # is on the new fields, not on the phases array.
+    provisioning_repo.summarize_phases = AsyncMock(return_value=[])
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=FakePoolRepo(),
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+        provisioning_repo=provisioning_repo,
+    )
+
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.get(f"/v1/nodes/{nid}/provisioning", headers=auth)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["error"] == {
+        "code": "PULUMI_CLI_MISSING",
+        "message": "no pulumi binary",
+        "hint": "install via curl",
+        "class": "PERMANENT",
+    }
+    assert body["aws_metadata"]["instance_id"] == "i-abc"
+    assert body["aws_metadata"]["instance_class"] == "normal_gpu"
+    assert body["aws_metadata"]["instance_type"] == "g6.xlarge"
+    assert body["aws_metadata"]["region"] == "us-east-1"
+    assert body["aws_metadata"]["ami_id"] == "ami-x"
+    assert body["aws_metadata"]["public_dns"] == "ec2-1.compute.amazonaws.com"
+    assert body["attempt_count"] == 3
+    assert body["job_id"] == str(job.id)
+    assert body["current_phase"] == "failed"
+    assert body["terminal"] is True
+
+
+def test_get_provisioning_returns_404_when_node_missing():
+    """Missing inventory row → 404 before any provisioning lookup."""
+    inventory = FakeInventory()  # no nodes inserted
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=FakePoolRepo(),
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+        provisioning_repo=MagicMock(),
+    )
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer test"}
+    resp = client.get(
+        "/v1/nodes/00000000-0000-0000-0000-000000000000/provisioning",
+        headers=auth,
+    )
+    assert resp.status_code == 404

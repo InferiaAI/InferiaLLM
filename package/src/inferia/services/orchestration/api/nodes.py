@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from typing import Any, Callable
 
 from fastapi import (
@@ -217,6 +218,18 @@ class ProvisioningSummary(BaseModel):
     current_phase: str | None = None
     terminal: bool
     phases: list[ProvisioningPhase]
+    # The UI consumes these on the Overview tab: error → red banner with hint
+    # + Retry button, aws_metadata → metadata grid, attempt_count → "Retry N"
+    # subtitle. job_id surfaced so the UI can call POST .../provisioning/retry
+    # without an extra round-trip.
+    #
+    # error is a free-form dict (not a sub-model) because the contract uses
+    # the key "class" — a reserved Python word that's awkward as a Pydantic
+    # field name. The shape is locked to {code, message, hint, class}.
+    attempt_count: int = 0
+    error: dict[str, Any] | None = None
+    aws_metadata: dict[str, Any] | None = None
+    job_id: str | None = None
 
 
 class ProvisioningEvent(BaseModel):
@@ -595,21 +608,93 @@ async def get_provisioning(
     if not row:
         raise HTTPException(404, "node not found")
     pool_id = row.get("pool_id")
-    if not pool_id or _deps.provisioning_repo is None:
-        return ProvisioningSummary(current_phase=None, terminal=True, phases=[])
-    summary = await _deps.provisioning_repo.summarize_phases(pool_id=pool_id)
-    current = await _deps.provisioning_repo.current_phase(pool_id=pool_id)
-    node_state = row.get("state")
-    terminal = current is None or node_state in ("ready", "terminated")
-    return ProvisioningSummary(
-        current_phase=current,
-        terminal=terminal,
-        phases=[ProvisioningPhase(
+
+    # Pull the most-recent provisioning_jobs row for this node. The new
+    # state-machine path uses this row as the authoritative source of
+    # current_phase / attempt_count / error_*; the legacy event-log path
+    # below only contributes the phase history list.
+    job = None
+    if _deps.provisioning_repo is not None and hasattr(
+        _deps.provisioning_repo, "get_by_node",
+    ):
+        try:
+            node_uuid = uuid.UUID(str(node_id))
+        except (ValueError, TypeError):
+            node_uuid = None
+        if node_uuid is not None:
+            job = await _deps.provisioning_repo.get_by_node(node_id=node_uuid)
+
+    # Build the error block. Populated only when a job exists AND its
+    # last_error_code is set — i.e. the reconciler classified an error
+    # against it. Default error_class to PERMANENT for the rare case
+    # where a code/message is recorded without a classification.
+    error_block: dict[str, Any] | None = None
+    if job is not None and getattr(job, "last_error_code", None):
+        ec = getattr(job, "error_class", None)
+        error_block = {
+            "code": job.last_error_code,
+            "message": getattr(job, "last_error_message", None),
+            "hint": getattr(job, "last_error_hint", None),
+            "class": ec.value if ec is not None else "PERMANENT",
+        }
+
+    # AWS metadata grid. Always shaped for aws nodes (even pre-pulumi);
+    # outputs that haven't landed yet show up as None and the UI hides
+    # individual rows. instance_class / instance_type come from the
+    # inventory row (committed at add-node time); region / ami_id /
+    # instance_id / public_dns come from the Pulumi stack outputs once
+    # PulumiUpHandler has merged them in.
+    aws_metadata: dict[str, Any] | None = None
+    if row.get("provider") == "aws":
+        outs = (getattr(job, "pulumi_stack_outputs", None) or {}) if job else {}
+        aws_metadata = {
+            "instance_class": row.get("instance_class"),
+            "instance_type":  row.get("instance_type"),
+            "region":         outs.get("region"),
+            "ami_id":         outs.get("ami_id"),
+            "instance_id":    outs.get("instance_id"),
+            "public_dns":     outs.get("public_dns"),
+        }
+
+    # Phases summary via the existing event log. Repo may be None for
+    # nodes that predate the provisioning queue (worker / nosana / akash),
+    # in which case the phases list is empty.
+    phases: list[ProvisioningPhase] = []
+    if _deps.provisioning_repo is not None and pool_id and hasattr(
+        _deps.provisioning_repo, "summarize_phases",
+    ):
+        summary = await _deps.provisioning_repo.summarize_phases(pool_id=pool_id)
+        phases = [ProvisioningPhase(
             phase=p["phase"], status=p["status"],
             started_at=p["started_at"].isoformat() if p["started_at"] else None,
             ended_at=p["ended_at"].isoformat() if p["ended_at"] else None,
             last_message=p["last_message"],
-        ) for p in summary],
+        ) for p in summary]
+
+    # current_phase / terminal: prefer the job row when present (the
+    # state-machine path), fall back to the legacy current_phase repo
+    # call for nodes that don't have a job row (worker / nosana / akash).
+    if job is not None:
+        current_phase = job.phase.value
+        terminal = job.phase.is_terminal
+    elif _deps.provisioning_repo is not None and pool_id and hasattr(
+        _deps.provisioning_repo, "current_phase",
+    ):
+        current_phase = await _deps.provisioning_repo.current_phase(pool_id=pool_id)
+        node_state = row.get("state")
+        terminal = current_phase is None or node_state in ("ready", "terminated")
+    else:
+        current_phase = None
+        terminal = True
+
+    return ProvisioningSummary(
+        current_phase=current_phase,
+        terminal=terminal,
+        phases=phases,
+        attempt_count=getattr(job, "attempt_count", 0) if job is not None else 0,
+        error=error_block,
+        aws_metadata=aws_metadata,
+        job_id=str(job.id) if job is not None else None,
     )
 
 

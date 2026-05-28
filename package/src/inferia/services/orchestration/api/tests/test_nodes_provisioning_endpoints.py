@@ -53,6 +53,10 @@ def app_and_deps():
          "message": None, "created_at": datetime.now(timezone.utc)},
     ])
     prov.current_phase = AsyncMock(return_value="pulumi_up")
+    # T24 added a get_by_node lookup; tests in this file predate the
+    # provisioning_jobs queue and want the legacy current_phase/state
+    # fallback. Returning None keeps that path active.
+    prov.get_by_node = AsyncMock(return_value=None)
     aws_adapter = MagicMock()
     aws_adapter.get_logs = AsyncMock(return_value={
         "logs": ["[boot] cloud-init starting", "[user-data] docker pull..."],
