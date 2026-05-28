@@ -24,6 +24,8 @@ import LabelEditor from "@/components/nodes/LabelEditor";
 import NodeLogs from "@/components/nodes/NodeLogs";
 import NodeShell from "@/components/nodes/NodeShell";
 import ProvisioningStatus from "@/components/nodes/ProvisioningStatus";
+import { AWSMetadataGrid } from "@/components/nodes/AWSMetadataGrid";
+import { RetryProvisioningButton } from "@/components/nodes/RetryProvisioningButton";
 import { getProvisioning, type ProvisioningSummary } from "@/services/provisioningService";
 
 type Tab = "overview" | "labels" | "logs" | "shell";
@@ -264,7 +266,31 @@ export default function InstanceDetail() {
           <div className="grid grid-cols-1 gap-6">
             {isAws && provisioning &&
               (isProvisioning || provisioning.phases.some(p => p.status === "failed")) && (
-              <ProvisioningStatus summary={provisioning} />
+              <ProvisioningStatus
+                summary={provisioning}
+                attemptCount={provisioning.attempt_count ?? 0}
+              />
+            )}
+            {isAws && provisioning?.error && id && (
+              <div
+                className="rounded-lg border border-red-400 bg-red-50 dark:bg-red-950/30 p-4"
+                role="alert"
+              >
+                <h3 className="font-medium text-red-900 dark:text-red-200">
+                  {provisioning.error.message ?? "Provisioning failed"}
+                </h3>
+                {provisioning.error.hint && (
+                  <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                    {provisioning.error.hint}
+                  </p>
+                )}
+                <div className="mt-3">
+                  <RetryProvisioningButton nodeId={id} />
+                </div>
+              </div>
+            )}
+            {isAws && provisioning?.aws_metadata && (
+              <AWSMetadataGrid metadata={provisioning.aws_metadata} />
             )}
             <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
               <h3 className="font-mono text-sm font-semibold mb-4">Node Information</h3>

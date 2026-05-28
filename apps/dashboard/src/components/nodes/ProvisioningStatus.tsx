@@ -26,13 +26,31 @@ function PhaseIcon({ status }: { status: ProvisioningPhase["status"] | "pending"
   return <Circle className="w-4 h-4 text-muted-foreground/40" data-icon="pending" />;
 }
 
-export default function ProvisioningStatus({ summary }: { summary: ProvisioningSummary }) {
+export default function ProvisioningStatus(
+  { summary, attemptCount = 0 }:
+  { summary: ProvisioningSummary; attemptCount?: number },
+) {
   const byPhase = new Map(summary.phases.map(p => [p.phase, p]));
   const failed = summary.phases.find(p => p.status === "failed");
+  // Only surface the "Attempt N" badge when we've genuinely retried —
+  // a first-attempt job has attempt_count=1 and no badge is helpful.
+  const showAttemptBadge = attemptCount > 1;
 
   return (
     <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
-      <h3 className="font-mono text-sm font-semibold mb-4">Provisioning Status</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-mono text-sm font-semibold">Provisioning Status</h3>
+        {showAttemptBadge && (
+          <span
+            className="px-2 py-0.5 rounded border border-amber-500/30
+                       bg-amber-500/10 text-amber-700 dark:text-amber-300
+                       text-xs font-medium"
+            data-testid="provisioning-attempt-badge"
+          >
+            Attempt {attemptCount}
+          </span>
+        )}
+      </div>
       {failed && (
         <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300 px-3 py-2 text-sm">
           <div className="font-semibold">Provisioning failed at {PHASE_LABELS[failed.phase] || failed.phase}</div>
