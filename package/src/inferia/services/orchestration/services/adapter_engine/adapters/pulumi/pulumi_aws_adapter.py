@@ -387,6 +387,45 @@ def run_pulumi_up_sync(
     return StackOutputs.from_pulumi_outputs(result.outputs or {})
 
 
+def run_pulumi_destroy_sync(
+    *,
+    stack_name: str,
+    program: Callable[[], None],
+    env: dict[str, str],
+    state_dir: str | None = None,
+    project_name: str = PROJECT_NAME,
+) -> None:
+    """Run ``pulumi destroy`` synchronously. Idempotent — destroying a
+    stack that doesn't exist is treated as success.
+
+    Used by the reconciler's CancelHandler (T17) when a user deletes a
+    node mid-provisioning. The reconciler wraps this in
+    ``asyncio.to_thread(...)`` because the Pulumi Python SDK has no
+    ``destroy_async`` (memory: feedback_pulumi_python_sdk_sync).
+
+    Raises ``PulumiCliMissingError`` when the ``pulumi`` binary isn't on
+    PATH (memory: feedback_pulumi_cli_binary_required). Any other
+    exception that doesn't look like a "no stack" error propagates so
+    the reconciler's classifier can decide retry vs fail.
+    """
+    try:
+        stack = _make_stack(
+            stack_name=stack_name,
+            program=program,
+            env=env,
+            state_dir=state_dir,
+            project_name=project_name,
+        )
+    except FileNotFoundError as e:
+        raise PulumiCliMissingError(f"pulumi binary missing: {e}") from e
+    try:
+        stack.destroy()
+    except Exception as e:
+        if "no stack named" in str(e).lower():
+            return
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Adapter — surviving lifecycle helpers (deprovision, wait_for_ready,
 # discover_resources, get_logs). The reconciler owns provision_node,
