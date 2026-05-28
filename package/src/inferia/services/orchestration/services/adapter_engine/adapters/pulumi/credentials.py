@@ -8,9 +8,27 @@ from __future__ import annotations
 
 import os
 import tempfile
+from dataclasses import dataclass
 
 from inferia.services.api_gateway.config import ProvidersConfig
 from inferia.services.api_gateway.management.configuration import _is_masked
+
+
+@dataclass(frozen=True)
+class AWSCredentials:
+    """In-memory AWS credential bundle passed to the preflight check.
+
+    Mirrors the fields Pulumi-AWS needs (access key + secret + region,
+    plus an optional session token for STS-issued temporary creds). Built
+    by the reconciler from ProvidersConfig before each phase run so the
+    PreflightHandler can probe sts:GetCallerIdentity without dragging the
+    full Pydantic config object through.
+    """
+
+    access_key_id: str
+    secret_access_key: str
+    region: str
+    session_token: str | None = None
 
 
 class MissingCredentialsError(ValueError):
@@ -78,3 +96,49 @@ def resolve_azure_env(cfg: ProvidersConfig) -> dict[str, str]:
         "ARM_CLIENT_ID": client,
         "ARM_CLIENT_SECRET": secret,
     }
+
+
+def _boto3_sts_client(creds: AWSCredentials):
+    """Built as a separate function so tests can mock without bringing
+    boto3 into the test environment's import path."""
+    import boto3
+    return boto3.client(
+        "sts",
+        aws_access_key_id=creds.access_key_id,
+        aws_secret_access_key=creds.secret_access_key,
+        aws_session_token=creds.session_token,
+        region_name=creds.region,
+    )
+
+
+def verify_credentials(creds: "AWSCredentials") -> dict:
+    """Synchronously call sts:GetCallerIdentity to validate that the
+    creds work and can reach AWS. Used by the PreflightHandler.
+
+    Returns the GetCallerIdentity response. Raises:
+    - InvalidCredentialsError on AuthFailure / InvalidClientTokenId /
+      SignatureDoesNotMatch / UnauthorizedOperation.
+    - NetworkError on EndpointConnectionError or similar reachability
+      failures.
+    - Other botocore exceptions propagate; the classifier maps them.
+    """
+    from botocore.exceptions import (  # local import: optional dep
+        ClientError, EndpointConnectionError,
+    )
+    from inferia.services.orchestration.services.provisioning.errors import (
+        InvalidCredentialsError, NetworkError,
+    )
+
+    client = _boto3_sts_client(creds)
+    try:
+        return client.get_caller_identity()
+    except EndpointConnectionError as e:
+        raise NetworkError(str(e)) from e
+    except ClientError as e:
+        code = (e.response.get("Error") or {}).get("Code", "")
+        if code in {
+            "AuthFailure", "InvalidClientTokenId",
+            "SignatureDoesNotMatch", "UnauthorizedOperation",
+        }:
+            raise InvalidCredentialsError(str(e)) from e
+        raise
