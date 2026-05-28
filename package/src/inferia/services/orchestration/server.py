@@ -125,6 +125,94 @@ async def create_db_pool():
     )
 
 
+# Postgres advisory-lock key for the single-active ProvisioningReconciler.
+# Generated once and committed verbatim so every replica picks the same lock.
+# Postgres advisory locks are per-database; this key is shared across the
+# inferia orchestration replicas pointing at the same DB so only one process
+# runs the reconciler loop. Postgres auto-releases the lock when the holding
+# connection drops, so a crashed inferia-app can't lock out its replacement.
+RECONCILER_LOCK_KEY = 0xD1F24B3EC7A91100
+
+
+async def start_reconciler(
+    db,
+    *,
+    handlers: dict,
+    emit_event,
+    stop_event: asyncio.Event,
+    lease_holder: str,
+    poll_for_lock_s: float = 15.0,
+) -> None:
+    """Single-active reconciler loop.
+
+    Acquires a Postgres advisory lock via ``pg_try_advisory_lock``; if the
+    lock is held by another inferia-app instance, sleeps for
+    ``poll_for_lock_s`` seconds and retries. Postgres auto-releases the
+    lock on connection drop, so a crashed leader can't keep its replicas
+    locked out forever.
+
+    Once the lock is held, instantiates a ``ProvisioningReconciler`` and
+    runs ``rec.run()`` until ``stop_event`` is set. On shutdown the
+    reconciler drains in-flight handlers for up to 30s before cancelling.
+    """
+    # Local imports keep module import cheap and avoid pulling the
+    # reconciler graph into unrelated unit tests.
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+    from inferia.services.orchestration.services.provisioning.reconciler.loop import (
+        ProvisioningReconciler,
+    )
+
+    while not stop_event.is_set():
+        async with db.acquire() as conn:
+            got_lock = await conn.fetchval(
+                "SELECT pg_try_advisory_lock($1)", RECONCILER_LOCK_KEY,
+            )
+            if not got_lock:
+                # Another inferia-app holds the lock. Sleep up to
+                # poll_for_lock_s, then retry. If stop fires while we
+                # wait, exit cleanly.
+                try:
+                    await asyncio.wait_for(
+                        stop_event.wait(), timeout=poll_for_lock_s,
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                else:
+                    return
+            try:
+                repo = ProvisioningJobRepository(db)
+                rec = ProvisioningReconciler(
+                    repo=repo,
+                    handlers=handlers,
+                    emit_event=emit_event,
+                    db=db,
+                    concurrency=4,
+                    poll_interval_s=2.0,
+                    lease_seconds=300,
+                    renew_interval_s=60.0,
+                    lease_holder=lease_holder,
+                )
+                run_task = asyncio.create_task(rec.run())
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=None)
+                except asyncio.CancelledError:
+                    raise
+                finally:
+                    await rec.stop_with_drain(grace_seconds=30.0)
+                    run_task.cancel()
+                    try:
+                        await run_task
+                    except asyncio.CancelledError:
+                        pass
+            finally:
+                await conn.fetchval(
+                    "SELECT pg_advisory_unlock($1)", RECONCILER_LOCK_KEY,
+                )
+        return
+
+
 async def check_db_health(db_pool):
     """Check database connectivity."""
     try:
@@ -440,6 +528,71 @@ async def serve():
                 "Failed to start in-process deployment dispatcher: %s", e
             )
 
+    # ---------------- Provisioning Reconciler ----------------
+    # Single-active reconciler loop: advisory-lock-guarded so only one
+    # inferia-app replica drives jobs, but every replica boots the loop
+    # so the standby polls for the lock and takes over when the leader
+    # dies (Postgres auto-releases on connection drop). Disable with
+    # INFERIA_DISABLE_PROVISIONING_RECONCILER=1 in any operator-driven
+    # rollback scenario.
+    reconciler_stop: asyncio.Event | None = None
+    reconciler_task: asyncio.Task | None = None
+    if os.getenv("INFERIA_DISABLE_PROVISIONING_RECONCILER", "0") != "1":
+        try:
+            from inferia.services.orchestration.services.provisioning.events import (
+                emit_event as _emit_event_to_db,
+            )
+            from inferia.services.orchestration.services.provisioning.jobs.model import (
+                Phase,
+            )
+            from inferia.services.orchestration.services.provisioning.phases.bootstrap import (
+                BootstrapHandler,
+            )
+            from inferia.services.orchestration.services.provisioning.phases.cancel import (
+                CancelHandler,
+            )
+            from inferia.services.orchestration.services.provisioning.phases.preflight import (
+                PreflightHandler,
+            )
+            from inferia.services.orchestration.services.provisioning.phases.pulumi_up import (
+                PulumiUpHandler,
+            )
+
+            _provisioning_handlers = {
+                Phase.PREFLIGHT: PreflightHandler(),
+                Phase.PROVISIONING: PulumiUpHandler(),
+                Phase.BOOTSTRAPPING: BootstrapHandler(inventory_repo=inventory_repo),
+                Phase.CANCELLING: CancelHandler(),
+            }
+
+            async def _emit_event(**kwargs):
+                # Reconciler emits with positional-by-name args matching
+                # events.emit_event's signature (pool_id, node_id, phase,
+                # status, message, extra). Adapter forwards the db pool.
+                await _emit_event_to_db(db_pool, **kwargs)
+
+            import socket as _socket  # local import keeps the optional dep narrow
+
+            reconciler_stop = asyncio.Event()
+            reconciler_task = asyncio.create_task(
+                start_reconciler(
+                    db=db_pool,
+                    handlers=_provisioning_handlers,
+                    emit_event=_emit_event,
+                    stop_event=reconciler_stop,
+                    lease_holder=(
+                        f"inferia-app-{os.getpid()}-{_socket.gethostname()}"
+                    ),
+                )
+            )
+            app.state.reconciler_stop = reconciler_stop
+            app.state.reconciler_task = reconciler_task
+            logger.info("Provisioning reconciler started (advisory-lock guarded)")
+        except Exception as e:
+            logger.warning(
+                "Failed to start provisioning reconciler: %s", e
+            )
+
     # Start gRPC
     server.add_insecure_port(f"[::]:{settings.grpc_port}")
     await server.start()
@@ -448,7 +601,21 @@ async def serve():
     # Wait for shutdown signal
     await shutdown_event.wait()
 
-    # Graceful shutdown
+    # Graceful shutdown — signal the reconciler first so its in-flight
+    # handlers get the full 30s drain budget before we tear down gRPC + DB.
+    if reconciler_stop is not None:
+        reconciler_stop.set()
+    if reconciler_task is not None:
+        try:
+            await asyncio.wait_for(reconciler_task, timeout=35.0)
+        except asyncio.TimeoutError:
+            logger.warning("reconciler shutdown timed out; cancelling")
+            reconciler_task.cancel()
+            try:
+                await reconciler_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     await server.stop(grace=5)
     logger.info("Servers stopped gracefully")
 
