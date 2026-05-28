@@ -25,6 +25,9 @@ class InstanceType:
     gpu_count: int                  # 0 for cpu
     gpu_model: str | None           # None for cpu
     gpu_ram_gb: int                 # 0 for cpu
+    # NOTE: serialized as 'price_per_hour' on the HTTP catalog endpoint
+    # (T22) to match the existing dashboard contract in
+    # apps/dashboard/src/pages/Compute/NewPool.tsx.
     approx_usd_per_hour: float
 
 

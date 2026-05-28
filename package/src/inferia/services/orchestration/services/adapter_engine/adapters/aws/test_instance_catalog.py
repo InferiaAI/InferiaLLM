@@ -1,4 +1,6 @@
 """Tests for the AWS instance catalog."""
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from inferia.services.orchestration.services.adapter_engine.adapters.aws.instance_catalog import (
@@ -83,7 +85,7 @@ def test_heavy_gpu_default_set_present():
 def test_instance_type_is_frozen():
     """InstanceType records are immutable."""
     sample = INSTANCE_CATALOG[0]
-    with pytest.raises((AttributeError, Exception)):
+    with pytest.raises(FrozenInstanceError):
         sample.name = "z.0"  # type: ignore[misc]
 
 
