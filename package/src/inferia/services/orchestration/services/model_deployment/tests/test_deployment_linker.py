@@ -15,6 +15,9 @@ from inferia.services.orchestration.repositories.inventory_repo import (
 from inferia.services.orchestration.repositories.model_deployment_repo import (
     ModelDeploymentRepository,
 )
+from inferia.services.orchestration.services.worker_controller.controller import (
+    WorkerController,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -56,16 +59,16 @@ async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready")
     return pool_id, node_id
 
 
-async def _seed_pending_deploy(p, pool_id, *, gpu_required=1):
+async def _seed_pending_deploy(p, pool_id, *, gpu_required=1, model_name="test-model"):
     deploy_id = uuid4()
     async with p.acquire() as c:
         await c.execute(
             """INSERT INTO model_deployments(deployment_id, model_name,
                  replicas, gpu_per_replica, pool_id,
                  target_pool_id, target_node_id, state, org_id)
-               VALUES ($1, 'm', 1, $4, $2, $2, NULL,
+               VALUES ($1, $5, 1, $4, $2, $2, NULL,
                        'PENDING_NODE', $3)""",
-            deploy_id, pool_id, str(uuid4()), gpu_required,
+            deploy_id, pool_id, str(uuid4()), gpu_required, model_name,
         )
     return deploy_id
 
@@ -73,7 +76,7 @@ async def _seed_pending_deploy(p, pool_id, *, gpu_required=1):
 async def test_one_pending_deploy_binds_on_worker_ready(pool):
     pool_id, node_id = await _seed_pool_and_node(pool)
     deploy_id = await _seed_pending_deploy(pool, pool_id)
-    controller = AsyncMock()
+    controller = AsyncMock(spec=WorkerController)
     linker = DeploymentLinker(
         db_pool=pool,
         inventory_repo=InventoryRepository(pool),
@@ -92,12 +95,16 @@ async def test_one_pending_deploy_binds_on_worker_ready(pool):
     assert row["state"] == "DEPLOYING"
     assert row["target_node_id"] == node_id
     controller.load_model.assert_awaited_once()
+    call_kwargs = controller.load_model.await_args.kwargs
+    assert "spec" in call_kwargs
+    assert call_kwargs["spec"]["deployment_id"]  # non-empty
+    assert call_kwargs["spec"]["model"]["artifact_uri"]  # non-empty
 
 
 async def test_five_pending_with_capacity_three_binds_three_fifo(pool):
     pool_id, node_id = await _seed_pool_and_node(pool, gpu_total=3)
     deploys = [await _seed_pending_deploy(pool, pool_id) for _ in range(5)]
-    controller = AsyncMock()
+    controller = AsyncMock(spec=WorkerController)
     linker = DeploymentLinker(
         db_pool=pool,
         inventory_repo=InventoryRepository(pool),
@@ -122,7 +129,7 @@ async def test_five_pending_with_capacity_three_binds_three_fifo(pool):
 
 async def test_no_pending_deploys_is_noop(pool):
     _, node_id = await _seed_pool_and_node(pool)
-    controller = AsyncMock()
+    controller = AsyncMock(spec=WorkerController)
     linker = DeploymentLinker(
         db_pool=pool,
         inventory_repo=InventoryRepository(pool),
@@ -138,7 +145,7 @@ async def test_pending_deploy_in_other_pool_ignored(pool):
     pool_a, node_a = await _seed_pool_and_node(pool)
     pool_b, _ = await _seed_pool_and_node(pool)
     await _seed_pending_deploy(pool, pool_b)
-    controller = AsyncMock()
+    controller = AsyncMock(spec=WorkerController)
     linker = DeploymentLinker(
         db_pool=pool,
         inventory_repo=InventoryRepository(pool),
@@ -154,7 +161,7 @@ async def test_pending_deploy_in_other_pool_ignored(pool):
 async def test_load_model_failure_releases_gpu_and_marks_failed(pool):
     pool_id, node_id = await _seed_pool_and_node(pool, gpu_total=2)
     deploy_id = await _seed_pending_deploy(pool, pool_id)
-    controller = AsyncMock()
+    controller = AsyncMock(spec=WorkerController)
     controller.load_model.side_effect = RuntimeError("worker offline")
     linker = DeploymentLinker(
         db_pool=pool,

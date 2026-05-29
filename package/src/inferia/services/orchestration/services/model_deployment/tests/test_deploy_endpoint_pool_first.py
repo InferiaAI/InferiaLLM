@@ -27,6 +27,9 @@ from httpx import AsyncClient, ASGITransport
 from inferia.services.orchestration.services.model_deployment import (
     deployment_server,
 )
+from inferia.services.orchestration.services.worker_controller.controller import (
+    WorkerController,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -53,7 +56,7 @@ async def app_and_pool(db_pool):
     """Isolated FastAPI app with the deployment router mounted."""
     app = FastAPI()
     app.state.pool = db_pool
-    app.state.worker_controller = AsyncMock()
+    app.state.worker_controller = AsyncMock(spec=WorkerController)
     app.state.event_bus = None
     app.include_router(deployment_server.router)
     yield app, db_pool
@@ -123,6 +126,18 @@ async def _seed_node(
     return node_id
 
 
+async def _seed_ready_node(
+    pool,
+    pool_id: UUID,
+    *,
+    gpu_total: int = 4,
+    gpu_allocated: int = 0,
+) -> UUID:
+    """Alias of _seed_node with state='ready' for clarity."""
+    return await _seed_node(pool, pool_id, gpu_total=gpu_total,
+                            gpu_allocated=gpu_allocated, state="ready")
+
+
 def _deploy_payload(pool_id: UUID, *, gpu_per_replica: int = 1) -> dict:
     return {
         "model_name": "test-model",
@@ -131,6 +146,9 @@ def _deploy_payload(pool_id: UUID, *, gpu_per_replica: int = 1) -> dict:
         "gpu_per_replica": gpu_per_replica,
         "pool_id": str(pool_id),
         "engine": "vllm",
+        # model_name doubles as artifact_uri fallback; provide explicit
+        # configuration.artifact_uri so the spec helper can resolve it.
+        "configuration": {"artifact_uri": "hf://test-model"},
     }
 
 
@@ -204,6 +222,10 @@ async def test_deploy_to_warm_pool_returns_deploying(app_and_pool):
 
     controller = app.state.worker_controller
     controller.load_model.assert_awaited_once()
+    call_kwargs = controller.load_model.await_args.kwargs
+    assert "spec" in call_kwargs
+    assert call_kwargs["spec"]["deployment_id"]  # non-empty
+    assert call_kwargs["spec"]["model"]["artifact_uri"]  # non-empty
 
 
 async def test_deploy_to_terminating_pool_returns_409(app_and_pool):
@@ -260,3 +282,40 @@ async def test_deploy_to_worker_pool_pending_no_provisioning_job(app_and_pool):
             "SELECT COUNT(*) FROM provisioning_jobs WHERE pool_id=$1", pool_id,
         )
     assert job_count == 0, "worker pool must NOT enqueue a ProvisioningJob"
+
+
+async def test_deploy_duplicate_model_name_in_org_returns_409(app_and_pool):
+    """Duplicate-name guard: same model_name + same org_id => 409 on second deploy."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool, gpu_count=4)
+    await _seed_ready_node(pool, pool_id, gpu_total=4)
+    org_id = str(uuid4())
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # First deploy succeeds (DEPLOYING — warm node present)
+        r1 = await client.post("/deployment/deploy", json={
+            "model_name": "qwen3",
+            "model_version": "1.0",
+            "replicas": 1,
+            "gpu_per_replica": 1,
+            "pool_id": str(pool_id),
+            "engine": "vllm",
+            "org_id": org_id,
+            "configuration": {"artifact_uri": "hf://qwen3"},
+        })
+        assert r1.status_code == 200, r1.text
+
+        # Second deploy with same model_name + same org => 409
+        r2 = await client.post("/deployment/deploy", json={
+            "model_name": "qwen3",
+            "model_version": "1.0",
+            "replicas": 1,
+            "gpu_per_replica": 1,
+            "pool_id": str(pool_id),
+            "engine": "vllm",
+            "org_id": org_id,
+            "configuration": {"artifact_uri": "hf://qwen3"},
+        })
+        assert r2.status_code == 409, r2.text
+        assert "already exists" in r2.text

@@ -238,6 +238,43 @@ def _auth_channel():
     return grpc.aio.insecure_channel(GRPC_ADDR, interceptors=[_AuthInterceptor()])
 
 
+def _model_spec_from_request(req: "DeployModelRequest") -> dict:
+    """Build the ``spec["model"]`` dict from a deploy request.
+
+    Extracts artifact_uri / format / backend either from a nested
+    req.configuration or falls back to the top-level engine / inference_model
+    fields.
+
+    Raises HTTPException(400) if no artifact_uri can be resolved.
+    """
+    cfg = req.configuration or {}
+    model_block = cfg.get("model") or {}
+    artifact_uri = (
+        model_block.get("artifact_uri")
+        or cfg.get("artifact_uri")
+        or req.inference_model
+        or req.model_name
+    )
+    if not artifact_uri:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "model.artifact_uri (or inference_model / model_name) "
+                "is required to load a model on a worker"
+            ),
+        )
+    return {
+        "artifact_uri": str(artifact_uri),
+        "format": str(model_block.get("format") or cfg.get("format") or "hf"),
+        "backend": str(
+            model_block.get("backend")
+            or cfg.get("backend")
+            or req.engine
+            or "vllm"
+        ),
+    }
+
+
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
 
 POOL_STATE_RUNNING = "running"
@@ -778,6 +815,30 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         pool_meta = _raw_meta
     else:
         pool_meta = {}
+    if not isinstance(pool_meta, dict):
+        pool_meta = {}
+
+    # Duplicate-name guard: 409 if any non-terminal deploy with this
+    # model_name already exists in the same org.
+    if req.model_name and req.org_id:
+        async with db_pool.acquire() as _c:
+            dup_row = await _c.fetchrow(
+                """
+                SELECT deployment_id FROM model_deployments
+                 WHERE model_name = $1
+                   AND org_id = $2
+                   AND state NOT IN ('STOPPED', 'TERMINATED', 'FAILED')
+                """,
+                req.model_name, str(req.org_id),
+            )
+        if dup_row is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"deployment '{req.model_name}' already exists "
+                    f"in this org; stop it first"
+                ),
+            )
 
     # 2. Create deployment row (CREATED state, target_pool_id=pool_id)
     deploy_id = uuid4()
@@ -983,22 +1044,51 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             },
             headers={"Retry-After": "60"},
         )
+    except HTTPException:
+        # Already a structured client error (e.g. capacity race lost twice);
+        # mark FAILED and re-raise.
+        await deploys.set_state(deploy_id, "FAILED")
+        raise
+    except Exception as e:
+        logger.exception("deploy: unexpected error for %s: %s", deploy_id, e)
+        await deploys.set_state(deploy_id, "FAILED")
+        raise HTTPException(
+            status_code=500,
+            detail=f"deploy failed: {e.__class__.__name__}",
+        )
 
     # 4a. Post-tx: enqueue provisioning job (requires committed placeholder node for FK)
     if pending_enqueue is not None:
-        await jobs_repo.enqueue(**pending_enqueue)
+        try:
+            await jobs_repo.enqueue(**pending_enqueue)
+        except Exception as e:
+            logger.exception("deploy: enqueue failed for %s: %s", deploy_id, e)
+            # Rollback: mark FAILED + release the placeholder GPU.
+            async with db_pool.acquire() as _c:
+                async with _c.transaction():
+                    await inventory.release_gpu(
+                        pending_enqueue["node_id"], req.gpu_per_replica or 0,
+                        tx=_c,
+                    )
+                    await deploys.set_state(deploy_id, "FAILED", tx=_c)
+            raise HTTPException(
+                status_code=502,
+                detail=f"failed to enqueue provisioning job: {e}",
+            )
 
     # 4b. Post-tx: load_model for the warm path
     if bound_for_load is not None:
         node_id, _ = bound_for_load
         try:
-            await controller.load_model(
-                node_id=node_id,
-                deployment_id=deploy_id,
-                model_name=req.model_name,
-                engine=req.engine,
-                configuration=configuration_val,
-            )
+            spec = {
+                "deployment_id": str(deploy_id),
+                "recipe": (req.engine or "vllm"),
+                "model": _model_spec_from_request(req),
+                "config": (req.configuration or {}).get("config") or {},
+                "gpu_indices": list(range(req.gpu_per_replica or 0)),
+                "port": 0,
+            }
+            await controller.load_model(node_id=str(node_id), spec=spec)
         except Exception as exc:
             logger.exception("deploy: load_model failed for %s: %s", deploy_id, exc)
             # Rollback: release the GPU and mark FAILED
@@ -1010,6 +1100,20 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                     await deploys.set_state(deploy_id, "FAILED", tx=conn)
             raise HTTPException(status_code=502,
                                   detail=f"load_model failed: {exc}")
+
+    await log_audit_event(
+        user_id=req.owner_id,
+        action="deployment.create",
+        resource_type="deployment",
+        resource_id=str(deploy_id),
+        details={
+            "model_name": req.model_name,
+            "pool_id": str(pool_id_uuid),
+            "final_state": response_body.get("state"),
+        },
+        status="success",
+        org_id=str(req.org_id) if req.org_id else None,
+    )
 
     from fastapi.responses import JSONResponse
     return JSONResponse(status_code=response_status, content=response_body)

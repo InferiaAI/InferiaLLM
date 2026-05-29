@@ -35,6 +35,47 @@ from inferia.services.orchestration.repositories.model_deployment_repo import (
 logger = logging.getLogger(__name__)
 
 
+def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
+    """Build the load_model spec from a list_pending_for_pool row.
+
+    asyncpg returns ``configuration`` as a JSON string. Parse it if so.
+    """
+    import json as _json
+
+    cfg = deploy.get("configuration") or {}
+    if isinstance(cfg, str):
+        try:
+            cfg = _json.loads(cfg)
+        except (ValueError, TypeError):
+            cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    model_block = cfg.get("model") or {}
+    artifact_uri = (
+        model_block.get("artifact_uri")
+        or cfg.get("artifact_uri")
+        or deploy.get("model_name")
+        or ""
+    )
+    return {
+        "deployment_id": str(deploy["id"]),
+        "recipe": deploy.get("engine") or "vllm",
+        "model": {
+            "artifact_uri": str(artifact_uri),
+            "format": str(model_block.get("format") or cfg.get("format") or "hf"),
+            "backend": str(
+                model_block.get("backend")
+                or cfg.get("backend")
+                or deploy.get("engine")
+                or "vllm"
+            ),
+        },
+        "config": cfg.get("config") or {},
+        "gpu_indices": list(range(gpu_required)),
+        "port": 0,
+    }
+
+
 class DeploymentLinker:
     def __init__(
         self,
@@ -85,12 +126,9 @@ class DeploymentLinker:
         for deploy in bound:
             gpu_required = int(deploy.get("gpu_per_replica") or 1)
             try:
+                spec = _spec_from_pending(deploy, gpu_required)
                 await self._controller.load_model(
-                    node_id=node_id,
-                    deployment_id=deploy["id"],
-                    model_name=deploy.get("model_name"),
-                    engine=deploy.get("engine"),
-                    configuration=deploy.get("configuration"),
+                    node_id=str(node_id), spec=spec,
                 )
             except Exception as e:
                 logger.exception(
