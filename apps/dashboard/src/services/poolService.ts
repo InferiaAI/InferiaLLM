@@ -92,12 +92,18 @@ export async function patchPoolMetadata(
  * List all pools for an organisation.
  *
  * Route: GET /api/v1/deployment/listPools/{org_id}
+ *
+ * The backend wraps the array as `{"pools": [...]}`. Unwrap here so
+ * callers receive a plain `PoolView[]`.
  */
 export async function listPools(orgId: string): Promise<PoolView[]> {
-  const res = await computeApi.get<PoolView[]>(
+  const res = await computeApi.get<{ pools: PoolView[] } | PoolView[]>(
     `/deployment/listPools/${orgId}`,
   );
-  return res.data;
+  // Tolerate both shapes (production wraps as {pools:[…]}; tests/mocks may
+  // return the array directly).
+  if (Array.isArray(res.data)) return res.data;
+  return res.data?.pools ?? [];
 }
 
 /**
