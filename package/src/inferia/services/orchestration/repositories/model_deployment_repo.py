@@ -148,13 +148,14 @@ class ModelDeploymentRepository(BaseRepository):
             async with self.db.acquire() as c:
                 await c.execute(q, deployment_id, state, error_message)
 
-        await self.event_bus.publish(
-            "deployment.state_changed",
-            {
-                "deployment_id": str(deployment_id),
-                "state": state,
-            },
-        )
+        if self.event_bus:
+            await self.event_bus.publish(
+                "deployment.state_changed",
+                {
+                    "deployment_id": str(deployment_id),
+                    "state": state,
+                },
+            )
 
     async def update_state_if(
         self,
@@ -189,7 +190,7 @@ class ModelDeploymentRepository(BaseRepository):
 
         updated = result != "UPDATE 0"
 
-        if updated:
+        if updated and self.event_bus:
             await self.event_bus.publish(
                 "deployment.state_changed",
                 {

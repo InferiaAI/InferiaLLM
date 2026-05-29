@@ -290,18 +290,13 @@ async def _initiate_node_destroy(
     pool_id,
     org_id,
     provider: str,
-):
-    """Mark the node terminating and enqueue a CancelJob so the
-    provisioning reconciler runs the destroy phase.
+) -> bool:
+    """Mark the node terminating and enqueue a CancelJob.
 
-    Sets ``compute_inventory.metadata->>'terminating' = 'true'`` (per the
-    existing convention from PR #252 / memory project_aws_destroy_on_delete)
-    so the dashboard can show a spinner. Enqueues a fresh provisioning
-    job tagged spec={"cancel": True} that the CancelHandler picks up.
-
-    Safe to call even if the node has no running ProvisioningJob (the
-    node went from placeholder → ready → idle); the new job is the
-    destroy operation.
+    Returns True on success, False if the enqueue failed (in which case
+    the metadata.terminating flag is still set so the dashboard can
+    render the spinner — but the caller should signal the failure so
+    the operator can retry).
     """
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -318,14 +313,13 @@ async def _initiate_node_destroy(
             provider=provider,
             spec={"cancel": True, "node_id": str(node_id)},
         )
+        return True
     except Exception as e:
-        # Log but don't fail the terminate response — metadata.terminating
-        # alone is enough for the dashboard to render the spinner; the
-        # destroy can be retried via the reconciler's reaper or manually.
         logger.exception(
             "_initiate_node_destroy: enqueue failed for node=%s: %s",
             node_id, e,
         )
+        return False
 
 
 # status start stop
@@ -1302,6 +1296,15 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
         if pool_row is not None:
             pool_provider = pool_row.get("provider")
 
+    # Fallback: read provider directly from compute_inventory when the
+    # pool row is gone (soft-deleted between deploy creation and now).
+    if pool_provider is None and target_node_id is not None:
+        async with db_pool.acquire() as _c:
+            pool_provider = await _c.fetchval(
+                "SELECT provider::text FROM compute_inventory WHERE id=$1",
+                target_node_id,
+            )
+
     if state == "PENDING_NODE":
         async with db_pool.acquire() as conn:
             async with conn.transaction():
@@ -1314,11 +1317,32 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
                     )
                     should_destroy = result.should_destroy
         if should_destroy and target_node_id is not None and pool_provider:
-            await _initiate_node_destroy(
+            destroy_ok = await _initiate_node_destroy(
                 db_pool=db_pool, jobs_repo=jobs_repo,
                 node_id=target_node_id, pool_id=pool_id,
                 org_id=org_id, provider=pool_provider,
             )
+            if not destroy_ok:
+                # The deploy is TERMINATED in the DB; the node is flagged
+                # terminating; but the destroy job didn't enqueue. Signal
+                # so the operator retries (consistent with T7's /deploy).
+                await log_audit_event(
+                    user_id=None,
+                    action="deployment.terminate",
+                    resource_type="deployment",
+                    resource_id=str(deploy_uuid),
+                    status="partial",
+                    org_id=org_id,
+                    details={"prev_state": "PENDING_NODE",
+                              "destroy_enqueued": False},
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"deploy terminated but destroy job enqueue failed "
+                        f"for node {target_node_id}; retry to clean up"
+                    ),
+                )
         await log_audit_event(
             user_id=None,
             action="deployment.terminate",
@@ -1346,7 +1370,11 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
 
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            await deploys.set_state(deploy_uuid, "TERMINATED", tx=conn)
+            await deploys.update_state(
+                deployment_id=deploy_uuid,
+                state="TERMINATED",
+                tx=conn,
+            )
             should_destroy = False
             if target_node_id is not None and gpu_per_replica > 0:
                 result = await inventory.release_gpu(
@@ -1355,11 +1383,32 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
                 should_destroy = result.should_destroy
 
     if should_destroy and target_node_id is not None and pool_provider:
-        await _initiate_node_destroy(
+        destroy_ok = await _initiate_node_destroy(
             db_pool=db_pool, jobs_repo=jobs_repo,
             node_id=target_node_id, pool_id=pool_id,
             org_id=org_id, provider=pool_provider,
         )
+        if not destroy_ok:
+            # The deploy is TERMINATED in the DB; the node is flagged
+            # terminating; but the destroy job didn't enqueue. Signal
+            # so the operator retries (consistent with T7's /deploy).
+            await log_audit_event(
+                user_id=None,
+                action="deployment.terminate",
+                resource_type="deployment",
+                resource_id=str(deploy_uuid),
+                status="partial",
+                org_id=org_id,
+                details={"prev_state": state,
+                          "destroy_enqueued": False},
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"deploy terminated but destroy job enqueue failed "
+                    f"for node {target_node_id}; retry to clean up"
+                ),
+            )
 
     await log_audit_event(
         user_id=None,

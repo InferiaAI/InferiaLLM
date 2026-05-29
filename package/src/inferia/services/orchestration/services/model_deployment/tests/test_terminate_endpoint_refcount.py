@@ -288,6 +288,15 @@ async def test_terminate_last_deploy_triggers_destroy(app_and_pool):
     call_kwargs = mock_enqueue.await_args.kwargs
     assert call_kwargs["spec"].get("cancel") is True
 
+    # Verify the call shape matches ProvisioningJobRepository.enqueue's
+    # real signature — guards against regressions where the kwargs drift
+    # (per memory feedback_asyncmock_signature_blindness).
+    assert call_kwargs["spec"]["cancel"] is True
+    assert call_kwargs["spec"]["node_id"] == str(node_id)
+    assert call_kwargs["provider"] == "aws"
+    assert call_kwargs["node_id"] == node_id   # UUID, not str
+    assert call_kwargs["pool_id"] == pool_id   # UUID, not str
+
     # Node metadata must have terminating=true
     async with pool.acquire() as c:
         meta = await c.fetchval(
@@ -401,3 +410,48 @@ async def test_terminate_not_found_returns_404(app_and_pool):
         )
 
     assert resp.status_code == 404, resp.text
+
+
+async def test_terminate_invalid_uuid_returns_400(app_and_pool):
+    """Malformed UUID => 400."""
+    app, _ = app_and_pool
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post(
+            "/deployment/terminate",
+            json={"deployment_id": "not-a-uuid"},
+        )
+    assert r.status_code == 400
+
+
+async def test_terminate_destroys_node_even_when_pool_soft_deleted(app_and_pool):
+    """Pool is_active=FALSE between deploy and terminate — the destroy
+    must still fire via the compute_inventory.provider fallback."""
+    app, pool = app_and_pool
+    # seed pool, ready node, running deploy; then soft-delete pool
+    pool_id = await _seed_pool(pool, provider='aws', gpu_count=4)
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=1)
+    deploy_id = await _seed_deploy(pool, pool_id=pool_id,
+                                    state='RUNNING',
+                                    gpu_per_replica=1,
+                                    target_node_id=node_id)
+    async with pool.acquire() as c:
+        await c.execute(
+            "UPDATE compute_pools SET is_active=FALSE WHERE id=$1", pool_id,
+        )
+
+    with patch(
+        "inferia.services.orchestration.services.provisioning.jobs.repository."
+        "ProvisioningJobRepository.enqueue",
+        new_callable=AsyncMock,
+    ) as mock_enqueue:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/deployment/terminate",
+                json={"deployment_id": str(deploy_id)},
+            )
+    assert resp.status_code == 200
+    mock_enqueue.assert_awaited_once()
+    assert mock_enqueue.await_args.kwargs["provider"] == "aws"
