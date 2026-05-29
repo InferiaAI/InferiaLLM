@@ -482,17 +482,18 @@ class InventoryRepository:
     async def allocate_gpu(self, node_id: UUID, count: int) -> bool:
         """Atomically increment gpu_allocated by `count` iff capacity allows.
 
-        Returns True on success, False on capacity exhaustion. Used by
-        PoolPlacer.place after it picks a candidate node — concurrent
-        allocate_gpu calls on the same node racing for the same slot
-        will see exactly one winner.
+        Returns True on success, False on capacity exhaustion. Concurrent
+        allocate_gpu calls on the same node racing for the last slot will
+        see exactly one winner — Postgres serializes the UPDATE via its
+        row lock and the loser's `gpu_allocated + $2 <= gpu_total`
+        predicate re-evaluates against the freshly-updated tuple.
 
         Allowed states: 'ready' (warm bind) and 'provisioning' (co-wait
         on a placeholder that hasn't booted yet). Nodes flagged
         metadata.terminating=true are excluded — they're on the way out.
         """
         async with self.db.acquire() as conn:
-            result = await conn.execute(
+            row = await conn.fetchrow(
                 """
                 UPDATE compute_inventory
                    SET gpu_allocated = gpu_allocated + $2
@@ -500,60 +501,67 @@ class InventoryRepository:
                    AND state IN ('ready', 'provisioning')
                    AND (metadata->>'terminating') IS DISTINCT FROM 'true'
                    AND gpu_allocated + $2 <= gpu_total
+              RETURNING 1
                 """,
                 node_id, count,
             )
-        rowcount = int(result.rsplit(" ", 1)[-1])
-        return rowcount > 0
+        return row is not None
 
     async def release_gpu(self, node_id: UUID, count: int) -> ReleaseResult:
         """Decrement gpu_allocated and signal whether the node should be
-        destroyed (last reference released AND no PENDING_NODE deploys
-        still target it).
+        destroyed (last reference released AND no PENDING_NODE/DEPLOYING/
+        RUNNING deploys still target it).
 
-        Defensive: underflow logs and returns should_destroy=False.
+        UPDATE and EXISTS run in the same CTE so both reads come from a
+        single transaction snapshot — eliminates the race where a deploy
+        is inserted between the decrement and the destroy check.
+
+        Defensive: if the decrement would underflow (gpu_allocated < count),
+        we log and return should_destroy=False.
         """
         async with self.db.acquire() as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    """
-                    UPDATE compute_inventory
-                       SET gpu_allocated = gpu_allocated - $2
-                     WHERE id = $1
-                       AND gpu_allocated >= $2
-                    RETURNING gpu_allocated
-                    """,
-                    node_id, count,
+            row = await conn.fetchrow(
+                """
+                WITH dec AS (
+                  UPDATE compute_inventory
+                     SET gpu_allocated = gpu_allocated - $2
+                   WHERE id = $1
+                     AND gpu_allocated >= $2
+                  RETURNING gpu_allocated
                 )
-                if row is None:
-                    cur = await conn.fetchval(
-                        "SELECT gpu_allocated FROM compute_inventory WHERE id=$1",
-                        node_id,
-                    )
-                    logger.error(
-                        "refcount underflow: node=%s released=%d current=%s",
-                        node_id, count, cur,
-                    )
-                    return ReleaseResult(new_allocated=int(cur or 0),
-                                          should_destroy=False)
-                new_alloc = row["gpu_allocated"]
-                if new_alloc != 0:
-                    return ReleaseResult(new_allocated=new_alloc,
-                                          should_destroy=False)
-                still_pending = await conn.fetchval(
-                    """
-                    SELECT EXISTS (
-                      SELECT 1 FROM model_deployments
-                       WHERE target_node_id = $1
-                         AND state IN ('PENDING_NODE','DEPLOYING','RUNNING')
-                    )
-                    """,
+                SELECT
+                  (SELECT gpu_allocated FROM dec) AS new_alloc,
+                  NOT EXISTS (
+                    SELECT 1 FROM model_deployments
+                     WHERE target_node_id = $1
+                       AND state IN ('PENDING_NODE','DEPLOYING','RUNNING')
+                  ) AS no_pending
+                """,
+                node_id, count,
+            )
+
+        new_alloc = row["new_alloc"]
+        if new_alloc is None:
+            # UPDATE matched zero rows — underflow defensive path.
+            async with self.db.acquire() as conn:
+                cur = await conn.fetchval(
+                    "SELECT gpu_allocated FROM compute_inventory WHERE id=$1",
                     node_id,
                 )
-                return ReleaseResult(
-                    new_allocated=0,
-                    should_destroy=not bool(still_pending),
-                )
+            logger.error(
+                "refcount underflow: node=%s released=%d current=%s",
+                node_id, count, cur,
+            )
+            return ReleaseResult(new_allocated=int(cur or 0),
+                                  should_destroy=False)
+
+        if new_alloc != 0:
+            return ReleaseResult(new_allocated=new_alloc,
+                                  should_destroy=False)
+        return ReleaseResult(
+            new_allocated=0,
+            should_destroy=bool(row["no_pending"]),
+        )
 
     async def create_placeholder(
         self,

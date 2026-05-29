@@ -163,7 +163,12 @@ async def test_release_gpu_underflow_logs_and_no_destroy(pool, caplog):
     result = await repo.release_gpu(node_id, 1)
     assert result.new_allocated == 0
     assert result.should_destroy is False
-    assert any("refcount underflow" in r.message.lower()
+    # Use getMessage() so a formatter exception would surface here and
+    # so the assertion actually exercises the interpolation path.
+    assert any("refcount underflow" in r.getMessage().lower()
+               for r in caplog.records)
+    # Force-verify the node_id made it into the formatted output.
+    assert any(str(node_id) in r.getMessage()
                for r in caplog.records)
 
 
