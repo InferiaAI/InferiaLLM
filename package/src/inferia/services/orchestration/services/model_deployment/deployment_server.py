@@ -282,6 +282,52 @@ POOL_STATE_TERMINATING = "terminating"
 POOL_STATE_TERMINATED = "terminated"
 
 
+async def _initiate_node_destroy(
+    *,
+    db_pool,
+    jobs_repo,
+    node_id,
+    pool_id,
+    org_id,
+    provider: str,
+):
+    """Mark the node terminating and enqueue a CancelJob so the
+    provisioning reconciler runs the destroy phase.
+
+    Sets ``compute_inventory.metadata->>'terminating' = 'true'`` (per the
+    existing convention from PR #252 / memory project_aws_destroy_on_delete)
+    so the dashboard can show a spinner. Enqueues a fresh provisioning
+    job tagged spec={"cancel": True} that the CancelHandler picks up.
+
+    Safe to call even if the node has no running ProvisioningJob (the
+    node went from placeholder → ready → idle); the new job is the
+    destroy operation.
+    """
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE compute_inventory SET metadata = "
+            "jsonb_set(COALESCE(metadata,'{}'::jsonb), "
+            "'{terminating}', 'true'::jsonb) WHERE id=$1",
+            node_id,
+        )
+    try:
+        await jobs_repo.enqueue(
+            node_id=node_id,
+            pool_id=pool_id,
+            org_id=str(org_id) if org_id else "",
+            provider=provider,
+            spec={"cancel": True, "node_id": str(node_id)},
+        )
+    except Exception as e:
+        # Log but don't fail the terminate response — metadata.terminating
+        # alone is enough for the dashboard to render the spinner; the
+        # destroy can be retried via the reconciler's reaper or manually.
+        logger.exception(
+            "_initiate_node_destroy: enqueue failed for node=%s: %s",
+            node_id, e,
+        )
+
+
 # status start stop
 
 
@@ -1192,34 +1238,140 @@ async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
 
 
 @router.post("/terminate")
-async def terminate_deployment(req: TerminateDeploymentRequest):
-    async with _auth_channel() as channel:
-        stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
+async def terminate_deployment(req: TerminateDeploymentRequest, request: Request):
+    """Refcount-aware deploy termination.
 
+    PENDING_NODE: unbind + release_gpu; if refcount=0 -> destroy node.
+    DEPLOYING/RUNNING: unload_model + release_gpu; if refcount=0 -> destroy.
+    Terminal states: no-op.
+    """
+    from uuid import UUID
+    from inferia.services.orchestration.repositories.inventory_repo import (
+        InventoryRepository,
+    )
+    from inferia.services.orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+    from inferia.services.orchestration.repositories.pool_repo import (
+        ComputePoolRepository,
+    )
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+
+    db_pool = request.app.state.pool
+    controller = request.app.state.worker_controller
+    event_bus = getattr(request.app.state, "event_bus", None)
+
+    inventory = InventoryRepository(db_pool)
+    deploys = ModelDeploymentRepository(db_pool, event_bus=event_bus)
+    pool_repo = ComputePoolRepository(db_pool)
+    jobs_repo = ProvisioningJobRepository(db_pool)
+
+    try:
+        deploy_uuid = UUID(req.deployment_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid deployment_id")
+
+    row = await deploys.get(deploy_uuid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="deployment not found")
+
+    state = row.get("state")
+    target_node_id = row.get("target_node_id")
+    gpu_per_replica = int(row.get("gpu_per_replica") or 0)
+    pool_id = row.get("pool_id") or row.get("target_pool_id")
+    org_id = row.get("org_id")
+
+    if state in ("STOPPED", "TERMINATED", "FAILED"):
+        await log_audit_event(
+            user_id=None,
+            action="deployment.terminate",
+            resource_type="deployment",
+            resource_id=str(deploy_uuid),
+            status="success",
+            org_id=org_id,
+            details={"already_terminal": state},
+        )
+        return {"deployment_id": str(deploy_uuid), "status": state}
+
+    # Determine pool provider for the potential destroy enqueue.
+    pool_provider = None
+    if pool_id is not None:
+        pool_row = await pool_repo.get(pool_id)
+        if pool_row is not None:
+            pool_provider = pool_row.get("provider")
+
+    if state == "PENDING_NODE":
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await deploys.unbind(deploy_uuid, tx=conn)
+                await deploys.set_state(deploy_uuid, "TERMINATED", tx=conn)
+                should_destroy = False
+                if target_node_id is not None and gpu_per_replica > 0:
+                    result = await inventory.release_gpu(
+                        target_node_id, gpu_per_replica, tx=conn,
+                    )
+                    should_destroy = result.should_destroy
+        if should_destroy and target_node_id is not None and pool_provider:
+            await _initiate_node_destroy(
+                db_pool=db_pool, jobs_repo=jobs_repo,
+                node_id=target_node_id, pool_id=pool_id,
+                org_id=org_id, provider=pool_provider,
+            )
+        await log_audit_event(
+            user_id=None,
+            action="deployment.terminate",
+            resource_type="deployment",
+            resource_id=str(deploy_uuid),
+            status="success",
+            org_id=org_id,
+            details={"prev_state": "PENDING_NODE",
+                      "destroyed_node": str(target_node_id) if should_destroy else None},
+        )
+        return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
+
+    # DEPLOYING / RUNNING / CREATED
+    if target_node_id is not None:
         try:
-            await stub.DeleteDeployment(
-                model_deployment_pb2.DeleteDeploymentRequest(
-                    deployment_id=req.deployment_id
-                )
+            await controller.unload_model(
+                node_id=str(target_node_id),
+                deployment_id=str(deploy_uuid),
             )
-            await log_audit_event(
-                user_id=None,
-                action="deployment.terminate",
-                resource_type="deployment",
-                resource_id=req.deployment_id,
-                status="success",
-                org_id=await _lookup_org_id("deployment", req.deployment_id),
-            )
-        except grpc.RpcError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to terminate deployment: {e.details()}",
+        except Exception as e:
+            logger.warning(
+                "terminate: unload_model failed for %s on %s: %s",
+                deploy_uuid, target_node_id, e,
             )
 
-    return {
-        "deployment_id": req.deployment_id,
-        "status": "TERMINATING",
-    }
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            await deploys.set_state(deploy_uuid, "TERMINATED", tx=conn)
+            should_destroy = False
+            if target_node_id is not None and gpu_per_replica > 0:
+                result = await inventory.release_gpu(
+                    target_node_id, gpu_per_replica, tx=conn,
+                )
+                should_destroy = result.should_destroy
+
+    if should_destroy and target_node_id is not None and pool_provider:
+        await _initiate_node_destroy(
+            db_pool=db_pool, jobs_repo=jobs_repo,
+            node_id=target_node_id, pool_id=pool_id,
+            org_id=org_id, provider=pool_provider,
+        )
+
+    await log_audit_event(
+        user_id=None,
+        action="deployment.terminate",
+        resource_type="deployment",
+        resource_id=str(deploy_uuid),
+        status="success",
+        org_id=org_id,
+        details={"prev_state": state,
+                  "destroyed_node": str(target_node_id) if should_destroy else None},
+    )
+    return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
 
 
 @router.post("/start")
