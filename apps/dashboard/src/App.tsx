@@ -31,8 +31,8 @@ import ProviderList from "@/pages/Settings/Providers/ProviderList";
 import ProviderConfigPage from "@/pages/Settings/Providers/ProviderConfig";
 import Status from "@/pages/Status";
 import Sandbox from "@/pages/Sandbox";
-import Instances from "@/pages/Compute/Instances";
-import InstanceDetail from "@/pages/Compute/InstanceDetail";
+import Pools from "@/pages/Compute/Pools";
+import PoolDetail from "@/pages/Compute/PoolDetail";
 import NewPool from "@/pages/Compute/NewPool";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -114,22 +114,23 @@ const router = createBrowserRouter([
                 path: "deployments/:id",
                 element: <DeploymentDetail />,
               },
+              // Pool-first routes (canonical)
+              {
+                path: "compute/pools",
+                element: <Pools />,
+              },
+              {
+                path: "compute/pools/:id/*",
+                element: <PoolDetail />,
+              },
+              // Legacy node routes — redirect to pools
               {
                 path: "compute/nodes",
-                element: <Instances />,
+                element: <Navigate to="/dashboard/compute/pools" replace />,
               },
               {
                 path: "compute/nodes/:id",
-                element: <InstanceDetail />,
-              },
-              // Legacy redirects so bookmarked /pools URLs still land somewhere.
-              {
-                path: "compute/pools",
-                element: <Navigate to="/dashboard/compute/nodes" replace />,
-              },
-              {
-                path: "compute/pools/:id",
-                element: <Navigate to="/dashboard/compute/nodes" replace />,
+                element: <Navigate to="/dashboard/compute/pools" replace />,
               },
             ]
           },
@@ -145,12 +146,13 @@ const router = createBrowserRouter([
                 element: <NewDeployment />,
               },
               {
-                path: "compute/nodes/new",
+                path: "compute/pools/new",
                 element: <NewPool />,
               },
+              // Legacy redirect
               {
-                path: "compute/pools/new",
-                element: <Navigate to="/dashboard/compute/nodes/new" replace />,
+                path: "compute/nodes/new",
+                element: <Navigate to="/dashboard/compute/pools/new" replace />,
               },
             ]
           },
