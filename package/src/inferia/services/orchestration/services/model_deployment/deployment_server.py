@@ -36,9 +36,6 @@ from typing import Any, Optional
 
 import os
 
-# Strong references to background tasks spawned by /createpool. Without
-# this, CPython may GC them before they run. Tasks self-discard on done.
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 def _resolve_postgres_dsn() -> str:
@@ -1535,58 +1532,29 @@ async def delete_deployment(deployment_id: str):
     }
 
 
-async def _kick_aws_provision(adapter, req, pool_id, writer, conn_to_close):
-    """Drive the AWS Pulumi provisioning in the background.
-
-    Awaits the adapter's internal `_provision_async` so we can close
-    `conn_to_close` after all UPDATEs settle. Errors from the prep
-    phases are already emitted by the adapter's own try/except — we
-    only log here, no duplicate `prepare/failed` write.
-    """
-    try:
-        await adapter.provision_node(
-            provider_resource_id=(req.allowed_gpu_types[0] if req.allowed_gpu_types else "t3.micro"),
-            pool_id=pool_id,
-            org_id=req.owner_id,
-            region=getattr(req, "region_constraint", None) or None,
-            use_spot=bool(getattr(req, "use_spot", False)),
-            progress_writer=writer,
-        )
-        # Wait for the adapter's spawned _provision_async task so we
-        # can safely close the asyncpg connection it's been using for
-        # the placeholder-swap UPDATEs.
-        prov_task = getattr(adapter, "_last_provision_task", None)
-        if prov_task is not None:
-            try:
-                await prov_task
-            except Exception:
-                pass  # already logged inside _provision_async
-    except Exception as e:
-        import logging as _logging
-        _logging.getLogger("deployment-server").exception(
-            "aws provisioning kickoff failed: %s", e,
-        )
-    finally:
-        try:
-            await conn_to_close.close()
-        except Exception:
-            pass
-
-
 @router.post("/createpool")
 async def create_pool(req: CreatePoolRequest, request: Request):
-    # Validate provider exists before creating pool
+    """Metadata-only pool creation.
+
+    Inserts a `compute_pools` row and persists metadata/org_id. Does NOT
+    spawn any compute_inventory rows; does NOT kick off Pulumi or any
+    other provisioning. All provisioning happens at /deploy time via
+    PoolPlacer when an actual model deploy arrives (T7).
+    """
+    from uuid import UUID, uuid4
+    from inferia.services.orchestration.repositories.pool_repo import (
+        ComputePoolRepository,
+    )
+
+    # 1. Validate provider
     try:
-        adapter = get_adapter(req.provider)
-        capabilities = adapter.get_capabilities()
+        get_adapter(req.provider)
     except ValueError as e:
         raise HTTPException(
-            status_code=400, detail=f"Invalid provider '{req.provider}'. {str(e)}"
+            status_code=400, detail=f"Invalid provider '{req.provider}'. {str(e)}",
         )
 
-    # Validate AWS pool metadata shape at the API boundary when provider=aws
-    # and a metadata dict is supplied, so AWSAdapter.provision_node never
-    # receives malformed subnet_id / security_group_ids.
+    # 2. Validate AWS pool metadata
     if req.provider == "aws" and req.metadata is not None:
         from inferia.services.orchestration.services.adapter_engine.adapters.aws.pool_metadata import (
             AWSPoolMetadata,
@@ -1597,209 +1565,104 @@ async def create_pool(req: CreatePoolRequest, request: Request):
         except _ValidationError as e:
             raise HTTPException(status_code=422, detail={"errors": e.errors()})
 
-    # The api_gateway forwards the caller's resolved org via X-Organization-ID.
-    # That value is authoritative for which org list-nodes will query later,
-    # so we override req.owner_id with it when present. Without this, a
-    # multi-org user whose JWT claim differs from their gateway-resolved
-    # org context can create pools that never show up in their list view.
+    # 3. Multi-org header override (api_gateway forwards resolved org)
     hdr_org = request.headers.get("x-organization-id")
     if hdr_org and req.owner_type == "user":
         req.owner_id = hdr_org
         req.owner_type = "organization"
 
-    async with _auth_channel() as channel:
-        stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
+    db_pool = request.app.state.pool
+    pool_repo = ComputePoolRepository(db_pool)
 
-        try:
-            resp = await stub.RegisterPool(
-                compute_pool_pb2.RegisterPoolRequest(
-                    pool_name=req.pool_name,
-                    owner_type=req.owner_type,
-                    owner_id=req.owner_id,
-                    provider=req.provider,
-                    allowed_gpu_types=req.allowed_gpu_types,
-                    max_cost_per_hour=req.max_cost_per_hour,
-                    is_dedicated=req.is_dedicated,
-                    provider_pool_id=req.provider_pool_id,
-                    scheduling_policy_json=req.scheduling_policy_json,
-                    provider_credential_name=req.provider_credential_name
-                    if req.provider_credential_name
-                    else "",
-                    gpu_count=req.gpu_count,
-                )
-            )
-
-            # Log Audit Event
-            # Using owner_id as user_id for now if owner_type is user, if org then context mapping needed.
-            # Assuming owner_id in request context is sufficient.
-            await log_audit_event(
-                user_id=req.owner_id if req.owner_type == "user" else None,
-                action="pool.create",
-                resource_type="compute_pool",
-                resource_id=resp.pool_id,
-                details={
-                    "name": req.pool_name,
-                    "provider": req.provider,
-                    "gpu_types": req.allowed_gpu_types,
-                },
-                org_id=req.owner_id if req.owner_type == "org" else None,
-            )
-
-        except grpc.RpcError as e:
-            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                raise HTTPException(status_code=409, detail=e.details())
-            raise HTTPException(status_code=500, detail=e.details())
-
-    # Provider placeholder + (for AWS) eager provisioning kickoff.
-    # For DePIN providers (nosana, akash) and other clouds we keep the
-    # legacy state='ready' placeholder. For AWS we mark the placeholder
-    # state='provisioning' with gpu_total=0 (so placement never targets
-    # it while Pulumi runs) and schedule provision_node in the background.
+    # 4. Determine pool_type from adapter capabilities (preserves the
+    #    legacy 'cluster' vs 'job' shape the gRPC servicer used to set).
     try:
-        from uuid import UUID as _UUID
-        dsn = (
-            os.getenv("POSTGRES_DSN")
-            or (os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
-            or "postgresql://inferia:inferia@postgres:5432/inferia"
-        )
-        if req.provider == "aws":
-            conn = await asyncpg.connect(dsn=dsn, timeout=5)
-            try:
-                gpu_type = (req.allowed_gpu_types[0] if req.allowed_gpu_types else "any")
-                await conn.execute(
-                    """
-                    INSERT INTO compute_inventory (
-                        pool_id, provider, provider_instance_id, hostname,
-                        gpu_total, vcpu_total, ram_gb_total, state,
-                        node_class, agent_kind, metadata, labels
-                    )
-                    VALUES (
-                        $1::uuid, $2::provider_type, $3, $4,
-                        0, 0, 0, 'provisioning',
-                        'on_demand', 'worker', $5::jsonb, '{}'::jsonb
-                    )
-                    """,
-                    resp.pool_id,
-                    req.provider,
-                    f"placeholder:{resp.pool_id}",
-                    req.pool_name,
-                    json.dumps({
-                        "gpu_type": gpu_type,
-                        "provider_pool_id": req.provider_pool_id,
-                        "placeholder": True,
-                        "requested_gpu_count": req.gpu_count or 1,
-                    }),
-                )
-            finally:
-                await conn.close()
+        adapter = get_adapter(req.provider)
+        caps = adapter.get_capabilities()
+        pool_type = "cluster" if caps and caps.supports_cluster_mode else "job"
+    except Exception:
+        pool_type = "job"
 
-            # Schedule the background provisioning kickoff. Uses a fresh
-            # asyncpg connection wrapped to look like a minimal pool — the
-            # adapter expects fetch/fetchval/execute. The connection is
-            # closed when the kickoff finishes (success or failure).
-            from inferia.services.orchestration.repositories.node_provisioning_repo import (
-                NodeProvisioningRepo,
-            )
-            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.progress_writer import (
-                ProgressWriter,
-            )
-            pool_conn = await asyncpg.connect(dsn=dsn, timeout=5)
-
-            class _SingleConnPool:
-                def __init__(self, c): self._c = c
-                async def fetchval(self, *a, **kw): return await self._c.fetchval(*a, **kw)
-                async def fetch(self,    *a, **kw): return await self._c.fetch(*a, **kw)
-                async def execute(self,  *a, **kw): return await self._c.execute(*a, **kw)
-
-            prov_repo = NodeProvisioningRepo(_SingleConnPool(pool_conn))
-            writer = ProgressWriter(
-                prov_repo,
-                pool_id=_UUID(resp.pool_id),
-                node_id=None,
-            )
-            # Construct a per-call adapter instance so concurrent /createpool
-            # requests don't race on the shared adapter._db field.
-            aws_cls = ADAPTER_REGISTRY.get("aws")
-            if aws_cls is None:
-                raise Exception("aws adapter not registered")
-            adapter = aws_cls(db=pool_conn)
-            _t = asyncio.create_task(_kick_aws_provision(
-                adapter, req, resp.pool_id, writer, pool_conn,
-            ))
-            _BACKGROUND_TASKS.add(_t)
-            _t.add_done_callback(_BACKGROUND_TASKS.discard)
-        elif req.provider in ("nosana", "akash", "gcp", "azure", "lambda", "runpod", "k8s"):
-            conn = await asyncpg.connect(dsn=dsn, timeout=5)
-            try:
-                gpu_type = (req.allowed_gpu_types[0] if req.allowed_gpu_types else "any")
-                await conn.execute(
-                    """
-                    INSERT INTO compute_inventory (
-                        pool_id, provider, provider_instance_id, hostname,
-                        gpu_total, vcpu_total, ram_gb_total, state,
-                        node_class, metadata, labels
-                    )
-                    VALUES (
-                        $1::uuid, $2::provider_type, $3, $4,
-                        $5, 0, 0, 'ready',
-                        'on_demand', $6::jsonb, '{}'::jsonb
-                    )
-                    """,
-                    resp.pool_id,
-                    req.provider,
-                    f"placeholder:{resp.pool_id}",
-                    req.pool_name,
-                    req.gpu_count or 1,
-                    json.dumps({
-                        "gpu_type": gpu_type,
-                        "provider_pool_id": req.provider_pool_id,
-                        "placeholder": True,
-                    }),
-                )
-            finally:
-                await conn.close()
-    except Exception as e:
-        import logging as _logging
-        _logging.getLogger("deployment-server").warning(
-            "createpool: placeholder/provisioning kickoff failed: %s", e,
-        )
-
-    # Persist metadata + org_id (alias of owner_id for AWS adapter queries)
-    # into compute_pools. Non-fatal if the columns don't exist yet — the
-    # migration will add them.
-    if req.metadata or True:  # always update org_id
-        try:
-            dsn2 = (
-                os.getenv("POSTGRES_DSN")
-                or (os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://", 1))
-                or "postgresql://inferia:inferia@postgres:5432/inferia"
-            )
-            conn2 = await asyncpg.connect(dsn=dsn2, timeout=5)
-            try:
-                await conn2.execute(
-                    """
-                    UPDATE compute_pools
-                    SET org_id = $2,
-                        metadata = COALESCE($3::jsonb, metadata),
-                        updated_at = now()
-                    WHERE id = $1::uuid
-                    """,
-                    resp.pool_id,
-                    req.owner_id,
-                    json.dumps(req.metadata) if req.metadata else None,
-                )
-            finally:
-                await conn2.close()
-        except Exception as e2:
-            import logging as _logging2
-            _logging2.getLogger("deployment-server").warning(
-                "createpool: metadata/org_id update failed: %s", e2,
-            )
-
-    return {
-        "pool_id": resp.pool_id,
-        "status": "CREATED",
+    # 5. Build pool data and insert
+    pool_id = uuid4()
+    pool_data = {
+        "id": pool_id,
+        "pool_name": req.pool_name,
+        "owner_type": req.owner_type,
+        "owner_id": req.owner_id,
+        "provider": req.provider,
+        "pool_type": pool_type,
+        "allowed_gpu_types": list(req.allowed_gpu_types),
+        "max_cost_per_hour": req.max_cost_per_hour,
+        "is_dedicated": req.is_dedicated,
+        "provider_pool_id": req.provider_pool_id,
+        "scheduling_policy": req.scheduling_policy_json or '{"strategy":"best_fit"}',
+        "is_active": True,
+        "lifecycle_state": "running",
+        "gpu_count": req.gpu_count or 1,
     }
+    if req.provider_credential_name:
+        # validate credential exists if specified
+        ok = await pool_repo.credential_exists(
+            req.provider, req.provider_credential_name,
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=412,
+                detail=(f"Credential '{req.provider_credential_name}' not "
+                        f"found or inactive for provider '{req.provider}'"),
+            )
+        pool_data["provider_credential_name"] = req.provider_credential_name
+
+    try:
+        created_pool_id = await pool_repo.create_pool(pool_data)
+    except Exception as e:
+        # Duplicate (pool_name, owner) -> 409; other DB errors -> 500
+        msg = str(e)
+        if "UniqueViolationError" in type(e).__name__ or "unique" in msg.lower():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Pool '{req.pool_name}' already exists for this owner",
+            )
+        raise HTTPException(status_code=500, detail=f"create_pool failed: {e}")
+
+    final_pool_id = created_pool_id if created_pool_id else pool_id
+
+    # 6. Audit event
+    await log_audit_event(
+        user_id=req.owner_id if req.owner_type == "user" else None,
+        action="pool.create",
+        resource_type="compute_pool",
+        resource_id=str(final_pool_id),
+        details={
+            "name": req.pool_name,
+            "provider": req.provider,
+            "gpu_types": list(req.allowed_gpu_types),
+        },
+        org_id=req.owner_id if req.owner_type in ("org", "organization") else None,
+    )
+
+    # 7. Persist org_id + metadata into compute_pools (separate UPDATE so
+    #    the pool create stays minimal). Non-fatal if it fails — the pool
+    #    row exists either way.
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE compute_pools
+                   SET org_id = $2,
+                       metadata = COALESCE($3::jsonb, metadata),
+                       updated_at = now()
+                 WHERE id = $1
+                """,
+                final_pool_id,
+                req.owner_id,
+                json.dumps(req.metadata) if req.metadata else None,
+            )
+    except Exception as e:
+        logger.warning("createpool: metadata/org_id update failed: %s", e)
+
+    return {"pool_id": str(final_pool_id), "status": "CREATED"}
 
 
 @router.get("/list/pool/{pool_id}/inventory")
