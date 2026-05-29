@@ -1,5 +1,4 @@
 from __future__ import annotations
-import asyncio
 import os
 import pytest
 import pytest_asyncio
@@ -151,31 +150,39 @@ async def test_max_nodes_null_means_unlimited(pool):
 
 
 async def test_concurrent_place_picks_distinct_nodes_under_capacity(pool):
-    """Two concurrent place() calls — FOR UPDATE SKIP LOCKED inside each
-    call's transaction guarantees no double-binding even though there's
-    no held lock between them: Postgres's row-level lock during the
-    SELECT is enough. Multi-trial loop hardens against scheduler jitter.
+    """Two place() calls under separate transactions where the first's
+    tx is still open when the second runs — the second's FOR UPDATE
+    SKIP LOCKED deterministically skips the row the first locked.
+
+    This exercises the production contract that T7's deploy_model
+    relies on: a long-lived placement transaction holds rows across
+    subsequent placement attempts in other transactions.
     """
     placer = PoolPlacer(pool)
-    for trial in range(5):
-        pool_id = await _seed_pool_row(pool)
-        n1 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)
-        n2 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=3)
+    pool_id = await _seed_pool_row(pool)
+    n1 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)  # free=2
+    n2 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=3)  # free=1
 
-        d1, d2 = await asyncio.gather(
-            placer.place(pool_id=pool_id, gpu_required=1),
-            placer.place(pool_id=pool_id, gpu_required=1),
-        )
-        assert isinstance(d1, BindToReady), f"trial {trial}: d1 was {d1}"
-        assert isinstance(d2, BindToReady), f"trial {trial}: d2 was {d2}"
-        assert d1.node_id != d2.node_id, (
-            f"trial {trial}: double-booked node {d1.node_id} "
-            f"(n1={n1}, n2={n2})"
-        )
-        assert {d1.node_id, d2.node_id} == {n1, n2}, (
-            f"trial {trial}: chose {(d1.node_id, d2.node_id)}, "
-            f"expected {{{n1}, {n2}}}"
-        )
+    async with pool.acquire() as conn_a:
+        async with conn_a.transaction():
+            d_a = await placer.place(
+                pool_id=pool_id, gpu_required=1, tx=conn_a,
+            )
+            assert isinstance(d_a, BindToReady)
+
+            # conn_a's transaction is still open — its row lock on d_a.node_id
+            # is held. A second placer call on a separate transaction must
+            # see that row as locked and skip to the other node.
+            async with pool.acquire() as conn_b:
+                async with conn_b.transaction():
+                    d_b = await placer.place(
+                        pool_id=pool_id, gpu_required=1, tx=conn_b,
+                    )
+                    assert isinstance(d_b, BindToReady)
+
+            # Both nodes get picked exactly once — no double-binding.
+            assert d_a.node_id != d_b.node_id
+            assert {d_a.node_id, d_b.node_id} == {n1, n2}
 
 
 async def test_place_uses_external_tx_when_provided(pool):
