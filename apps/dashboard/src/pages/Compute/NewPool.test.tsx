@@ -122,7 +122,6 @@ vi.mock("@/services/configService", () => ({
 
 vi.mock("@/services/nodeService", () => ({
     addWorkerNode: vi.fn(),
-    listNodes: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/context/AuthContext", () => ({
