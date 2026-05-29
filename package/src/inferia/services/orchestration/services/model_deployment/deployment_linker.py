@@ -89,7 +89,6 @@ class DeploymentLinker:
                     node_id=node_id,
                     deployment_id=deploy["id"],
                     model_name=deploy.get("model_name"),
-                    model_version=deploy.get("model_version"),
                     engine=deploy.get("engine"),
                     configuration=deploy.get("configuration"),
                 )
@@ -98,10 +97,17 @@ class DeploymentLinker:
                     "linker: load_model failed for deploy=%s: %s",
                     deploy["id"], e,
                 )
-                # Release GPU and mark FAILED so the operator sees the cause.
-                # Done outside the original transaction.
-                await self._inventory.release_gpu(node_id, gpu_required)
-                await self._deploys.set_state(deploy["id"], "FAILED")
+                # Atomic rollback: release GPU + mark FAILED in one txn so a
+                # partial failure can't leave gpu_allocated out of sync with
+                # deploy state.
+                async with self._db.acquire() as conn:
+                    async with conn.transaction():
+                        await self._inventory.release_gpu(
+                            node_id, gpu_required, tx=conn,
+                        )
+                        await self._deploys.set_state(
+                            deploy["id"], "FAILED", tx=conn,
+                        )
 
         if bound:
             logger.info(
