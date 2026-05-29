@@ -87,3 +87,24 @@ export async function patchPoolMetadata(
   );
   return res.data;
 }
+
+/**
+ * List all pools for an organisation.
+ *
+ * Route: GET /api/v1/deployment/listPools/{org_id}
+ */
+export async function listPools(orgId: string): Promise<PoolView[]> {
+  const res = await computeApi.get<PoolView[]>(
+    `/deployment/listPools/${orgId}`,
+  );
+  return res.data;
+}
+
+/**
+ * Delete (destroy) a pool and every node in it.
+ *
+ * Route: DELETE /api/v1/deployment/pool/{pool_id}
+ */
+export async function deletePool(poolId: string): Promise<void> {
+  await computeApi.delete(`/deployment/pool/${poolId}`);
+}
