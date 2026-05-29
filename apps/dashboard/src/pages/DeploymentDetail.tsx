@@ -157,6 +157,16 @@ export default function DeploymentDetail() {
 
   useEffect(() => { if (id) void fetchDeployment(true) }, [id, fetchDeployment])
 
+  // Keep polling while state is PENDING_NODE so the page transitions automatically
+  // when the provisioned node comes up and the deployment moves to RUNNING.
+  useEffect(() => {
+    if (!id) return;
+    const deploymentState = (deployment?.state || deployment?.status || "").toUpperCase();
+    if (deploymentState !== "PENDING_NODE") return;
+    const interval = window.setInterval(() => void fetchDeployment(false), 5_000);
+    return () => window.clearInterval(interval);
+  }, [id, fetchDeployment, deployment?.state, deployment?.status])
+
   const handleAction = async (action: ActionModalType) => {
     if (!id) return
     if ((action === "start" || action === "stop") && !canUpdateDeployment) {
@@ -198,6 +208,22 @@ export default function DeploymentDetail() {
         onRefresh={() => void fetchDeployment(false)}
         onAction={(a) => dispatch({ type: 'SET_ACTION_MODAL', payload: a })}
       />
+
+      {deploymentState === "PENDING_NODE" && (
+        <div className="space-y-3">
+          <div className="inline-block px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-800">
+            Provisioning compute…
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Spinning up a node. This typically takes 60–120 seconds.
+          </p>
+          {(deployment as any)?.target_node_id && (
+            <p className="text-xs text-muted-foreground font-mono">
+              Target node: {(deployment as any).target_node_id}
+            </p>
+          )}
+        </div>
+      )}
 
       {deploymentState === "FAILED" && deployment?.error_message && (
         <div className="flex items-start gap-3 p-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300">
