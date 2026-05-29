@@ -6,8 +6,6 @@
 -- a transaction, so the migration runner splits on the @SPLIT@ marker
 -- and runs each chunk separately.
 
-BEGIN;
-
 ALTER TABLE model_deployments
   ADD COLUMN IF NOT EXISTS target_pool_id uuid REFERENCES compute_pools(id),
   ADD COLUMN IF NOT EXISTS target_node_id uuid REFERENCES compute_inventory(id);
@@ -19,8 +17,6 @@ UPDATE model_deployments
 
 ALTER TABLE compute_pools
   ADD COLUMN IF NOT EXISTS max_nodes int;
-
-COMMIT;
 
 -- @SPLIT@
 

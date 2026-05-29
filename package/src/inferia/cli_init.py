@@ -110,24 +110,12 @@ async def _apply_migrations(dsn: str):
             if chunks:
                 transactional_sql = chunks[0].strip()
                 if transactional_sql:
-                    await conn.execute("BEGIN")
                     try:
-                        await conn.execute(transactional_sql)
-                        await conn.execute(
-                            "INSERT INTO schema_migrations (filename) VALUES ($1)",
-                            mf.name,
-                        )
-                        await conn.execute("COMMIT")
+                        async with conn.transaction():
+                            await conn.execute(transactional_sql)
                     except Exception as e:
-                        await conn.execute("ROLLBACK")
                         print(f"[inferia:init] Migration failed ({mf.name}): {e}")
                         raise
-                else:
-                    # Empty transactional part, still mark as applied
-                    await conn.execute(
-                        "INSERT INTO schema_migrations (filename) VALUES ($1)",
-                        mf.name,
-                    )
 
             # Subsequent chunks (concurrent, outside transaction)
             for i, concurrent_sql in enumerate(chunks[1:], start=1):
@@ -139,6 +127,17 @@ async def _apply_migrations(dsn: str):
                     except Exception as e:
                         print(f"[inferia:init] Concurrent chunk {i} failed ({mf.name}): {e}")
                         raise
+
+            # Mark migration as applied only after all chunks (transactional + concurrent) succeed
+            try:
+                async with conn.transaction():
+                    await conn.execute(
+                        "INSERT INTO schema_migrations (filename) VALUES ($1)",
+                        mf.name,
+                    )
+            except Exception as e:
+                print(f"[inferia:init] Failed to record migration ({mf.name}): {e}")
+                raise
     finally:
         await conn.close()
 
