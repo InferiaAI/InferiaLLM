@@ -393,49 +393,89 @@ class ModelDeploymentRepository(BaseRepository):
         async with self.db.acquire() as c:
             await c.execute(q, deployment_id, config_json)
 
-    async def list_pending_for_pool(self, pool_id: UUID) -> list[dict]:
+    async def list_pending_for_pool(
+        self,
+        pool_id: UUID,
+        *,
+        tx=None,
+    ) -> list[dict]:
         """All deployments waiting for a node in this pool, ordered FIFO
-        by created_at. Locked FOR UPDATE SKIP LOCKED so concurrent linker
-        runs split the work without colliding.
+        by created_at.
 
-        The SELECT aliases deployment_id AS id so callers can refer to
-        the result by `row["id"]` — DeploymentLinker uses this naming.
+        When `tx` is provided, the FOR UPDATE SKIP LOCKED row locks live
+        for the lifetime of that transaction — concurrent linker runs
+        will split the work without overlapping. When `tx` is None, the
+        locks are released the instant the SELECT completes (asyncpg
+        autocommits on connection release) and the lock hint is a no-op
+        — only safe for non-concurrent callers.
+
+        The SELECT aliases deployment_id AS id so callers can read
+        `row["id"]` — DeploymentLinker uses this naming.
         """
-        async with self.db.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT deployment_id AS id, target_node_id, gpu_per_replica,
-                       replicas, model_name, engine, configuration
-                  FROM model_deployments
-                 WHERE target_pool_id = $1
-                   AND state = 'PENDING_NODE'
-              ORDER BY created_at ASC
-                   FOR UPDATE SKIP LOCKED
-                """,
-                pool_id,
-            )
+        q = """
+            SELECT deployment_id AS id, target_node_id, gpu_per_replica,
+                   replicas, model_name, engine, configuration
+              FROM model_deployments
+             WHERE target_pool_id = $1
+               AND state = 'PENDING_NODE'
+          ORDER BY created_at ASC
+               FOR UPDATE SKIP LOCKED
+            """
+        if tx is not None:
+            rows = await tx.fetch(q, pool_id)
+        else:
+            async with self.db.acquire() as conn:
+                rows = await conn.fetch(q, pool_id)
         return [dict(r) for r in rows]
 
-    async def bind_to_node(self, deploy_id: UUID, node_id: UUID) -> None:
-        async with self.db.acquire() as conn:
-            await conn.execute(
-                "UPDATE model_deployments SET target_node_id = $2 "
-                "WHERE deployment_id = $1",
-                deploy_id, node_id,
-            )
+    async def bind_to_node(
+        self,
+        deployment_id: UUID,
+        node_id: UUID,
+        *,
+        tx=None,
+    ) -> None:
+        q = ("UPDATE model_deployments SET target_node_id = $2 "
+             "WHERE deployment_id = $1")
+        if tx is not None:
+            await tx.execute(q, deployment_id, node_id)
+        else:
+            async with self.db.acquire() as conn:
+                await conn.execute(q, deployment_id, node_id)
 
-    async def set_state(self, deploy_id: UUID, state: str) -> None:
-        async with self.db.acquire() as conn:
-            await conn.execute(
-                "UPDATE model_deployments SET state = $2 "
-                "WHERE deployment_id = $1",
-                deploy_id, state,
-            )
+    async def set_state(
+        self,
+        deployment_id: UUID,
+        state: str,
+        *,
+        tx=None,
+    ) -> None:
+        """Placement-internal state transition.
 
-    async def unbind(self, deploy_id: UUID) -> None:
-        async with self.db.acquire() as conn:
-            await conn.execute(
-                "UPDATE model_deployments SET target_node_id = NULL "
-                "WHERE deployment_id = $1",
-                deploy_id,
-            )
+        Does NOT publish on event_bus — that's intentional. The
+        DeploymentLinker calls this for the PENDING_NODE → DEPLOYING
+        transition and any subscribers downstream that care about
+        observable state changes should subscribe to the event_bus
+        topic published by update_state instead.
+        """
+        q = ("UPDATE model_deployments SET state = $2 "
+             "WHERE deployment_id = $1")
+        if tx is not None:
+            await tx.execute(q, deployment_id, state)
+        else:
+            async with self.db.acquire() as conn:
+                await conn.execute(q, deployment_id, state)
+
+    async def unbind(
+        self,
+        deployment_id: UUID,
+        *,
+        tx=None,
+    ) -> None:
+        q = ("UPDATE model_deployments SET target_node_id = NULL "
+             "WHERE deployment_id = $1")
+        if tx is not None:
+            await tx.execute(q, deployment_id)
+        else:
+            async with self.db.acquire() as conn:
+                await conn.execute(q, deployment_id)

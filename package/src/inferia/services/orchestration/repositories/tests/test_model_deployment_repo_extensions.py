@@ -147,3 +147,46 @@ async def test_unbind_clears_target_node_id(pool):
             deploy_id,
         )
     assert row["target_node_id"] is None
+
+
+async def test_list_pending_for_pool_locks_under_explicit_tx(pool):
+    """When called inside an explicit transaction, FOR UPDATE SKIP LOCKED
+    actually locks the matched rows — a concurrent transaction with the
+    same query sees zero rows (SKIPped).
+
+    Proves the C1 fix: the locking guarantee promised by the docstring
+    is delivered only when the caller passes its own `tx`.
+    """
+    repo = ModelDeploymentRepository(pool, event_bus=None)
+    _, pool_id = await _seed_pool_row(pool)
+    await _seed_deploy(pool, pool_id=pool_id, state="PENDING_NODE")
+    await _seed_deploy(pool, pool_id=pool_id, state="PENDING_NODE")
+
+    async with pool.acquire() as conn_a:
+        async with conn_a.transaction():
+            locked_a = await repo.list_pending_for_pool(pool_id, tx=conn_a)
+            assert len(locked_a) == 2
+
+            # While the above transaction holds the locks, a concurrent
+            # caller with FOR UPDATE SKIP LOCKED should see zero matched
+            # rows because all matches are locked.
+            async with pool.acquire() as conn_b:
+                async with conn_b.transaction():
+                    locked_b = await repo.list_pending_for_pool(
+                        pool_id, tx=conn_b,
+                    )
+                    assert locked_b == []
+
+
+async def test_list_pending_for_pool_without_tx_releases_locks(pool):
+    """When called without an explicit tx, the FOR UPDATE locks are
+    released as soon as the SELECT returns — concurrent callers see
+    the same rows.
+    """
+    repo = ModelDeploymentRepository(pool, event_bus=None)
+    _, pool_id = await _seed_pool_row(pool)
+    await _seed_deploy(pool, pool_id=pool_id, state="PENDING_NODE")
+
+    first = await repo.list_pending_for_pool(pool_id)
+    second = await repo.list_pending_for_pool(pool_id)
+    assert len(first) == len(second) == 1  # both see the row
