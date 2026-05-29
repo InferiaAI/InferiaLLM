@@ -392,3 +392,50 @@ class ModelDeploymentRepository(BaseRepository):
         config_json = json.dumps(configuration)
         async with self.db.acquire() as c:
             await c.execute(q, deployment_id, config_json)
+
+    async def list_pending_for_pool(self, pool_id: UUID) -> list[dict]:
+        """All deployments waiting for a node in this pool, ordered FIFO
+        by created_at. Locked FOR UPDATE SKIP LOCKED so concurrent linker
+        runs split the work without colliding.
+
+        The SELECT aliases deployment_id AS id so callers can refer to
+        the result by `row["id"]` — DeploymentLinker uses this naming.
+        """
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT deployment_id AS id, target_node_id, gpu_per_replica,
+                       replicas, model_name, engine, configuration
+                  FROM model_deployments
+                 WHERE target_pool_id = $1
+                   AND state = 'PENDING_NODE'
+              ORDER BY created_at ASC
+                   FOR UPDATE SKIP LOCKED
+                """,
+                pool_id,
+            )
+        return [dict(r) for r in rows]
+
+    async def bind_to_node(self, deploy_id: UUID, node_id: UUID) -> None:
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                "UPDATE model_deployments SET target_node_id = $2 "
+                "WHERE deployment_id = $1",
+                deploy_id, node_id,
+            )
+
+    async def set_state(self, deploy_id: UUID, state: str) -> None:
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                "UPDATE model_deployments SET state = $2 "
+                "WHERE deployment_id = $1",
+                deploy_id, state,
+            )
+
+    async def unbind(self, deploy_id: UUID) -> None:
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                "UPDATE model_deployments SET target_node_id = NULL "
+                "WHERE deployment_id = $1",
+                deploy_id,
+            )
