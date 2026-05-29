@@ -204,3 +204,45 @@ async def test_allocate_gpu_concurrent_no_double_book(pool):
             "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id
         )
     assert row["gpu_allocated"] == 1
+
+
+async def test_allocate_gpu_uses_external_tx(pool):
+    """allocate_gpu under a caller's tx commits when the caller commits."""
+    repo = InventoryRepository(pool)
+    _, pool_id = await _seed_org_and_pool(pool)
+    node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=0)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            ok = await repo.allocate_gpu(node_id, 2, tx=conn)
+            assert ok is True
+            # Inside the same tx, the update is visible.
+            row = await conn.fetchrow(
+                "SELECT gpu_allocated FROM compute_inventory WHERE id=$1",
+                node_id,
+            )
+            assert row["gpu_allocated"] == 2
+    # After commit, the update persists outside the tx.
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1",
+            node_id,
+        )
+    assert row["gpu_allocated"] == 2
+
+
+async def test_create_placeholder_uses_external_tx(pool):
+    repo = InventoryRepository(pool)
+    _, pool_id = await _seed_org_and_pool(pool)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            node_id = await repo.create_placeholder(
+                pool_id=pool_id, gpu_total=4, initial_alloc=2, tx=conn,
+            )
+            row = await conn.fetchrow(
+                "SELECT state, gpu_total FROM compute_inventory WHERE id=$1",
+                node_id,
+            )
+            assert row["state"] == "provisioning"
+            assert row["gpu_total"] == 4

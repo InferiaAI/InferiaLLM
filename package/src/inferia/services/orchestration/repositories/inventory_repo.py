@@ -479,75 +479,95 @@ class InventoryRepository:
             rows = await conn.fetch(query, provider, limit, offset)
             return [dict(row) for row in rows]
 
-    async def allocate_gpu(self, node_id: UUID, count: int) -> bool:
+    async def allocate_gpu(
+        self,
+        node_id: UUID,
+        count: int,
+        *,
+        tx=None,
+    ) -> bool:
         """Atomically increment gpu_allocated by `count` iff capacity allows.
 
         Returns True on success, False on capacity exhaustion. Concurrent
         allocate_gpu calls on the same node racing for the last slot will
-        see exactly one winner — Postgres serializes the UPDATE via its
-        row lock and the loser's `gpu_allocated + $2 <= gpu_total`
-        predicate re-evaluates against the freshly-updated tuple.
+        see exactly one winner.
 
         Allowed states: 'ready' (warm bind) and 'provisioning' (co-wait
         on a placeholder that hasn't booted yet). Nodes flagged
-        metadata.terminating=true are excluded — they're on the way out.
+        metadata.terminating=true are excluded.
+
+        Pass `tx` to run inside a caller's transaction (so the row lock
+        lives until the caller commits).
         """
-        async with self.db.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                UPDATE compute_inventory
-                   SET gpu_allocated = gpu_allocated + $2
-                 WHERE id = $1
-                   AND state IN ('ready', 'provisioning')
-                   AND (metadata->>'terminating') IS DISTINCT FROM 'true'
-                   AND gpu_allocated + $2 <= gpu_total
-              RETURNING 1
-                """,
-                node_id, count,
-            )
+        q = """
+            UPDATE compute_inventory
+               SET gpu_allocated = gpu_allocated + $2
+             WHERE id = $1
+               AND state IN ('ready', 'provisioning')
+               AND (metadata->>'terminating') IS DISTINCT FROM 'true'
+               AND gpu_allocated + $2 <= gpu_total
+          RETURNING 1
+            """
+        if tx is not None:
+            row = await tx.fetchrow(q, node_id, count)
+        else:
+            async with self.db.acquire() as conn:
+                row = await conn.fetchrow(q, node_id, count)
         return row is not None
 
-    async def release_gpu(self, node_id: UUID, count: int) -> ReleaseResult:
+    async def release_gpu(
+        self,
+        node_id: UUID,
+        count: int,
+        *,
+        tx=None,
+    ) -> ReleaseResult:
         """Decrement gpu_allocated and signal whether the node should be
         destroyed (last reference released AND no PENDING_NODE/DEPLOYING/
         RUNNING deploys still target it).
 
-        UPDATE and EXISTS run in the same CTE so both reads come from a
-        single transaction snapshot — eliminates the race where a deploy
-        is inserted between the decrement and the destroy check.
+        UPDATE + EXISTS run in one CTE so both reads come from a single
+        snapshot — eliminates the race where a deploy is inserted between
+        the decrement and the destroy check.
 
-        Defensive: if the decrement would underflow (gpu_allocated < count),
-        we log and return should_destroy=False.
+        Pass `tx` to run inside a caller's transaction.
         """
-        async with self.db.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                WITH dec AS (
-                  UPDATE compute_inventory
-                     SET gpu_allocated = gpu_allocated - $2
-                   WHERE id = $1
-                     AND gpu_allocated >= $2
-                  RETURNING gpu_allocated
-                )
-                SELECT
-                  (SELECT gpu_allocated FROM dec) AS new_alloc,
-                  NOT EXISTS (
-                    SELECT 1 FROM model_deployments
-                     WHERE target_node_id = $1
-                       AND state IN ('PENDING_NODE','DEPLOYING','RUNNING')
-                  ) AS no_pending
-                """,
-                node_id, count,
+        q = """
+            WITH dec AS (
+              UPDATE compute_inventory
+                 SET gpu_allocated = gpu_allocated - $2
+               WHERE id = $1
+                 AND gpu_allocated >= $2
+              RETURNING gpu_allocated
             )
+            SELECT
+              (SELECT gpu_allocated FROM dec) AS new_alloc,
+              NOT EXISTS (
+                SELECT 1 FROM model_deployments
+                 WHERE target_node_id = $1
+                   AND state IN ('PENDING_NODE','DEPLOYING','RUNNING')
+              ) AS no_pending
+            """
+        if tx is not None:
+            row = await tx.fetchrow(q, node_id, count)
+        else:
+            async with self.db.acquire() as conn:
+                row = await conn.fetchrow(q, node_id, count)
 
         new_alloc = row["new_alloc"]
         if new_alloc is None:
-            # UPDATE matched zero rows — underflow defensive path.
-            async with self.db.acquire() as conn:
-                cur = await conn.fetchval(
+            # Underflow defensive path.
+            if tx is not None:
+                cur = await tx.fetchval(
                     "SELECT gpu_allocated FROM compute_inventory WHERE id=$1",
                     node_id,
                 )
+            else:
+                async with self.db.acquire() as conn:
+                    cur = await conn.fetchval(
+                        "SELECT gpu_allocated FROM compute_inventory WHERE id=$1",
+                        node_id,
+                    )
             logger.error(
                 "refcount underflow: node=%s released=%d current=%s",
                 node_id, count, cur,
@@ -570,34 +590,37 @@ class InventoryRepository:
         gpu_total: int,
         initial_alloc: int,
         agent_kind: str = "worker",
+        tx=None,
     ) -> UUID:
         """Insert a state='provisioning' placeholder for a pool whose
-        node hasn't booted yet. gpu_total is set upfront (from the pool's
-        per-node gpu_count) so concurrent co-waiters in PoolPlacer.place
-        can read free capacity correctly while the EC2 is mid-provision.
+        node hasn't booted yet.
+
+        Pass `tx` so this insert lands in the caller's transaction (T7's
+        deploy_model uses this to atomically pair ColdStart + placeholder
+        insert).
         """
         node_id = uuid4()
-        async with self.db.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO compute_inventory(
-                  id, pool_id, provider, provider_instance_id, hostname,
-                  node_name, agent_kind, gpu_total, gpu_allocated,
-                  vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
-                  state, metadata
-                )
-                VALUES (
-                  $1, $2,
-                  (SELECT provider FROM compute_pools WHERE id=$2),
-                  $3, '', $4, $5,
-                  $6, $7, 0, 0, 0, 0, 'provisioning', '{}'::jsonb
-                )
-                """,
-                node_id, pool_id,
-                f"placeholder:{node_id}",
-                f"node-{node_id}", agent_kind,
-                gpu_total, initial_alloc,
+        q = """
+            INSERT INTO compute_inventory(
+              id, pool_id, provider, provider_instance_id, hostname,
+              node_name, agent_kind, gpu_total, gpu_allocated,
+              vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
+              state, metadata
             )
+            VALUES (
+              $1, $2,
+              (SELECT provider FROM compute_pools WHERE id=$2),
+              $3, '', $4, $5,
+              $6, $7, 0, 0, 0, 0, 'provisioning', '{}'::jsonb
+            )
+            """
+        args = (node_id, pool_id, f"placeholder:{node_id}",
+                f"node-{node_id}", agent_kind, gpu_total, initial_alloc)
+        if tx is not None:
+            await tx.execute(q, *args)
+        else:
+            async with self.db.acquire() as conn:
+                await conn.execute(q, *args)
         return node_id
 
 

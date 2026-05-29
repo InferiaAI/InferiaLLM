@@ -65,59 +65,88 @@ class PoolPlacer:
         *,
         pool_id: UUID,
         gpu_required: int,
+        tx=None,
     ) -> PlacementDecision:
+        """Decide where to put an incoming deployment.
+
+        When `tx` is provided, both the candidate SELECT and the
+        pool-meta SELECT run on the caller's transaction. The
+        FOR UPDATE SKIP LOCKED row lock then lives until the caller
+        commits — letting T7's deploy_model atomically combine
+        place() + create_placeholder() + bind so two concurrent
+        cold-start deploys produce ONE placeholder, not two.
+
+        When `tx` is None, a fresh transaction is opened for the
+        duration of this call only. Safe for non-concurrent callers.
+
+        Raises:
+            PoolAtCapacity: when pool.max_nodes is set and
+                current_nodes >= max_nodes.
+            ValueError: when pool_id does not match any row in
+                compute_pools.
+        """
+        if tx is not None:
+            return await self._place_in_tx(tx, pool_id, gpu_required)
         async with self.db.acquire() as conn:
             async with conn.transaction():
-                # 1. Try to bind onto an existing node (ready preferred,
-                #    provisioning accepted, both must have capacity).
-                row = await conn.fetchrow(
-                    """
-                    SELECT id, state
-                      FROM compute_inventory
-                     WHERE pool_id = $1
-                       AND state IN ('ready', 'provisioning')
-                       AND (metadata->>'terminating') IS DISTINCT FROM 'true'
-                       AND gpu_total - gpu_allocated >= $2
-                  ORDER BY (CASE WHEN state = 'ready' THEN 0 ELSE 1 END),
-                           (gpu_total - gpu_allocated) ASC
-                     LIMIT 1
-                       FOR UPDATE SKIP LOCKED
-                    """,
-                    pool_id, gpu_required,
-                )
-                if row is not None:
-                    if row["state"] == "ready":
-                        return BindToReady(node_id=row["id"])
-                    return CoWaitOnProvisioning(node_id=row["id"])
+                return await self._place_in_tx(conn, pool_id, gpu_required)
 
-                # 2. No slot — would adding a new node exceed max_nodes?
-                pool_meta = await conn.fetchrow(
-                    """
-                    SELECT p.provider,
-                           p.gpu_count,
-                           p.max_nodes,
-                           (SELECT COUNT(*) FROM compute_inventory ci
-                             WHERE ci.pool_id = p.id
-                               AND ci.state IN ('ready', 'provisioning')
-                               AND (ci.metadata->>'terminating') IS DISTINCT FROM 'true'
-                           ) AS current_nodes
-                      FROM compute_pools p
-                     WHERE p.id = $1
-                    """,
-                    pool_id,
-                )
-                if pool_meta is None:
-                    raise ValueError(f"pool not found: {pool_id}")
+    async def _place_in_tx(
+        self,
+        conn,
+        pool_id: UUID,
+        gpu_required: int,
+    ) -> PlacementDecision:
+        # 1. Try to bind onto an existing node (ready preferred,
+        #    provisioning accepted, both must have capacity).
+        row = await conn.fetchrow(
+            """
+            SELECT id, state
+              FROM compute_inventory
+             WHERE pool_id = $1
+               AND state IN ('ready', 'provisioning')
+               AND (metadata->>'terminating') IS DISTINCT FROM 'true'
+               AND gpu_total - gpu_allocated >= $2
+          ORDER BY (CASE WHEN state = 'ready' THEN 0 ELSE 1 END),
+                   (gpu_total - gpu_allocated) ASC
+             LIMIT 1
+               FOR UPDATE SKIP LOCKED
+            """,
+            pool_id, gpu_required,
+        )
+        if row is not None:
+            if row["state"] == "ready":
+                return BindToReady(node_id=row["id"])
+            return CoWaitOnProvisioning(node_id=row["id"])
 
-                max_nodes = pool_meta["max_nodes"]
-                current = int(pool_meta["current_nodes"])
-                if max_nodes is not None and current >= max_nodes:
-                    raise PoolAtCapacity(
-                        current_nodes=current,
-                        max_nodes=max_nodes,
-                    )
+        # 2. No slot — would adding a new node exceed max_nodes?
+        pool_meta = await conn.fetchrow(
+            """
+            SELECT p.provider,
+                   p.gpu_count,
+                   p.max_nodes,
+                   (SELECT COUNT(*) FROM compute_inventory ci
+                     WHERE ci.pool_id = p.id
+                       AND ci.state IN ('ready', 'provisioning')
+                       AND (ci.metadata->>'terminating') IS DISTINCT FROM 'true'
+                   ) AS current_nodes
+              FROM compute_pools p
+             WHERE p.id = $1
+            """,
+            pool_id,
+        )
+        if pool_meta is None:
+            raise ValueError(f"pool not found: {pool_id}")
 
-                return ColdStart(
-                    gpu_total_per_node=int(pool_meta["gpu_count"]),
-                    provider=str(pool_meta["provider"]),
-                )
+        max_nodes = pool_meta["max_nodes"]
+        current = int(pool_meta["current_nodes"])
+        if max_nodes is not None and current >= max_nodes:
+            raise PoolAtCapacity(
+                current_nodes=current,
+                max_nodes=max_nodes,
+            )
+
+        return ColdStart(
+            gpu_total_per_node=int(pool_meta["gpu_count"]),
+            provider=str(pool_meta["provider"]),
+        )

@@ -151,73 +151,53 @@ async def test_max_nodes_null_means_unlimited(pool):
 
 
 async def test_concurrent_place_picks_distinct_nodes_under_capacity(pool):
-    """Two concurrent place() calls — each runs FOR UPDATE SKIP LOCKED in
-    its own transaction, so the second SELECT skips the row the first
-    locked. Run multiple trials so any single flaky event-loop scheduling
-    doesn't escape the assertion.
+    """Two concurrent place() calls — FOR UPDATE SKIP LOCKED inside each
+    call's transaction guarantees no double-binding even though there's
+    no held lock between them: Postgres's row-level lock during the
+    SELECT is enough. Multi-trial loop hardens against scheduler jitter.
     """
     placer = PoolPlacer(pool)
-
     for trial in range(5):
         pool_id = await _seed_pool_row(pool)
-        n1 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)  # free=2
-        n2 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=3)  # free=1
+        n1 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)
+        n2 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=3)
 
-        # Synchronization events to ensure locks overlap
-        start_event = asyncio.Event()
-        lock_acquired_events = [asyncio.Event(), asyncio.Event()]
-
-        async def place_with_held_lock(idx):
-            """Call placer.place(), then hold a lock until both have completed.
-            We simulate a held lock by acquiring a connection and keeping a
-            transaction open that touches the locked row, forcing PostgreSQL
-            to maintain the lock until both transactions are done.
-            """
-            await start_event.wait()
-
-            # Call the actual placer.place() to get the placement decision
-            result = await placer.place(pool_id=pool_id, gpu_required=1)
-
-            # After place() returns, establish a new lock to simulate keeping
-            # the original lock held. This is necessary because place()
-            # commits its transaction immediately.
-            async with pool.acquire() as conn:
-                async with conn.transaction():
-                    # Re-acquire the same row to simulate the lock being held
-                    if isinstance(result, BindToReady):
-                        await conn.fetchval(
-                            "SELECT id FROM compute_inventory WHERE id = $1 FOR UPDATE",
-                            result.node_id
-                        )
-                        lock_acquired_events[idx].set()
-                        # Wait for the other task to acquire its lock
-                        await lock_acquired_events[1 - idx].wait()
-                        await asyncio.sleep(0.01)
-
-            return result
-
-        # Create both tasks
-        task1 = asyncio.create_task(place_with_held_lock(0))
-        task2 = asyncio.create_task(place_with_held_lock(1))
-
-        # Release both to start concurrently
-        start_event.set()
-
-        d1, d2 = await asyncio.gather(task1, task2)
-
-        # Both calls should bind to an existing ready node (capacity exists).
+        d1, d2 = await asyncio.gather(
+            placer.place(pool_id=pool_id, gpu_required=1),
+            placer.place(pool_id=pool_id, gpu_required=1),
+        )
         assert isinstance(d1, BindToReady), f"trial {trial}: d1 was {d1}"
         assert isinstance(d2, BindToReady), f"trial {trial}: d2 was {d2}"
-
-        # The placer must NEVER pick the same node twice — that's the
-        # core guarantee FOR UPDATE SKIP LOCKED delivers. (We never called
-        # allocate_gpu, so without locking the SELECT would return the
-        # same row both times.)
         assert d1.node_id != d2.node_id, (
             f"trial {trial}: double-booked node {d1.node_id} "
             f"(n1={n1}, n2={n2})"
         )
-        # And both nodes picked must be among the seeded nodes.
         assert {d1.node_id, d2.node_id} == {n1, n2}, (
-            f"trial {trial}: chose {d1.node_id, d2.node_id}, expected {{{n1}, {n2}}}"
+            f"trial {trial}: chose {(d1.node_id, d2.node_id)}, "
+            f"expected {{{n1}, {n2}}}"
         )
+
+
+async def test_place_uses_external_tx_when_provided(pool):
+    """When called inside an explicit transaction, the row lock holds
+    until that transaction commits. A concurrent place() running in
+    its own short transaction sees the locked row skipped and falls
+    through to ColdStart (or another node).
+    """
+    placer = PoolPlacer(pool)
+    pool_id = await _seed_pool_row(pool)
+    n1 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=0)
+
+    async with pool.acquire() as conn_a:
+        async with conn_a.transaction():
+            d_a = await placer.place(
+                pool_id=pool_id, gpu_required=1, tx=conn_a,
+            )
+            assert isinstance(d_a, BindToReady)
+            assert d_a.node_id == n1
+
+            # While conn_a holds the row lock, a separate placer() call
+            # should not see n1 — it's locked. There are no other nodes,
+            # so it falls through to ColdStart.
+            d_b = await placer.place(pool_id=pool_id, gpu_required=1)
+            assert isinstance(d_b, ColdStart)
