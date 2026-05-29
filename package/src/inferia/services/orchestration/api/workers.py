@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
 from inferia.services.orchestration.services.worker_controller.auth import (
@@ -110,6 +110,7 @@ def get_inventory():
 @router.post("/v1/workers/register", response_model=RegisterResponse)
 async def register_worker(
     body: RegisterRequest,
+    request: Request,
     authorization: str = Header(default=""),
     auth: WorkerAuth = Depends(get_auth),
     inventory=Depends(get_inventory),
@@ -183,6 +184,40 @@ async def register_worker(
         node_id=node_id_str,
         pool_id=body.pool_id,
     )
+
+    # T10: fire DeploymentLinker so any deploys in PENDING_NODE state
+    # waiting on this pool get bound to the just-registered worker. The
+    # linker handles tx + load_model internally. Wrap in try/except so a
+    # linker failure does not break worker registration — the worker
+    # would just not pick up the pending deploys until the next signal.
+    try:
+        from inferia.services.orchestration.services.model_deployment.deployment_linker import (
+            DeploymentLinker,
+        )
+        from inferia.services.orchestration.repositories.inventory_repo import (
+            InventoryRepository,
+        )
+        from inferia.services.orchestration.repositories.model_deployment_repo import (
+            ModelDeploymentRepository,
+        )
+
+        db_pool = request.app.state.pool
+        worker_controller = request.app.state.worker_controller
+        event_bus = getattr(request.app.state, "event_bus", None)
+        linker = DeploymentLinker(
+            db_pool=db_pool,
+            inventory_repo=InventoryRepository(db_pool),
+            deployment_repo=ModelDeploymentRepository(db_pool, event_bus=event_bus),
+            worker_controller=worker_controller,
+        )
+        await linker.on_worker_ready(node["id"])
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).exception(
+            "register_worker: linker hook failed for node=%s: %s",
+            node_id_str, e,
+        )
+
     return RegisterResponse(node_id=node_id_str, worker_jwt=worker_jwt)
 
 
