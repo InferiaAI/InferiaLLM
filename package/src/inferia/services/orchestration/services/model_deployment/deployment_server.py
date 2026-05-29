@@ -713,80 +713,306 @@ async def deployment_preflight(req: PreflightRequest):
 
 
 @router.post("/deploy")
-async def deploy_model(req: DeployModelRequest):
-    # Check for duplicate deployment name within the same org
-    if req.org_id and req.model_name:
-        conn = await asyncpg.connect(POSTGRES_DSN)
+async def deploy_model(req: DeployModelRequest, request: Request):
+    """Pool-first deploy.
+
+    1. Validate pool exists and is running.
+    2. Create deployment row in CREATED state.
+    3. Inside a transaction:
+       - PoolPlacer.place(tx=conn) decides where the model goes.
+       - BindToReady: allocate GPU, bind, set DEPLOYING. Commit. Then load_model.
+       - CoWaitOnProvisioning: allocate, bind, set PENDING_NODE.
+       - ColdStart: create_placeholder, bind, set PENDING_NODE. For
+         worker-pools, return. Otherwise enqueue ProvisioningJob.
+    4. PoolAtCapacity is caught and surfaced as 503.
+    """
+    from uuid import UUID, uuid4
+    from fastapi.responses import JSONResponse
+    from inferia.services.orchestration.services.model_deployment.pool_placer import (
+        PoolPlacer, BindToReady, CoWaitOnProvisioning, ColdStart, PoolAtCapacity,
+    )
+    from inferia.services.orchestration.repositories.inventory_repo import (
+        InventoryRepository,
+    )
+    from inferia.services.orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+    from inferia.services.orchestration.repositories.pool_repo import (
+        ComputePoolRepository,
+    )
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+
+    db_pool = request.app.state.pool
+    controller = request.app.state.worker_controller
+    event_bus = getattr(request.app.state, "event_bus", None)
+
+    pool_repo = ComputePoolRepository(db_pool)
+    inventory = InventoryRepository(db_pool)
+    deploys = ModelDeploymentRepository(db_pool, event_bus=event_bus)
+    placer = PoolPlacer(db_pool)
+    jobs_repo = ProvisioningJobRepository(db_pool)
+
+    # 1. Validate pool
+    try:
+        pool_id_uuid = UUID(req.pool_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="pool_id must be a UUID")
+    pool_row = await pool_repo.get(pool_id_uuid)
+    if pool_row is None:
+        raise HTTPException(status_code=404, detail="pool not found")
+    lifecycle = (pool_row.get("lifecycle_state") or "running").lower()
+    if lifecycle in ("terminating", "terminated"):
+        raise HTTPException(status_code=409,
+                             detail=f"pool is {lifecycle}")
+
+    # Normalize the pool's metadata — asyncpg returns jsonb columns as str
+    _raw_meta = pool_row.get("metadata")
+    if isinstance(_raw_meta, str):
         try:
-            existing = await conn.fetchrow(
-                """
-                SELECT deployment_id FROM model_deployments
-                WHERE model_name = $1
-                  AND org_id = $2
-                LIMIT 1
-                """,
-                req.model_name,
-                req.org_id,
-            )
-            if existing:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"A deployment with this name already exists. Please try another name.",
+            pool_meta: dict = json.loads(_raw_meta)
+        except (ValueError, TypeError):
+            pool_meta = {}
+    elif isinstance(_raw_meta, dict):
+        pool_meta = _raw_meta
+    else:
+        pool_meta = {}
+
+    # 2. Create deployment row (CREATED state, target_pool_id=pool_id)
+    deploy_id = uuid4()
+    policies_val = req.policies
+    if policies_val is not None and isinstance(policies_val, dict):
+        policies_val = json.dumps(policies_val)
+    configuration_val = req.configuration
+    if configuration_val is not None and isinstance(configuration_val, dict):
+        configuration_val = json.dumps(configuration_val)
+    await deploys.create(
+        deployment_id=deploy_id,
+        model_id=None,
+        pool_id=pool_id_uuid,
+        replicas=req.replicas,
+        gpu_per_replica=req.gpu_per_replica,
+        state="CREATED",
+        engine=req.engine,
+        configuration=configuration_val,
+        endpoint=req.endpoint,
+        model_name=req.model_name,
+        owner_id=req.owner_id,
+        org_id=req.org_id,
+        policies=policies_val,
+        inference_model=req.inference_model,
+        model_type=req.model_type,
+        target_pool_id=pool_id_uuid,
+        target_node_id=None,
+    )
+
+    # 3. Transactional decision + bind
+    # pending_enqueue: set after tx commits; contains kwargs for jobs_repo.enqueue
+    bound_for_load: tuple | None = None  # (node_id, deploy_id) for warm path
+    pending_enqueue: dict | None = None  # post-tx provisioning job to enqueue
+    response_body: dict = {}
+    response_status = 200
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                decision = await placer.place(
+                    pool_id=pool_id_uuid,
+                    gpu_required=req.gpu_per_replica or 0,
+                    tx=conn,
                 )
-        finally:
-            await conn.close()
 
-    async with _auth_channel() as channel:
-        stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
+                if isinstance(decision, BindToReady):
+                    ok = await inventory.allocate_gpu(
+                        decision.node_id, req.gpu_per_replica or 0, tx=conn,
+                    )
+                    if not ok:
+                        # capacity raced; one retry inside the same tx
+                        decision = await placer.place(
+                            pool_id=pool_id_uuid,
+                            gpu_required=req.gpu_per_replica or 0,
+                            tx=conn,
+                        )
+                        if isinstance(decision, BindToReady):
+                            ok = await inventory.allocate_gpu(
+                                decision.node_id, req.gpu_per_replica or 0,
+                                tx=conn,
+                            )
+                            if not ok:
+                                raise HTTPException(
+                                    status_code=503,
+                                    detail="capacity race lost twice; retry",
+                                )
+                            await deploys.bind_to_node(
+                                deploy_id, decision.node_id, tx=conn,
+                            )
+                            await deploys.set_state(
+                                deploy_id, "DEPLOYING", tx=conn,
+                            )
+                            bound_for_load = (decision.node_id, deploy_id)
+                            response_body = {
+                                "deployment_id": str(deploy_id),
+                                "state": "DEPLOYING",
+                                "target_node_id": str(decision.node_id),
+                            }
+                            response_status = 200
+                        elif isinstance(decision, CoWaitOnProvisioning):
+                            await inventory.allocate_gpu(
+                                decision.node_id, req.gpu_per_replica or 0,
+                                tx=conn,
+                            )
+                            await deploys.bind_to_node(
+                                deploy_id, decision.node_id, tx=conn,
+                            )
+                            await deploys.set_state(
+                                deploy_id, "PENDING_NODE", tx=conn,
+                            )
+                            response_body = {
+                                "deployment_id": str(deploy_id),
+                                "state": "PENDING_NODE",
+                                "target_node_id": str(decision.node_id),
+                                "message": "co-waiting on existing provisioning",
+                            }
+                            response_status = 202
+                        else:
+                            # ColdStart on retry
+                            assert isinstance(decision, ColdStart)
+                            node_id = await inventory.create_placeholder(
+                                pool_id=pool_id_uuid,
+                                gpu_total=decision.gpu_total_per_node,
+                                initial_alloc=req.gpu_per_replica or 0,
+                                tx=conn,
+                            )
+                            await deploys.bind_to_node(deploy_id, node_id, tx=conn)
+                            await deploys.set_state(deploy_id, "PENDING_NODE", tx=conn)
+                            is_worker_pool = pool_meta.get("agent_kind") == "worker"
+                            response_body = {
+                                "deployment_id": str(deploy_id),
+                                "state": "PENDING_NODE",
+                                "target_node_id": str(node_id),
+                                "message": "waiting for worker registration"
+                                if is_worker_pool else "provisioning compute",
+                            }
+                            response_status = 202
+                            if not is_worker_pool:
+                                # Collect for post-tx enqueue (FK needs committed node)
+                                pending_enqueue = {
+                                    "node_id": node_id,
+                                    "pool_id": pool_id_uuid,
+                                    "org_id": str(req.org_id) if req.org_id else "",
+                                    "provider": decision.provider,
+                                    "spec": {
+                                        "pool_id": str(pool_id_uuid),
+                                        "org_id": str(req.org_id) if req.org_id else None,
+                                        "instance_type": pool_meta.get("instance_type"),
+                                        "region": pool_meta.get("region"),
+                                        "gpu_count": decision.gpu_total_per_node,
+                                    },
+                                }
+                    else:
+                        # first allocate_gpu succeeded — BindToReady warm path
+                        await deploys.bind_to_node(deploy_id, decision.node_id, tx=conn)
+                        await deploys.set_state(deploy_id, "DEPLOYING", tx=conn)
+                        bound_for_load = (decision.node_id, deploy_id)
+                        response_body = {
+                            "deployment_id": str(deploy_id),
+                            "state": "DEPLOYING",
+                            "target_node_id": str(decision.node_id),
+                        }
+                        response_status = 200
 
-        # pool_id = uuid.uuid4() # No longer generating random pool_id
+                elif isinstance(decision, CoWaitOnProvisioning):
+                    await inventory.allocate_gpu(
+                        decision.node_id, req.gpu_per_replica or 0, tx=conn,
+                    )
+                    await deploys.bind_to_node(deploy_id, decision.node_id, tx=conn)
+                    await deploys.set_state(deploy_id, "PENDING_NODE", tx=conn)
+                    response_body = {
+                        "deployment_id": str(deploy_id),
+                        "state": "PENDING_NODE",
+                        "target_node_id": str(decision.node_id),
+                        "message": "co-waiting on existing provisioning",
+                    }
+                    response_status = 202
 
+                else:
+                    assert isinstance(decision, ColdStart)
+                    node_id = await inventory.create_placeholder(
+                        pool_id=pool_id_uuid,
+                        gpu_total=decision.gpu_total_per_node,
+                        initial_alloc=req.gpu_per_replica or 0,
+                        tx=conn,
+                    )
+                    await deploys.bind_to_node(deploy_id, node_id, tx=conn)
+                    await deploys.set_state(deploy_id, "PENDING_NODE", tx=conn)
+                    is_worker_pool = pool_meta.get("agent_kind") == "worker"
+                    response_body = {
+                        "deployment_id": str(deploy_id),
+                        "state": "PENDING_NODE",
+                        "target_node_id": str(node_id),
+                        "message": "waiting for worker registration"
+                        if is_worker_pool else "provisioning compute",
+                    }
+                    response_status = 202
+                    if not is_worker_pool:
+                        # Collect for post-tx enqueue (FK needs committed node)
+                        pending_enqueue = {
+                            "node_id": node_id,
+                            "pool_id": pool_id_uuid,
+                            "org_id": str(req.org_id) if req.org_id else "",
+                            "provider": decision.provider,
+                            "spec": {
+                                "pool_id": str(pool_id_uuid),
+                                "org_id": str(req.org_id) if req.org_id else None,
+                                "instance_type": pool_meta.get("instance_type"),
+                                "region": pool_meta.get("region"),
+                                "gpu_count": decision.gpu_total_per_node,
+                            },
+                        }
+
+    except PoolAtCapacity as e:
+        await deploys.set_state(deploy_id, "FAILED")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "POOL_AT_CAPACITY",
+                "current_nodes": e.current_nodes,
+                "max_nodes": e.max_nodes,
+                "deployment_id": str(deploy_id),
+            },
+            headers={"Retry-After": "60"},
+        )
+
+    # 4a. Post-tx: enqueue provisioning job (requires committed placeholder node for FK)
+    if pending_enqueue is not None:
+        await jobs_repo.enqueue(**pending_enqueue)
+
+    # 4b. Post-tx: load_model for the warm path
+    if bound_for_load is not None:
+        node_id, _ = bound_for_load
         try:
-            resp = await stub.DeployModel(
-                model_deployment_pb2.DeployModelRequest(
-                    model_name=req.model_name,
-                    model_version=req.model_version,
-                    pool_id=req.pool_id,  # Using pool_id from request
-                    replicas=req.replicas,
-                    gpu_per_replica=req.gpu_per_replica,
-                    workload_type=req.workload_type,
-                    engine=req.engine,
-                    configuration=json.dumps(
-                        req.configuration or req.job_definition or {}
-                    ),
-                    owner_id=req.owner_id,
-                    endpoint=req.endpoint,
-                    org_id=req.org_id,
-                    policies=json.dumps(req.policies) if req.policies else None,
-                    inference_model=req.inference_model,
-                    model_type=req.model_type,
-                )
+            await controller.load_model(
+                node_id=node_id,
+                deployment_id=deploy_id,
+                model_name=req.model_name,
+                engine=req.engine,
+                configuration=configuration_val,
             )
+        except Exception as exc:
+            logger.exception("deploy: load_model failed for %s: %s", deploy_id, exc)
+            # Rollback: release the GPU and mark FAILED
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    await inventory.release_gpu(
+                        node_id, req.gpu_per_replica or 0, tx=conn,
+                    )
+                    await deploys.set_state(deploy_id, "FAILED", tx=conn)
+            raise HTTPException(status_code=502,
+                                  detail=f"load_model failed: {exc}")
 
-            # Log Audit Event
-            await log_audit_event(
-                user_id=req.owner_id,
-                action="deployment.create",
-                resource_type="deployment",
-                resource_id=resp.deployment_id,
-                details={
-                    "name": req.model_name,
-                    "model": req.inference_model or req.model_version,
-                    "pool_id": req.pool_id,
-                },
-                org_id=req.org_id,
-            )
-
-        except grpc.RpcError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Deployment failed: {e.details()}",
-            )
-
-    return {
-        "deployment_id": resp.deployment_id,
-        "status": "DEPLOYING",
-    }
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=response_status, content=response_body)
 
 
 @router.get("/status/{deployment_id}")

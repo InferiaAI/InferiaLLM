@@ -392,6 +392,8 @@ async def serve():
 
     # Share pool with routes
     app.state.pool = db_pool
+    app.state.worker_controller = worker_controller
+    app.state.event_bus = event_bus
 
     # Add standard / and /health routes
     add_standard_health_routes(

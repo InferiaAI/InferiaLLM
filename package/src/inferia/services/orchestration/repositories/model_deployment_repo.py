@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from uuid import UUID
 from typing import List, Optional
 from inferia.services.orchestration.repositories.base_repo import BaseRepository
@@ -27,6 +29,8 @@ class ModelDeploymentRepository(BaseRepository):
         policies: Optional[str] = None,
         inference_model: Optional[str] = None,
         model_type: Optional[str] = "inference",
+        target_pool_id: Optional[UUID] = None,
+        target_node_id: Optional[UUID] = None,
         tx=None,
     ):
         q = """
@@ -45,9 +49,11 @@ class ModelDeploymentRepository(BaseRepository):
             org_id,
             policies,
             inference_model,
-            model_type
+            model_type,
+            target_pool_id,
+            target_node_id
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
         """
         # Ensure configuration is passed as json
         import json
@@ -80,6 +86,8 @@ class ModelDeploymentRepository(BaseRepository):
                 policies,
                 inference_model,
                 model_type,
+                target_pool_id,
+                target_node_id,
             )
         else:
             async with self.db.acquire() as c:
@@ -100,6 +108,8 @@ class ModelDeploymentRepository(BaseRepository):
                     policies,
                     inference_model,
                     model_type,
+                    target_pool_id,
+                    target_node_id,
                 )
 
         # await self.event_bus.publish(
