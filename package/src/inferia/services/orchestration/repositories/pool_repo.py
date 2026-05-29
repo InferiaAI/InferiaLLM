@@ -316,6 +316,22 @@ class ComputePoolRepository:
         async with self.db.acquire() as conn:
             await conn.execute(query, pool_id, lifecycle_state)
 
+    async def count_nodes(self, pool_id: UUID) -> int:
+        """Count nodes that occupy a slot in the pool — ready or
+        provisioning, not flagged as terminating. Used by PoolPlacer to
+        enforce compute_pools.max_nodes (T5)."""
+        async with self.db.acquire() as conn:
+            row = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM compute_inventory
+                 WHERE pool_id = $1
+                   AND state IN ('ready', 'provisioning')
+                   AND (metadata->>'terminating') IS DISTINCT FROM 'true'
+                """,
+                pool_id,
+            )
+        return int(row or 0)
+
 
 # ---------------------------------------------------------------------------
 # Worker-agent extensions (inferia-worker integration).
