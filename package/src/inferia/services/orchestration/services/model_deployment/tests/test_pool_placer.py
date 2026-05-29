@@ -151,59 +151,73 @@ async def test_max_nodes_null_means_unlimited(pool):
 
 
 async def test_concurrent_place_picks_distinct_nodes_under_capacity(pool):
-    """Two concurrent place() calls — each row is FOR UPDATE SKIP LOCKED
-    inside its own transaction, so the second call's SELECT skips the
-    row the first call holds and picks the next-best candidate.
+    """Two concurrent place() calls — each runs FOR UPDATE SKIP LOCKED in
+    its own transaction, so the second SELECT skips the row the first
+    locked. Run multiple trials so any single flaky event-loop scheduling
+    doesn't escape the assertion.
     """
     placer = PoolPlacer(pool)
-    pool_id = await _seed_pool_row(pool)
-    n1 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)  # free=2
-    n2 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=3)  # free=1
 
-    # Synchronization: ensure both transactions start concurrently
-    start_event = asyncio.Event()
-    lock_acquired_events = [asyncio.Event(), asyncio.Event()]
+    for trial in range(5):
+        pool_id = await _seed_pool_row(pool)
+        n1 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)  # free=2
+        n2 = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=3)  # free=1
 
-    async def place_with_hold(idx):
-        """Wrapper that holds the lock to ensure transaction overlap."""
-        await start_event.wait()
+        # Synchronization events to ensure locks overlap
+        start_event = asyncio.Event()
+        lock_acquired_events = [asyncio.Event(), asyncio.Event()]
 
-        # We need to hold the connection open to maintain the lock
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    """
-                    SELECT id, state
-                      FROM compute_inventory
-                     WHERE pool_id = $1
-                       AND state IN ('ready', 'provisioning')
-                       AND (metadata->>'terminating') IS DISTINCT FROM 'true'
-                       AND gpu_total - gpu_allocated >= $2
-                  ORDER BY (CASE WHEN state = 'ready' THEN 0 ELSE 1 END),
-                           (gpu_total - gpu_allocated) ASC
-                     LIMIT 1
-                       FOR UPDATE SKIP LOCKED
-                    """,
-                    pool_id, 1,
-                )
-                lock_acquired_events[idx].set()
-                # Hold the lock while both transactions' locks are acquired
-                if idx == 0:
-                    # First transaction holds the lock longer
-                    await lock_acquired_events[1].wait()
-                    await asyncio.sleep(0.01)
-                else:
-                    # Second transaction just waits a bit
-                    await asyncio.sleep(0.01)
-                return row["id"] if row else None
+        async def place_with_held_lock(idx):
+            """Call placer.place(), then hold a lock until both have completed.
+            We simulate a held lock by acquiring a connection and keeping a
+            transaction open that touches the locked row, forcing PostgreSQL
+            to maintain the lock until both transactions are done.
+            """
+            await start_event.wait()
 
-    # Start both operations
-    task1 = asyncio.create_task(place_with_hold(0))
-    task2 = asyncio.create_task(place_with_hold(1))
-    start_event.set()
+            # Call the actual placer.place() to get the placement decision
+            result = await placer.place(pool_id=pool_id, gpu_required=1)
 
-    r1, r2 = await asyncio.gather(task1, task2)
+            # After place() returns, establish a new lock to simulate keeping
+            # the original lock held. This is necessary because place()
+            # commits its transaction immediately.
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    # Re-acquire the same row to simulate the lock being held
+                    if isinstance(result, BindToReady):
+                        await conn.fetchval(
+                            "SELECT id FROM compute_inventory WHERE id = $1 FOR UPDATE",
+                            result.node_id
+                        )
+                        lock_acquired_events[idx].set()
+                        # Wait for the other task to acquire its lock
+                        await lock_acquired_events[1 - idx].wait()
+                        await asyncio.sleep(0.01)
 
-    chosen = {r1, r2}
-    chosen.discard(None)
-    assert chosen == {n1, n2}
+            return result
+
+        # Create both tasks
+        task1 = asyncio.create_task(place_with_held_lock(0))
+        task2 = asyncio.create_task(place_with_held_lock(1))
+
+        # Release both to start concurrently
+        start_event.set()
+
+        d1, d2 = await asyncio.gather(task1, task2)
+
+        # Both calls should bind to an existing ready node (capacity exists).
+        assert isinstance(d1, BindToReady), f"trial {trial}: d1 was {d1}"
+        assert isinstance(d2, BindToReady), f"trial {trial}: d2 was {d2}"
+
+        # The placer must NEVER pick the same node twice — that's the
+        # core guarantee FOR UPDATE SKIP LOCKED delivers. (We never called
+        # allocate_gpu, so without locking the SELECT would return the
+        # same row both times.)
+        assert d1.node_id != d2.node_id, (
+            f"trial {trial}: double-booked node {d1.node_id} "
+            f"(n1={n1}, n2={n2})"
+        )
+        # And both nodes picked must be among the seeded nodes.
+        assert {d1.node_id, d2.node_id} == {n1, n2}, (
+            f"trial {trial}: chose {d1.node_id, d2.node_id}, expected {{{n1}, {n2}}}"
+        )
