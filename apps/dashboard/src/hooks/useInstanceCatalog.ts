@@ -19,6 +19,7 @@
  * navigating away and back never re-fetches in that window.
  */
 import { useQuery } from "@tanstack/react-query";
+import { computeApi } from "@/lib/api";
 
 export type InstanceClass = "normal_gpu" | "heavy_gpu" | "cpu";
 
@@ -41,11 +42,13 @@ export function useInstanceCatalog() {
   return useQuery<InstanceCatalog>({
     queryKey: ["aws-instance-catalog"],
     queryFn: async () => {
-      const resp = await fetch("/api/v1/providers/aws/instance-catalog");
-      if (!resp.ok) {
-        throw new Error(`catalog fetch failed: ${resp.status}`);
-      }
-      return resp.json();
+      // Use the authenticated axios client so the JWT goes through. Raw
+      // fetch() skips the interceptor → gateway returns 401 → empty
+      // catalog → no GPU types in NewPool's instance selector.
+      const resp = await computeApi.get<InstanceCatalog>(
+        "/providers/aws/instance-catalog",
+      );
+      return resp.data;
     },
     // 5 minutes — the catalog is a static module on the backend.
     staleTime: 5 * 60 * 1000,
