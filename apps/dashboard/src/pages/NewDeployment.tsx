@@ -5,6 +5,7 @@ import {
   MessageSquare, AlertCircle
 } from "lucide-react"
 import { computeApi } from "@/lib/api"
+import { listPools } from "@/services/poolService"
 import { toast } from "sonner"
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query"
 import { useNavigate, Link } from "react-router-dom"
@@ -635,36 +636,34 @@ export default function NewDeployment() {
 
   useEffect(() => {
     if (mode === "managed" && step === 3) {
-      // Node-centric refactor: surface ready/provisioning nodes as the picker
-      // options. The pool concept is hidden from the public API, so the
-      // 'pool' shape we feed the existing reducer is a thin wrapper that
-      // preserves pool_id (derived from each node's pool_id) for backwards
-      // compatibility with the existing deployment payload.
-      const fetchNodes = async () => {
+      const orgId = user?.org_id || organizations?.[0]?.id;
+      if (!orgId) return;
+      const fetchPoolList = async () => {
         dispatch({ type: 'SET_POOLS_LOADING', payload: true });
         try {
-          const res = await computeApi.get(`/nodes/`)
-          const nodes = res.data?.nodes || []
-          const poolish = nodes
-            .filter((n: any) => n.state !== "terminated")
-            .map((n: any) => ({
-              pool_id: n.pool_id,
-              pool_name: n.node_name || n.id.slice(0, 8),
-              provider: n.provider || n.agent_kind || "node",
-              is_active: true,
-              node_id: n.id,
-              labels: n.labels || {},
-              state: n.state,
-            }))
+          const pools = await listPools(orgId);
+          const poolish = pools
+            .filter((p) => p.lifecycle_state !== "terminated")
+            .map((p) => ({
+              pool_id: p.pool_id,
+              pool_name: p.pool_name,
+              provider: p.provider,
+              is_active: p.is_active,
+              allowed_gpu_types: p.allowed_gpu_types || [],
+              gpu_count: p.gpu_count,
+              nodes_count: 0,
+              lifecycle_state: p.lifecycle_state,
+              state: p.lifecycle_state,
+            }));
           dispatch({ type: 'INIT_POOLS', payload: poolish });
         } catch (e) {
-          console.error("Failed to fetch nodes", e)
-          toast.error("Failed to list compute nodes")
+          console.error("Failed to fetch pools", e)
+          toast.error("Failed to list compute pools")
         } finally {
           dispatch({ type: 'SET_POOLS_LOADING', payload: false });
         }
       }
-      fetchNodes()
+      fetchPoolList()
     }
   }, [mode, step, user, organizations])
 
@@ -892,7 +891,7 @@ export default function NewDeployment() {
     if (!preflightOk) return;
 
     const payload = {
-      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, node_id: selectedPool.node_id || undefined, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
+      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config
     }
@@ -1044,34 +1043,36 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
         <div className="flex items-center justify-center py-12">
           <div className="flex flex-col items-center gap-3">
             <div className="w-8 h-8 border-4 border-ember-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-muted-foreground">Loading compute nodes...</p>
+            <p className="text-sm text-muted-foreground">Loading compute pools...</p>
           </div>
         </div>
       ) : userPools.length === 0 ? (
         <div className="text-center py-12 bg-muted dark:bg-card/50 rounded-xl border border-dashed dark:border-border flex flex-col items-center">
           <Server className="w-12 h-12 text-cream/70 dark:text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium text-foreground dark:text-cream">No Compute Nodes Found</h3>
-          <p className="text-muted-foreground mt-1 mb-6 max-w-sm">You need at least one compute node to deploy this model.</p>
-          <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium text-fg-secondary dark:text-cream/70 hover:bg-muted dark:hover:bg-card shadow-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500" /> Create New Node</Link>
+          <h3 className="text-lg font-medium text-foreground dark:text-cream">No Compute Pools Found</h3>
+          <p className="text-muted-foreground mt-1 mb-6 max-w-sm">You need at least one compute pool to deploy this model.</p>
+          <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium text-fg-secondary dark:text-cream/70 hover:bg-muted dark:hover:bg-card shadow-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500" /> Create New Pool</Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {userPools.filter(pool => pool.state === "ready").length === 0 && (
-            <div className="col-span-full text-center py-8 text-muted-foreground">
-              <p className="text-sm">No ready nodes available. Nodes may still be provisioning.</p>
-              <Link to="/dashboard/compute/pools/new" className="text-ember-600 text-sm font-medium mt-2 inline-block hover:underline">Create New Node</Link>
-            </div>
-          )}
           {userPools.map(pool => {
-            const isReady = pool.state === "ready" || pool.state === "active" || pool.state === "idle";
-            const isProvisioning = pool.state === "provisioning" || pool.state === "pending";
+            const isActive = pool.state === "active" || pool.state === "ready" || pool.state === "idle";
             const isTerminated = pool.state === "terminated" || pool.state === "failed";
             const selectable = !isTerminated;
+            const hasNoNodes = !pool.nodes_count || pool.nodes_count === 0;
             return (
-            <button type="button" key={pool.node_id || pool.pool_id} aria-pressed={selectedPool?.node_id === pool.node_id} disabled={!selectable} onClick={() => selectable && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-card dark:border-border relative transition-colors outline-none text-left focus:ring-2 focus:ring-ember-500/40", !selectable && "opacity-50 cursor-not-allowed", selectedPool?.node_id === pool.node_id ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700")}>
+            <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} disabled={!selectable} onClick={() => selectable && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-card dark:border-border relative transition-colors outline-none text-left focus:ring-2 focus:ring-ember-500/40", !selectable && "opacity-50 cursor-not-allowed", selectedPool?.pool_id === pool.pool_id ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700")}>
               <div className="flex items-start justify-between">
-                <div><div className="font-bold text-lg">{pool.pool_name}</div><div className="text-sm text-muted-foreground font-mono mt-1">{pool.provider}</div></div>
-                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", isProvisioning ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-900/50" : isReady ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-muted text-muted-foreground border-border dark:bg-card dark:text-muted-foreground dark:border-border")}>{isProvisioning ? "Provisioning..." : isReady ? "Ready" : (pool.state || "Inactive")}</div>
+                <div>
+                  <div className="font-bold text-lg">{pool.pool_name}</div>
+                  <div className="text-sm text-muted-foreground font-mono mt-1">{pool.provider}</div>
+                  {hasNoNodes && (
+                    <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                      No node yet — deploy will provision (~90s)
+                    </div>
+                  )}
+                </div>
+                <div className={cn("px-2 py-0.5 rounded text-xs font-medium border", isActive ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900/50" : "bg-muted text-muted-foreground border-border dark:bg-card dark:text-muted-foreground dark:border-border")}>{isActive ? "Active" : (pool.state || "Inactive")}</div>
               </div>
             </button>
             );
