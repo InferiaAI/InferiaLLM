@@ -66,7 +66,13 @@ MIGRATIONS_DIR = SCHEMA_DIR / "migrations"
 
 
 async def _apply_migrations(dsn: str):
-    """Apply any unapplied SQL migrations from the migrations directory."""
+    """Apply any unapplied SQL migrations from the migrations directory.
+
+    Supports @SPLIT@ marker to separate transactional and concurrent chunks.
+    Migrations split on @SPLIT@ are executed in two phases:
+    1. Transactional chunk (before @SPLIT@) - runs inside BEGIN/COMMIT
+    2. Concurrent chunk (after @SPLIT@) - runs outside transaction (for CREATE INDEX CONCURRENTLY, etc.)
+    """
     if not MIGRATIONS_DIR.exists():
         return
 
@@ -96,18 +102,43 @@ async def _apply_migrations(dsn: str):
             if mf.name in applied:
                 continue
             print(f"[inferia:init] Applying migration: {mf.name}")
-            await conn.execute("BEGIN")
-            try:
-                await conn.execute(mf.read_text())
-                await conn.execute(
-                    "INSERT INTO schema_migrations (filename) VALUES ($1)",
-                    mf.name,
-                )
-                await conn.execute("COMMIT")
-            except Exception as e:
-                await conn.execute("ROLLBACK")
-                print(f"[inferia:init] Migration failed ({mf.name}): {e}")
-                raise
+
+            sql_content = mf.read_text()
+            chunks = sql_content.split("-- @SPLIT@")
+
+            # First chunk (transactional)
+            if chunks:
+                transactional_sql = chunks[0].strip()
+                if transactional_sql:
+                    await conn.execute("BEGIN")
+                    try:
+                        await conn.execute(transactional_sql)
+                        await conn.execute(
+                            "INSERT INTO schema_migrations (filename) VALUES ($1)",
+                            mf.name,
+                        )
+                        await conn.execute("COMMIT")
+                    except Exception as e:
+                        await conn.execute("ROLLBACK")
+                        print(f"[inferia:init] Migration failed ({mf.name}): {e}")
+                        raise
+                else:
+                    # Empty transactional part, still mark as applied
+                    await conn.execute(
+                        "INSERT INTO schema_migrations (filename) VALUES ($1)",
+                        mf.name,
+                    )
+
+            # Subsequent chunks (concurrent, outside transaction)
+            for i, concurrent_sql in enumerate(chunks[1:], start=1):
+                concurrent_sql = concurrent_sql.strip()
+                if concurrent_sql:
+                    try:
+                        print(f"[inferia:init] Applying migration {mf.name} (concurrent chunk {i})")
+                        await conn.execute(concurrent_sql)
+                    except Exception as e:
+                        print(f"[inferia:init] Concurrent chunk {i} failed ({mf.name}): {e}")
+                        raise
     finally:
         await conn.close()
 
