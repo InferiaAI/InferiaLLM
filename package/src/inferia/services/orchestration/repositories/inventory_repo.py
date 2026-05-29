@@ -1,7 +1,17 @@
 import uuid
-from uuid import UUID
+from uuid import UUID, uuid4
 import json
+import logging
+from dataclasses import dataclass
 from inferia.services.orchestration.constants import NodeState
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ReleaseResult:
+    new_allocated: int
+    should_destroy: bool
 
 
 class InventoryRepository:
@@ -468,6 +478,119 @@ class InventoryRepository:
         async with self.db.acquire() as conn:
             rows = await conn.fetch(query, provider, limit, offset)
             return [dict(row) for row in rows]
+
+    async def allocate_gpu(self, node_id: UUID, count: int) -> bool:
+        """Atomically increment gpu_allocated by `count` iff capacity allows.
+
+        Returns True on success, False on capacity exhaustion. Used by
+        PoolPlacer.place after it picks a candidate node — concurrent
+        allocate_gpu calls on the same node racing for the same slot
+        will see exactly one winner.
+
+        Allowed states: 'ready' (warm bind) and 'provisioning' (co-wait
+        on a placeholder that hasn't booted yet). Nodes flagged
+        metadata.terminating=true are excluded — they're on the way out.
+        """
+        async with self.db.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE compute_inventory
+                   SET gpu_allocated = gpu_allocated + $2
+                 WHERE id = $1
+                   AND state IN ('ready', 'provisioning')
+                   AND (metadata->>'terminating') IS DISTINCT FROM 'true'
+                   AND gpu_allocated + $2 <= gpu_total
+                """,
+                node_id, count,
+            )
+        rowcount = int(result.rsplit(" ", 1)[-1])
+        return rowcount > 0
+
+    async def release_gpu(self, node_id: UUID, count: int) -> ReleaseResult:
+        """Decrement gpu_allocated and signal whether the node should be
+        destroyed (last reference released AND no PENDING_NODE deploys
+        still target it).
+
+        Defensive: underflow logs and returns should_destroy=False.
+        """
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    UPDATE compute_inventory
+                       SET gpu_allocated = gpu_allocated - $2
+                     WHERE id = $1
+                       AND gpu_allocated >= $2
+                    RETURNING gpu_allocated
+                    """,
+                    node_id, count,
+                )
+                if row is None:
+                    cur = await conn.fetchval(
+                        "SELECT gpu_allocated FROM compute_inventory WHERE id=$1",
+                        node_id,
+                    )
+                    logger.error(
+                        "refcount underflow: node=%s released=%d current=%s",
+                        node_id, count, cur,
+                    )
+                    return ReleaseResult(new_allocated=int(cur or 0),
+                                          should_destroy=False)
+                new_alloc = row["gpu_allocated"]
+                if new_alloc != 0:
+                    return ReleaseResult(new_allocated=new_alloc,
+                                          should_destroy=False)
+                still_pending = await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                      SELECT 1 FROM model_deployments
+                       WHERE target_node_id = $1
+                         AND state IN ('PENDING_NODE','DEPLOYING','RUNNING')
+                    )
+                    """,
+                    node_id,
+                )
+                return ReleaseResult(
+                    new_allocated=0,
+                    should_destroy=not bool(still_pending),
+                )
+
+    async def create_placeholder(
+        self,
+        *,
+        pool_id: UUID,
+        gpu_total: int,
+        initial_alloc: int,
+        agent_kind: str = "worker",
+    ) -> UUID:
+        """Insert a state='provisioning' placeholder for a pool whose
+        node hasn't booted yet. gpu_total is set upfront (from the pool's
+        per-node gpu_count) so concurrent co-waiters in PoolPlacer.place
+        can read free capacity correctly while the EC2 is mid-provision.
+        """
+        node_id = uuid4()
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO compute_inventory(
+                  id, pool_id, provider, provider_instance_id, hostname,
+                  node_name, agent_kind, gpu_total, gpu_allocated,
+                  vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
+                  state, metadata
+                )
+                VALUES (
+                  $1, $2,
+                  (SELECT provider FROM compute_pools WHERE id=$2),
+                  $3, '', $4, $5,
+                  $6, $7, 0, 0, 0, 0, 'provisioning', '{}'::jsonb
+                )
+                """,
+                node_id, pool_id,
+                f"placeholder:{node_id}",
+                f"node-{node_id}", agent_kind,
+                gpu_total, initial_alloc,
+            )
+        return node_id
 
 
 # ---------------------------------------------------------------------------
