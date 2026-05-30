@@ -46,12 +46,28 @@ def _job(spec: dict | None = None) -> ProvisioningJob:
     )
 
 
-def _ctx():
+def _ctx(aws_creds: object = object()):
+    # Default to a non-None sentinel — preflight now rejects aws_creds=None
+    # before reaching verify_credentials (which the tests mock anyway).
     return PhaseContext(
         repo=MagicMock(),
         db=MagicMock(),
         emit_event=AsyncMock(),
+        aws_creds=aws_creds,
     )
+
+
+@pytest.mark.asyncio
+async def test_none_aws_creds_raises_invalid_credentials():
+    """When the reconciler couldn't load AWS creds (load_aws_context
+    returned None), preflight must fail cleanly with InvalidCredentialsError
+    instead of crashing on None.access_key_id deep in boto3."""
+    from inferia.services.orchestration.services.provisioning.errors import (
+        InvalidCredentialsError,
+    )
+    with patch("shutil.which", return_value="/usr/local/bin/pulumi"):
+        with pytest.raises(InvalidCredentialsError):
+            await PreflightHandler().run(_job(), _ctx(aws_creds=None))
 
 
 @pytest.mark.asyncio

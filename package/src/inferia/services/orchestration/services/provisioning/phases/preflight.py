@@ -23,8 +23,9 @@ from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.cred
     verify_credentials,
 )
 from inferia.services.orchestration.services.provisioning.errors import (
-    AMINotFoundError, InvalidInstanceTypeError, InvalidSpecError,
-    PulumiCliMissingError, SecurityGroupNotFoundError, SubnetNotFoundError,
+    AMINotFoundError, InvalidCredentialsError, InvalidInstanceTypeError,
+    InvalidSpecError, PulumiCliMissingError, SecurityGroupNotFoundError,
+    SubnetNotFoundError,
 )
 from inferia.services.orchestration.services.provisioning.jobs.model import (
     Phase, PhaseResult, ProvisioningJob,
@@ -122,6 +123,16 @@ class PreflightHandler:
 
         # 5. Creds work.
         creds = ctx.aws_creds  # injected by the reconciler before dispatch
+        if creds is None:
+            # The reconciler's load_aws_context returned None — AWS creds are
+            # not configured (Settings -> Providers -> AWS) or load_aws_context
+            # was never wired. Fail cleanly instead of crashing on
+            # None.access_key_id deep inside boto3.
+            raise InvalidCredentialsError(
+                "AWS credentials are not configured for this organisation; "
+                "set them under Settings -> Providers -> AWS before deploying "
+                "to an AWS pool"
+            )
         identity = verify_credentials(creds)
         await ctx.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,

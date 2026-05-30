@@ -148,6 +148,7 @@ async def start_reconciler(
     lease_holder: str,
     poll_for_lock_s: float = 15.0,
     inventory_repo=None,
+    load_aws_context=None,
 ) -> None:
     """Single-active reconciler loop.
 
@@ -200,6 +201,7 @@ async def start_reconciler(
                     renew_interval_s=60.0,
                     lease_holder=lease_holder,
                     inventory_repo=inventory_repo,
+                    load_aws_context=load_aws_context,
                 )
                 run_task = asyncio.create_task(rec.run())
                 try:
@@ -593,6 +595,41 @@ async def serve():
                 # status, message, extra). Adapter forwards the db pool.
                 await _emit_event_to_db(db_pool, **kwargs)
 
+            async def _load_aws_context(job):
+                # Resolve AWS creds + the Pulumi env for a provisioning job.
+                # Without this, the reconciler injects aws_creds=None into
+                # PhaseContext and PreflightHandler.verify_credentials(None)
+                # crashes, while pulumi up runs with no AWS env. Loads the
+                # account-wide ProvidersConfig (Settings -> Providers -> AWS)
+                # and returns (AWSCredentials, env_dict). Returns (None, {})
+                # for non-AWS providers (GCP/Azure carry their own env via
+                # the legacy direct-adapter path).
+                provider = (getattr(job, "provider", None) or "").lower()
+                if provider and provider != "aws":
+                    return None, {}
+                from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+                    load_providers_config,
+                )
+                from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.credentials import (
+                    AWSCredentials, MissingCredentialsError, resolve_aws_env,
+                )
+                try:
+                    cfg = await load_providers_config()
+                    env = resolve_aws_env(cfg)
+                except MissingCredentialsError as e:
+                    # Creds not configured (Settings -> Providers -> AWS).
+                    # Return (None, {}) so PreflightHandler fails the job
+                    # cleanly with an actionable message instead of crashing
+                    # the reconciler worker loop in a tight retry.
+                    logger.warning("load_aws_context: AWS creds unavailable: %s", e)
+                    return None, {}
+                creds = AWSCredentials(
+                    access_key_id=env["AWS_ACCESS_KEY_ID"],
+                    secret_access_key=env["AWS_SECRET_ACCESS_KEY"],
+                    region=env["AWS_DEFAULT_REGION"],
+                )
+                return creds, env
+
             import socket as _socket  # local import keeps the optional dep narrow
 
             reconciler_stop = asyncio.Event()
@@ -606,6 +643,7 @@ async def serve():
                         f"inferia-app-{os.getpid()}-{_socket.gethostname()}"
                     ),
                     inventory_repo=inventory_repo,
+                    load_aws_context=_load_aws_context,
                 )
             )
             app.state.reconciler_stop = reconciler_stop

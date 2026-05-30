@@ -119,6 +119,12 @@ def build_ec2_program(
         pulumi.export("instance_id", instance.id)
         pulumi.export("public_dns", instance.public_dns)
         pulumi.export("private_ip", instance.private_ip)
+        # Export region + ami_id as plain literals so StackOutputs captures
+        # them. Without these, from_pulumi_outputs reads None and the
+        # PROVISIONING PhaseResult would clobber the region/ami_id that
+        # PreflightHandler already wrote into pulumi_stack_outputs.
+        pulumi.export("region", region)
+        pulumi.export("ami_id", ami_id)
 
     return _program
 

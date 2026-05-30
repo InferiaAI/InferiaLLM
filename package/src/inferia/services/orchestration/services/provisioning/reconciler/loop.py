@@ -172,9 +172,21 @@ class ProvisioningReconciler:
         aws_creds, pulumi_env = (None, {})
         if self.load_aws_context is not None:
             aws_creds, pulumi_env = await self.load_aws_context(job)
+        # Cold EC2 boot + a large GPU worker-image docker pull + nvidia
+        # toolkit install routinely exceeds the 600s default. Allow an env
+        # override so operators can raise it for GPU images without a
+        # rebuild. Falls back to PhaseContext's 600s default.
+        import os as _os
+        try:
+            _bootstrap_timeout = float(
+                _os.getenv("INFERIA_BOOTSTRAP_TIMEOUT_S", "") or 900.0
+            )
+        except (TypeError, ValueError):
+            _bootstrap_timeout = 900.0
         ctx = PhaseContext(
             repo=self.repo, db=self.db, emit_event=self.emit_event,
             aws_creds=aws_creds, pulumi_env=pulumi_env,
+            bootstrap_timeout_s=_bootstrap_timeout,
         )
 
         # Run the handler with lease renewal in parallel. We wrap the

@@ -29,7 +29,17 @@ class PulumiUpHandler:
 
     async def run(self, job: ProvisioningJob, ctx: PhaseContext) -> PhaseResult:
         stack_name = f"{job.org_id}-{job.pool_id}-{job.node_id}"
-        spec = job.spec
+        spec = dict(job.spec or {})
+        provider = (spec.get("provider") or getattr(job, "provider", None) or "aws").lower()
+
+        # AWS: mint a single-use bootstrap token + build the cloud-init
+        # user_data right before launch (provision-time, not deploy-time).
+        # The EC2 boots this script, runs the inferia-worker container, and
+        # the worker self-registers onto the placeholder's compute_inventory
+        # row so BootstrapHandler (which polls job.node_id) sees it go ready.
+        if provider == "aws" and not spec.get("user_data"):
+            spec = await self._inject_aws_bootstrap(job, ctx, spec)
+
         program = build_program(spec=spec, stack_outputs=job.pulumi_stack_outputs or {})
 
         await ctx.emit_event(
@@ -38,12 +48,32 @@ class PulumiUpHandler:
             message=f"Starting pulumi up on stack {stack_name}",
         )
 
+        # Pin Pulumi to a persistent LOCAL file backend. Without
+        # PULUMI_BACKEND_URL the automation API defaults to Pulumi Cloud and
+        # `pulumi up` fails / prompts for login. state_dir must persist so
+        # deprovision_node can reopen the stack to destroy it later.
+        import os as _os
+        from inferia.services.orchestration.config import settings
+        state_dir = settings.pulumi_state_dir
+        try:
+            _os.makedirs(state_dir, exist_ok=True)
+        except OSError:
+            # Best-effort — in production the container runs as root and the
+            # dir is writable; if not, run_pulumi_up_sync surfaces a clearer
+            # error. Don't crash the handler here (also lets tests that mock
+            # run_pulumi_up_sync run without a writable state dir).
+            pass
+        env = dict(ctx.pulumi_env or {})
+        env.setdefault("PULUMI_BACKEND_URL", f"file://{state_dir}")
+        env.setdefault("PULUMI_CONFIG_PASSPHRASE", settings.pulumi_passphrase or "")
+
         # Run in a thread — see feedback_pulumi_python_sdk_sync.
         outputs = await asyncio.to_thread(
             run_pulumi_up_sync,
             stack_name=stack_name,
             program=program,
-            env=ctx.pulumi_env,
+            env=env,
+            state_dir=state_dir,
         )
 
         await ctx.emit_event(
@@ -59,7 +89,69 @@ class PulumiUpHandler:
             outputs={
                 "instance_id": outputs.instance_id,
                 "public_dns": outputs.public_dns,
-                "region": outputs.region,
-                "ami_id": outputs.ami_id,
+                "private_ip": getattr(outputs, "private_ip", None),
+                # Only overwrite region/ami_id when the stack actually exported
+                # them — otherwise keep the values PreflightHandler resolved.
+                # (The '||' jsonb merge in transition_to would otherwise clobber
+                # good preflight values with None.)
+                **({"region": outputs.region} if outputs.region else {}),
+                **({"ami_id": outputs.ami_id} if outputs.ami_id else {}),
             },
         )
+
+    async def _inject_aws_bootstrap(
+        self, job: ProvisioningJob, ctx: PhaseContext, spec: dict,
+    ) -> dict:
+        """Mint a bootstrap token + build cloud-init user_data for an AWS
+        node, returning a spec augmented with ``user_data`` + ``bootstrap_id``.
+
+        node_name is the placeholder's own node_name (``node-<node_id>``) so
+        the worker's ON CONFLICT(pool_id, node_name) upsert updates the SAME
+        compute_inventory row job.node_id points at — without this the worker
+        creates a new row and BootstrapHandler's poll on the placeholder times
+        out forever.
+        """
+        from inferia.services.orchestration.services.worker_controller.auth import (
+            mint_bootstrap_token,
+        )
+        from inferia.services.orchestration.services.adapter_engine.adapters.aws.bootstrap_builder import (
+            build_user_data,
+        )
+        from inferia.services.orchestration.repositories.pool_repo import (
+            ComputePoolRepository,
+        )
+        from inferia.services.orchestration.config import settings
+
+        node_name = None
+        async with ctx.db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT node_name FROM compute_inventory WHERE id = $1",
+                job.node_id,
+            )
+            if row and row["node_name"]:
+                node_name = row["node_name"]
+        if not node_name:
+            node_name = f"node-{job.node_id}"
+
+        pool_repo = ComputePoolRepository(ctx.db)
+        inference_token = await pool_repo.get_or_generate_inference_token(
+            pool_id=job.pool_id,
+        )
+
+        async with ctx.db.acquire() as conn:
+            token, bootstrap_id = await mint_bootstrap_token(
+                conn, pool_id=job.pool_id, org_id=job.org_id,
+            )
+
+        user_data = build_user_data(
+            bootstrap_token=token,
+            control_plane_url=settings.control_plane_external_url,
+            node_name=node_name,
+            pool_id=str(job.pool_id),
+            image=settings.worker_image,
+            image_tag=str(spec.get("worker_image_tag") or settings.worker_image_tag or ""),
+            inference_token=inference_token,
+            instance_class=str(spec.get("instance_class") or "normal_gpu"),
+            gpu_count=int(spec.get("gpu_count") or 1),
+        )
+        return {**spec, "user_data": user_data, "bootstrap_id": str(bootstrap_id)}
