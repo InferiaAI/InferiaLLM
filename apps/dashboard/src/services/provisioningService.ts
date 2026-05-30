@@ -82,3 +82,8 @@ export const ALL_PHASES = [
   "prepare", "ami_lookup", "pulumi_init", "pulumi_up",
   "ec2_running", "cloud_init", "worker_bootstrap", "ready",
 ] as const;
+
+export async function retryProvisioning(nodeId: string): Promise<{ job_id: string; phase: string }> {
+  const res = await computeApi.post(`/nodes/${nodeId}/provisioning/retry`, {});
+  return res.data;
+}

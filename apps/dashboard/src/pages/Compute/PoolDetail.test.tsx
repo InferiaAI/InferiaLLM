@@ -4,6 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import PoolDetail from "./PoolDetail";
 
+// Stub NodeDetail so clicking into a node route renders a recognisable marker
+// instead of the real NodeDetail (which would need extra service mocks).
+vi.mock("./NodeDetail", () => ({
+  default: () => <div data-testid="node-detail-stub">NodeDetail</div>,
+}));
+
 // ---------------------------------------------------------------------------
 // Mocks — factories must not reference top-level variables (hoisting)
 // ---------------------------------------------------------------------------
@@ -43,8 +49,28 @@ vi.mock("@/components/nodes/ProvisioningStatus", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Fixture (declared after mocks)
+// Fixtures (declared after mocks)
 // ---------------------------------------------------------------------------
+
+const MOCK_NODE: import("@/services/nodeService").NodeView = {
+  id: "node-abc",
+  pool_id: "pool-123",
+  node_name: "worker-1",
+  agent_kind: "aws",
+  provider: "aws",
+  state: "provisioning",
+  labels: {},
+  advertise_url: null,
+  expose_url: null,
+  gpu_total: 1,
+  gpu_allocated: 0,
+  vcpu_total: 4,
+  vcpu_allocated: 0,
+  ram_gb_total: 16,
+  ram_gb_allocated: 0,
+  last_heartbeat: null,
+  provider_instance_id: "i-abc123",
+};
 
 const MOCK_POOL = {
   pool_id: "pool-123",
@@ -136,5 +162,58 @@ describe("PoolDetail", () => {
     await waitForPoolLoad();
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Delete Pool")).toBeInTheDocument();
+  });
+
+  it("node row links navigate to node-detail provisioning route", async () => {
+    const user = userEvent.setup();
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_NODE]);
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+
+    // Switch to Nodes tab
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    // Node name link should be present
+    await waitFor(() => {
+      expect(screen.getByText("worker-1")).toBeInTheDocument();
+    });
+
+    // The node name cell is a Link to the provisioning route
+    const nodeLink = screen.getByText("worker-1").closest("a");
+    expect(nodeLink).toHaveAttribute(
+      "href",
+      "/dashboard/compute/pools/pool-123/nodes/node-abc/provisioning",
+    );
+
+    // Quick-action "Status" link also points to provisioning
+    const statusLink = screen.getByText("Status").closest("a");
+    expect(statusLink).toHaveAttribute(
+      "href",
+      "/dashboard/compute/pools/pool-123/nodes/node-abc/provisioning",
+    );
+  });
+
+  it("deep-link to node sub-route renders NodeDetail without showing PoolDetail tabs", async () => {
+    render(
+      <MemoryRouter
+        initialEntries={["/dashboard/compute/pools/pool-123/nodes/node-abc/shell"]}
+      >
+        <Routes>
+          <Route
+            path="/dashboard/compute/pools/:id/*"
+            element={<PoolDetail />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // When the URL is a node sub-route, PoolDetail renders NodeDetail as a
+    // takeover — we should see our stub but NOT the pool tab buttons.
+    await waitFor(() => {
+      expect(screen.getByTestId("node-detail-stub")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument();
   });
 });

@@ -5,17 +5,16 @@ import {
   useNavigate,
   Routes,
   Route,
+  useLocation,
 } from "react-router-dom";
-import { RefreshCw, ChevronRight, ScrollText, Terminal } from "lucide-react";
+import { RefreshCw, ChevronRight, ScrollText, Terminal, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { getPool, deletePool, type PoolView } from "@/services/poolService";
 import { listNodes, type NodeView } from "@/services/nodeService";
-import NodeLogs from "@/components/nodes/NodeLogs";
-import NodeShell from "@/components/nodes/NodeShell";
-import ProvisioningStatus from "@/components/nodes/ProvisioningStatus";
 import { computeApi } from "@/lib/api";
+import NodeDetail from "./NodeDetail";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,8 +33,21 @@ interface DeploymentRow {
 // ---------------------------------------------------------------------------
 export default function PoolDetail() {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
+
+  // If the current URL is inside a node sub-route, render NodeDetail as full
+  // content-area takeover so deep-links and refreshes work regardless of
+  // activeTab. Pattern: /compute/pools/:id/nodes/:nid/...
+  const isNodeSubRoute = /\/nodes\/[^/]+/.test(location.pathname);
+  if (isNodeSubRoute) {
+    return (
+      <Routes>
+        <Route path="nodes/:nid/*" element={<NodeDetail />} />
+      </Routes>
+    );
+  }
   const canDelete = hasPermission("deployment:delete");
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -299,27 +311,7 @@ export default function PoolDetail() {
         {/* ----------------------------------------------------------------- */}
         {activeTab === "nodes" && (
           <div className="space-y-4">
-            {/* Nested routes for shell / logs / provisioning */}
-            <Routes>
-              <Route
-                path="nodes/:nid/logs"
-                element={<NodeSubView mode="logs" />}
-              />
-              <Route
-                path="nodes/:nid/shell"
-                element={<NodeSubView mode="shell" />}
-              />
-              <Route
-                path="nodes/:nid/provisioning"
-                element={<NodeSubView mode="provisioning" />}
-              />
-              <Route
-                path="*"
-                element={
-                  <NodeList nodes={nodes} poolId={id ?? ""} />
-                }
-              />
-            </Routes>
+            <NodeList nodes={nodes} poolId={id ?? ""} />
           </div>
         )}
 
@@ -505,69 +497,74 @@ function NodeList({
           </tr>
         </thead>
         <tbody className="divide-y">
-          {nodes.map((n) => (
-            <tr
-              key={n.id}
-              className="bg-background hover:bg-muted/50 transition-colors"
-            >
-              <td className="px-6 py-4">
-                <div className="font-mono text-xs">
-                  {n.node_name || n.id.slice(0, 8)}
-                </div>
-                <div className="text-xs text-muted-foreground">{n.id}</div>
-              </td>
-              <td className="px-6 py-4">
-                <span
-                  className={cn(
-                    "inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium",
-                    n.state === "ready"
-                      ? "border-ember-500/20 text-ember-600 bg-ember-500/10"
-                      : n.state === "terminated"
-                        ? "border-red-500/20 text-red-600 bg-red-500/10"
-                        : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
-                  )}
-                >
-                  {n.state}
-                </span>
-              </td>
-              <td className="px-6 py-4 font-mono text-xs">
-                {n.gpu_allocated ?? 0}/{n.gpu_total ?? 0}
-              </td>
-              <td className="px-6 py-4">
-                <div className="flex items-center gap-2">
+          {nodes.map((n) => {
+            const detailBase = `/dashboard/compute/pools/${poolId}/nodes/${n.id}`;
+            return (
+              <tr
+                key={n.id}
+                className="bg-background hover:bg-muted/50 transition-colors cursor-pointer"
+                onClick={() => {
+                  window.location.href = `${detailBase}/provisioning`;
+                }}
+              >
+                <td className="px-6 py-4">
                   <Link
-                    to={`/dashboard/compute/pools/${poolId}/nodes/${n.id}/shell`}
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                    to={`${detailBase}/provisioning`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="font-mono text-xs text-ember-600 hover:text-ember-700"
                   >
-                    <Terminal className="w-3.5 h-3.5" /> Shell
+                    {n.node_name || n.id.slice(0, 8)}
                   </Link>
-                  <Link
-                    to={`/dashboard/compute/pools/${poolId}/nodes/${n.id}/logs`}
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  <div className="text-xs text-muted-foreground">{n.id}</div>
+                </td>
+                <td className="px-6 py-4">
+                  <span
+                    className={cn(
+                      "inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium",
+                      n.state === "ready"
+                        ? "border-ember-500/20 text-ember-600 bg-ember-500/10"
+                        : n.state === "terminated"
+                          ? "border-red-500/20 text-red-600 bg-red-500/10"
+                          : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
+                    )}
                   >
-                    <ScrollText className="w-3.5 h-3.5" /> Logs
-                  </Link>
-                </div>
-              </td>
-            </tr>
-          ))}
+                    {n.state}
+                  </span>
+                </td>
+                <td className="px-6 py-4 font-mono text-xs">
+                  {n.gpu_allocated ?? 0}/{n.gpu_total ?? 0}
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      to={`${detailBase}/provisioning`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <Activity className="w-3.5 h-3.5" /> Status
+                    </Link>
+                    <Link
+                      to={`${detailBase}/shell`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <Terminal className="w-3.5 h-3.5" /> Shell
+                    </Link>
+                    <Link
+                      to={`${detailBase}/logs`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <ScrollText className="w-3.5 h-3.5" /> Logs
+                    </Link>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function NodeSubView({ mode }: { mode: "shell" | "logs" | "provisioning" }) {
-  const { nid } = useParams<{ nid: string }>();
-  if (!nid) return null;
-  if (mode === "shell") {
-    return <NodeShell nodeId={nid} nodeState="ready" currentPhase={null} />;
-  }
-  if (mode === "logs") {
-    return <NodeLogs nodeId={nid} nodeProvider={undefined} nodeState="ready" />;
-  }
-  if (mode === "provisioning") {
-    return <ProvisioningStatus summary={null as any} attemptCount={0} />;
-  }
-  return null;
-}
