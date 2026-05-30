@@ -65,6 +65,11 @@ async def test_enqueue_inserts_and_returns_job_id():
     conn.fetchval.assert_awaited_once()
     sql = conn.fetchval.await_args.args[0]
     assert "INSERT INTO provisioning_jobs" in sql
+    # Regression: jobs must enqueue in 'preflight' (not 'pending') — there
+    # is no handler for the 'pending' phase, so a pending job is claimed and
+    # immediately fails UNCLASSIFIED. PreflightHandler is the first phase.
+    assert "'preflight'" in sql
+    assert "'pending'" not in sql
 
 
 @pytest.mark.asyncio

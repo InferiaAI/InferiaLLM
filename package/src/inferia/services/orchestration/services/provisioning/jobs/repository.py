@@ -54,7 +54,13 @@ class ProvisioningJobRepository:
         provider: str,
         spec: dict[str, Any],
     ) -> UUID:
-        """Insert a new pending job, return its id."""
+        """Insert a new job in the 'preflight' phase, return its id.
+
+        Initial phase is 'preflight' (not 'pending') so the reconciler's
+        PreflightHandler picks it up on the next tick. There is no
+        registered handler for 'pending' — claiming a pending job
+        causes an immediate UNCLASSIFIED failure.
+        """
         job_id = uuid.uuid4()
         async with self.db.acquire() as conn:
             await conn.fetchval(
@@ -63,7 +69,7 @@ class ProvisioningJobRepository:
                     id, node_id, pool_id, org_id, provider, spec,
                     phase, attempt_count, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'pending', 0, now(), now())
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'preflight', 0, now(), now())
                 RETURNING id
                 """,
                 job_id, node_id, pool_id, org_id, provider, json.dumps(spec or {}),

@@ -14,6 +14,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+def test_reconciler_lock_key_fits_signed_bigint():
+    """pg_try_advisory_lock takes a signed bigint. RECONCILER_LOCK_KEY must
+    fit in [-(2^63), 2^63-1] or asyncpg fails to encode it and the advisory
+    lock call raises — silently crashing the reconciler before it ever
+    claims a job (regression: the previous 0xD1F2... value overflowed)."""
+    from inferia.services.orchestration.server import RECONCILER_LOCK_KEY
+
+    assert -(2 ** 63) <= RECONCILER_LOCK_KEY <= (2 ** 63) - 1
+
+
 @pytest.mark.asyncio
 async def test_reconciler_starts_on_app_startup_and_holds_advisory_lock():
     """Starting the orchestration app starts a ProvisioningReconciler task

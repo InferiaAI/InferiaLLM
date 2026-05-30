@@ -124,14 +124,32 @@ class ProvisioningJob(BaseModel):
 
     @classmethod
     def from_row(cls, row: Any) -> "ProvisioningJob":
-        """Build from an asyncpg.Record or dict-like mapping."""
+        """Build from an asyncpg.Record or dict-like mapping.
+
+        asyncpg returns jsonb columns as raw JSON strings when a custom
+        codec isn't registered. Decode `spec` and `pulumi_stack_outputs`
+        if they came back as strings so Pydantic's dict validators
+        accept them.
+        """
+        import json as _json
+
+        def _as_dict(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                try:
+                    return _json.loads(v) if v else None
+                except (ValueError, TypeError):
+                    return None
+            return v
+
         return cls(
             id=row["id"],
             node_id=row["node_id"],
             pool_id=row["pool_id"],
             org_id=row["org_id"],
             provider=row["provider"],
-            spec=row["spec"] or {},
+            spec=_as_dict(row["spec"]) or {},
             phase=Phase(row["phase"]),
             attempt_count=row["attempt_count"],
             next_attempt_after=row["next_attempt_after"],
@@ -141,7 +159,7 @@ class ProvisioningJob(BaseModel):
             error_class=ErrorClass(row["error_class"]) if row["error_class"] else None,
             lease_holder=row["lease_holder"],
             lease_expires_at=row["lease_expires_at"],
-            pulumi_stack_outputs=row["pulumi_stack_outputs"],
+            pulumi_stack_outputs=_as_dict(row["pulumi_stack_outputs"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

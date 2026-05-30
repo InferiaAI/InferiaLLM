@@ -162,6 +162,52 @@ def test_provisioning_job_roundtrip_from_row():
     assert job.attempt_count == 1
 
 
+def test_provisioning_job_from_row_decodes_jsonb_string_spec():
+    """asyncpg returns jsonb columns as raw JSON strings when no codec is
+    registered. from_row must decode `spec` / `pulumi_stack_outputs`
+    strings so Pydantic's dict validators accept them (regression: the
+    reconciler crashed with 'Input should be a valid dictionary' on every
+    claim because spec arrived as a str)."""
+    row = {
+        "id": uuid.uuid4(),
+        "node_id": uuid.uuid4(),
+        "pool_id": uuid.uuid4(),
+        "org_id": "org-1",
+        "provider": "aws",
+        "spec": '{"instance_type": "g6.xlarge", "region": "us-east-1"}',
+        "phase": "preflight",
+        "attempt_count": 0,
+        "next_attempt_after": None,
+        "last_error_code": None,
+        "last_error_message": None,
+        "last_error_hint": None,
+        "error_class": None,
+        "lease_holder": None,
+        "lease_expires_at": None,
+        "pulumi_stack_outputs": '{"ami_id": "ami-123"}',
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    job = ProvisioningJob.from_row(row)
+    assert job.spec == {"instance_type": "g6.xlarge", "region": "us-east-1"}
+    assert job.pulumi_stack_outputs == {"ami_id": "ami-123"}
+
+
+def test_provisioning_job_from_row_handles_empty_and_bad_json():
+    """Empty-string / malformed jsonb degrade to None/{} without raising."""
+    base = {
+        "id": uuid.uuid4(), "node_id": uuid.uuid4(), "pool_id": uuid.uuid4(),
+        "org_id": "o", "provider": "aws", "phase": "preflight",
+        "attempt_count": 0, "next_attempt_after": None,
+        "last_error_code": None, "last_error_message": None,
+        "last_error_hint": None, "error_class": None, "lease_holder": None,
+        "lease_expires_at": None, "created_at": _now(), "updated_at": _now(),
+    }
+    job = ProvisioningJob.from_row({**base, "spec": "", "pulumi_stack_outputs": "not json"})
+    assert job.spec == {}
+    assert job.pulumi_stack_outputs is None
+
+
 def test_provisioning_job_phase_is_terminal_proxy():
     row = _row_with(phase="ready")
     assert ProvisioningJob.from_row(row).phase.is_terminal

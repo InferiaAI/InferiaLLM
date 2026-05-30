@@ -131,7 +131,12 @@ async def create_db_pool():
 # inferia orchestration replicas pointing at the same DB so only one process
 # runs the reconciler loop. Postgres auto-releases the lock when the holding
 # connection drops, so a crashed inferia-app can't lock out its replacement.
-RECONCILER_LOCK_KEY = 0xD1F24B3EC7A91100
+# Advisory lock key for the single-active reconciler.
+# Must fit in a signed bigint (Postgres `pg_try_advisory_lock(bigint)`).
+# The previous value (0xD1F24B3EC7A91100) overflowed int64 and asyncpg
+# silently failed the encode → reconciler crashed before acquiring the
+# lock → no provisioning ever ran. Top bit cleared to stay positive.
+RECONCILER_LOCK_KEY = 0x51F24B3EC7A91100
 
 
 async def start_reconciler(
