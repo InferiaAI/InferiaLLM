@@ -74,8 +74,15 @@ async def _seed_pool(
     provider: str = "aws",
     lifecycle_state: str = "running",
     metadata: dict | None = None,
+    instance_type: str = "g6.xlarge",  # must be a real catalog type for AWS
+    region: str = "us-east-1",
 ) -> UUID:
-    """Insert a compute_pool row, return its UUID."""
+    """Insert a compute_pool row, return its UUID.
+
+    For AWS, allowed_gpu_types[0] must be a real EC2 instance type that the
+    instance catalog knows (g6.xlarge -> normal_gpu), and region_constraint
+    must be set, or _build_provisioning_spec fails the deploy with 422.
+    """
     org_id = uuid4()
     pool_id = uuid4()
     meta_json = json.dumps(metadata or {})
@@ -89,13 +96,14 @@ async def _seed_pool(
                    id, pool_name, owner_type, owner_id, provider, pool_type,
                    allowed_gpu_types, max_cost_per_hour, scheduling_policy,
                    provider_pool_id, is_active, lifecycle_state, gpu_count,
-                   max_nodes, metadata
+                   max_nodes, metadata, region_constraint
                )
                VALUES ($1, $2, 'organization', $3::text, $4, 'cluster',
-                       ARRAY['none'], 0, '{}', $5, true, $6, $7, $8, $9::jsonb)""",
+                       ARRAY[$10], 0, '{}', $5, true, $6, $7, $8, $9::jsonb,
+                       ARRAY[$11])""",
             pool_id, f"p-{pool_id}", str(org_id), provider,
             f"placeholder:{pool_id}", lifecycle_state, gpu_count, max_nodes,
-            meta_json,
+            meta_json, instance_type, region,
         )
     return pool_id
 
@@ -319,3 +327,71 @@ async def test_deploy_duplicate_model_name_in_org_returns_409(app_and_pool):
         })
         assert r2.status_code == 409, r2.text
         assert "already exists" in r2.text
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _build_provisioning_spec (the AWS spec builder)
+# ---------------------------------------------------------------------------
+
+class _Decision:
+    """Minimal stand-in for PoolPlacer.ColdStart."""
+    def __init__(self, provider="aws", gpu_total_per_node=1):
+        self.provider = provider
+        self.gpu_total_per_node = gpu_total_per_node
+
+
+async def test_build_provisioning_spec_derives_instance_class_and_region():
+    """instance_class is catalog-derived (single source of truth); region
+    comes from the pool's region_constraint."""
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["g6.xlarge"],
+        "provider_pool_id": "aws/g6.xlarge",
+        "region_constraint": ["us-east-1"],
+    }
+    spec = await deployment_server._build_provisioning_spec(
+        pool_row=pool_row, pool_meta={}, decision=_Decision(), org_id="org-1",
+    )
+    assert spec["provider"] == "aws"
+    assert spec["instance_type"] == "g6.xlarge"
+    assert spec["instance_class"] == "normal_gpu"  # catalog-derived
+    assert spec["region"] == "us-east-1"
+    assert spec["gpu_count"] == 1
+
+
+async def test_build_provisioning_spec_unknown_instance_type_raises_422():
+    from fastapi import HTTPException
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["totally-fake.42xlarge"],
+        "provider_pool_id": "aws/totally-fake.42xlarge",
+        "region_constraint": ["us-east-1"],
+    }
+    with pytest.raises(HTTPException) as exc:
+        await deployment_server._build_provisioning_spec(
+            pool_row=pool_row, pool_meta={}, decision=_Decision(), org_id="o",
+        )
+    assert exc.value.status_code == 422
+    assert "catalog" in str(exc.value.detail).lower()
+
+
+async def test_build_provisioning_spec_includes_pool_metadata_overrides():
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["g6.xlarge"],
+        "provider_pool_id": "aws/g6.xlarge",
+        "region_constraint": ["us-west-2"],
+    }
+    meta = {
+        "subnet_id": "subnet-abc",
+        "security_group_ids": ["sg-123"],
+        "iam_instance_profile": "arn:aws:iam::1:instance-profile/x",
+        "root_volume_gb": 200,
+    }
+    spec = await deployment_server._build_provisioning_spec(
+        pool_row=pool_row, pool_meta=meta, decision=_Decision(), org_id="o",
+    )
+    assert spec["subnet_id"] == "subnet-abc"
+    assert spec["security_group_ids"] == ["sg-123"]
+    assert spec["iam_instance_profile"].endswith("/x")
+    assert spec["root_volume_gb"] == 200

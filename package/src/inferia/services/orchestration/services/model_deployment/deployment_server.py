@@ -272,6 +272,107 @@ def _model_spec_from_request(req: "DeployModelRequest") -> dict:
     }
 
 
+async def _build_provisioning_spec(
+    *, pool_row, pool_meta: dict, decision, org_id,
+) -> dict:
+    """Build the provisioning-job spec for a ColdStart enqueue.
+
+    For AWS this derives the full spec the reconciler's PreflightHandler +
+    PulumiUpHandler need:
+      - instance_type: pool.allowed_gpu_types[0] (fallback: tail of
+        provider_pool_id, or pool_meta.instance_type)
+      - instance_class: derived from the AWS instance catalog (single source
+        of truth — never trust a separately-stored value)
+      - region: pool.region_constraint[0] -> pool_meta.region -> account-wide
+        ProvidersConfig.cloud.aws.region
+      - optional per-pool overrides (subnet/SG/IAM/AMI/root volume/image tag)
+
+    Raises HTTPException(422) when instance_type / instance_class / region
+    cannot be resolved, so the operator gets an actionable error at deploy
+    time instead of an opaque INVALID_SPEC on the async job they never see.
+
+    For non-AWS providers it returns the legacy minimal spec (those clouds
+    still use the direct-adapter provisioning path, not this reconciler).
+    """
+    provider = (getattr(decision, "provider", None) or "aws").lower()
+    gpu_count = getattr(decision, "gpu_total_per_node", None) or 0
+    org_str = str(org_id) if org_id else None
+    pool_id = pool_row.get("id") if hasattr(pool_row, "get") else pool_row["id"]
+
+    if provider != "aws":
+        return {
+            "provider": provider,
+            "pool_id": str(pool_id),
+            "org_id": org_str,
+            "instance_type": pool_meta.get("instance_type"),
+            "region": pool_meta.get("region"),
+            "gpu_count": gpu_count,
+        }
+
+    from inferia.services.orchestration.services.adapter_engine.adapters.aws.instance_catalog import (
+        lookup as _catalog_lookup,
+    )
+
+    allowed = list(pool_row.get("allowed_gpu_types") or [])
+    instance_type = (allowed[0] if allowed else None) or pool_meta.get("instance_type")
+    if not instance_type:
+        ppid = pool_row.get("provider_pool_id") or ""
+        if "/" in ppid:
+            instance_type = ppid.rsplit("/", 1)[-1]
+    if not instance_type:
+        raise HTTPException(
+            status_code=422,
+            detail="AWS pool has no instance type configured (allowed_gpu_types)",
+        )
+
+    it = _catalog_lookup(instance_type)
+    if it is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"instance type {instance_type!r} is not in the AWS "
+                    f"catalog; pick a supported type when creating the pool"),
+        )
+    instance_class = it.cls
+
+    rc = pool_row.get("region_constraint")
+    region = (rc[0] if rc else None) or pool_meta.get("region")
+    if not region:
+        # Fall back to the account-wide AWS region (Settings -> Providers).
+        try:
+            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+                load_providers_config,
+            )
+            cfg = await load_providers_config()
+            region = cfg.cloud.aws.region
+        except Exception:
+            region = None
+    if not region:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"AWS pool for {instance_type} has no region configured; "
+                    f"set a region on the pool or in Settings -> Providers -> AWS"),
+        )
+
+    spec = {
+        "provider": "aws",
+        "pool_id": str(pool_id),
+        "org_id": org_str,
+        "instance_type": instance_type,
+        "instance_class": instance_class,
+        "region": region,
+        "gpu_count": gpu_count,
+    }
+    # Optional per-pool overrides — only included when set so build_ec2_program
+    # falls back to its safe defaults (synthesised SG, default VPC, etc.).
+    for key in ("subnet_id", "security_group_ids", "security_group_id",
+                "iam_instance_profile", "ami_id", "root_volume_gb",
+                "worker_image_tag"):
+        val = pool_meta.get(key)
+        if val not in (None, "", []):
+            spec[key] = val
+    return spec
+
+
 router = APIRouter(prefix="/deployment", tags=["Deployment"])
 
 POOL_STATE_RUNNING = "running"
@@ -391,6 +492,7 @@ class CreatePoolRequest(BaseModel):
         None  # Generic: which credential to use for this provider
     )
     gpu_count: int = 1  # Number of GPUs per node (for cluster provisioning)
+    region_constraint: list[str] | None = None  # e.g. ["us-east-1"]; the region EC2/Pulumi launches in
     metadata: Optional[dict[str, Any]] = None  # Provider-specific pool config (e.g. AWS subnet_id)
 
 
@@ -999,13 +1101,10 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                                     "pool_id": pool_id_uuid,
                                     "org_id": str(req.org_id) if req.org_id else "",
                                     "provider": decision.provider,
-                                    "spec": {
-                                        "pool_id": str(pool_id_uuid),
-                                        "org_id": str(req.org_id) if req.org_id else None,
-                                        "instance_type": pool_meta.get("instance_type"),
-                                        "region": pool_meta.get("region"),
-                                        "gpu_count": decision.gpu_total_per_node,
-                                    },
+                                    "spec": await _build_provisioning_spec(
+                                        pool_row=pool_row, pool_meta=pool_meta,
+                                        decision=decision, org_id=req.org_id,
+                                    ),
                                 }
                     else:
                         # first allocate_gpu succeeded — BindToReady warm path
@@ -1059,13 +1158,10 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                             "pool_id": pool_id_uuid,
                             "org_id": str(req.org_id) if req.org_id else "",
                             "provider": decision.provider,
-                            "spec": {
-                                "pool_id": str(pool_id_uuid),
-                                "org_id": str(req.org_id) if req.org_id else None,
-                                "instance_type": pool_meta.get("instance_type"),
-                                "region": pool_meta.get("region"),
-                                "gpu_count": decision.gpu_total_per_node,
-                            },
+                            "spec": await _build_provisioning_spec(
+                                pool_row=pool_row, pool_meta=pool_meta,
+                                decision=decision, org_id=req.org_id,
+                            ),
                         }
 
     except PoolAtCapacity as e:
@@ -1601,6 +1697,11 @@ async def create_pool(req: CreatePoolRequest, request: Request):
         "lifecycle_state": "running",
         "gpu_count": req.gpu_count or 1,
     }
+    if req.region_constraint:
+        # Persist the region so deploy-time provisioning can read it. Without
+        # this the AWS provisioning spec has no region and preflight fails
+        # with "spec is missing required field: region".
+        pool_data["region_constraint"] = list(req.region_constraint)
     if req.provider_credential_name:
         # validate credential exists if specified
         ok = await pool_repo.credential_exists(
