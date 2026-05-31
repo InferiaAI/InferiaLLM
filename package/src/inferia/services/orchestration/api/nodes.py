@@ -459,11 +459,17 @@ async def get_provisioning(
     aws_metadata: dict[str, Any] | None = None
     if row.get("provider") == "aws":
         outs = (getattr(job, "pulumi_stack_outputs", None) or {}) if job else {}
+        spec = (getattr(job, "spec", None) or {}) if job else {}
+        # instance_class / instance_type live in the JOB spec (the placeholder
+        # inventory row doesn't carry them); region / ami_id come from spec
+        # at enqueue and from the Pulumi stack outputs once PulumiUpHandler
+        # merges them in. Prefer outputs, fall back to spec so the EC2 tab
+        # shows class/type/region before the stack finishes.
         aws_metadata = {
-            "instance_class": row.get("instance_class"),
-            "instance_type":  row.get("instance_type"),
-            "region":         outs.get("region"),
-            "ami_id":         outs.get("ami_id"),
+            "instance_class": row.get("instance_class") or spec.get("instance_class"),
+            "instance_type":  row.get("instance_type") or spec.get("instance_type"),
+            "region":         outs.get("region") or spec.get("region"),
+            "ami_id":         outs.get("ami_id") or spec.get("ami_id"),
             "instance_id":    outs.get("instance_id"),
             "public_dns":     outs.get("public_dns"),
         }
