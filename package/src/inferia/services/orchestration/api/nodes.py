@@ -32,6 +32,7 @@ from inferia.services.orchestration.repositories.inventory_repo import (
     NodeNotFoundError,
     NodeTerminatedError,
 )
+from inferia.services.orchestration.services.provisioning.jobs.model import Phase
 
 logger = logging.getLogger("inferia.nodes_api")
 router = APIRouter(prefix="/v1/nodes")
@@ -296,68 +297,59 @@ async def delete_node(
     if not existing:
         raise HTTPException(404, "node not found")
     provider = existing.get("provider")
-    pool_id = existing.get("pool_id")
 
-    # T26: if a non-terminal provisioning job exists for this node, mark
-    # it for cancellation and return 204. The reconciler's CancelHandler
-    # owns the actual teardown (pulumi destroy + state machine progress).
-    # This path supersedes the legacy AWS destroy spawn below because the
-    # state machine is the new authoritative driver for terminating
-    # AWS nodes that went through the provisioning_jobs queue.
     try:
         nuuid = uuid.UUID(str(node_id))
     except (ValueError, TypeError):
         nuuid = None
-    if _deps.provisioning_repo is not None and nuuid is not None and hasattr(
-        _deps.provisioning_repo, "get_by_node",
+
+    # Route teardown through the provisioning reconciler's CancelHandler.
+    # It is the ONLY code that destroys the node-scoped stack
+    # `inferia-<node_id>` with the same local Pulumi backend PulumiUpHandler
+    # created it under. AWS EC2s are ALWAYS reconciler-created (the direct
+    # adapter refuses to provision), so any node with a live instance has a
+    # provisioning_jobs row. The previous direct-adapter destroy keyed on
+    # pool_id -> stack `inferia-pool-<pool_id>`, a stack that never existed;
+    # `run_pulumi_destroy_sync` swallows "no stack named" as success, so the
+    # real EC2 LEAKED while the row flipped to terminated. force_cancel +
+    # CancelHandler fixes that for every delete path.
+    if (
+        _deps.provisioning_repo is not None
+        and nuuid is not None
+        and hasattr(_deps.provisioning_repo, "get_by_node")
     ):
         job = await _deps.provisioning_repo.get_by_node(node_id=nuuid)
-        if job is not None and not job.phase.is_terminal:
-            await _deps.provisioning_repo.request_cancel(node_id=nuuid)
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-        # Terminal job → fall through to the idempotent soft-delete path
-        # below. We do NOT re-spawn pulumi destroy for terminal jobs;
-        # the CancelHandler already ran (or the job failed terminally
-        # without ever spinning up infra, in which case there is nothing
-        # to destroy).
-        if job is not None and job.phase.is_terminal:
-            await _deps.inventory_repo.set_state(
-                node_id=node_id, state="terminated",
+        if job is not None:
+            if job.phase == Phase.TERMINATED:
+                # The stack was already destroyed by a prior cancel; just
+                # drop the inventory row. Nothing left to tear down.
+                await _deps.inventory_repo.set_state(
+                    node_id=node_id, state="terminated",
+                )
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
+            # Any non-terminated job (in-flight, READY, or FAILED-after-up)
+            # may own a live EC2. Flip it to 'cancelling' so the reconciler
+            # destroys the correct stack, and surface 'terminating' to the
+            # dashboard immediately.
+            await _deps.provisioning_repo.force_cancel(node_id=nuuid)
+            if hasattr(_deps.inventory_repo, "mark_terminating_node"):
+                await _deps.inventory_repo.mark_terminating_node(node_id=node_id)
+            return Response(
+                content=__import__("json").dumps(
+                    {"node_id": str(node_id), "state": "terminating"},
+                ),
+                media_type="application/json",
+                status_code=status.HTTP_202_ACCEPTED,
             )
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        # job is None: no reconciler stack exists for this node (AWS infra is
+        # always reconciler-created), so there is nothing to destroy — fall
+        # through to the idempotent soft-delete.
 
-    # AWS nodes must destroy the underlying EC2 stack before the row
-    # disappears from inventory. Non-AWS providers (worker/on_prem,
-    # nosana, akash, gcp/azure for now) keep the original soft-delete
-    # 204 behaviour.
-    if provider == "aws" and _deps.db_pool is not None and pool_id:
-        from inferia.services.orchestration.services.adapter_engine import (
-            aws_deprovision,
-        )
-        # Synchronous flip to terminating so the dashboard sees the
-        # state transition immediately. mark_terminating_node falls
-        # back to soft_delete_node when the inventory repo predates
-        # the new state — defensive against partial deploys.
-        if hasattr(_deps.inventory_repo, "mark_terminating_node"):
-            await _deps.inventory_repo.mark_terminating_node(node_id=node_id)
-        aws_deprovision._spawn_destroy(
-            pool_id=str(pool_id),
-            node_id=str(node_id),
-            db_pool=_deps.db_pool,
-        )
-        return Response(
-            content=__import__("json").dumps(
-                {"node_id": str(node_id), "state": "terminating"},
-            ),
-            media_type="application/json",
-            status_code=status.HTTP_202_ACCEPTED,
-        )
-
-    # Non-AWS path (or AWS with no db_pool / pool_id available).
-    if provider == "aws":
+    if provider == "aws" and _deps.provisioning_repo is None:
         logger.warning(
-            "AWS node %s deleted without destroy: db_pool=%s pool_id=%s",
-            node_id, _deps.db_pool is not None, pool_id,
+            "AWS node %s deleted without reconciler routing: provisioning_repo "
+            "is unwired; cannot guarantee EC2 teardown via the state machine",
+            node_id,
         )
     await _deps.inventory_repo.soft_delete_node(node_id=node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -240,6 +240,57 @@ async def test_request_cancel_returns_false_when_already_terminal():
 
 
 @pytest.mark.asyncio
+async def test_force_cancel_flips_even_ready_job_to_cancelling():
+    # Unlike request_cancel (non-terminal only), force_cancel must flip a
+    # READY or FAILED job — those have a live EC2 stack that the
+    # CancelHandler needs to destroy. Only already-cancelling/terminated
+    # jobs are skipped.
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 1")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    ok = await repo.force_cancel(node_id=uuid.uuid4())
+    assert ok is True
+    sql = " ".join(conn.execute.await_args.args[0].split())
+    assert "phase = 'cancelling'" in sql
+    assert "phase NOT IN ('cancelling', 'terminated')" in sql
+    # Must NOT use the non-terminal whitelist that request_cancel uses.
+    assert "'pending','preflight'" not in sql.replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_force_cancel_returns_false_when_no_live_job():
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 0")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    ok = await repo.force_cancel(node_id=uuid.uuid4())
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_force_cancel_pool_flips_all_live_jobs_and_returns_count():
+    # Tearing down a whole pool: every node's job (any live phase) flips to
+    # cancelling so the reconciler destroys each inferia-<node_id> stack.
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 3")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    n = await repo.force_cancel_pool(pool_id=uuid.uuid4())
+    assert n == 3
+    sql = " ".join(conn.execute.await_args.args[0].split())
+    assert "phase = 'cancelling'" in sql
+    assert "pool_id = $1" in sql
+    assert "phase NOT IN ('cancelling', 'terminated')" in sql
+
+
+@pytest.mark.asyncio
+async def test_force_cancel_pool_returns_zero_when_no_jobs():
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 0")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    n = await repo.force_cancel_pool(pool_id=uuid.uuid4())
+    assert n == 0
+
+
+@pytest.mark.asyncio
 async def test_reset_for_retry_returns_job_and_clears_error_fields():
     row = _row(phase="pending", attempt_count=0)
     conn = MagicMock()

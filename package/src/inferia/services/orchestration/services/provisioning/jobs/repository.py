@@ -34,6 +34,14 @@ def _affected_one(status: str) -> bool:
     return len(parts) == 2 and parts[1] == "1"
 
 
+def _affected_count(status: str) -> int:
+    """Trailing rowcount of an asyncpg command-status string, or 0."""
+    parts = status.rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return int(parts[1])
+    return 0
+
+
 class ProvisioningJobRepository:
     """Wraps a database pool. The `db` argument must expose `.acquire()`
     as an async context manager that yields an asyncpg connection — this
@@ -265,6 +273,62 @@ class ProvisioningJobRepository:
                 node_id,
             )
         return _affected_one(res)
+
+    async def force_cancel(self, *, node_id: UUID) -> bool:
+        """Flip a node's job to 'cancelling' from ANY phase except an
+        already-cancelling/terminated one — including the terminal READY
+        and FAILED phases.
+
+        ``request_cancel`` only covers in-flight jobs. But a deleted node
+        whose job already reached READY (or FAILED after a successful
+        ``pulumi up``) still has a live EC2 under stack
+        ``inferia-<node_id>``; the reconciler's CancelHandler is the only
+        code that destroys that exact stack with the matching local
+        backend. Routing UI/API deletes through here (rather than the
+        pool-scoped direct-adapter path, which targets a stack that never
+        existed and silently leaks the EC2) is what actually terminates
+        the instance. Returns True if a row was flipped, else False
+        (no job, or already cancelling/terminated)."""
+        async with self.db.acquire() as conn:
+            res = await conn.execute(
+                """
+                UPDATE provisioning_jobs
+                SET phase = 'cancelling',
+                    next_attempt_after = NULL,
+                    lease_holder = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = now()
+                WHERE node_id = $1
+                  AND phase NOT IN ('cancelling', 'terminated')
+                """,
+                node_id,
+            )
+        return _affected_one(res)
+
+    async def force_cancel_pool(self, *, pool_id: UUID) -> int:
+        """Flip EVERY live job in a pool to 'cancelling' so the reconciler
+        destroys each node's EC2 stack. Used when a whole pool is
+        stopped/deleted from the UI. Returns the number of jobs flipped.
+
+        Mirrors :meth:`force_cancel` but pool-scoped — the pool-delete path
+        must not key teardown on a pool-scoped Pulumi stack (which never
+        existed); routing through the reconciler's per-node CancelHandler is
+        what actually terminates the instances."""
+        async with self.db.acquire() as conn:
+            res = await conn.execute(
+                """
+                UPDATE provisioning_jobs
+                SET phase = 'cancelling',
+                    next_attempt_after = NULL,
+                    lease_holder = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = now()
+                WHERE pool_id = $1
+                  AND phase NOT IN ('cancelling', 'terminated')
+                """,
+                pool_id,
+            )
+        return _affected_count(res)
 
     async def reset_for_retry(self, *, node_id: UUID) -> ProvisioningJob | None:
         """Re-enqueue a failed job: phase='pending', attempt_count=0, all

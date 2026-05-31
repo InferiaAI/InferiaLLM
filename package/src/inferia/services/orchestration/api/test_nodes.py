@@ -34,6 +34,7 @@ from inferia.services.orchestration.repositories.inventory_repo import (
     NodeTerminatedError,
     LabelConflictError,
 )
+from inferia.services.orchestration.services.provisioning.jobs.model import Phase
 
 
 ORG = "69ff5234-a4ea-4c88-adf0-d5702508f7ef"
@@ -708,111 +709,83 @@ def aws_app_and_deps():
 
 class TestDeleteAwsNode:
     @pytest.mark.asyncio
-    async def test_aws_node_returns_202_and_kicks_destroy(self, aws_app_and_deps):
-        app, inventory = aws_app_and_deps
+    async def test_aws_ready_node_force_cancels_through_reconciler(self):
+        """A READY AWS node (live EC2 under stack inferia-<node_id>) must be
+        torn down via force_cancel → reconciler CancelHandler, returning 202
+        terminating. This is the gemma3:4b empty-pool E2E delete path."""
+        inventory = AwsFakeInventory()
         inventory.nodes[NODE] = {
             "id": NODE, "state": "ready", "labels": {},
             "pool_id": POOL, "provider": "aws",
         }
-        # _spawn_destroy returns a Task in real code; the route does not
-        # await it (the destroy is a fire-and-forget background task), so
-        # we just spy on the call and return a sentinel.
-        spy = []
+        inventory.set_state = AsyncMock()
+        provisioning_repo = MagicMock()
+        provisioning_repo.get_by_node = AsyncMock(return_value=_job_in(Phase.READY))
+        provisioning_repo.force_cancel = AsyncMock(return_value=True)
+        app = _configure_with_provisioning_repo(inventory, provisioning_repo)
 
-        class _FakeTask:
-            pass
-
-        def fake_spawn(**kw):
-            spy.append(kw)
-            return _FakeTask()
-
-        with patch.object(aws_deprovision, "_spawn_destroy", side_effect=fake_spawn):
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(
-                transport=transport, base_url="http://t",
-            ) as c:
-                r = await c.delete(
-                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
-                )
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
 
         assert r.status_code == 202, r.text
-        body = r.json()
-        assert body["node_id"] == NODE
-        assert body["state"] == "terminating"
+        assert r.json()["state"] == "terminating"
+        provisioning_repo.force_cancel.assert_awaited_once()
         assert inventory.terminating_calls == [NODE]
-        # Helper was invoked with pool_id from the node row.
-        assert len(spy) == 1
-        assert spy[0]["pool_id"] == POOL
-        assert spy[0]["node_id"] == NODE
 
     @pytest.mark.asyncio
     async def test_non_aws_node_keeps_204_softdelete(self, aws_app_and_deps):
-        app, inventory = aws_app_and_deps
+        app, inventory = aws_app_and_deps  # fixture wires NO provisioning_repo
         inventory.nodes[NODE] = {
             "id": NODE, "state": "ready", "labels": {},
             "pool_id": POOL, "provider": "on_prem",
         }
-        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(
-                transport=transport, base_url="http://t",
-            ) as c:
-                r = await c.delete(
-                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
-                )
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.delete(f"/v1/nodes/{NODE}", headers=_user_ctx_header())
         assert r.status_code == 204
         assert inventory.nodes[NODE]["state"] == "terminated"
-        spawn.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_aws_node_without_db_pool_falls_back_to_softdelete(
+    async def test_aws_node_without_provisioning_repo_softdeletes_204(
         self, aws_app_and_deps,
     ):
-        """If the orchestration boot didn't wire db_pool, still succeed."""
+        """If provisioning_repo is unwired we cannot route teardown through
+        the reconciler. Since AWS infra is ALWAYS reconciler-created, a node
+        reachable on this path has no stack to destroy — soft-delete safely
+        (the old code spawned a pool-scoped destroy that targeted a
+        non-existent stack and leaked the EC2; that path is gone)."""
         app, inventory = aws_app_and_deps
-        # Strip the db_pool to simulate a misconfiguration.
-        nodes_api._deps.db_pool = None
+        assert nodes_api._deps.provisioning_repo is None  # fixture default
         inventory.nodes[NODE] = {
             "id": NODE, "state": "ready", "labels": {},
             "pool_id": POOL, "provider": "aws",
         }
-        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(
-                transport=transport, base_url="http://t",
-            ) as c:
-                r = await c.delete(
-                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
-                )
-        # Without db_pool we cannot kick destroy. Soft-delete still runs
-        # so the user sees the row disappear from the dashboard.
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.delete(f"/v1/nodes/{NODE}", headers=_user_ctx_header())
         assert r.status_code == 204
-        spawn.assert_not_called()
         assert inventory.nodes[NODE]["state"] == "terminated"
 
     @pytest.mark.asyncio
-    async def test_aws_node_missing_pool_id_returns_404_compat(
-        self, aws_app_and_deps,
-    ):
-        app, inventory = aws_app_and_deps
-        # Empty pool_id on the row — should still soft-delete and not
-        # spawn a destroy (helper would no-op anyway, but we save the
-        # work by not scheduling).
+    async def test_delete_no_job_softdeletes_204(self):
+        """provisioning_repo wired but get_by_node returns None (no job, e.g.
+        a manually-added node): nothing to destroy → soft-delete 204."""
+        inventory = AwsFakeInventory()
         inventory.nodes[NODE] = {
             "id": NODE, "state": "ready", "labels": {},
-            "pool_id": None, "provider": "aws",
+            "pool_id": POOL, "provider": "aws",
         }
-        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(
-                transport=transport, base_url="http://t",
-            ) as c:
-                r = await c.delete(
-                    f"/v1/nodes/{NODE}", headers=_user_ctx_header(),
-                )
-        # Soft-delete still runs; we can't destroy a stack without a pool_id.
+        provisioning_repo = MagicMock()
+        provisioning_repo.get_by_node = AsyncMock(return_value=None)
+        provisioning_repo.force_cancel = AsyncMock()
+        app = _configure_with_provisioning_repo(inventory, provisioning_repo)
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
         assert r.status_code == 204
-        spawn.assert_not_called()
+        provisioning_repo.force_cancel.assert_not_called()
+        assert inventory.nodes[NODE]["state"] == "terminated"
 
 
 # ---------------------------------------------------------------------------
@@ -1040,71 +1013,75 @@ def test_retry_provisioning_on_missing_node_returns_404():
     provisioning_repo.reset_for_retry.assert_not_called()
 
 
-def test_delete_non_terminal_node_enqueues_cancellation():
-    """A non-terminal job for the node → request_cancel + 204. The
-    legacy AWS destroy spawn must NOT fire because the CancelHandler
-    drives teardown via the state machine."""
+def _job_in(phase: Phase):
     job = MagicMock()
-    job.phase = MagicMock()
-    job.phase.is_terminal = False
+    job.phase = phase
+    return job
 
-    inventory = FakeInventory()
+
+def _delete_with_job(phase: Phase, *, node_state: str):
+    """Configure the router with a job in ``phase`` and DELETE the node.
+
+    Returns (resp, inventory, provisioning_repo) for assertions.
+    """
+    inventory = AwsFakeInventory()
     nid = str(uuid.uuid4())
     inventory.nodes[nid] = {
         "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
-        "state": "provisioning",
+        "state": node_state,
     }
     inventory.set_state = AsyncMock()
 
     provisioning_repo = MagicMock()
-    provisioning_repo.get_by_node = AsyncMock(return_value=job)
-    provisioning_repo.request_cancel = AsyncMock(return_value=True)
+    provisioning_repo.get_by_node = AsyncMock(return_value=_job_in(phase))
+    provisioning_repo.force_cancel = AsyncMock(return_value=True)
 
     app = _configure_with_provisioning_repo(inventory, provisioning_repo)
     client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
-    resp = client.delete(f"/v1/nodes/{nid}", headers=auth)
-    assert resp.status_code in (200, 204), resp.text
-    # Cancellation was enqueued exactly once with the right node UUID.
-    provisioning_repo.request_cancel.assert_awaited_once()
-    call_kwargs = provisioning_repo.request_cancel.await_args.kwargs
-    assert call_kwargs["node_id"] == uuid.UUID(nid)
-    # set_state was NOT called on the cancellation path (the
-    # CancelHandler owns terminating the inventory row).
+    resp = client.delete(
+        f"/v1/nodes/{nid}", headers={"Authorization": "Bearer test"},
+    )
+    return resp, inventory, provisioning_repo, nid
+
+
+@pytest.mark.parametrize(
+    "phase,node_state",
+    [
+        (Phase.PROVISIONING, "provisioning"),
+        (Phase.BOOTSTRAPPING, "provisioning"),
+        (Phase.READY, "ready"),     # the gemma3 E2E case: live EC2 must be destroyed
+        (Phase.FAILED, "failed"),   # failed-after-up may still have a live stack
+    ],
+)
+def test_delete_live_node_force_cancels_and_returns_202(phase, node_state):
+    """Any non-terminated job (incl. READY/FAILED) → force_cancel so the
+    reconciler's CancelHandler destroys the node-scoped stack, + 202
+    terminating. The legacy pool-scoped destroy (which leaked the EC2)
+    must NOT be used."""
+    resp, inventory, repo, nid = _delete_with_job(phase, node_state=node_state)
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["node_id"] == nid
+    assert body["state"] == "terminating"
+    repo.force_cancel.assert_awaited_once()
+    assert repo.force_cancel.await_args.kwargs["node_id"] == uuid.UUID(nid)
+    # Dashboard sees 'terminating' immediately.
+    assert inventory.terminating_calls == [nid]
+    # We do NOT just flip the row to terminated — that would orphan the EC2.
     inventory.set_state.assert_not_called()
 
 
-def test_delete_terminated_node_is_idempotent_204():
-    """A terminal job for the node → soft-delete via set_state and 204.
-    No cancellation enqueue (the CancelHandler already ran, or the job
-    failed terminally without provisioning anything)."""
-    job = MagicMock()
-    job.phase = MagicMock()
-    job.phase.is_terminal = True
-
-    inventory = FakeInventory()
-    nid = str(uuid.uuid4())
-    inventory.nodes[nid] = {
-        "id": nid, "pool_id": str(uuid.uuid4()), "provider": "aws",
-        "state": "failed",
-    }
-    inventory.set_state = AsyncMock()
-
-    provisioning_repo = MagicMock()
-    provisioning_repo.get_by_node = AsyncMock(return_value=job)
-    provisioning_repo.request_cancel = AsyncMock(return_value=True)
-
-    app = _configure_with_provisioning_repo(inventory, provisioning_repo)
-    client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
-    resp = client.delete(f"/v1/nodes/{nid}", headers=auth)
-    assert resp.status_code in (200, 204), resp.text
-    # set_state was called with 'terminated' on the idempotent path.
+def test_delete_terminated_job_is_idempotent_204():
+    """A job already in the TERMINATED phase means the stack was already
+    destroyed by a prior cancel → just drop the row (204), do NOT
+    re-cancel."""
+    resp, inventory, repo, nid = _delete_with_job(
+        Phase.TERMINATED, node_state="terminated",
+    )
+    assert resp.status_code == 204, resp.text
     inventory.set_state.assert_awaited_once()
-    state_kwargs = inventory.set_state.await_args.kwargs
-    assert state_kwargs["state"] == "terminated"
-    # No cancellation enqueue — the job is already terminal.
-    provisioning_repo.request_cancel.assert_not_called()
+    assert inventory.set_state.await_args.kwargs["state"] == "terminated"
+    repo.force_cancel.assert_not_called()
 
 
 def test_delete_missing_node_returns_404_with_provisioning_repo():
