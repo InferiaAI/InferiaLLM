@@ -21,6 +21,7 @@ vi.mock("@/services/poolService", () => ({
 
 vi.mock("@/services/nodeService", () => ({
   listNodes: vi.fn(),
+  deleteNode: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -30,12 +31,16 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
 vi.mock("@/context/AuthContext", () => ({
-  useAuth: () => ({
+  useAuth: vi.fn(() => ({
     hasPermission: () => true,
     user: { org_id: "org-1", user_id: "u1", username: "test", permissions: [] },
     organizations: [],
-  }),
+  })),
 }));
 
 vi.mock("@/components/nodes/NodeLogs", () => ({
@@ -121,12 +126,24 @@ async function waitForPoolLoad() {
 describe("PoolDetail", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Re-establish the default permissive auth after clearAllMocks wipes it
+    const authCtx = await import("@/context/AuthContext");
+    (authCtx.useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      hasPermission: () => true,
+      user: { org_id: "org-1", user_id: "u1", username: "test", permissions: [] },
+      organizations: [],
+    });
+
     const poolService = await import("@/services/poolService");
     (poolService.getPool as ReturnType<typeof vi.fn>).mockResolvedValue(MOCK_POOL);
     (poolService.deletePool as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     const nodeService = await import("@/services/nodeService");
     (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockResolvedValue({
+      terminating: false,
+    });
 
     const api = await import("@/lib/api");
     (api.computeApi.get as ReturnType<typeof vi.fn>).mockResolvedValue({ data: { deployments: [] } });
@@ -215,5 +232,190 @@ describe("PoolDetail", () => {
       expect(screen.getByTestId("node-detail-stub")).toBeInTheDocument();
     });
     expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument();
+  });
+
+  // ── Per-row Delete: shown when permitted ──────────────────────────────────
+  it("shows a per-row Delete action in the Nodes table when permitted", async () => {
+    const user = userEvent.setup();
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_NODE]);
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-node-node-abc")).toBeInTheDocument();
+    });
+  });
+
+  // ── Per-row Delete: hidden when user lacks deployment:delete ───────────────
+  it("hides the per-row Delete action when user lacks deployment:delete", async () => {
+    const authCtx = await import("@/context/AuthContext");
+    (authCtx.useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      hasPermission: () => false,
+      user: { org_id: "org-1", user_id: "u1", username: "test", permissions: [] },
+      organizations: [],
+    });
+
+    const user = userEvent.setup();
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_NODE]);
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("worker-1")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("delete-node-node-abc")).not.toBeInTheDocument();
+  });
+
+  // ── Per-row Delete: confirm true → deleteNode called + node list refetched ─
+  it("calls deleteNode then refetches the node list on a confirmed row delete", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    const listSpy = nodeService.listNodes as ReturnType<typeof vi.fn>;
+    listSpy.mockResolvedValue([MOCK_NODE]);
+    const delSpy = nodeService.deleteNode as ReturnType<typeof vi.fn>;
+    delSpy.mockResolvedValue({ terminating: true, state: "terminating", nodeId: "node-abc" });
+
+    const { toast } = await import("sonner");
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-node-node-abc")).toBeInTheDocument();
+    });
+
+    const callsBefore = listSpy.mock.calls.length;
+    await user.click(screen.getByTestId("delete-node-node-abc"));
+
+    await waitFor(() => {
+      expect(delSpy).toHaveBeenCalledWith("node-abc");
+    });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Termination started — destroying the EC2 instance…",
+    );
+    // onRefetch (fetchNodes) is invoked after a successful delete
+    await waitFor(() => {
+      expect(listSpy.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+    confirmSpy.mockRestore();
+  });
+
+  // ── Per-row Delete: confirm cancelled → no deleteNode call ─────────────────
+  it("does not call deleteNode when the row delete confirm is dismissed", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_NODE]);
+    const delSpy = nodeService.deleteNode as ReturnType<typeof vi.fn>;
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-node-node-abc")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("delete-node-node-abc"));
+    expect(delSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  // ── Per-row Delete: 409 → conflict detail toast ────────────────────────────
+  it("shows the 409 conflict detail toast on a failed row delete", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_NODE]);
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: { detail: "node still busy" } },
+    });
+
+    const { toast } = await import("sonner");
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-node-node-abc")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("delete-node-node-abc"));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("node still busy");
+    });
+    confirmSpy.mockRestore();
+  });
+
+  // ── Per-row Delete: generic failure → generic error toast ──────────────────
+  it("shows a generic error toast on a non-409 row delete failure", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_NODE]);
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 500, data: {} },
+    });
+
+    const { toast } = await import("sonner");
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-node-node-abc")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("delete-node-node-abc"));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Failed to delete node");
+    });
+    confirmSpy.mockRestore();
+  });
+
+  // ── fetchNodes error surfacing: toasts once on failure ─────────────────────
+  it("toasts 'Failed to load nodes' when the node list fetch fails", async () => {
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("network down"),
+    );
+
+    const { toast } = await import("sonner");
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Failed to load nodes");
+    });
+  });
+
+  // ── fetchNodes error surfacing: empty pool does NOT toast ──────────────────
+  it("does not toast on a successful but empty node list", async () => {
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const { toast } = await import("sonner");
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+
+    // give the initial fetch a tick to settle
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalledWith("Failed to load nodes");
   });
 });

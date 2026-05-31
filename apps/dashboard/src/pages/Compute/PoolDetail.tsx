@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   useParams,
   Link,
@@ -7,12 +7,12 @@ import {
   Route,
   useLocation,
 } from "react-router-dom";
-import { RefreshCw, ChevronRight, ScrollText, Terminal, Activity } from "lucide-react";
+import { RefreshCw, ChevronRight, ScrollText, Terminal, Activity, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { getPool, deletePool, type PoolView } from "@/services/poolService";
-import { listNodes, type NodeView } from "@/services/nodeService";
+import { listNodes, deleteNode, type NodeView } from "@/services/nodeService";
 import { computeApi } from "@/lib/api";
 import NodeDetail from "./NodeDetail";
 
@@ -32,14 +32,13 @@ interface DeploymentRow {
 // Main component
 // ---------------------------------------------------------------------------
 export default function PoolDetail() {
-  const { id } = useParams<{ id: string }>();
   const location = useLocation();
-  const navigate = useNavigate();
-  const { hasPermission } = useAuth();
 
   // If the current URL is inside a node sub-route, render NodeDetail as full
   // content-area takeover so deep-links and refreshes work regardless of
   // activeTab. Pattern: /compute/pools/:id/nodes/:nid/...
+  // This branch is handled in a thin wrapper so the data-driven body below can
+  // call its hooks unconditionally (Rules of Hooks).
   const isNodeSubRoute = /\/nodes\/[^/]+/.test(location.pathname);
   if (isNodeSubRoute) {
     return (
@@ -48,6 +47,13 @@ export default function PoolDetail() {
       </Routes>
     );
   }
+  return <PoolDetailContent />;
+}
+
+function PoolDetailContent() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { hasPermission } = useAuth();
   const canDelete = hasPermission("deployment:delete");
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -56,6 +62,10 @@ export default function PoolDetail() {
   const [deployments, setDeployments] = useState<DeploymentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+
+  // Tracks whether the last fetchNodes call errored, so we only toast on an
+  // error transition (not on every 15s poll while the backend stays down).
+  const nodesErroredRef = useRef(false);
 
   // ---------------------------------------------------------------------------
   // Fetch
@@ -88,8 +98,16 @@ export default function PoolDetail() {
     try {
       const allNodes = await listNodes();
       setNodes(allNodes.filter((n) => n.pool_id === id));
+      // Successful fetch (including a legitimately empty pool) clears the error
+      // latch so a future failure toasts again.
+      nodesErroredRef.current = false;
     } catch {
-      /* swallow */
+      // Only toast on the transition into an errored state to avoid spamming
+      // a notification on every 15s poll while the backend stays unreachable.
+      if (!nodesErroredRef.current) {
+        nodesErroredRef.current = true;
+        toast.error("Failed to load nodes");
+      }
     }
   }, [id]);
 
@@ -311,7 +329,12 @@ export default function PoolDetail() {
         {/* ----------------------------------------------------------------- */}
         {activeTab === "nodes" && (
           <div className="space-y-4">
-            <NodeList nodes={nodes} poolId={id ?? ""} />
+            <NodeList
+              nodes={nodes}
+              poolId={id ?? ""}
+              canDelete={canDelete}
+              onRefetch={fetchNodes}
+            />
           </div>
         )}
 
@@ -474,10 +497,48 @@ function InfoField({ label, value }: { label: string; value: string }) {
 function NodeList({
   nodes,
   poolId,
+  canDelete,
+  onRefetch,
 }: {
   nodes: NodeView[];
   poolId: string;
+  canDelete: boolean;
+  onRefetch: () => void | Promise<void>;
 }) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDeleteNode = async (nodeId: string) => {
+    if (
+      !window.confirm(
+        "Delete this node? For AWS this terminates the EC2 instance.",
+      )
+    )
+      return;
+    setDeletingId(nodeId);
+    try {
+      const res = await deleteNode(nodeId);
+      toast.success(
+        res.terminating
+          ? "Termination started — destroying the EC2 instance…"
+          : "Node deleted",
+      );
+      await onRefetch();
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail;
+      if (status === 409) {
+        toast.error(
+          detail || "Cannot delete: stop active deployments on this node first.",
+        );
+      } else {
+        toast.error(detail || "Failed to delete node");
+      }
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   if (nodes.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground">
@@ -557,6 +618,25 @@ function NodeList({
                     >
                       <ScrollText className="w-3.5 h-3.5" /> Logs
                     </Link>
+                    {canDelete && (
+                      <button
+                        data-testid={`delete-node-${n.id}`}
+                        disabled={deletingId === n.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteNode(n.id);
+                        }}
+                        className={cn(
+                          "inline-flex items-center gap-1 text-xs",
+                          deletingId === n.id
+                            ? "text-muted-foreground cursor-not-allowed"
+                            : "text-red-600 hover:text-red-700",
+                        )}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        {deletingId === n.id ? "Deleting…" : "Delete"}
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

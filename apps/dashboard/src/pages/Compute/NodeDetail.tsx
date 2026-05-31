@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, Link, useNavigate, Routes, Route, Navigate } from "react-router-dom";
-import { ChevronRight, RefreshCw, RotateCcw } from "lucide-react";
+import { ChevronRight, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
-import { getNode, type NodeView } from "@/services/nodeService";
+import { getNode, deleteNode, type NodeView } from "@/services/nodeService";
 import {
   getProvisioning,
   retryProvisioning,
@@ -28,12 +28,14 @@ export default function NodeDetail() {
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
   const canRetry = hasPermission("deployment:create");
+  const canDelete = hasPermission("deployment:delete");
 
   const [node, setNode] = useState<NodeView | null>(null);
   const [summary, setSummary] = useState<ProvisioningSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Use a ref for the poll interval so polling doesn't remount shell/logs tabs
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -115,6 +117,39 @@ export default function NodeDetail() {
       toast.error(detail || "Retry failed");
     } finally {
       setRetrying(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!nid) return;
+    if (
+      !window.confirm(
+        "Delete this node? For AWS nodes this terminates the underlying EC2 instance and stops billing. This cannot be undone.",
+      )
+    )
+      return;
+    setDeleting(true);
+    try {
+      const res = await deleteNode(nid);
+      toast.success(
+        res.terminating
+          ? "Termination started — destroying the EC2 instance…"
+          : "Node deleted",
+      );
+      navigate(`/dashboard/compute/pools/${poolId}`);
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail;
+      if (status === 409) {
+        toast.error(
+          detail || "Cannot delete: stop active deployments on this node first.",
+        );
+      } else {
+        toast.error(detail || "Failed to delete node");
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -209,6 +244,22 @@ export default function NodeDetail() {
           >
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
+          {canDelete && (
+            <button
+              data-testid="delete-node-btn"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+              className={cn(
+                "h-9 px-4 flex items-center gap-2 rounded-md text-sm font-medium transition-colors",
+                deleting
+                  ? "bg-muted text-muted-foreground cursor-not-allowed"
+                  : "bg-red-600 text-white hover:bg-red-700",
+              )}
+            >
+              <Trash2 className="w-4 h-4" />
+              {deleting ? "Deleting…" : "Delete Node"}
+            </button>
+          )}
         </div>
       </div>
 

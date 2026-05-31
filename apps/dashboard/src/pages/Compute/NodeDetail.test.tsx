@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import NodeDetail from "./NodeDetail";
@@ -10,7 +10,22 @@ import NodeDetail from "./NodeDetail";
 
 vi.mock("@/services/nodeService", () => ({
   getNode: vi.fn(),
+  deleteNode: vi.fn(),
 }));
+
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+// Spy on react-router-dom's useNavigate so we can assert post-delete redirects
+const navigateSpy = vi.fn();
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useNavigate: () => navigateSpy,
+  };
+});
 
 vi.mock("@/services/provisioningService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/provisioningService")>();
@@ -139,8 +154,13 @@ describe("NodeDetail", () => {
       organizations: [],
     });
 
+    navigateSpy.mockReset();
+
     const nodeService = await import("@/services/nodeService");
     (nodeService.getNode as ReturnType<typeof vi.fn>).mockResolvedValue(MOCK_NODE);
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockResolvedValue({
+      terminating: false,
+    });
 
     const provSvc = await import("@/services/provisioningService");
     (provSvc.getProvisioning as ReturnType<typeof vi.fn>).mockResolvedValue(MOCK_SUMMARY);
@@ -424,5 +444,189 @@ describe("NodeDetail", () => {
       "href",
       "/dashboard/compute/pools/p1",
     );
+  });
+
+  // ── Delete Node: button shown when user has deployment:delete ─────────────
+  it("shows the Delete Node button when user has deployment:delete", async () => {
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+    expect(screen.getByTestId("delete-node-btn")).toBeInTheDocument();
+  });
+
+  // ── Delete Node: button hidden when user lacks deployment:delete ──────────
+  it("does NOT show the Delete Node button when user lacks deployment:delete", async () => {
+    const authCtx = await import("@/context/AuthContext");
+    (authCtx.useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      hasPermission: () => false,
+      user: { user_id: "u1", username: "test", permissions: [] },
+      organizations: [],
+    });
+
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByTestId("delete-node-btn")).not.toBeInTheDocument();
+  });
+
+  // ── Delete Node: confirm true → deleteNode called, terminating toast, nav ──
+  it("calls deleteNode and shows termination toast + navigates on a 202 (terminating)", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    const delSpy = nodeService.deleteNode as ReturnType<typeof vi.fn>;
+    delSpy.mockResolvedValue({
+      terminating: true,
+      state: "terminating",
+      nodeId: "n1",
+    });
+
+    const { toast } = await import("sonner");
+
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("delete-node-btn"));
+
+    await waitFor(() => {
+      expect(delSpy).toHaveBeenCalledWith("n1");
+    });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Termination started — destroying the EC2 instance…",
+    );
+    await waitFor(() => {
+      expect(navigateSpy).toHaveBeenCalledWith("/dashboard/compute/pools/p1");
+    });
+
+    confirmSpy.mockRestore();
+  });
+
+  // ── Delete Node: confirm true + 204 → "Node deleted" toast ────────────────
+  it("shows the plain 'Node deleted' toast on a 204 (terminating false)", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockResolvedValue({
+      terminating: false,
+    });
+
+    const { toast } = await import("sonner");
+
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("delete-node-btn"));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("Node deleted");
+    });
+    confirmSpy.mockRestore();
+  });
+
+  // ── Delete Node: confirm cancelled → no deleteNode call ───────────────────
+  it("does not call deleteNode when the confirm dialog is dismissed", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const nodeService = await import("@/services/nodeService");
+    const delSpy = nodeService.deleteNode as ReturnType<typeof vi.fn>;
+
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("delete-node-btn"));
+
+    expect(delSpy).not.toHaveBeenCalled();
+    expect(navigateSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  // ── Delete Node: 409 → shows the conflict detail toast, no navigation ─────
+  it("shows the 409 conflict detail toast and does not navigate", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: { detail: "node has active deployments" } },
+    });
+
+    const { toast } = await import("sonner");
+
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("delete-node-btn"));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("node has active deployments");
+    });
+    expect(navigateSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  // ── Delete Node: 409 with no detail → fallback conflict message ───────────
+  it("falls back to the default conflict message when 409 has no detail", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: {} },
+    });
+
+    const { toast } = await import("sonner");
+
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("delete-node-btn"));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Cannot delete: stop active deployments on this node first.",
+      );
+    });
+    confirmSpy.mockRestore();
+  });
+
+  // ── Delete Node: generic (non-409) failure → generic error toast ──────────
+  it("shows a generic error toast on a non-409 delete failure", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 500, data: {} },
+    });
+
+    const { toast } = await import("sonner");
+
+    renderNodeDetail();
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("delete-node-btn"));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Failed to delete node");
+    });
+    expect(navigateSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 });
