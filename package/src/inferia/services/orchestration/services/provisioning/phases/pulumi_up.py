@@ -138,6 +138,22 @@ class PulumiUpHandler:
             pool_id=job.pool_id,
         )
 
+        # Operator SSH authorized_keys (mounted into the CP at this path) so
+        # the provisioned worker accepts SSH for ops/debugging. Best-effort:
+        # absent file → SSH stays disabled (the prior behaviour).
+        ssh_authorized_keys = ""
+        try:
+            import os as _os
+            _ssh_path = (
+                getattr(settings, "ssh_authorized_keys_path", None)
+                or "/var/lib/inferia/ssh/authorized_keys"
+            )
+            if _os.path.exists(_ssh_path):
+                with open(_ssh_path) as _f:
+                    ssh_authorized_keys = _f.read()
+        except OSError:
+            ssh_authorized_keys = ""
+
         async with ctx.db.acquire() as conn:
             token, bootstrap_id = await mint_bootstrap_token(
                 conn, pool_id=job.pool_id, org_id=job.org_id,
@@ -153,5 +169,6 @@ class PulumiUpHandler:
             inference_token=inference_token,
             instance_class=str(spec.get("instance_class") or "normal_gpu"),
             gpu_count=int(spec.get("gpu_count") or 1),
+            ssh_authorized_keys=ssh_authorized_keys,
         )
         return {**spec, "user_data": user_data, "bootstrap_id": str(bootstrap_id)}

@@ -66,14 +66,7 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         model_name=deploy.get("model_name"),
     ) or ""
     recipe = deploy.get("engine") or "vllm"
-    # CPU-friendly engines (ollama/localai) run without a GPU: passing GPU
-    # indices makes the worker attach an nvidia DeviceRequest to the sibling
-    # model container, which on the GPU AMI is unstable (the ollama container
-    # detects the GPU then gets killed). ollama serves gemma-class models fine
-    # on CPU, so we omit GPU indices for these engines. GPU engines (vllm)
-    # still get their indices.
-    cpu_friendly = recipe in ("ollama", "localai")
-    gpu_indices = [] if cpu_friendly else list(range(gpu_required))
+    gpu_indices = list(range(gpu_required))
     return {
         "deployment_id": str(deploy["id"]),
         "recipe": recipe,
@@ -159,7 +152,7 @@ class DeploymentLinker:
             gpu_required = int(deploy.get("gpu_per_replica") or 1)
             try:
                 spec = _spec_from_pending(deploy, gpu_required)
-                await self._controller.load_model(
+                result = await self._controller.load_model(
                     node_id=str(node_id), spec=spec,
                 )
             except Exception as e:
@@ -179,6 +172,29 @@ class DeploymentLinker:
                             deploy["id"], "FAILED", tx=conn,
                         )
             else:
+                # The worker can return a CommandResult with status='failed'
+                # (e.g. readiness probe timed out, pull failed) WITHOUT raising
+                # — controller.load_model returns the body verbatim. Treat that
+                # as a load failure: release the GPU + mark FAILED, and DO NOT
+                # publish an endpoint or report RUNNING (the model is not
+                # serving). Previously this fell through to the success branch
+                # and reported RUNNING for a model that never loaded.
+                if getattr(result, "status", None) == "failed":
+                    logger.error(
+                        "linker: load_model returned status=failed for "
+                        "deploy=%s: %s",
+                        deploy["id"], getattr(result, "detail", ""),
+                    )
+                    async with self._db.acquire() as conn:
+                        async with conn.transaction():
+                            await self._inventory.release_gpu(
+                                node_id, gpu_required, tx=conn,
+                            )
+                            await self._deploys.set_state(
+                                deploy["id"], "FAILED", tx=conn,
+                            )
+                    continue
+
                 # Model loaded on the worker. Promote DEPLOYING → RUNNING so
                 # the dashboard reflects the live deployment. The warm-deploy
                 # path does this (controller/worker set RUNNING); the

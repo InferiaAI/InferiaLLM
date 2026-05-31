@@ -222,6 +222,44 @@ async def test_load_model_failure_releases_gpu_and_marks_failed(pool):
     assert node_row["gpu_allocated"] == 0  # released after load_model failure
 
 
+async def test_load_model_failed_status_releases_gpu_and_marks_failed(pool):
+    """The worker can return a CommandResult with status='failed' (e.g. the
+    readiness probe timed out) WITHOUT raising — controller.load_model returns
+    that body verbatim. The linker must treat it as a load failure (release
+    GPU + FAILED + NO endpoint), not silently mark the deploy RUNNING."""
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        CommandResultBody,
+    )
+    pool_id, node_id = await _seed_pool_and_node(
+        pool, gpu_total=2, advertise_url="http://ec2-x:8080",
+    )
+    deploy_id = await _seed_pending_deploy(pool, pool_id)
+    controller = AsyncMock(spec=WorkerController)
+    controller.load_model = AsyncMock(return_value=CommandResultBody(
+        in_reply_to="x", status="failed", detail="readiness probe timed out",
+    ))
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT state, endpoint FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+        node_row = await c.fetchrow(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
+        )
+    assert row["state"] == "FAILED"          # NOT RUNNING
+    assert not row["endpoint"]               # endpoint NOT published on failure
+    assert node_row["gpu_allocated"] == 0    # GPU released
+
+
 async def test_already_bound_deploy_is_promoted_without_reallocate(pool):
     """A ColdStart deploy pre-allocates its GPU on the placeholder and is
     bound to it (target_node_id=node). When the worker registers onto that
