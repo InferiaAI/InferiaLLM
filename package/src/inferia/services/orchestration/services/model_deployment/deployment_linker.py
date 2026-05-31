@@ -31,6 +31,9 @@ from inferia.services.orchestration.repositories.inventory_repo import (
 from inferia.services.orchestration.repositories.model_deployment_repo import (
     ModelDeploymentRepository,
 )
+from inferia.services.orchestration.services.model_deployment.model_ref import (
+    resolve_artifact_uri,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +53,18 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
             cfg = {}
     if not isinstance(cfg, dict):
         cfg = {}
-    model_block = cfg.get("model") or {}
-    artifact_uri = (
-        model_block.get("artifact_uri")
-        or cfg.get("artifact_uri")
-        or deploy.get("model_name")
-        or ""
-    )
+    model_block = cfg.get("model")
+    if not isinstance(model_block, dict):
+        model_block = {}
+    # The real model identifier for ollama lives in cfg["model_id"] (a bare
+    # name:tag); resolve_artifact_uri reads it and guarantees a scheme the
+    # worker accepts. Falling back to model_name (the display name) is the
+    # bug this replaces — it shipped e.g. "hjg" instead of "gemma3:4b".
+    artifact_uri = resolve_artifact_uri(
+        configuration=cfg,
+        inference_model=deploy.get("inference_model"),
+        model_name=deploy.get("model_name"),
+    ) or ""
     return {
         "deployment_id": str(deploy["id"]),
         "recipe": deploy.get("engine") or "vllm",
@@ -161,6 +169,16 @@ class DeploymentLinker:
                         await self._deploys.set_state(
                             deploy["id"], "FAILED", tx=conn,
                         )
+            else:
+                # Model loaded on the worker. Promote DEPLOYING → RUNNING so
+                # the dashboard reflects the live deployment. The warm-deploy
+                # path does this (controller/worker set RUNNING); the
+                # EC2-bootstrap path previously left the deploy stuck
+                # DEPLOYING forever even though the model was serving.
+                async with self._db.acquire() as conn:
+                    await self._deploys.set_state(
+                        deploy["id"], "RUNNING", tx=conn,
+                    )
 
         if bound:
             logger.info(

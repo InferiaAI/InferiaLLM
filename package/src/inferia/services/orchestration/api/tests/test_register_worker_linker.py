@@ -67,9 +67,13 @@ async def test_register_worker_with_missing_pool_id_returns_422(app_and_deps):
     assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
 
 
-async def test_register_worker_fires_linker_hook(app_and_deps):
-    """After upsert_worker succeeds, on_worker_ready is invoked once
-    with the new node_id."""
+async def test_register_worker_does_NOT_fire_linker_hook(app_and_deps):
+    """register_worker must NOT fire on_worker_ready: it returns the
+    worker_jwt the worker only THEN uses to open the WS control channel, so
+    load_model at register time always races the channel and fails
+    NodeUnreachableError (marking the deploy FAILED). The linker is fired
+    from worker_channel instead. This guards against re-introducing the
+    premature trigger."""
     app, _, inventory, pool_id, node_id = app_and_deps
 
     with patch(
@@ -97,8 +101,32 @@ async def test_register_worker_fires_linker_hook(app_and_deps):
     body = r.json()
     assert body["node_id"] == str(node_id)
     assert body["worker_jwt"] == "jwt-token-mock"
+    # The linker is deferred to the channel — register must not touch it.
+    mock_ready.assert_not_awaited()
+
+
+async def test_channel_ready_helper_fires_linker_with_node_uuid():
+    """_fire_linker_on_channel_ready schedules on_worker_ready(node_uuid) as
+    a background task — this is the path that actually loads the model once
+    the worker's control channel is connected."""
+    node_id = uuid4()
+    ws = MagicMock()
+    ws.app.state.pool = MagicMock()
+    ws.app.state.worker_controller = AsyncMock()
+    ws.app.state.event_bus = None
+
+    with patch(
+        "inferia.services.orchestration.services.model_deployment."
+        "deployment_linker.DeploymentLinker.on_worker_ready",
+        new_callable=AsyncMock,
+    ) as mock_ready:
+        workers_api._fire_linker_on_channel_ready(ws, str(node_id))
+        # Let the scheduled task run.
+        import asyncio
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if mock_ready.await_count:
+                break
 
     mock_ready.assert_awaited_once()
-    call_args = mock_ready.await_args
-    assert len(call_args.args) == 1
-    assert call_args.args[0] == node_id
+    assert mock_ready.await_args.args[0] == node_id  # passed as a UUID

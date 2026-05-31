@@ -27,6 +27,9 @@ from inferia.services.orchestration.services.adapter_engine.registry import (
     get_adapter,
     ADAPTER_REGISTRY,
 )
+from inferia.services.orchestration.services.model_deployment.model_ref import (
+    resolve_artifact_uri,
+)
 from inferia.services.orchestration.services.model_deployment.log_store import (
     DeploymentLogStore,
     DeploymentLogBuffer,
@@ -245,12 +248,14 @@ def _model_spec_from_request(req: "DeployModelRequest") -> dict:
     Raises HTTPException(400) if no artifact_uri can be resolved.
     """
     cfg = req.configuration or {}
-    model_block = cfg.get("model") or {}
-    artifact_uri = (
-        model_block.get("artifact_uri")
-        or cfg.get("artifact_uri")
-        or req.inference_model
-        or req.model_name
+    model_block = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+    # resolve_artifact_uri also reads cfg["model_id"] (where ollama/localai
+    # carry the bare name:tag) and guarantees a worker-acceptable scheme, so
+    # the warm path and the EC2-bootstrap path resolve identically.
+    artifact_uri = resolve_artifact_uri(
+        configuration=cfg,
+        inference_model=req.inference_model,
+        model_name=req.model_name,
     )
     if not artifact_uri:
         raise HTTPException(
@@ -658,6 +663,25 @@ async def _terminate_pool_background(pool_id: UUID):
                     cluster_id=pool["cluster_id"],
                     provider_credential_name=pool["provider_credential_name"],
                 )
+
+        # Job pools (the AWS pool-first path) own per-node EC2 stacks created
+        # by the reconciler. Stopping the pool must release them: flip every
+        # live provisioning job to 'cancelling' so the reconciler's
+        # CancelHandler destroys each inferia-<node_id> stack. Without this a
+        # stopped pool keeps billing. No-op for providers with no jobs.
+        await conn.execute(
+            """
+            UPDATE provisioning_jobs
+            SET phase = 'cancelling',
+                next_attempt_after = NULL,
+                lease_holder = NULL,
+                lease_expires_at = NULL,
+                updated_at = now()
+            WHERE pool_id = $1
+              AND phase NOT IN ('cancelling', 'terminated')
+            """,
+            pool_id,
+        )
 
         await conn.execute(
             """
@@ -2154,6 +2178,112 @@ async def delete_pool(pool_id: str):
     )
 
     return {"pool_id": pool_id, "status": "DELETED"}
+
+
+@router.delete("/pool/{pool_id}")
+async def delete_pool_rest(pool_id: str):
+    """Delete a pool from the dashboard in one call: tear down every node's
+    EC2 (via the provisioning reconciler) and soft-delete the pool row.
+
+    This is the route ``poolService.deletePool()`` (DELETE
+    /api/v1/deployment/pool/{id}) actually calls — previously there was no
+    such handler, so the dashboard's "Delete Pool" button 404'd. It
+    supersedes the two-step POST /stoppool + POST /deletepool flow:
+
+      1. 404 if the pool is gone.
+      2. 409 if live deployments remain (the UI surfaces this and prompts the
+         user to stop them first).
+      3. force-cancel EVERY provisioning job in the pool so the reconciler's
+         CancelHandler destroys each ``inferia-<node_id>`` stack with the
+         matching local backend, and flips each node's row to terminating.
+         (The old pool-scoped direct-adapter destroy targeted a stack that
+         never existed and silently leaked the EC2s.)
+      4. soft-delete the pool row (lifecycle_state=terminated, is_active=FALSE).
+
+    Returns 202 — node teardown is asynchronous (~60-90s per EC2); the
+    reconciler marks each node terminated as it finishes.
+    """
+    try:
+        pool_uuid = UUID(pool_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pool_id")
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        pool = await conn.fetchrow(
+            "SELECT id, lifecycle_state, is_active FROM compute_pools "
+            "WHERE id = $1 AND is_active = TRUE",
+            pool_uuid,
+        )
+        if not pool:
+            raise HTTPException(status_code=404, detail="Pool not found")
+
+        active = await conn.fetchval(
+            "SELECT count(*) FROM model_deployments "
+            "WHERE pool_id = $1 "
+            "  AND state NOT IN ('STOPPED','TERMINATED','FAILED','PENDING')",
+            pool_uuid,
+        )
+        if active:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Pool has {active} active deployment(s). Stop them before "
+                    f"deleting the pool."
+                ),
+            )
+
+        # Tear down every node's EC2 via the reconciler (see docstring).
+        await conn.execute(
+            """
+            UPDATE provisioning_jobs
+            SET phase = 'cancelling',
+                next_attempt_after = NULL,
+                lease_holder = NULL,
+                lease_expires_at = NULL,
+                updated_at = now()
+            WHERE pool_id = $1
+              AND phase NOT IN ('cancelling', 'terminated')
+            """,
+            pool_uuid,
+        )
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                           || jsonb_build_object('terminating', true),
+                updated_at = now()
+            WHERE pool_id = $1 AND state IS DISTINCT FROM 'terminated'
+            """,
+            pool_uuid,
+        )
+        await conn.execute(
+            """
+            UPDATE compute_pools
+            SET lifecycle_state = $2, is_active = FALSE, updated_at = now()
+            WHERE id = $1
+            """,
+            pool_uuid, POOL_STATE_TERMINATED,
+        )
+    finally:
+        if conn:
+            await conn.close()
+
+    await log_audit_event(
+        user_id=None,
+        action="pool.delete",
+        resource_type="compute_pool",
+        resource_id=pool_id,
+        status="success",
+        org_id=await _lookup_org_id("compute_pool", pool_id),
+    )
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=202,
+        content={"pool_id": pool_id, "status": "TERMINATING"},
+    )
 
 
 @router.get("/listDeployments/{pool_id}")

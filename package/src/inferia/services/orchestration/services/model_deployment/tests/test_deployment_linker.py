@@ -92,7 +92,9 @@ async def test_one_pending_deploy_binds_on_worker_ready(pool):
             "WHERE deployment_id=$1",
             deploy_id,
         )
-    assert row["state"] == "DEPLOYING"
+    # load_model succeeded (AsyncMock, no side_effect) → the linker promotes
+    # the deploy DEPLOYING → RUNNING so the dashboard reflects the live model.
+    assert row["state"] == "RUNNING"
     assert row["target_node_id"] == node_id
     controller.load_model.assert_awaited_once()
     call_kwargs = controller.load_model.await_args.kwargs
@@ -122,7 +124,9 @@ async def test_five_pending_with_capacity_three_binds_three_fifo(pool):
             deploys,
         )
     states = [r["state"] for r in rows]
-    assert states == ["DEPLOYING", "DEPLOYING", "DEPLOYING",
+    # The 3 that fit load successfully → RUNNING; the 2 over capacity stay
+    # PENDING_NODE.
+    assert states == ["RUNNING", "RUNNING", "RUNNING",
                        "PENDING_NODE", "PENDING_NODE"]
     assert controller.load_model.await_count == 3
 
@@ -222,6 +226,8 @@ async def test_already_bound_deploy_is_promoted_without_reallocate(pool):
         node = await c.fetchrow(
             "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
         )
-    assert row["state"] == "DEPLOYING"           # promoted, not stranded
+    # Promoted (not stranded) AND load succeeded → RUNNING; GPU not
+    # double-allocated.
+    assert row["state"] == "RUNNING"
     assert node["gpu_allocated"] == 1            # NOT double-allocated
     controller.load_model.assert_awaited_once()  # model load fired

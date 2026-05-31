@@ -7,6 +7,7 @@ FastAPI router exposing the inferia-worker control-plane endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 
@@ -38,6 +39,48 @@ from inferia.services.orchestration.services.worker_controller.registry import (
 logger = logging.getLogger("inferia.workers_api")
 
 router = APIRouter()
+
+
+# Strong refs to in-flight channel-triggered linker tasks so CPython doesn't
+# GC them mid-flight (asyncio holds only a weak ref).
+_CHANNEL_LINKER_TASKS: set[asyncio.Task] = set()
+
+
+def _fire_linker_on_channel_ready(ws: WebSocket, node_id_str: str) -> None:
+    """Bind PENDING_NODE deploys + load_model on the just-connected worker.
+
+    Fired from worker_channel once the WS control channel is attached (so the
+    worker is reachable). Runs as a background task because on_worker_ready
+    awaits the LoadModel CommandResult, which the channel read loop delivers —
+    blocking on it inline would deadlock.
+    """
+    try:
+        from inferia.services.orchestration.services.model_deployment.deployment_linker import (
+            DeploymentLinker,
+        )
+        from inferia.services.orchestration.repositories.inventory_repo import (
+            InventoryRepository,
+        )
+        from inferia.services.orchestration.repositories.model_deployment_repo import (
+            ModelDeploymentRepository,
+        )
+
+        db_pool = ws.app.state.pool
+        worker_controller = ws.app.state.worker_controller
+        event_bus = getattr(ws.app.state, "event_bus", None)
+        linker = DeploymentLinker(
+            db_pool=db_pool,
+            inventory_repo=InventoryRepository(db_pool),
+            deployment_repo=ModelDeploymentRepository(db_pool, event_bus=event_bus),
+            worker_controller=worker_controller,
+        )
+        task = asyncio.create_task(linker.on_worker_ready(uuid.UUID(node_id_str)))
+        _CHANNEL_LINKER_TASKS.add(task)
+        task.add_done_callback(_CHANNEL_LINKER_TASKS.discard)
+    except Exception:
+        logger.exception(
+            "worker_channel: failed to fire linker hook for node=%s", node_id_str,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -185,39 +228,14 @@ async def register_worker(
         pool_id=body.pool_id,
     )
 
-    # T10: fire DeploymentLinker so any deploys in PENDING_NODE state
-    # waiting on this pool get bound to the just-registered worker. The
-    # linker handles tx + load_model internally. Wrap in try/except so a
-    # linker failure does not break worker registration — the worker
-    # would just not pick up the pending deploys until the next signal.
-    try:
-        from inferia.services.orchestration.services.model_deployment.deployment_linker import (
-            DeploymentLinker,
-        )
-        from inferia.services.orchestration.repositories.inventory_repo import (
-            InventoryRepository,
-        )
-        from inferia.services.orchestration.repositories.model_deployment_repo import (
-            ModelDeploymentRepository,
-        )
-
-        db_pool = request.app.state.pool
-        worker_controller = request.app.state.worker_controller
-        event_bus = getattr(request.app.state, "event_bus", None)
-        linker = DeploymentLinker(
-            db_pool=db_pool,
-            inventory_repo=InventoryRepository(db_pool),
-            deployment_repo=ModelDeploymentRepository(db_pool, event_bus=event_bus),
-            worker_controller=worker_controller,
-        )
-        await linker.on_worker_ready(node["id"])
-    except Exception as e:
-        import logging as _logging
-        _logging.getLogger(__name__).exception(
-            "register_worker: linker hook failed for node=%s: %s",
-            node_id_str, e,
-        )
-
+    # NOTE: the DeploymentLinker hook (binding PENDING_NODE deploys +
+    # load_model) is NOT fired here. This endpoint RETURNS worker_jwt, which
+    # the worker only THEN uses to open the WS control channel
+    # (/v1/workers/channel). At register time that channel does not yet exist,
+    # so load_model would always raise NodeUnreachableError and mark the
+    # deploy FAILED — and it cannot wait for the channel (the worker is
+    # blocked on this very response). The linker is therefore fired from
+    # worker_channel(), AFTER the channel is attached and reachable.
     return RegisterResponse(node_id=node_id_str, worker_jwt=worker_jwt)
 
 
@@ -263,6 +281,14 @@ async def worker_channel(
 
     conn = WorkerConn(ws=_FastAPIWSAdapter(ws), pool_id=claims.pool_id)
     await registry.attach(claims.sub, conn)
+
+    # The worker's control channel is now live and reachable, so the
+    # DeploymentLinker can actually send LoadModel. Fire it HERE (not at HTTP
+    # /register, which races the channel — see register_worker). Run it as a
+    # background task: on_worker_ready awaits the LoadModel CommandResult,
+    # which is delivered by the read loop BELOW (deliver_command_result) — so
+    # it must run concurrently, not block the loop.
+    _fire_linker_on_channel_ready(ws, claims.sub)
 
     # Send Hello.
     try:
