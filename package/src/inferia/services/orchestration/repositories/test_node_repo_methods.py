@@ -119,6 +119,22 @@ class TestListNodes:
         await repo.list_nodes(org_id=ORG, selector={"inferia.io/zone": "eu-west"})
         # Just verify no exception; the value goes through as plain JSON.
 
+    @pytest.mark.asyncio
+    async def test_org_scoping_matches_owner_id_OR_org_id(self):
+        """A pool whose owner_id holds a user id (legacy createpool) but whose
+        org_id column equals the querying org must still surface its nodes.
+        Scoping on owner_id alone hid the freshly-provisioned node from the
+        dashboard ('the EC2 spins but doesn't show'). The query must match
+        either column."""
+        pool, conn = make_db(fetch=[{"id": "a", "state": "provisioning"}])
+        repo = InventoryRepository(pool)
+        await repo.list_nodes(org_id=ORG)
+        sql = " ".join(conn.fetch.await_args.args[0].split())
+        assert "p.owner_id = $1" in sql
+        assert "p.org_id = $1" in sql
+        # Both must be OR'd inside the org gate, not AND'd.
+        assert "p.owner_id = $1 OR p.org_id = $1" in sql
+
 
 # ---------------------------------------------------------------------------
 # inventory_repo.set_labels

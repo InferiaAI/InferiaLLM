@@ -846,7 +846,11 @@ async def _list_nodes_impl(self, *, org_id, selector=None):
         "       i.hostname, i.created_at, i.updated_at "
         "FROM compute_inventory i "
         "JOIN compute_pools p ON p.id = i.pool_id "
-        "WHERE p.owner_id = $1 "
+        # Match owner_id OR org_id: the legacy createpool path stores a user
+        # id in owner_id while org_id holds the org UUID. Scoping on owner_id
+        # alone hid a freshly-provisioned node from the dashboard ('the EC2
+        # spins but doesn't show'). Matching either column surfaces it.
+        "WHERE (p.owner_id = $1 OR p.org_id = $1) "
         "  AND i.state IS DISTINCT FROM 'terminated' "
     )
     args: list = [org_id]
