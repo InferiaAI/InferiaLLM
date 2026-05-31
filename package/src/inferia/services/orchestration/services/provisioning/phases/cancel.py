@@ -13,7 +13,7 @@ from inferia.services.orchestration.services.provisioning.jobs.model import (
     Phase, PhaseResult, ProvisioningJob,
 )
 from inferia.services.orchestration.services.provisioning.phases.base import (
-    PhaseContext,
+    PhaseContext, stack_name_for_job,
 )
 
 
@@ -30,7 +30,7 @@ class CancelHandler:
     name = Phase.CANCELLING
 
     async def run(self, job: ProvisioningJob, ctx: PhaseContext) -> PhaseResult:
-        stack_name = f"{job.org_id}-{job.pool_id}-{job.node_id}"
+        stack_name = stack_name_for_job(job)
         program = build_program(
             spec=job.spec, stack_outputs=job.pulumi_stack_outputs or {},
         )

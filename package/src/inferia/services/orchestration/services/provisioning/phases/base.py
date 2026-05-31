@@ -23,6 +23,19 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def stack_name_for_job(job) -> str:
+    """Deterministic Pulumi stack name for a provisioning job.
+
+    MUST be <= 100 chars (Pulumi rejects longer with
+    'a stack name cannot exceed 100 characters') and MUST be identical
+    between PulumiUpHandler (up) and CancelHandler (destroy) so the stack
+    can be reopened to tear down. node_id alone uniquely identifies the
+    provision; the old f"{org_id}-{pool_id}-{node_id}" was three UUIDs
+    (~110 chars) and failed pulumi up at stack creation.
+    """
+    return f"inferia-{job.node_id}"
+
+
 @dataclass
 class PhaseContext:
     """Carries dependencies handlers need, injected by the reconciler.

@@ -164,7 +164,7 @@ async def test_auth_failure_propagates_as_permanent():
 
 
 @pytest.mark.asyncio
-async def test_stack_name_uses_deterministic_org_pool_node_format():
+async def test_stack_name_is_deterministic_and_within_pulumi_limit():
     captured = {}
     def _spy(*, stack_name, program, env, state_dir=None, **_):
         captured["stack_name"] = stack_name
@@ -177,7 +177,10 @@ async def test_stack_name_uses_deterministic_org_pool_node_format():
         "pulumi_up.run_pulumi_up_sync", side_effect=_spy,
     ):
         await PulumiUpHandler().run(j, _ctx())
-    assert captured["stack_name"] == f"{j.org_id}-{j.pool_id}-{j.node_id}"
+    # node_id uniquely identifies the provision; the old org-pool-node
+    # scheme was three UUIDs (~110 chars) and pulumi rejects names >100.
+    assert captured["stack_name"] == f"inferia-{j.node_id}"
+    assert len(captured["stack_name"]) <= 100
 
 
 @pytest.mark.asyncio

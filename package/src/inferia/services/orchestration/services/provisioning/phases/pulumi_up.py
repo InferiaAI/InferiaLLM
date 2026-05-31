@@ -13,7 +13,7 @@ from inferia.services.orchestration.services.provisioning.jobs.model import (
     Phase, PhaseResult, ProvisioningJob,
 )
 from inferia.services.orchestration.services.provisioning.phases.base import (
-    PhaseContext,
+    PhaseContext, stack_name_for_job,
 )
 
 
@@ -28,7 +28,7 @@ class PulumiUpHandler:
     name = Phase.PROVISIONING
 
     async def run(self, job: ProvisioningJob, ctx: PhaseContext) -> PhaseResult:
-        stack_name = f"{job.org_id}-{job.pool_id}-{job.node_id}"
+        stack_name = stack_name_for_job(job)
         spec = dict(job.spec or {})
         provider = (spec.get("provider") or getattr(job, "provider", None) or "aws").lower()
 
