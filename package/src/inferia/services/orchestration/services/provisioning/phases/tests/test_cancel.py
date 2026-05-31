@@ -42,9 +42,15 @@ async def test_happy_path_destroys_stack_and_returns_terminated():
     with patch(
         "inferia.services.orchestration.services.provisioning.phases."
         "cancel.run_pulumi_destroy_sync", return_value=None,
-    ):
+    ) as destroy:
         result = await CancelHandler().run(_job(), _ctx())
     assert result.next_phase == Phase.TERMINATED
+    # Destroy MUST target the same local file backend + state_dir the
+    # PulumiUpHandler created the stack in — otherwise it opens a different
+    # backend, finds no stack, and "succeeds" while leaking the real EC2.
+    kw = destroy.call_args.kwargs
+    assert kw.get("state_dir")
+    assert kw["env"].get("PULUMI_BACKEND_URL", "").startswith("file://")
 
 
 @pytest.mark.asyncio

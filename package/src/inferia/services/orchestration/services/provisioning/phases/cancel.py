@@ -35,13 +35,31 @@ class CancelHandler:
             spec=job.spec, stack_outputs=job.pulumi_stack_outputs or {},
         )
 
+        # Pin Pulumi to the SAME persistent local file backend the
+        # PulumiUpHandler used to create the stack. Without this, destroy
+        # opens a different (cloud / fresh-temp) backend, finds no stack, and
+        # run_pulumi_destroy_sync treats "missing stack" as success — silently
+        # LEAKING the real EC2. state_dir + PULUMI_BACKEND_URL must match
+        # pulumi_up.py exactly.
+        import os as _os
+        from inferia.services.orchestration.config import settings
+        state_dir = settings.pulumi_state_dir
+        try:
+            _os.makedirs(state_dir, exist_ok=True)
+        except OSError:
+            pass
+        env = dict(ctx.pulumi_env or {})
+        env.setdefault("PULUMI_BACKEND_URL", f"file://{state_dir}")
+        env.setdefault("PULUMI_CONFIG_PASSPHRASE", settings.pulumi_passphrase or "")
+
         await ctx.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.CANCELLING,
             status="running", message=f"Destroying stack {stack_name}",
         )
         await asyncio.to_thread(
             run_pulumi_destroy_sync,
-            stack_name=stack_name, program=program, env=ctx.pulumi_env,
+            stack_name=stack_name, program=program, env=env,
+            state_dir=state_dir,
         )
         await ctx.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.CANCELLING,
