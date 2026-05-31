@@ -1244,12 +1244,20 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     if bound_for_load is not None:
         node_id, _ = bound_for_load
         try:
+            _recipe = req.engine or "vllm"
+            # CPU-friendly engines (ollama/localai) run without a GPU — GPU
+            # passthrough to the sibling model container is unstable. Mirror
+            # the cold-path (_spec_from_pending) policy.
+            _cpu_friendly = _recipe in ("ollama", "localai")
+            _gpu_indices = (
+                [] if _cpu_friendly else list(range(req.gpu_per_replica or 0))
+            )
             spec = {
                 "deployment_id": str(deploy_id),
-                "recipe": (req.engine or "vllm"),
+                "recipe": _recipe,
                 "model": _model_spec_from_request(req),
                 "config": (req.configuration or {}).get("config") or {},
-                "gpu_indices": list(range(req.gpu_per_replica or 0)),
+                "gpu_indices": _gpu_indices,
                 "port": 0,
             }
             await controller.load_model(node_id=str(node_id), spec=spec)

@@ -31,7 +31,8 @@ async def pool():
     await p.close()
 
 
-async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready"):
+async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready",
+                              advertise_url=None):
     org_id, pool_id, node_id = uuid4(), uuid4(), uuid4()
     async with p.acquire() as c:
         await c.execute("INSERT INTO organizations(id,name) VALUES($1,$2) "
@@ -49,12 +50,14 @@ async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready")
         await c.execute(
             """INSERT INTO compute_inventory(id, pool_id, provider,
                  provider_instance_id, hostname, node_name, agent_kind,
+                 advertise_url,
                  gpu_total, gpu_allocated, vcpu_total, vcpu_allocated,
                  ram_gb_total, ram_gb_allocated, state)
                VALUES ($1, $2, 'aws', $3, 'h', $4, 'worker',
+                       $8,
                        $5, $6, 0, 0, 0, 0, $7)""",
             node_id, pool_id, f"p-{node_id}", f"n-{node_id}",
-            gpu_total, gpu_allocated, state,
+            gpu_total, gpu_allocated, state, advertise_url,
         )
     return pool_id, node_id
 
@@ -101,6 +104,36 @@ async def test_one_pending_deploy_binds_on_worker_ready(pool):
     assert "spec" in call_kwargs
     assert call_kwargs["spec"]["deployment_id"]  # non-empty
     assert call_kwargs["spec"]["model"]["artifact_uri"]  # non-empty
+
+
+async def test_on_worker_ready_sets_endpoint_to_node_advertise_url(pool):
+    """After a successful load, the deploy's endpoint must be set to the
+    node's CP-reachable advertise_url (the worker's :8080 inference proxy) so
+    the inference data plane can route to it. The worker's own reported
+    endpoint_url is a useless 127.0.0.1 loopback — we must use advertise_url.
+    Without this the deployment has endpoint='' and the sandbox 'never
+    connects to the node'."""
+    pool_id, node_id = await _seed_pool_and_node(
+        pool, advertise_url="http://ec2-test-host:8080",
+    )
+    deploy_id = await _seed_pending_deploy(pool, pool_id)
+    controller = AsyncMock(spec=WorkerController)
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT state, endpoint FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+    assert row["state"] == "RUNNING"
+    assert row["endpoint"] == "http://ec2-test-host:8080"
 
 
 async def test_five_pending_with_capacity_three_binds_three_fifo(pool):

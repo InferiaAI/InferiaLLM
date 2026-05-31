@@ -32,7 +32,7 @@ def test_ollama_model_id_becomes_schemed_artifact_uri():
     assert spec["recipe"] == "ollama"
     assert spec["model"]["artifact_uri"] == "hf://gemma3:4b"
     assert spec["deployment_id"]
-    assert spec["gpu_indices"] == [0]
+    assert spec["gpu_indices"] == []  # ollama is cpu-friendly → no GPU
     assert spec["port"] == 0
 
 
@@ -57,8 +57,21 @@ def test_vllm_schemed_artifact_uri_preserved():
     assert spec["model"]["artifact_uri"] == "hf://Qwen/Qwen3-0.6B"
 
 
-def test_gpu_indices_track_required_count():
-    spec = _spec_from_pending(_deploy(gpu_per_replica=2), 2)
+def test_ollama_runs_on_cpu_no_gpu_indices():
+    # ollama is a CPU-friendly engine; GPU passthrough to the sibling ollama
+    # container is unreliable (the container detects the GPU then gets killed),
+    # so cpu-friendly engines get gpu_indices=[] (no --gpus → stable CPU run).
+    spec = _spec_from_pending(_deploy(engine="ollama", gpu_per_replica=1), 1)
+    assert spec["recipe"] == "ollama"
+    assert spec["gpu_indices"] == []
+
+
+def test_gpu_engine_indices_track_required_count():
+    spec = _spec_from_pending(
+        _deploy(engine="vllm", configuration={"artifact_uri": "hf://x"},
+                gpu_per_replica=2),
+        2,
+    )
     assert spec["gpu_indices"] == [0, 1]
 
 

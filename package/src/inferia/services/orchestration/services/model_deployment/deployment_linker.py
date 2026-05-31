@@ -65,9 +65,18 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         inference_model=deploy.get("inference_model"),
         model_name=deploy.get("model_name"),
     ) or ""
+    recipe = deploy.get("engine") or "vllm"
+    # CPU-friendly engines (ollama/localai) run without a GPU: passing GPU
+    # indices makes the worker attach an nvidia DeviceRequest to the sibling
+    # model container, which on the GPU AMI is unstable (the ollama container
+    # detects the GPU then gets killed). ollama serves gemma-class models fine
+    # on CPU, so we omit GPU indices for these engines. GPU engines (vllm)
+    # still get their indices.
+    cpu_friendly = recipe in ("ollama", "localai")
+    gpu_indices = [] if cpu_friendly else list(range(gpu_required))
     return {
         "deployment_id": str(deploy["id"]),
-        "recipe": deploy.get("engine") or "vllm",
+        "recipe": recipe,
         "model": {
             "artifact_uri": str(artifact_uri),
             "format": str(model_block.get("format") or cfg.get("format") or "hf"),
@@ -79,7 +88,7 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
             ),
         },
         "config": cfg.get("config") or {},
-        "gpu_indices": list(range(gpu_required)),
+        "gpu_indices": gpu_indices,
         "port": 0,
     }
 
@@ -178,6 +187,37 @@ class DeploymentLinker:
                 async with self._db.acquire() as conn:
                     await self._deploys.set_state(
                         deploy["id"], "RUNNING", tx=conn,
+                    )
+                # Publish the inference endpoint so the data plane can route
+                # to this worker's :8080 inference proxy. We use the node's
+                # CP-reachable advertise_url — NOT the worker's reported
+                # endpoint_url, which is a 127.0.0.1:<port> loopback useless
+                # to the control plane. The proxy auths with the pool
+                # inference_token and routes by X-Inferia-Deployment-Id; the
+                # inference data plane attaches both. Without this the
+                # deployment has endpoint='' and the sandbox "never connects
+                # to the node".
+                try:
+                    async with self._db.acquire() as conn:
+                        advertise = await conn.fetchval(
+                            "SELECT advertise_url FROM compute_inventory "
+                            "WHERE id=$1",
+                            node_id,
+                        )
+                    if advertise:
+                        await self._deploys.update_endpoint(
+                            deploy["id"], advertise,
+                        )
+                    else:
+                        logger.warning(
+                            "linker: node=%s has no advertise_url; deploy=%s "
+                            "endpoint not set (inference unreachable)",
+                            node_id, deploy["id"],
+                        )
+                except Exception:
+                    logger.exception(
+                        "linker: failed to set endpoint for deploy=%s",
+                        deploy["id"],
                     )
 
         if bound:

@@ -450,6 +450,11 @@ async def resolve_inference_context(
             "engine": deployment["engine"],
             "configuration": deployment["configuration"],
             "inference_model": deployment.get("inference_model"),
+            # Pass the pool inference_token through to the inference data plane
+            # so it can auth to a worker-hosted deploy's :8080 proxy. This is
+            # the internal resolve channel (internal-API-key gated), never the
+            # dashboard-facing deployment API.
+            "inference_token": deployment.get("inference_token"),
         },
         guardrail_config=config["guardrail"],
         rag_config=config["rag"],

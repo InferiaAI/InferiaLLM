@@ -14,7 +14,8 @@ from fastapi.responses import StreamingResponse
 from inferia.services.inference.client import api_gateway_client
 from inferia.services.inference.config import settings
 from ..pipeline import Pipeline, RequestContext
-from ..providers import get_adapter, is_external_engine, resolve_upstream
+from ..providers import get_adapter, resolve_upstream
+from ..worker_routing import provider_auth, upstream_model
 from ..rate_limiter import rate_limiter
 from ..request_logger import RequestLogger
 from ..service import GatewayService
@@ -129,30 +130,25 @@ class CompletionHandler:
             engine, endpoint_url, settings.external_proxy_url,
         )
 
-        credentials = (
-            deployment.get("credentials_json") or deployment.get("configuration") or {}
+        # Resolve upstream auth + routing. Worker-hosted deploys (a pool
+        # inference_token is present in the resolved context) auth to the
+        # worker's :8080 proxy with that token and must carry the
+        # X-Inferia-Deployment-Id header so the worker routes to the right
+        # model container; external providers keep their own api_key.
+        provider_key, extra_headers = provider_auth(
+            deployment, engine, settings.api_gateway_internal_key,
         )
-        provider_key = str(
-            credentials.get("api_key")
-            or credentials.get("key")
-            or credentials.get("token")
-            or ""
-        )
-
-        if not provider_key and not is_external_engine(engine):
-            provider_key = settings.api_gateway_internal_key
-
         provider_headers = adapter.get_headers(provider_key)
+        provider_headers.update(extra_headers)
 
         provider_payload = body.copy()
         provider_payload["messages"] = messages
 
-        if deployment.get("inference_model"):
-            provider_payload["model"] = deployment.get("inference_model")
-        elif credentials.get("model"):
-            provider_payload["model"] = credentials.get("model")
-        elif deployment.get("model_name"):
-            provider_payload["model"] = deployment.get("model_name")
+        # Send the real upstream model id (e.g. the ollama tag gemma3:4b),
+        # never the human display name the sandbox sent.
+        resolved_model = upstream_model(deployment)
+        if resolved_model:
+            provider_payload["model"] = resolved_model
 
         # 7. Execute Request
         if body.get("stream"):

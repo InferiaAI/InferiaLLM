@@ -9,7 +9,7 @@ import cachetools
 from inferia.services.api_gateway.db.models import Usage as DBUsage
 from fastapi import HTTPException, status
 from inferia.services.api_gateway.models import UserContext
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -83,6 +83,34 @@ class PolicyEngine:
 
         return None
 
+    async def _fetch_inference_token(self, db: AsyncSession, deployment_id) -> Optional[str]:
+        """Pool inference token for a deployment, or None.
+
+        Worker-hosted deploys (ollama/vllm on an InferiaLLM worker) are
+        reached via the worker's :8080 inference proxy, which requires this
+        token as the bearer. The gateway has no ComputePool ORM model, so we
+        join compute_pools by the deployment's pool_id with a raw query.
+        Returns None for deploys whose pool has no token (e.g. external/k8s),
+        leaving the legacy auth path unchanged.
+        """
+        try:
+            res = await db.execute(
+                text(
+                    "SELECT p.inference_token "
+                    "FROM model_deployments d "
+                    "JOIN compute_pools p ON p.id = d.pool_id "
+                    "WHERE d.deployment_id = :did"
+                ),
+                {"did": str(deployment_id)},
+            )
+            return res.scalar()
+        except Exception:
+            logger.exception(
+                "resolve_context: inference_token lookup failed for %s",
+                deployment_id,
+            )
+            return None
+
     async def _resolve_sandbox_context(
         self,
         db: AsyncSession,
@@ -137,6 +165,10 @@ class PolicyEngine:
             "org_id": deployment.org_id,
             "policies": deployment.policies,
             "inference_model": deployment.inference_model,
+            # Pool inference token: lets the inference data plane auth to a
+            # worker-hosted deploy's :8080 proxy. Internal-only (this context
+            # goes to the inference service, never the dashboard).
+            "inference_token": await self._fetch_inference_token(db, deployment.id),
         }
 
         # For sandbox mode, return minimal config (no policies enforcement)
@@ -241,6 +273,7 @@ class PolicyEngine:
             "org_id": deployment.org_id,
             "policies": deployment.policies,
             "inference_model": deployment.inference_model,
+            "inference_token": await self._fetch_inference_token(db, deployment.id),
         }
 
         # 3. Fetch Policies (DB + Deployment Metadata)
