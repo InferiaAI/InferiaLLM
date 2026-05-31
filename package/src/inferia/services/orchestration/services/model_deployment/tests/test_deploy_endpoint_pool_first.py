@@ -357,6 +357,7 @@ async def test_build_provisioning_spec_derives_instance_class_and_region():
     assert spec["instance_class"] == "normal_gpu"  # catalog-derived
     assert spec["region"] == "us-east-1"
     assert spec["gpu_count"] == 1
+    assert spec["root_volume_gb"] == 100  # GPU DLAMI needs >=75GB
 
 
 async def test_build_provisioning_spec_unknown_instance_type_raises_422():
@@ -394,4 +395,4 @@ async def test_build_provisioning_spec_includes_pool_metadata_overrides():
     assert spec["subnet_id"] == "subnet-abc"
     assert spec["security_group_ids"] == ["sg-123"]
     assert spec["iam_instance_profile"].endswith("/x")
-    assert spec["root_volume_gb"] == 200
+    assert spec["root_volume_gb"] == 200  # explicit override wins over GPU default

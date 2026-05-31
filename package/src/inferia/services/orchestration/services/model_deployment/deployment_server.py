@@ -370,6 +370,13 @@ async def _build_provisioning_spec(
         val = pool_meta.get(key)
         if val not in (None, "", []):
             spec[key] = val
+    # Root volume: GPU classes boot a Deep Learning AMI whose backing
+    # snapshot is ~75GB+, so the build_program default of 50GB fails with
+    # InvalidBlockDeviceMapping ("Volume ... smaller than snapshot, expect
+    # >= 75GB"). Default GPU tiers to 100GB; CPU (plain Ubuntu) to 30GB.
+    # A per-pool root_volume_gb override above still wins.
+    if "root_volume_gb" not in spec:
+        spec["root_volume_gb"] = 30 if instance_class == "cpu" else 100
     return spec
 
 
