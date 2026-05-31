@@ -183,3 +183,45 @@ async def test_load_model_failure_releases_gpu_and_marks_failed(pool):
         )
     assert row["state"] == "FAILED"
     assert node_row["gpu_allocated"] == 0  # released after load_model failure
+
+
+async def test_already_bound_deploy_is_promoted_without_reallocate(pool):
+    """A ColdStart deploy pre-allocates its GPU on the placeholder and is
+    bound to it (target_node_id=node). When the worker registers onto that
+    same row, the linker must PROMOTE it (PENDING_NODE->DEPLOYING) without
+    re-allocating — re-allocating would double-count and fail on the now-full
+    node, stranding the deploy in PENDING_NODE forever (the live bug)."""
+    pool_id, node_id = await _seed_pool_and_node(
+        pool, gpu_total=1, gpu_allocated=1,  # full: GPU already reserved
+    )
+    # Deploy already bound to this node (as ColdStart leaves it).
+    deploy_id = uuid4()
+    async with pool.acquire() as c:
+        await c.execute(
+            """INSERT INTO model_deployments(deployment_id, model_name,
+                 replicas, gpu_per_replica, pool_id, target_pool_id,
+                 target_node_id, state, org_id)
+               VALUES ($1, 'm', 1, 1, $2, $2, $3, 'PENDING_NODE', $4)""",
+            deploy_id, pool_id, node_id, str(uuid4()),
+        )
+    controller = AsyncMock(spec=WorkerController)
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT state FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+        node = await c.fetchrow(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
+        )
+    assert row["state"] == "DEPLOYING"           # promoted, not stranded
+    assert node["gpu_allocated"] == 1            # NOT double-allocated
+    controller.load_model.assert_awaited_once()  # model load fired

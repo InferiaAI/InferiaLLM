@@ -108,19 +108,34 @@ class DeploymentLinker:
                 )
                 for deploy in pending:
                     gpu_required = int(deploy.get("gpu_per_replica") or 1)
-                    ok = await self._inventory.allocate_gpu(
-                        node_id, gpu_required, tx=conn,
-                    )
-                    if not ok:
-                        # node full; remaining deploys stay PENDING_NODE
-                        break
-                    await self._deploys.bind_to_node(
-                        deploy["id"], node_id, tx=conn,
-                    )
-                    await self._deploys.set_state(
-                        deploy["id"], "DEPLOYING", tx=conn,
-                    )
-                    bound.append(deploy)
+                    tgt = deploy.get("target_node_id")
+                    if tgt == node_id:
+                        # Already bound to THIS node with its GPU allocated at
+                        # ColdStart/CoWait deploy time (create_placeholder
+                        # initial_alloc). Re-allocating would double-count and
+                        # fail on a now-full node — just promote to DEPLOYING.
+                        await self._deploys.set_state(
+                            deploy["id"], "DEPLOYING", tx=conn,
+                        )
+                        bound.append(deploy)
+                    elif tgt is None:
+                        # Unbound (e.g. a worker-pool deploy waiting for a
+                        # self-registered worker): allocate + bind now.
+                        ok = await self._inventory.allocate_gpu(
+                            node_id, gpu_required, tx=conn,
+                        )
+                        if not ok:
+                            # node full; remaining unbound deploys stay PENDING
+                            break
+                        await self._deploys.bind_to_node(
+                            deploy["id"], node_id, tx=conn,
+                        )
+                        await self._deploys.set_state(
+                            deploy["id"], "DEPLOYING", tx=conn,
+                        )
+                        bound.append(deploy)
+                    # else: bound to a DIFFERENT in-flight node — leave it for
+                    # that node's on_worker_ready.
 
         # Transaction committed. Fire load_model OUTSIDE the transaction.
         for deploy in bound:
