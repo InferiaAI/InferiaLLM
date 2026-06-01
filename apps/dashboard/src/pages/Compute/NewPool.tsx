@@ -51,6 +51,26 @@ const gcpRegions = [
     { id: "asia-southeast1", name: "Singapore (asia-southeast1)", available: true },
 ]
 
+// AWS regions for Pulumi-managed clusters. AWS region codes carry a SECOND
+// hyphen (us-east-1), unlike GCP (us-east1). Sending a GCP code as the AWS
+// region makes boto3 build an endpoint for a nonexistent region and
+// provisioning fails at preflight with EndpointConnectionError, so the AWS
+// pool form MUST offer these, not gcpRegions.
+const awsRegions = [
+    { id: "us-east-1", name: "N. Virginia (us-east-1)", available: true },
+    { id: "us-east-2", name: "Ohio (us-east-2)", available: true },
+    { id: "us-west-1", name: "N. California (us-west-1)", available: true },
+    { id: "us-west-2", name: "Oregon (us-west-2)", available: true },
+    { id: "eu-west-1", name: "Ireland (eu-west-1)", available: true },
+    { id: "eu-west-2", name: "London (eu-west-2)", available: true },
+    { id: "eu-central-1", name: "Frankfurt (eu-central-1)", available: true },
+    { id: "ap-south-1", name: "Mumbai (ap-south-1)", available: true },
+    { id: "ap-southeast-1", name: "Singapore (ap-southeast-1)", available: true },
+    { id: "ap-southeast-2", name: "Sydney (ap-southeast-2)", available: true },
+    { id: "ap-northeast-1", name: "Tokyo (ap-northeast-1)", available: true },
+    { id: "ca-central-1", name: "Canada (ca-central-1)", available: true },
+]
+
 // GPU types for GCP/Pulumi
 const gcpGpuTypes = [
     { gpu_type: "H100", gpu_memory_gb: 80, vcpu: 26, ram_gb: 200, description: "NVIDIA H100 80GB" },
@@ -849,7 +869,7 @@ export default function NewPool() {
                         <div className="mb-6">
                             <label className="text-sm font-medium mb-2 block">Select Region</label>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                {gcpRegions.map((region) => (
+                                {(selectedProvider === "aws" ? awsRegions : gcpRegions).map((region) => (
                                     <button
                                         key={region.id}
                                         onClick={() => dispatch({ type: "SET_REGION", payload: region.id })}

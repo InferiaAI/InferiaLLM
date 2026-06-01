@@ -467,3 +467,24 @@ describe("AWS Instance Tier selector (useInstanceCatalog)", () => {
         expect(screen.getByText(/≈\$0\.420\/hr/)).toBeInTheDocument();
     });
 });
+
+describe("AWS region selector", () => {
+    // Regression: the AWS pool form offered GCP region codes (e.g. "us-east1"),
+    // which AWS rejects — boto3 can't build an endpoint for a nonexistent
+    // region and provisioning failed at preflight with EndpointConnectionError.
+    it("offers valid AWS region codes (us-east-1), not GCP codes (us-east1)", async () => {
+        await gotoStep2("aws");
+        await screen.findByText(/Select Region/i);
+        // A real AWS region code is presented…
+        expect(screen.getByText("us-east-1")).toBeInTheDocument();
+        // …and the GCP-style code that AWS rejects is NOT offered.
+        expect(screen.queryByText("us-east1")).not.toBeInTheDocument();
+        expect(screen.queryByText("us-central1")).not.toBeInTheDocument();
+    });
+
+    it("GCP pool still offers GCP region codes (us-central1)", async () => {
+        await gotoStep2("gcp");
+        await screen.findByText(/Select Region/i);
+        expect(screen.getByText("us-central1")).toBeInTheDocument();
+    });
+});
