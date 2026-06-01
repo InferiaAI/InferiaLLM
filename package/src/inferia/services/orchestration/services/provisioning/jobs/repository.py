@@ -175,6 +175,14 @@ class ProvisioningJobRepository:
                     last_error_hint = NULL,
                     error_class = NULL,
                     next_attempt_after = NULL,
+                    -- Release the lease so the very next reconciler iteration
+                    -- can claim this job for the NEW phase immediately. Leaving
+                    -- it set kept the job unclaimable until the lease TTL
+                    -- (lease_seconds, ~300s) expired, stalling provisioning ~5
+                    -- minutes at every phase boundary (preflight→provisioning→
+                    -- bootstrapping) with no progress shown on the nodes tab.
+                    lease_holder = NULL,
+                    lease_expires_at = NULL,
                     updated_at = now()
                 WHERE id = $1 AND phase = $2::text AND lease_holder = $5
                 """,

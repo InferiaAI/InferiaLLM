@@ -176,6 +176,33 @@ async def test_transition_to_advances_phase_with_lease_guard():
 
 
 @pytest.mark.asyncio
+async def test_transition_to_releases_lease_for_immediate_next_claim():
+    """A successful phase transition MUST clear the lease (lease_expires_at
+    and lease_holder = NULL) so the next iteration can claim the job for the
+    next phase immediately.
+
+    Regression: transition_to left the lease set for its full TTL
+    (lease_seconds=300), and claim_next_job only claims rows where
+    `lease_expires_at IS NULL OR lease_expires_at < now()`. So every phase
+    boundary (preflight→provisioning→bootstrapping) stalled ~5 minutes until
+    the lease expired — provisioning crawled and the nodes tab showed long
+    dead gaps with no progress.
+    """
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 1")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    await repo.transition_to(
+        job_id=uuid.uuid4(),
+        current_phase=Phase.PREFLIGHT,
+        next_phase=Phase.PROVISIONING,
+        lease_holder="me",
+    )
+    sql = conn.execute.await_args.args[0]
+    assert "lease_expires_at = NULL" in sql
+    assert "lease_holder = NULL" in sql
+
+
+@pytest.mark.asyncio
 async def test_schedule_retry_keeps_phase_and_bumps_attempt():
     conn = MagicMock()
     conn.execute = AsyncMock(return_value="UPDATE 1")
