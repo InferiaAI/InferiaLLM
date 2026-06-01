@@ -1692,6 +1692,22 @@ async def create_pool(req: CreatePoolRequest, request: Request):
         except _ValidationError as e:
             raise HTTPException(status_code=422, detail={"errors": e.errors()})
 
+    # 2b. Validate AWS region(s) at the boundary. A malformed code (e.g.
+    #     "us-east1" missing the second hyphen) is otherwise persisted and only
+    #     fails much later at preflight with an opaque
+    #     "DLAMI lookup failed: EndpointConnectionError" (boto3 can't build an
+    #     endpoint for a nonexistent region). Reject early with a clear message.
+    if req.provider == "aws" and req.region_constraint:
+        from inferia.services.orchestration.services.adapter_engine.adapters.aws.region import (
+            InvalidRegionError,
+            validate_aws_region,
+        )
+        for _region in req.region_constraint:
+            try:
+                validate_aws_region(_region)
+            except InvalidRegionError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+
     # 3. Multi-org header override (api_gateway forwards resolved org)
     hdr_org = request.headers.get("x-organization-id")
     if hdr_org and req.owner_type == "user":

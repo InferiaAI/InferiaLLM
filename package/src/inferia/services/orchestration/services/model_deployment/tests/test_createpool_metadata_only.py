@@ -143,6 +143,54 @@ async def test_createpool_aws_does_not_provision(app_and_pool):
         )
 
 
+async def test_createpool_rejects_malformed_region(app_and_pool):
+    """A malformed AWS region (``us-east1``, missing the second hyphen) must be
+    rejected at /createpool with a clear 422 — NOT accepted and left to fail
+    deep in preflight with an opaque ``EndpointConnectionError``.
+    """
+    app, pool = app_and_pool
+    payload = _createpool_payload(provider="aws")
+    payload["region_constraint"] = ["us-east1"]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/deployment/createpool", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    assert "us-east1" in resp.text
+    assert "region" in resp.text.lower()
+
+    # Must NOT have created a pool row for the rejected request.
+    async with pool.acquire() as c:
+        cnt = await c.fetchval(
+            "SELECT COUNT(*) FROM compute_pools WHERE pool_name = $1",
+            payload["pool_name"],
+        )
+    assert cnt == 0, "rejected pool must not be persisted"
+
+
+async def test_createpool_accepts_valid_region(app_and_pool):
+    """A correctly-formed region (us-east-1) is accepted and persisted."""
+    app, pool = app_and_pool
+    payload = _createpool_payload(provider="aws")
+    payload["region_constraint"] = ["us-east-1"]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/deployment/createpool", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    pool_id = resp.json()["pool_id"]
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT region_constraint FROM compute_pools WHERE id = $1::uuid",
+            pool_id,
+        )
+    assert "us-east-1" in (row["region_constraint"] or [])
+
+
 async def test_createpool_nosana_does_not_create_placeholder(app_and_pool):
     """POST /createpool with provider=nosana must NOT insert any
     compute_inventory placeholder rows.
