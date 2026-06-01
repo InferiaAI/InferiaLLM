@@ -80,6 +80,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.ssh/
+authorized_keys
 
 # --- mypy ---
 .mypy_cache/

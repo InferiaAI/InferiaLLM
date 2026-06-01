@@ -82,17 +82,11 @@ services:
       # host file; Pulumi reads it at provision time and bakes it into
       # the cloud-init user-data for the ubuntu + root users.
       # Override the host path with INFERIA_SSH_AUTHORIZED_KEYS_FILE.
-      - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-/home/ankit/.ssh/id_ed25519_gh.pub}:/var/lib/inferia/ssh/authorized_keys:ro
+      - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
-      - "8000:8000"   # Filtration Gateway (external API)
-      - "8001:8001"   # Inference Gateway (external API)
-      - "3001:3001"   # Dashboard (web UI)
-      # Extra publish so a port-forwarded dev box can expose the control
-      # plane on a single port from outside (out.wlan0.in:8110 → 8000).
-      # Cloud workers dial this from the public internet. Set
-      # INFERIA_CONTROL_PLANE_EXTERNAL_URL=http://out.wlan0.in:8110 in .env
-      # so the AWS adapter bakes this URL into the worker user-data.
-      - "8110:8000"
+      - "${FILTRATION_GATEWAY_PORT}:8000"   # Filtration Gateway (external API)
+      - "${INFERENCE_GATEWAY_PORT}:8001"   # Inference Gateway (external API)
+      - "${DASHBOARD_PORT}:3001"   # Dashboard (web UI)
     deploy:
       resources:
         limits:
@@ -108,9 +102,6 @@ services:
     networks:
       - inferia-net
 
-  # ---------------------------------------------------------------------------
-  # Elasticsearch
-  # ---------------------------------------------------------------------------
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     container_name: inferia-elasticsearch
@@ -137,9 +128,6 @@ services:
       retries: 5
       start_period: 30s
 
-  # ---------------------------------------------------------------------------
-  # Logstash
-  # ---------------------------------------------------------------------------
   logstash:
     image: docker.elastic.co/logstash/logstash:8.13.4
     container_name: inferia-logstash
@@ -171,9 +159,6 @@ services:
       retries: 5
       start_period: 60s
 
-  # ---------------------------------------------------------------------------
-  # Kibana (Log Dashboard)
-  # ---------------------------------------------------------------------------
   kibana:
     image: docker.elastic.co/kibana/kibana:8.13.4
     container_name: inferia-kibana
