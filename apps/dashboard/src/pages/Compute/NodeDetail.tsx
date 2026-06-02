@@ -214,15 +214,20 @@ export default function NodeDetail() {
             <span className="font-mono">{node.id}</span>
             <span
               className={cn(
-                "px-2 py-0.5 rounded border text-xs font-medium capitalize",
-                node.state === "ready"
-                  ? "border-ember-500/20 text-ember-600 dark:text-ember-400 bg-ember-500/10"
-                  : node.state === "terminated" || node.state === "failed"
-                    ? "border-red-500/20 text-red-600 dark:text-red-400 bg-red-500/10"
-                    : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
+                "inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium capitalize",
+                node.terminating || node.state === "terminating"
+                  ? "border-amber-500/20 text-amber-600 dark:text-amber-400 bg-amber-500/10"
+                  : node.state === "ready"
+                    ? "border-ember-500/20 text-ember-600 dark:text-ember-400 bg-ember-500/10"
+                    : node.state === "terminated" || node.state === "failed"
+                      ? "border-red-500/20 text-red-600 dark:text-red-400 bg-red-500/10"
+                      : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
               )}
             >
-              {node.state}
+              {(node.terminating || node.state === "terminating") && (
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+              )}
+              {node.terminating || node.state === "terminating" ? "terminating" : node.state}
             </span>
             {node.provider && (
               <span className="px-2 py-0.5 rounded border border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10 text-xs font-medium">

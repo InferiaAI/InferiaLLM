@@ -245,6 +245,50 @@ class TestGetNode:
         r = client.get("/v1/nodes/missing", headers=_user_ctx_header())
         assert r.status_code == 404
 
+    def test_terminating_metadata_surfaces_as_state_and_flag(self, app_and_deps):
+        """A node mid-destroy (metadata.terminating=true, SQL state still
+        'ready') must surface state='terminating' + terminating=true so the
+        dashboard reflects the deletion immediately instead of showing 'ready'."""
+        app, inventory, *_ = app_and_deps
+        inventory.nodes["t"] = {
+            "id": "t", "pool_id": POOL, "agent_kind": "worker", "state": "ready",
+            "labels": {}, "metadata": {"terminating": True},
+            "provider": "aws", "last_heartbeat": None,
+        }
+        client = TestClient(app)
+        r = client.get("/v1/nodes/t", headers=_user_ctx_header())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["terminating"] is True
+        assert body["state"] == "terminating"
+
+    def test_terminating_accepts_string_metadata(self, app_and_deps):
+        """metadata may arrive as a JSON string (no asyncpg jsonb codec)."""
+        app, inventory, *_ = app_and_deps
+        inventory.nodes["s"] = {
+            "id": "s", "pool_id": POOL, "agent_kind": "worker", "state": "ready",
+            "labels": {}, "metadata": '{"terminating": "true"}',
+            "provider": "aws", "last_heartbeat": None,
+        }
+        client = TestClient(app)
+        r = client.get("/v1/nodes/s", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert r.json()["terminating"] is True
+        assert r.json()["state"] == "terminating"
+
+    def test_non_terminating_node_unaffected(self, app_and_deps):
+        app, inventory, *_ = app_and_deps
+        inventory.nodes["r"] = {
+            "id": "r", "pool_id": POOL, "agent_kind": "worker", "state": "ready",
+            "labels": {}, "metadata": {}, "provider": "aws",
+            "last_heartbeat": None,
+        }
+        client = TestClient(app)
+        r = client.get("/v1/nodes/r", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert r.json()["terminating"] is False
+        assert r.json()["state"] == "ready"
+
 
 # ---------------------------------------------------------------------------
 # PATCH /v1/nodes/{id}/labels

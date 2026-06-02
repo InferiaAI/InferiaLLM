@@ -146,6 +146,13 @@ class NodeView(BaseModel):
     agent_kind: str | None = None
     provider: str | None = None
     state: str
+    # True while an async EC2 destroy is in flight. The node_state SQL enum has
+    # no 'terminating' member, so a deleting node's `state` column stays 'ready'
+    # for the ~60-90s the destroy takes; we stamp metadata.terminating=true at
+    # delete time and surface it here so the dashboard shows "Terminating…"
+    # immediately instead of a misleading "ready" until the row flips to
+    # 'terminated' (and drops out of the list entirely).
+    terminating: bool = False
     labels: dict[str, str] = Field(default_factory=dict)
     advertise_url: str | None = None
     expose_url: str | None = None
@@ -580,13 +587,30 @@ def _to_view(row: dict) -> NodeView:
             labels = json.loads(labels)
         except Exception:
             labels = {}
+    # metadata.terminating is stamped by mark_terminating_node at delete time.
+    # It may arrive as a dict (asyncpg jsonb codec) or a JSON string.
+    metadata = row.get("metadata") or {}
+    if isinstance(metadata, str):
+        import json
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    terminating = str((metadata or {}).get("terminating", "")).lower() == "true"
+    state = row.get("state") or "unknown"
+    # Present the in-flight destroy as "terminating" so the existing
+    # state-driven UI reflects the deletion immediately. Once the destroy
+    # completes the row flips to 'terminated' and list_nodes drops it.
+    if terminating and state != "terminated":
+        state = "terminating"
     return NodeView(
         id=str(row["id"]),
         pool_id=str(row.get("pool_id")) if row.get("pool_id") else None,
         node_name=row.get("node_name") or row.get("hostname"),
         agent_kind=row.get("agent_kind"),
         provider=row.get("provider"),
-        state=row.get("state") or "unknown",
+        state=state,
+        terminating=terminating,
         labels=labels,
         advertise_url=row.get("advertise_url"),
         expose_url=row.get("expose_url"),

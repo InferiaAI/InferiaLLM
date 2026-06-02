@@ -14,6 +14,9 @@ export interface NodeView {
   agent_kind: string | null;
   provider: string | null;
   state: string;
+  // True while an async EC2 destroy is in flight. The backend also reports
+  // state="terminating" in this window (the SQL enum has no such member).
+  terminating?: boolean;
   labels: Record<string, string>;
   advertise_url: string | null;
   expose_url: string | null;

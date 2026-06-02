@@ -581,15 +581,20 @@ function NodeList({
                 <td className="px-6 py-4">
                   <span
                     className={cn(
-                      "inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium",
-                      n.state === "ready"
-                        ? "border-ember-500/20 text-ember-600 bg-ember-500/10"
-                        : n.state === "terminated"
-                          ? "border-red-500/20 text-red-600 bg-red-500/10"
-                          : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
+                      "inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium",
+                      n.terminating || n.state === "terminating"
+                        ? "border-amber-500/20 text-amber-600 bg-amber-500/10"
+                        : n.state === "ready"
+                          ? "border-ember-500/20 text-ember-600 bg-ember-500/10"
+                          : n.state === "terminated"
+                            ? "border-red-500/20 text-red-600 bg-red-500/10"
+                            : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
                     )}
                   >
-                    {n.state}
+                    {(n.terminating || n.state === "terminating") && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    )}
+                    {n.terminating || n.state === "terminating" ? "terminating" : n.state}
                   </span>
                 </td>
                 <td className="px-6 py-4 font-mono text-xs">
