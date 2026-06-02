@@ -82,13 +82,11 @@ const MOCK_NODE = {
 };
 
 const MOCK_SUMMARY = {
-  current_phase: "pulumi_up",
+  current_phase: "provisioning",
   terminal: false,
   phases: [
-    { phase: "prepare", status: "succeeded", started_at: null, ended_at: null, last_message: null },
-    { phase: "ami_lookup", status: "succeeded", started_at: null, ended_at: null, last_message: null },
-    { phase: "pulumi_init", status: "succeeded", started_at: null, ended_at: null, last_message: null },
-    { phase: "pulumi_up", status: "running", started_at: null, ended_at: null, last_message: "provisioning EC2" },
+    { phase: "preflight", status: "succeeded", started_at: null, ended_at: null, last_message: null },
+    { phase: "provisioning", status: "running", started_at: null, ended_at: null, last_message: "provisioning EC2" },
   ],
   attempt_count: 1,
   error: null,
@@ -107,8 +105,8 @@ const MOCK_SUMMARY_WITH_ERROR = {
   ...MOCK_SUMMARY,
   terminal: true,
   phases: [
-    ...MOCK_SUMMARY.phases.slice(0, 3),
-    { phase: "pulumi_up", status: "failed" as const, started_at: null, ended_at: null, last_message: "timeout" },
+    { phase: "preflight", status: "succeeded" as const, started_at: null, ended_at: null, last_message: null },
+    { phase: "provisioning", status: "failed" as const, started_at: null, ended_at: null, last_message: "timeout" },
   ],
   error: {
     code: "PROVISION_FAILED",
@@ -166,7 +164,7 @@ describe("NodeDetail", () => {
     (provSvc.getProvisioning as ReturnType<typeof vi.fn>).mockResolvedValue(MOCK_SUMMARY);
     (provSvc.retryProvisioning as ReturnType<typeof vi.fn>).mockResolvedValue({
       job_id: "job-2",
-      phase: "prepare",
+      phase: "preflight",
     });
   });
 

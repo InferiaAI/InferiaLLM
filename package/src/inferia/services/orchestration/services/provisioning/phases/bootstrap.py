@@ -44,6 +44,14 @@ class BootstrapHandler:
                     phase=Phase.BOOTSTRAPPING, status="succeeded",
                     message="Worker registered as ready",
                 )
+                # Emit a terminal "ready" row so the dashboard timeline shows
+                # the final phase as completed (the READY phase has no handler
+                # of its own to emit this).
+                await ctx.emit_event(
+                    pool_id=job.pool_id, node_id=job.node_id,
+                    phase=Phase.READY, status="succeeded",
+                    message="Node ready",
+                )
                 return PhaseResult(next_phase=Phase.READY)
             if state == "failed":
                 raise PermanentError(

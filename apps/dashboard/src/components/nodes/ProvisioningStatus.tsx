@@ -3,13 +3,9 @@ import { cn } from "@/lib/utils";
 import { ALL_PHASES, type ProvisioningSummary, type ProvisioningPhase } from "@/services/provisioningService";
 
 const PHASE_LABELS: Record<string, string> = {
-  prepare: "Prepare credentials & user-data",
-  ami_lookup: "Look up AMI",
-  pulumi_init: "Initialize Pulumi stack",
-  pulumi_up: "Provision EC2 instance",
-  ec2_running: "EC2 instance running",
-  cloud_init: "Boot & install worker",
-  worker_bootstrap: "Worker bootstrap",
+  preflight: "Preflight checks",
+  provisioning: "Provision EC2 instance",
+  bootstrapping: "Bootstrap worker",
   ready: "Ready",
 };
 
@@ -62,7 +58,12 @@ export default function ProvisioningStatus(
       <ol className="space-y-2">
         {ALL_PHASES.map((phase) => {
           const p = byPhase.get(phase);
-          const status: ProvisioningPhase["status"] | "pending" = p?.status ?? "pending";
+          let status: ProvisioningPhase["status"] | "pending" = p?.status ?? "pending";
+          // The terminal "ready" phase may not emit its own event row; derive
+          // its completed state from the job being terminal without a failure.
+          if (phase === "ready" && status === "pending" && summary.terminal && !failed) {
+            status = "succeeded";
+          }
           return (
             <li
               key={phase}

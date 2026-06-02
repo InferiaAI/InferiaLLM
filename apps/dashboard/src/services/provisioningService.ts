@@ -78,9 +78,12 @@ export async function getEC2Console(nodeId: string): Promise<EC2ConsoleResponse>
   return r.data;
 }
 
+// Coarse provisioning phases emitted by the reconciler state machine
+// (orchestration jobs/model.py::Phase). The legacy fine-grained phase set
+// is gone; the timeline must mirror exactly what the backend emits into
+// node_provisioning_events or every row renders "pending".
 export const ALL_PHASES = [
-  "prepare", "ami_lookup", "pulumi_init", "pulumi_up",
-  "ec2_running", "cloud_init", "worker_bootstrap", "ready",
+  "preflight", "provisioning", "bootstrapping", "ready",
 ] as const;
 
 export async function retryProvisioning(nodeId: string): Promise<{ job_id: string; phase: string }> {

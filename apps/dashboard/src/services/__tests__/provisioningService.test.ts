@@ -18,9 +18,9 @@ describe("provisioningService", () => {
 
   it("getProvisioning returns the summary shape", async () => {
     const payload: ProvisioningSummary = {
-      current_phase: "pulumi_up",
+      current_phase: "provisioning",
       terminal: false,
-      phases: [{ phase: "prepare", status: "succeeded",
+      phases: [{ phase: "preflight", status: "succeeded",
                  started_at: "2026-05-25T00:00:00Z",
                  ended_at: "2026-05-25T00:00:01Z",
                  last_message: null }],

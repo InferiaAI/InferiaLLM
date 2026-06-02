@@ -105,3 +105,18 @@ async def test_emits_running_log_at_least_once():
     handler = BootstrapHandler(inventory_repo=inv, poll_interval_s=0.01)
     await handler.run(_job(), ctx)
     assert ctx.emit_event.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_emits_terminal_ready_succeeded_event():
+    """The READY phase has no handler of its own, so bootstrap must emit a
+    succeeded row for Phase.READY so the dashboard timeline shows the final
+    completed tick."""
+    ctx, inv = _ctx(get_inventory_states=["ready"])
+    handler = BootstrapHandler(inventory_repo=inv, poll_interval_s=0.01)
+    await handler.run(_job(), ctx)
+    ready_succeeded = [
+        kw for (_a, kw) in ctx.emit_event.await_args_list
+        if kw.get("phase") == Phase.READY and kw.get("status") == "succeeded"
+    ]
+    assert len(ready_succeeded) == 1

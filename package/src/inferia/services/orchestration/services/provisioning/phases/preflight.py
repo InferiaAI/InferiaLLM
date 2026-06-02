@@ -91,6 +91,14 @@ class PreflightHandler:
     async def run(self, job: ProvisioningJob, ctx: PhaseContext) -> PhaseResult:
         spec = job.spec or {}
 
+        # Mark the phase as running so the dashboard timeline shows it
+        # animating; without a non-"log" row this phase is invisible in
+        # summarize_phases (which filters status="log").
+        await ctx.emit_event(
+            pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
+            status="running", message="Validating spec, credentials and AMI",
+        )
+
         # 1. Pulumi CLI present.
         if shutil.which("pulumi") is None:
             raise PulumiCliMissingError(
@@ -158,6 +166,11 @@ class PreflightHandler:
         await ctx.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
             status="log", message=f"AMI resolved: {ami}",
+        )
+
+        await ctx.emit_event(
+            pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
+            status="succeeded", message="Preflight checks passed",
         )
 
         return PhaseResult(

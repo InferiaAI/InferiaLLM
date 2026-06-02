@@ -139,7 +139,8 @@ async def test_happy_path_returns_provisioning():
             "inferia.services.orchestration.services.provisioning.phases."
             "preflight.resolve_ami", return_value="ami-abc",
         ):
-        result = await PreflightHandler().run(_job(), _ctx())
+        ctx = _ctx()
+        result = await PreflightHandler().run(_job(), ctx)
     assert result.next_phase == Phase.PROVISIONING
     # T14 code review: outputs must carry the keys T15 PulumiUpHandler
     # reads back.
@@ -149,6 +150,14 @@ async def test_happy_path_returns_provisioning():
         "instance_class": "normal_gpu",
         "instance_type": "g6.xlarge",
     }
+    # The dashboard timeline depends on a non-"log" running + succeeded row
+    # for PREFLIGHT (summarize_phases filters status="log"). Assert both.
+    statuses = [
+        kw["status"] for (_a, kw) in ctx.emit_event.await_args_list
+        if kw.get("phase") == Phase.PREFLIGHT
+    ]
+    assert "running" in statuses
+    assert "succeeded" in statuses
 
 
 @pytest.mark.parametrize("missing_field", ["instance_class", "instance_type", "region"])
