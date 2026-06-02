@@ -2623,6 +2623,11 @@ async def list_all_deployments(
         {
             "deployment_id": d.deployment_id,
             "model_name": d.model_name,
+            # The real model slug (e.g. hf://gemma3:4b), distinct from the
+            # human deployment name in model_name. The dashboard's Model column
+            # binds to this; without it the column falls back to model_name and
+            # shows the deployment name twice.
+            "inference_model": d.inference_model,
             "model_version": d.model_version,
             "state": d.state,
             "replicas": d.replicas,

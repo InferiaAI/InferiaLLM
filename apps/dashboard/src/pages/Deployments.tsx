@@ -22,6 +22,7 @@ import type { AxiosError } from "axios";
 interface DeploymentRecord {
   deployment_id: string;
   model_name?: string;
+  inference_model?: string;
   engine?: string;
   endpoint?: string;
   org_id?: string;
@@ -106,7 +107,7 @@ export default function Deployments() {
       return (res.data.deployments || []).map((d, index) => ({
         id: d.deployment_id || `temp-${index}`,
         name: d.model_name || `Deployment-${(d.deployment_id || "").slice(0, 8)}`,
-        modelName: d.model_name || "-",
+        modelName: d.inference_model || d.model_name || "-",
         provider: d.engine || "compute",
         endpointUrl: d.endpoint || "",
         orgId: d.org_id || "user",
