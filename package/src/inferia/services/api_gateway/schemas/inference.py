@@ -19,23 +19,6 @@ class InferenceRequest(BaseModel):
     top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
     stream: Optional[bool] = Field(default=False)
 
-    # Feature Flags (Client-side configuration override)
-    enable_guardrails: bool = Field(
-        default=False, description="Enable input/output guardrail scanning"
-    )
-    enable_rag: bool = Field(default=False, description="Enable RAG context retrieval")
-    rag_collection_name: Optional[str] = Field(
-        default=None, description="ChromaDB collection for RAG"
-    )
-
-    # Prompt Engine Flags
-    template_id: Optional[str] = Field(
-        default=None, description="ID of the prompt template to use"
-    )
-    template_vars: Optional[Dict[str, Any]] = Field(
-        default=None, description="Variables for template substitution"
-    )
-
     @validator("messages")
     @classmethod
     def validate_messages(cls, v):

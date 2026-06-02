@@ -1,6 +1,6 @@
 import React from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Activity, Server, Database, Zap, Cloud, Check, X, RefreshCw, Clock, AlertTriangle, Shield } from "lucide-react"
+import { Activity, Server, Database, Zap, Cloud, Check, X, RefreshCw, Clock, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
 import { MANAGEMENT_URL } from "@/lib/api"
@@ -29,8 +29,6 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
     "API Gateway": Activity,
     "Inference Gateway": Zap,
     "Orchestration": Server,
-    "Data Service": Database,
-    "Guardrail Service": Shield,
     "DePIN Sidecar": Cloud,
 }
 
@@ -38,8 +36,6 @@ const descriptionMap: Record<string, string> = {
     "API Gateway": "Authentication, RBAC, and service routing",
     "Inference Gateway": "OpenAI-compatible LLM inference API",
     "Orchestration": "Deployment management and compute orchestration",
-    "Data Service": "Document processing and vector database management",
-    "Guardrail Service": "Content safety, PII detection, and policy enforcement",
     "DePIN Sidecar": "DePIN (Nosana/Akash) job management",
 }
 

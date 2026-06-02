@@ -173,9 +173,6 @@ class PolicyEngine:
 
         # For sandbox mode, return minimal config (no policies enforcement)
         config = {
-            "guardrail": {"enabled": False},
-            "rag": {"enabled": False},
-            "prompt_template": None,
             "rate_limit": {"enabled": False},
         }
 
@@ -288,10 +285,11 @@ class PolicyEngine:
             result = await db.execute(stmt)
             policies = result.scalars().all()
 
+            # Seed rate_limit so apply_policy (which only writes keys already
+            # present in `config`) actually populates it. Without this key the
+            # rate_limit policy would be silently dropped.
             config = {
-                "guardrail": {"enabled": False},
-                "rag": {"enabled": False},
-                "prompt_template": None,
+                "rate_limit": {"enabled": False},
             }
 
             # --- MERGE LOGIC ---
@@ -302,14 +300,6 @@ class PolicyEngine:
             org_policies = [p for p in policies if not p.deployment_id]
             dep_policies = [p for p in policies if p.deployment_id]
 
-            # Prepare template definitions lookup (ID -> Content)
-            template_definitions = {}
-            for p in org_policies:
-                if p.policy_type == "prompt_template" and p.config_json:
-                    t_id = p.config_json.get("id")
-                    if t_id:
-                        template_definitions[t_id] = p.config_json.get("content")
-
             sorted_policies = org_policies + dep_policies
 
             # Helper to merge config
@@ -318,28 +308,8 @@ class PolicyEngine:
                 if p_type in config and p_config:
                     policy_cfg = p_config.copy()
                     if "enabled" not in policy_cfg:
-                        if p_type in (
-                            "guardrail",
-                            "rag",
-                            "prompt_template",
-                            "rate_limit",
-                        ):
-                            policy_cfg["enabled"] = False
-                        else:
-                            policy_cfg["enabled"] = True
-
-                    if p_type == "prompt_engine":
-                        pass
-                    else:
-                        config[p_type] = policy_cfg
-
-                    # Inject content for templates
-                    if p_type == "prompt_template":
-                        base_id = p_config.get("base_template_id")
-                        if base_id and not p_config.get("content"):
-                            found_content = template_definitions.get(base_id)
-                            if found_content:
-                                config[p_type]["content"] = found_content
+                        policy_cfg["enabled"] = p_type not in ("rate_limit",)
+                    config[p_type] = policy_cfg
 
             # Apply DB Policies
             for p in sorted_policies:
@@ -347,7 +317,7 @@ class PolicyEngine:
 
             # Apply Inline Policies (from Deployment Metadata)
             if deployment.policies:
-                # Expecting dict like {"guardrail": {...}, "rag": {...}}
+                # Expecting dict like {"rate_limit": {...}}
                 for p_type, p_cfg in deployment.policies.items():
                     apply_policy(p_type, p_cfg)
 

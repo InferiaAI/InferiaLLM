@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { Search, LayoutDashboard, Rocket, Box, FileText, Database, Key, Building2, Users, Shield, Clock, Activity, X, Cloud, BarChart3 } from "lucide-react"
+import { Search, LayoutDashboard, Rocket, Box, Key, Building2, Users, Shield, Clock, Activity, X, Cloud, BarChart3 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/context/AuthContext"
 
@@ -21,8 +21,6 @@ const SEARCH_ITEMS: SearchItem[] = [
     { title: "New Deployment", path: "/dashboard/deployments/new", icon: Rocket, category: "Actions", keywords: ["create", "add", "deploy"], permission: "deployment:create" },
     { title: "Compute Pools", path: "/dashboard/compute/pools", icon: Box, category: "Navigation", keywords: ["pool", "instances", "compute", "gpu"], permission: "deployment:list" },
     { title: "New Pool", path: "/dashboard/compute/pools/new", icon: Box, category: "Actions", keywords: ["create", "add", "pool"], permission: "deployment:create" },
-    { title: "Templates", path: "/dashboard/templates", icon: FileText, category: "Navigation", keywords: ["prompt", "template"], permission: "prompt_template:list" },
-    { title: "Knowledge Base", path: "/dashboard/knowledge-base", icon: Database, category: "Navigation", keywords: ["rag", "documents", "knowledge"], permission: "knowledge_base:list" },
     { title: "API Keys", path: "/dashboard/api-keys", icon: Key, category: "Navigation", keywords: ["keys", "tokens", "auth"], permission: "api_key:list" },
     // Settings
     { title: "Organization", path: "/dashboard/settings/organization", icon: Building2, category: "Settings", keywords: ["org", "company"], permission: "organization:view" },
@@ -30,10 +28,7 @@ const SEARCH_ITEMS: SearchItem[] = [
     { title: "Roles", path: "/dashboard/settings/roles", icon: Shield, category: "Settings", keywords: ["permissions", "access"], permission: "role:list" },
     { title: "Audit Logs", path: "/dashboard/settings/audit-logs", icon: Clock, category: "Settings", keywords: ["logs", "history", "activity"], permission: "audit_log:list" },
     { title: "Infrastructure & Compute", path: "/dashboard/settings/providers/cloud", icon: Cloud, category: "Settings", keywords: ["infrastructure", "aws", "nosana", "akash", "depin", "cloud"], permission: "organization:update" },
-    { title: "Vector Databases", path: "/dashboard/settings/providers/vector-db", icon: Database, category: "Settings", keywords: ["chroma", "pinecone", "database", "embeddings", "rag"], permission: "organization:update" },
-    { title: "Security Guardrails", path: "/dashboard/settings/providers/guardrails", icon: Shield, category: "Settings", keywords: ["pii", "groq", "lakera", "firewall", "security", "guard"], permission: "organization:update" },
     { title: "AWS Configuration", path: "/dashboard/settings/providers/cloud/aws", icon: Cloud, category: "Settings", keywords: ["amazon", "s3", "iam", "cloud"], permission: "organization:update" },
-    { title: "ChromaDB Configuration", path: "/dashboard/settings/providers/vector-db/chroma", icon: Database, category: "Settings", keywords: ["chroma", "vector", "local"], permission: "organization:update" },
     { title: "Security", path: "/dashboard/settings/security", icon: Shield, category: "Settings", keywords: ["2fa", "auth", "password", "security", "totp"] },
     { title: "System Status", path: "/dashboard/status", icon: Activity, category: "Settings", keywords: ["health", "services", "status", "uptime"], permission: "organization:view" },
 ]

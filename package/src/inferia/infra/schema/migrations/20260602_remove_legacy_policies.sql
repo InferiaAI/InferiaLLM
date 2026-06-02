@@ -1,0 +1,14 @@
+-- Migration 20260602_remove_legacy_policies.sql (idempotent)
+--
+-- Removes the now-defunct Guardrails / RAG / Prompt-Template features.
+-- Those features (and their dedicated services) have been deleted from the
+-- codebase; only rate_limit policies remain in use. The generic `policies`
+-- table is intentionally KEPT (rate_limit still uses it) — this migration
+-- only deletes the orphaned rows.
+--
+-- The plural 'guardrails' is included defensively: the deployment seeder
+-- wrote 'guardrail' (singular) but earlier code/docs referenced 'guardrails'.
+--
+-- WARNING: tests/integration/test_migration.py splits migration files on ';'.
+-- Keep this to a single plain statement (no $$-quoted blocks).
+DELETE FROM policies WHERE policy_type IN ('guardrail', 'guardrails', 'rag', 'prompt_template');

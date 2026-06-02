@@ -425,7 +425,7 @@ export default function Overview() {
           {canManageProviders && (
             <QuickAction
               title="Configure Providers"
-              description="Set up cloud, vector DB, and guardrail integrations."
+              description="Set up cloud compute provider integrations."
               href="/dashboard/settings/providers"
               icon={Wrench}
               colorClass="text-amber-600 dark:text-amber-400"

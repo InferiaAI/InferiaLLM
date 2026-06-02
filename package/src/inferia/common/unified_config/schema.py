@@ -144,68 +144,6 @@ class InferenceService(BaseModel):
     quota_cache: QuotaCacheSection = Field(default_factory=QuotaCacheSection)
 
 
-# ─── guardrail ────────────────────────────────────────────────────────────
-
-class GuardrailControlsSection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enable_guardrails: bool = True
-    enable_toxicity: bool = False
-    enable_prompt_injection: bool = False
-    enable_secrets: bool = False
-    enable_code_scanning: bool = False
-    enable_sensitive_info: bool = False
-    enable_no_refusal: bool = False
-    enable_bias: bool = False
-    enable_relevance: bool = False
-
-
-class GuardrailThresholdsSection(BaseModel):
-    # NOTE: leaf names match the service Settings field names exactly so the
-    # flatten logic in source.py maps them correctly without a prefix collision.
-    model_config = ConfigDict(extra="forbid")
-    toxicity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    prompt_injection_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
-    bias_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
-    relevance_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-
-
-class GuardrailPiiSection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    detection_enabled: bool = True
-    anonymize: bool = True
-    entity_types: list[str] = Field(default_factory=list)
-    max_scan_time_seconds: float = Field(default=5.0, gt=0)
-
-
-class GuardrailService(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-    # host, port, reload → env only
-    # api_gateway_url, allowed_origins → env only (URLs/network)
-    # NOTE: leaf name matches guardrail/config.py Settings field name exactly
-    # so the flatten logic maps it without a prefix collision.
-    default_guardrail_engine: str = "llm-guard"
-    llama_guard_model_id: str = "meta-llama/llama-guard-4-12b"
-    banned_substrings: str = ""
-    controls: GuardrailControlsSection = Field(default_factory=GuardrailControlsSection)
-    thresholds: GuardrailThresholdsSection = Field(default_factory=GuardrailThresholdsSection)
-    pii: GuardrailPiiSection = Field(default_factory=GuardrailPiiSection)
-
-
-# ─── data ─────────────────────────────────────────────────────────────────
-
-class DataService(BaseModel):
-    # NOTE: max_ingest_documents and max_document_size_bytes are top-level
-    # (no sub-section wrapper) so the flatten produces the exact field names
-    # declared in data/config.py Settings.
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-    # host, port, reload → env only
-    # api_gateway_url, redis_url, allowed_origins → env only (URLs/network)
-    max_ingest_documents: int = Field(default=500, gt=0)
-    max_document_size_bytes: int = Field(default=1_000_000, gt=0)
-
-
 # ─── orchestration ────────────────────────────────────────────────────────
 
 class OrchestrationReadinessSection(BaseModel):
@@ -237,8 +175,6 @@ class ServicesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     api_gateway: ApiGatewayService = Field(default_factory=ApiGatewayService)
     inference: InferenceService = Field(default_factory=InferenceService)
-    guardrail: GuardrailService = Field(default_factory=GuardrailService)
-    data: DataService = Field(default_factory=DataService)
     orchestration: OrchestrationService = Field(default_factory=OrchestrationService)
 
 

@@ -51,10 +51,6 @@ class CompletionHandler:
         deployment_id = deployment.get("id")
         concurrency_key = str(deployment_id or model)
         user_context_id = context["user_id_context"]
-        org_id = context.get("org_id")
-        guardrail_cfg = context["guardrail_config"] or {}
-        rag_cfg = context["rag_config"] or {}
-        template_config = context.get("template_config")
         rate_limit_config = context.get("rate_limit_config")
         log_payloads = context.get("log_payloads", True)
 
@@ -76,47 +72,9 @@ class CompletionHandler:
 
         # 3. Check Quota
         applied_policies.append("quota")
-        quota_task = asyncio.create_task(
-            api_gateway_client.check_quota(user_context_id, model)
-        )
+        await api_gateway_client.check_quota(user_context_id, model)
 
-        # 4. Input Guardrails
-        scan_task = None
-        if guardrail_cfg.get("enabled") or guardrail_cfg.get("pii_enabled"):
-            applied_policies.append("guardrail")
-            if guardrail_cfg.get("pii_enabled"):
-                applied_policies.append("pii")
-            scan_task = asyncio.create_task(
-                GatewayService.scan_input(messages, guardrail_cfg, user_context_id)
-            )
-
-        try:
-            await quota_task
-        except Exception:
-            if scan_task is not None:
-                scan_task.cancel()
-            raise
-
-        if scan_task is not None:
-            await scan_task
-
-        # 5. Prompt Processing (RAG / Templates)
-        if rag_cfg.get("enabled"):
-            applied_policies.append("rag")
-        if template_config and template_config.get("enabled"):
-            applied_policies.append("prompt_template")
-
-        messages = await GatewayService.process_prompt(
-            messages,
-            model,
-            user_context_id,
-            org_id or "default",
-            rag_cfg,
-            template_config or {},
-            body,
-        )
-
-        # 6. Prepare Provider Request
+        # 4. Prepare Provider Request
         endpoint_url = deployment.get("endpoint")
         if not endpoint_url:
             raise HTTPException(
@@ -179,7 +137,6 @@ class CompletionHandler:
                 model,
                 body,
                 start_time,
-                guardrail_cfg,
                 background_tasks,
                 applied_policies,
                 log_payloads,
@@ -296,7 +253,6 @@ class CompletionHandler:
         model,
         original_body,
         start_time,
-        guardrail_cfg,
         background_tasks,
         applied_policies,
         log_payloads,
@@ -316,23 +272,6 @@ class CompletionHandler:
                 engine,
                 concurrency_key=concurrency_key,
             )
-
-            # Output Guardrails
-            if response_data and response_data.get("choices"):
-                content = (response_data.get("choices") or [{}])[0].get(
-                    "message", {}
-                ).get("content") or ""
-                last_msg = provider_payload.get("messages", [{}])[-1]
-                input_content = (
-                    last_msg.get("content", "") if isinstance(last_msg, dict) else ""
-                )
-                if content and input_content:
-                    await GatewayService.scan_output(
-                        content,
-                        input_content,
-                        guardrail_cfg,
-                        user_context_id,
-                    )
 
             usage = response_data.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)

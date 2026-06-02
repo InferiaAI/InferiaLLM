@@ -17,8 +17,6 @@ from inferia.common.unified_config.schema import (
     InferiaConfig,
     ApiGatewayService,
     InferenceService,
-    GuardrailService,
-    DataService,
     OrchestrationService,
     ServicesConfig,
 )
@@ -57,20 +55,6 @@ class TestSchemaHasNoHostingFields:
     def test_inference_service_has_no_hosting_attr(self, attr):
         assert attr not in InferenceService.model_fields, (
             f"InferenceService.{attr} must not be in yaml schema (hosting/URL → env only)"
-        )
-
-    @pytest.mark.parametrize("attr", ("host", "port", "reload",
-                                       "api_gateway_url", "allowed_origins"))
-    def test_guardrail_service_has_no_hosting_attr(self, attr):
-        assert attr not in GuardrailService.model_fields, (
-            f"GuardrailService.{attr} must not be in yaml schema (hosting/URL → env only)"
-        )
-
-    @pytest.mark.parametrize("attr", ("host", "port", "reload",
-                                       "api_gateway_url", "redis_url", "allowed_origins"))
-    def test_data_service_has_no_hosting_attr(self, attr):
-        assert attr not in DataService.model_fields, (
-            f"DataService.{attr} must not be in yaml schema (hosting/URL → env only)"
         )
 
     @pytest.mark.parametrize("attr", ("host", "http_port", "grpc_port",
@@ -175,7 +159,7 @@ class TestSchemaRejectsHostingFields:
     def test_api_gateway_service_urls_rejected(self):
         with pytest.raises(ValidationError):
             InferiaConfig.model_validate(
-                self._base(services={"api_gateway": {"service_urls": {"guardrail": "http://localhost:8002"}}})
+                self._base(services={"api_gateway": {"service_urls": {"orchestration": "http://localhost:8080"}}})
             )
 
     def test_api_gateway_dashboard_rejected(self):
@@ -196,22 +180,12 @@ class TestSchemaRejectsHostingFields:
                 self._base(services={"inference": {"api_gateway_url": "http://localhost:8000"}})
             )
 
-    def test_guardrail_port_rejected(self):
+    def test_unknown_service_rejected(self):
+        """services.* with an unknown service name (e.g. the removed guardrail
+        service) is rejected by ServicesConfig(extra='forbid')."""
         with pytest.raises(ValidationError):
             InferiaConfig.model_validate(
-                self._base(services={"guardrail": {"port": 8002}})
-            )
-
-    def test_data_port_rejected(self):
-        with pytest.raises(ValidationError):
-            InferiaConfig.model_validate(
-                self._base(services={"data": {"port": 8003}})
-            )
-
-    def test_data_redis_url_rejected(self):
-        with pytest.raises(ValidationError):
-            InferiaConfig.model_validate(
-                self._base(services={"data": {"redis_url": "redis://localhost:6379/0"}})
+                self._base(services={"guardrail": {"enabled": True}})
             )
 
     def test_orchestration_http_port_rejected(self):

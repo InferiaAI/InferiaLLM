@@ -39,12 +39,6 @@ function clearMaskedSecrets(cfg: ProvidersConfig): ProvidersConfig {
     }
     const gcp = scrubbed.cloud?.gcp as any;
     if (gcp && isMaskedSecret(gcp.service_account_json)) gcp.service_account_json = "";
-    const chroma = scrubbed.vectordb?.chroma as any;
-    if (chroma && isMaskedSecret(chroma.api_key)) chroma.api_key = "";
-    const groq = scrubbed.guardrails?.groq as any;
-    if (groq && isMaskedSecret(groq.api_key)) groq.api_key = "";
-    const lakera = scrubbed.guardrails?.lakera as any;
-    if (lakera && isMaskedSecret(lakera.api_key)) lakera.api_key = "";
     const nosana = scrubbed.depin?.nosana as any;
     if (nosana && isMaskedSecret(nosana.wallet_private_key)) nosana.wallet_private_key = "";
     const akash = scrubbed.depin?.akash as any;
@@ -134,14 +128,9 @@ export default function ProviderConfigPage() {
             const data = await ConfigService.getProviderConfig();
             // Merge with initial to ensure structure exists
             const merged = {
-                cloud: { 
+                cloud: {
                     aws: { ...initialProviderConfig.cloud.aws, ...data.cloud?.aws },
                     gcp: { ...initialProviderConfig.cloud.gcp, ...data.cloud?.gcp }
-                },
-                vectordb: { chroma: { ...initialProviderConfig.vectordb.chroma, ...data.vectordb?.chroma } },
-                guardrails: {
-                    groq: { ...initialProviderConfig.guardrails.groq, ...data.guardrails?.groq },
-                    lakera: { ...initialProviderConfig.guardrails.lakera, ...data.guardrails?.lakera }
                 },
                 depin: {
                     nosana: { ...initialProviderConfig.depin.nosana, ...data.depin?.nosana },
@@ -228,9 +217,6 @@ export default function ProviderConfigPage() {
         switch (pid) {
             case "aws": return !!data.cloud.aws.access_key_id;
             case "gcp": return !!data.cloud.gcp?.project_id || !!data.cloud.gcp?.service_account_json;
-            case "chroma": return data.vectordb.chroma.is_local !== false ? (!!data.vectordb.chroma.url) : !!data.vectordb.chroma.api_key;
-            case "groq": return !!data.guardrails.groq.api_key;
-            case "lakera": return !!data.guardrails.lakera.api_key;
             case "nosana": return !!data.depin.nosana.wallet_private_key || !!data.depin.nosana.api_key || (nosanaApiKeys && nosanaApiKeys.length > 0);
             case "akash": return !!data.depin.akash.mnemonic;
             default: return false;
@@ -709,115 +695,6 @@ function GCPFields({ config, updateField }: { config: ProvidersConfig; updateFie
     );
 }
 
-function ChromaFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void }) {
-    return (
-        <div className="space-y-4">
-            <div className="flex items-center gap-4 p-4 border rounded-lg bg-muted/30">
-                <div className="flex-1">
-                    <span className="text-sm font-medium">Connection Mode</span>
-                    <p className="text-xs text-muted-foreground">Choose between self-hosted or cloud-managed Chroma.</p>
-                </div>
-                <div className="flex bg-muted rounded-lg p-1">
-                    <button
-                        type="button"
-                        onClick={() => updateField(['vectordb', 'chroma', 'is_local'], true)}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${config.vectordb.chroma.is_local !== false ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                    >
-                        Local
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => updateField(['vectordb', 'chroma', 'is_local'], false)}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${config.vectordb.chroma.is_local === false ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                    >
-                        Cloud
-                    </button>
-                </div>
-            </div>
-
-            {config.vectordb.chroma.is_local !== false ? (
-                <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
-                    <label htmlFor="chroma-url" className="text-sm font-medium">Chroma URL</label>
-                    <input
-                        id="chroma-url"
-                        value={config.vectordb.chroma.url || "http://localhost:8000"}
-                        onChange={(e) => updateField(['vectordb', 'chroma', 'url'], e.target.value)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="http://localhost:8000"
-                    />
-                    <p className="text-xs text-muted-foreground">Default local URL is http://localhost:8000</p>
-                </div>
-            ) : (
-                <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
-                    <div className="space-y-2">
-                        <label htmlFor="chroma-api-key" className="text-sm font-medium">Chroma API Key</label>
-                        <input
-                            id="chroma-api-key"
-                            type="password"
-                            value={config.vectordb.chroma.api_key || ""}
-                            onChange={(e) => updateField(['vectordb', 'chroma', 'api_key'], e.target.value)}
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            placeholder="ck-..."
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label htmlFor="chroma-tenant" className="text-sm font-medium">Tenant ID</label>
-                        <input
-                            id="chroma-tenant"
-                            value={config.vectordb.chroma.tenant || ""}
-                            onChange={(e) => updateField(['vectordb', 'chroma', 'tenant'], e.target.value)}
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        />
-                    </div>
-                </div>
-            )}
-
-            <div className="space-y-2">
-                <label htmlFor="chroma-db" className="text-sm font-medium">Database Name</label>
-                <input
-                    id="chroma-db"
-                    value={config.vectordb.chroma.database || ""}
-                    onChange={(e) => updateField(['vectordb', 'chroma', 'database'], e.target.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="default_database"
-                />
-                <p className="text-xs text-muted-foreground">Required for organization isolation.</p>
-            </div>
-        </div>
-    );
-}
-
-function GroqFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void }) {
-    return (
-        <div className="space-y-2">
-            <label htmlFor="groq-api-key" className="text-sm font-medium">Groq API Key</label>
-            <input
-                id="groq-api-key"
-                type="password"
-                value={config.guardrails.groq.api_key || ""}
-                onChange={(e) => updateField(['guardrails', 'groq', 'api_key'], e.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                placeholder="gsk_..."
-            />
-        </div>
-    );
-}
-
-function LakeraFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void }) {
-    return (
-        <div className="space-y-2">
-            <label htmlFor="lakera-api-key" className="text-sm font-medium">Lakera Guard API Key</label>
-            <input
-                id="lakera-api-key"
-                type="password"
-                value={config.guardrails.lakera.api_key || ""}
-                onChange={(e) => updateField(['guardrails', 'lakera', 'api_key'], e.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
-        </div>
-    );
-}
-
 function NosanaFields({
     config,
     updateField,
@@ -1016,20 +893,6 @@ function AkashFields({ config, updateField, handleAddKey }: { config: ProvidersC
     );
 }
 
-function PIIFields() {
-    return (
-        <div className="p-4 bg-muted/30 border rounded-lg space-y-2">
-            <div className="font-medium flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-green-600" />
-                Local Service Active
-            </div>
-            <p className="text-sm text-muted-foreground">
-                PII Redaction is a built-in local service using LLM-Guard. It does not require external API keys and is always available for use in your deployments.
-            </p>
-        </div>
-    );
-}
-
 function ProviderFormFields({
     providerId,
     config,
@@ -1054,12 +917,6 @@ function ProviderFormFields({
             return <AWSFields config={config} updateField={updateField} isConfigured={isConfigured} />;
         case "gcp":
             return <GCPFields config={config} updateField={updateField} />;
-        case "chroma":
-            return <ChromaFields config={config} updateField={updateField} />;
-        case "groq":
-            return <GroqFields config={config} updateField={updateField} />;
-        case "lakera":
-            return <LakeraFields config={config} updateField={updateField} />;
         case "nosana":
             return (
                 <NosanaFields
@@ -1073,8 +930,6 @@ function ProviderFormFields({
             );
         case "akash":
             return <AkashFields config={config} updateField={updateField} handleAddKey={handleAddKey} />;
-        case "pii":
-            return <PIIFields />;
         default:
             return <div>Unknown Provider</div>;
     }

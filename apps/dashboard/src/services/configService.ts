@@ -21,22 +21,6 @@ export interface GCPConfig {
     region?: string;
 }
 
-export interface ChromaConfig {
-    api_key?: string;
-    tenant?: string;
-    url?: string;
-    is_local?: boolean;
-    database?: string;
-}
-
-export interface GroqConfig {
-    api_key?: string;
-}
-
-export interface LakeraConfig {
-    api_key?: string;
-}
-
 export interface NosanaApiKeyEntry {
     name: string;
     key: string;
@@ -58,15 +42,6 @@ export interface CloudConfig {
     gcp: GCPConfig;
 }
 
-export interface VectorDBConfig {
-    chroma: ChromaConfig;
-}
-
-export interface GuardrailsConfig {
-    groq: GroqConfig;
-    lakera: LakeraConfig;
-}
-
 export interface DePINConfig {
     nosana: NosanaConfig;
     akash: AkashConfig;
@@ -74,8 +49,6 @@ export interface DePINConfig {
 
 export interface ProvidersConfig {
     cloud: CloudConfig;
-    vectordb: VectorDBConfig;
-    guardrails: GuardrailsConfig;
     depin: DePINConfig;
 }
 
@@ -86,8 +59,6 @@ export interface ProviderConfigResponse {
 // Initial state helper
 export const initialProviderConfig: ProvidersConfig = {
     cloud: { aws: {}, gcp: {} },
-    vectordb: { chroma: { is_local: true } },
-    guardrails: { groq: {}, lakera: {} },
     depin: { nosana: {}, akash: {} }
 };
 

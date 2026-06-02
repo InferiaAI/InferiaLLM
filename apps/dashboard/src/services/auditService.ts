@@ -39,7 +39,6 @@ export const AUDIT_CATEGORIES = [
     { value: "user_management", label: "User Management" },
     { value: "credential", label: "Credentials" },
     { value: "configuration", label: "Configuration" },
-    { value: "knowledge_base", label: "Knowledge Base" },
 ] as const;
 
 export const CATEGORY_COLORS: Record<string, string> = {
@@ -51,7 +50,6 @@ export const CATEGORY_COLORS: Record<string, string> = {
     user_management: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
     credential: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     configuration: "bg-muted-foreground/10 text-muted-foreground",
-    knowledge_base: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
 };
 
 export const auditService = {

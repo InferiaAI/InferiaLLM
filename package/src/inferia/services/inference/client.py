@@ -428,69 +428,6 @@ class ApiGatewayClient:
                 status_code=500, detail="Failed to resolve deployment context"
             )
 
-    async def retrieve_rag_context(
-        self, collection: str, query: str, top_k: int
-    ) -> list:
-        """
-        Retrieve RAG context.
-        """
-        client = self._get_client()
-        headers = self._get_headers()
-        payload = {"collection_name": collection, "query": query, "n_results": top_k}
-
-        try:
-            response = await client.post(
-                "/internal/data/retrieve", json=payload, headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("context", [])
-        except Exception:
-            return []
-
-    async def scan_content(
-        self, auth_token: str, payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Proxy guardrail scan request to API Gateway."""
-        client = self._get_client()
-        headers = self._get_headers(auth_token)
-
-        try:
-            response = await client.post(
-                "/internal/guardrails/scan", json=payload, headers=headers
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Guardrail scan failed: {e.response.status_code}")
-            raise HTTPException(
-                status_code=e.response.status_code,
-                detail=e.response.json().get("detail", "Guardrail scan failed"),
-            )
-        except httpx.RequestError as e:
-            logger.error(f"Failed to connect to API Gateway: {e}")
-            raise HTTPException(
-                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="API Gateway unavailable",
-            )
-
-    async def process_prompt(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Call internal prompt process endpoint.
-        """
-        client = self._get_client()
-        headers = self._get_headers()
-
-        try:
-            response = await client.post(
-                "/internal/prompt/process", json=payload, headers=headers
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Process prompt failed: {e}")
-            raise HTTPException(status_code=500, detail="Prompt processing failed")
-
 
 # Global client instance
 api_gateway_client = ApiGatewayClient()

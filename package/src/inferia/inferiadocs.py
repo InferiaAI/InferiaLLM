@@ -70,7 +70,7 @@ def show_inferia():
     bullets = [
         "• Distributed LLM inference",
         "• Compute orchestration and scheduling",
-        "• Guardrails, RBAC, policy, and audit enforcement",
+        "• RBAC, policy, and audit enforcement",
         "• Multi-provider GPU backends (cloud, on-prem, decentralized)",
     ]
     longest_bullet = max(len(b) for b in bullets)

@@ -18,8 +18,6 @@ def stub_runners(monkeypatch):
         "run_all",
         "run_api_gateway_service",
         "run_inference_service",
-        "run_guardrail_service",
-        "run_data_service",
         "run_orchestration_stack",
         "run_skypilot_server",
         "run_init",

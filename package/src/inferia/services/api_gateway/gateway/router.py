@@ -16,7 +16,6 @@ from fastapi import (
     BackgroundTasks,
     Query,
 )
-from inferia.common.schemas.guardrail import GuardrailScanRequest, ScanType
 from inferia.services.api_gateway.models import (
     InferenceRequest,
     InferenceResponse,
@@ -190,51 +189,6 @@ async def create_inference_log(
     log_id = str(uuid.uuid4())
     background_tasks.add_task(_persist_log_background, log_data, log_id)
     return {"status": "ok", "log_id": log_id}
-
-
-@router.post("/guardrails/scan", response_model=dict)
-async def scan_content(request_body: GuardrailScanRequest, request: Request):
-    """
-    Directly access the guardrail scanner for testing or external checks.
-    Proxies to Guardrail Microservice.
-    """
-    # Check rate limit
-    await rate_limiter.check_rate_limit(request)
-
-    # Get authenticated user (if available) or use context from body
-    user_id = "unknown"
-
-    # Use UserContext from middleware (Pydantic model, safe)
-    if hasattr(request.state, "user"):
-        user = request.state.user
-        user_id = user.user_id
-    elif hasattr(request_body, "user_id") and request_body.user_id:
-        # Internal M2M call
-        user_id = request_body.user_id
-
-    # Prepare payload for Guardrail Service
-    payload = request_body.model_dump()
-    payload["user_id"] = user_id
-
-    # We map "text" from request to the service expected input
-    # GuardrailScanRequest has 'text'. Service expects 'text'.
-
-    try:
-        client = gateway_http_client.get_service_client()
-        response = await client.post(
-            f"{settings.guardrail_service_url}/scan",
-            json=payload,
-            headers=gateway_http_client.get_internal_headers(),
-            timeout=settings.guardrail_settings_timeout
-            if hasattr(settings, "guardrail_settings_timeout")
-            else 10.0,
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        logger.error(f"Guardrail Service call failed: {e}")
-        # Fail open or closed? Usually closed for security.
-        raise HTTPException(status_code=500, detail=f"Guardrail check failed: {str(e)}")
 
 
 # In-memory cache for models list (30s TTL)
@@ -412,9 +366,6 @@ class ResolveContextResponse(BaseModel):
     valid: bool
     error: Optional[str] = None
     deployment: Optional[Dict] = None
-    guardrail_config: Optional[Dict] = None
-    rag_config: Optional[Dict] = None
-    template_config: Optional[Dict] = None
     rate_limit_config: Optional[Dict] = None
     user_id_context: Optional[str] = None
     org_id: Optional[str] = None
@@ -456,203 +407,10 @@ async def resolve_inference_context(
             # dashboard-facing deployment API.
             "inference_token": deployment.get("inference_token"),
         },
-        guardrail_config=config["guardrail"],
-        rag_config=config["rag"],
-        template_config=config.get("prompt_template"),
         rate_limit_config=config.get("rate_limit"),
         user_id_context=user_id_context,
         org_id=deployment["org_id"],
         log_payloads=result.get("log_payloads", True),
-    )
-
-
-# --- Prompt Engine Integration ---
-from inferia.services.api_gateway.models import (
-    Message,
-    PromptProcessRequest,
-    PromptProcessResponse,
-)
-
-
-@router.post("/prompt/process", response_model=PromptProcessResponse)
-async def process_prompt(
-    request: PromptProcessRequest,
-    # Internal endpoint, simpler auth or rely on firewall/internal network
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Process a prompt: Rewrite -> RAG -> Template.
-    Returns the modified messages list.
-    """
-    messages = request.messages
-    org_id = request.org_id
-    if not messages:
-        return PromptProcessResponse(messages=[])
-
-    # 1. Identify User Query (Last User Message)
-    user_msg_idx = -1
-    for i, m in enumerate(reversed(messages)):
-        if m.role == "user":
-            user_msg_idx = len(messages) - 1 - i
-            break
-
-    if user_msg_idx == -1:
-        # No user message, return as is
-        return PromptProcessResponse(messages=messages)
-
-    original_query = messages[user_msg_idx].content
-    processed_query = original_query
-
-    # 2. Rewrite (Disabled)
-    rewritten = False
-    # Rewriting functionality removed as per request.
-
-    # 4. Advanced Templating with Variable Mapping
-    used_template_id = request.template_id
-    template_content = request.template_content
-
-    # If config provides a base template, prefer that, unless override is present
-    template_config = request.template_config or {}
-    rag_used = False  # Initialize for scope
-
-    # Only use template config if explicitly enabled
-    template_enabled = template_config.get("enabled", False)
-
-    if not used_template_id and template_enabled:
-        used_template_id = template_config.get("base_template_id")
-        # If content override is present in config, use it
-        if template_config.get("content"):
-            template_content = template_config.get("content")
-            used_template_id = used_template_id or "custom_override"
-
-    # If we have a template to work with AND templates are enabled
-    if (used_template_id or template_content) and template_enabled:
-        variables = request.template_vars or {}
-        # Only use variable_mapping if template is enabled via config
-        variable_mapping = (
-            template_config.get("variable_mapping", {}) if template_enabled else {}
-        )
-
-        # Resolve mapped variables
-        for var_name, config in variable_mapping.items():
-            source = config.get("source")
-            if source == "rag":
-                collection = config.get("collection_id") or "default"
-                top_k = config.get("top_k", 3)
-                # Fetch RAG context for this variable via Data Service (Prompt Engine)
-                try:
-                    resp = await gateway_http_client.post(
-                        f"{settings.data_service_url}/context/assemble",
-                        json={
-                            "query": processed_query,
-                            "collection_name": collection,
-                            "org_id": org_id or "default",
-                            "n_results": top_k,
-                        },
-                        timeout=5.0,
-                    )
-                    if resp.status_code == 200:
-                        rag_val = resp.json().get("context", "")
-                        if rag_val:
-                            variables[var_name] = rag_val
-                            rag_used = True
-                except Exception as e:
-                    logger.error(f"Failed to fetch RAG context: {e}")
-
-            elif source == "static":
-                variables[var_name] = config.get("value", "")
-            elif source == "request":
-                # Key alias, e.g. map "user_name" var to "user" payload key
-                key = config.get("key", var_name)
-                # If key exists in request vars, use it. Otherwise keep existing or ignore.
-                if key in variables:
-                    variables[var_name] = variables[key]
-
-        # Always inject standard vars if not mapped (backward compat)
-        if "query" not in variables:
-            variables["query"] = processed_query
-
-        # Legacy RAG support (if rag_config passed but no mapping used)
-        if request.rag_config and request.rag_config.get("enabled") and not rag_used:
-            if "context" not in variables:
-                collection = request.rag_config.get("default_collection") or "default"
-                top_k = request.rag_config.get("top_k", 3)
-                try:
-                    resp = await gateway_http_client.post(
-                        f"{settings.data_service_url}/context/assemble",
-                        json={
-                            "query": processed_query,
-                            "collection_name": collection,
-                            "org_id": org_id or "default",
-                            "n_results": top_k,
-                        },
-                        timeout=5.0,
-                    )
-                    if resp.status_code == 200:
-                        rag_ctx = resp.json().get("context", "")
-                        if rag_ctx:
-                            variables["context"] = rag_ctx
-                            rag_used = True
-                except Exception as e:
-                    logger.error(f"Failed to fetch legacy RAG context: {e}")
-
-        # Render Template via Data Service (Prompt Engine)
-        try:
-            process_payload = {
-                "variables": variables,
-                "template_id": used_template_id if not template_content else None,
-                "template_content": template_content,
-            }
-
-            resp = await gateway_http_client.post(
-                f"{settings.data_service_url}/process",
-                json=process_payload,
-                timeout=2.0,
-            )
-
-            if resp.status_code == 200:
-                system_content = resp.json().get("content", "")
-
-                # Replace or Insert System Message
-                messages = [m for m in messages if m.role != "system"]
-                messages.insert(0, Message(role="system", content=system_content))
-            else:
-                logger.error(f"Data Service Process failed: {resp.text}")
-
-        except Exception as e:
-            logger.error(f"Failed to call Data Service Process: {e}")
-
-    # Fallback RAG Logic (No Template, but RAG Enabled)
-    elif not rag_used and request.rag_config and request.rag_config.get("enabled"):
-        collection = request.rag_config.get("default_collection") or "default"
-        top_k = request.rag_config.get("top_k", 3)
-
-        try:
-            resp = await gateway_http_client.post(
-                f"{settings.data_service_url}/context/assemble",
-                json={
-                    "query": processed_query,
-                    "collection_name": collection,
-                    "org_id": org_id or "default",
-                    "n_results": top_k,
-                },
-                timeout=5.0,
-            )
-            if resp.status_code == 200:
-                rag_context = resp.json().get("context", "")
-                if rag_context:
-                    rag_used = True
-                    # Strategy: Append to User Message (easiest for non-template flows)
-                    context_msg = f"Context Information:\n{rag_context}\n\n"
-                    messages[user_msg_idx].content = context_msg + processed_query
-        except Exception as e:
-            logger.error(f"Failed to fetch fallback RAG context: {e}")
-
-    return PromptProcessResponse(
-        messages=messages,
-        used_template_id=used_template_id,
-        rewritten=rewritten,
-        rag_context_used=rag_used,
     )
 
 

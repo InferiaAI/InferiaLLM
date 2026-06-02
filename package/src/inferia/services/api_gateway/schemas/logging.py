@@ -71,9 +71,6 @@ ACTION_CATEGORY_MAP = {
     "pool.stop": "deployment",
     "pool.delete": "deployment",
     "config.update": "configuration",
-    "prompt_template.create": "configuration",
-    "prompt_template.delete": "configuration",
-    "knowledge_base.add_document": "knowledge_base",
 }
 
 

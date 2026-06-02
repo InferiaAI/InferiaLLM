@@ -45,11 +45,6 @@ async def initialize_default_org(db: AsyncSession):
             PermissionEnum.API_KEY_LIST.value,
             PermissionEnum.API_KEY_CREATE.value,
             PermissionEnum.API_KEY_REVOKE.value,
-            PermissionEnum.PROMPT_LIST.value,
-            PermissionEnum.PROMPT_CREATE.value,
-            PermissionEnum.PROMPT_DELETE.value,
-            PermissionEnum.KB_LIST.value,
-            PermissionEnum.KB_ADD_DATA.value,
             PermissionEnum.ORG_VIEW.value,
         ]
         

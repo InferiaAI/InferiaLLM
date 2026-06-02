@@ -17,8 +17,9 @@ class TestCreateDeployment:
     """Deployment creation logic."""
 
     @pytest.mark.asyncio
-    async def test_create_attaches_default_disabled_policies(self):
-        """Creating a deployment attaches guardrail/rag/prompt_template policies (all disabled)."""
+    async def test_create_does_not_attach_legacy_policies(self):
+        """Creating a deployment no longer attaches guardrail/rag/prompt_template
+        policies (those features were removed)."""
         from inferia.services.api_gateway.management.deployments import create_deployment
         from inferia.services.api_gateway.schemas.management import DeploymentCreate
 
@@ -72,16 +73,14 @@ class TestCreateDeployment:
 
             result = await create_deployment(dep_data, mock_request, mock_db)
 
-            # Three default policies should have been added
+            # No guardrail/rag/prompt_template policies should be created anymore.
             policy_objects = [o for o in added_objects if isinstance(o, DBPolicy)]
             policy_types = {p.policy_type for p in policy_objects}
-            assert "guardrail" in policy_types
-            assert "rag" in policy_types
-            assert "prompt_template" in policy_types
-
-            # All disabled by default
-            for p in policy_objects:
-                assert p.config_json["enabled"] is False
+            assert "guardrail" not in policy_types
+            assert "rag" not in policy_types
+            assert "prompt_template" not in policy_types
+            # The deployment itself is still created.
+            assert result is not None
 
     @pytest.mark.asyncio
     async def test_create_duplicate_name_raises_409(self):

@@ -55,48 +55,6 @@ def run_api_gateway_service(queue=None):
             queue.put(ServiceFailed("API Gateway Service", error=str(e)))
 
 
-def run_guardrail_service(queue=None):
-    from inferia.startup_events import ServiceStarting, ServiceStarted, ServiceFailed
-
-    try:
-        if queue:
-            queue.put(ServiceStarting("Guardrail Service"))
-
-        from inferia.services.guardrail.main import start_api
-
-        if queue:
-            queue.put(
-                ServiceStarted("Guardrail Service", detail="Listening on port 8002")
-            )
-
-        start_api()
-    except Exception as e:
-        print(f"[FATAL] Guardrail Service failed to start: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        if queue:
-            queue.put(ServiceFailed("Guardrail Service", error=str(e)))
-
-
-def run_data_service(queue=None):
-    from inferia.startup_events import ServiceStarting, ServiceStarted, ServiceFailed
-
-    try:
-        if queue:
-            queue.put(ServiceStarting("Data Service"))
-
-        from inferia.services.data.main import start_api
-
-        if queue:
-            queue.put(ServiceStarted("Data Service", detail="Listening on port 8003"))
-
-        start_api()
-    except Exception as e:
-        print(f"[FATAL] Data Service failed to start: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        if queue:
-            queue.put(ServiceFailed("Data Service", error=str(e)))
-
-
 def run_inference_service(queue=None):
     from inferia.startup_events import ServiceStarting, ServiceStarted, ServiceFailed
 
@@ -578,7 +536,7 @@ def run_orchestration_stack(env: str = "production"):
 def run_all(env: str = "production"):
     # Run all services efficiently by spawning them as direct children
     queue = multiprocessing.Queue()
-    ui = StartupUI(queue, total=9)
+    ui = StartupUI(queue, total=7)
 
     processes = [
         # Core Gateway
@@ -588,16 +546,6 @@ def run_all(env: str = "production"):
             args=(queue,),
         ),
         # Microservices
-        multiprocessing.Process(
-            target=run_data_service,
-            name="data",
-            args=(queue,),
-        ),
-        multiprocessing.Process(
-            target=run_guardrail_service,
-            name="guardrail",
-            args=(queue,),
-        ),
         multiprocessing.Process(
             target=run_inference_service,
             name="inference",
@@ -693,8 +641,6 @@ def main(argv=None):
             "api-gateway",
             "inference",
             "orchestration",
-            "guardrail",
-            "data",
             "skypilot",
         ],
         help="Service to start (default: all)",
@@ -1020,12 +966,6 @@ def main(argv=None):
                     show_orchestration_docs()
                 else:
                     run_orchestration_stack(env=env)
-
-            elif service == "guardrail":
-                run_guardrail_service()
-
-            elif service == "data":
-                run_data_service()
 
             elif service == "skypilot":
                 run_skypilot_server()

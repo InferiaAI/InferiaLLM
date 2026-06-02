@@ -16,11 +16,6 @@ class PermissionEnum(str, Enum):
     DEPLOYMENT_UPDATE = "deployment:update"
     DEPLOYMENT_DELETE = "deployment:delete"
 
-    # Prompt Templates
-    PROMPT_CREATE = "prompt_template:create"
-    PROMPT_LIST = "prompt_template:list"
-    PROMPT_DELETE = "prompt_template:delete"
-
     # Models
     MODEL_ACCESS = "model:access"
 
@@ -28,10 +23,6 @@ class PermissionEnum(str, Enum):
     MEMBER_INVITE = "member:invite"
     MEMBER_DELETE = "member:delete"
     MEMBER_LIST = "member:list"
-
-    # Knowledge Base
-    KB_ADD_DATA = "knowledge_base:add_data"
-    KB_LIST = "knowledge_base:list"
 
     # Role Management
     ROLE_CREATE = "role:create"

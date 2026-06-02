@@ -8,7 +8,6 @@ import {
   Database,
   Users,
   Shield,
-  FileText,
   Menu,
   Search,
   Building2,
@@ -35,8 +34,6 @@ const navItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard/deployments", label: "Deployments", icon: Rocket, permission: "deployment:list" },
   { href: "/dashboard/sandbox", label: "Sandbox", icon: FlaskConical, permission: "deployment:list" },
   { href: "/dashboard/compute/pools", label: "Compute Pools", icon: Box, permission: "deployment:list" },
-  { href: "/dashboard/templates", label: "Templates", icon: FileText, permission: "prompt_template:list" },
-  { href: "/dashboard/knowledge-base", label: "Knowledge Base", icon: Database, permission: "knowledge_base:list" },
   { href: "/dashboard/api-keys", label: "API Keys", icon: Key, permission: "api_key:list" },
 ];
 
@@ -58,8 +55,6 @@ const breadcrumbLabels: Record<string, string> = {
   compute: "Compute",
   nodes: "Nodes",
   pools: "Pools",
-  templates: "Templates",
-  "knowledge-base": "Knowledge Base",
   "api-keys": "API Keys",
   settings: "Settings",
   organization: "Organization",

@@ -41,12 +41,6 @@ from .schemas.management import (
     ApiKeyCreatedResponse,
 )
 from .schemas.config import ConfigUpdateRequest, ConfigResponse, UsageStatsResponse
-from .schemas.prompt import (
-    PromptProcessRequest,
-    PromptProcessResponse,
-    PromptTemplateCreate,
-    PromptTemplateResponse,
-)
 from .schemas.logging import (
     InferenceLogCreate,
     InferenceLogResponse,
@@ -69,4 +63,3 @@ from .schemas.insights import (
     InsightsDeploymentFilterOption,
     InsightsFiltersResponse,
 )
-from .schemas.knowledge_base import KBFileResponse

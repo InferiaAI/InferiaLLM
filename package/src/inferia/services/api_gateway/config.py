@@ -266,12 +266,6 @@ class Settings(UnifiedBaseSettings):
 
     # Service URLs (Microservices)
     # In production, these should use HTTPS with valid certificates
-    guardrail_service_url: str = Field(
-        default="http://localhost:8002", validation_alias="GUARDRAIL_SERVICE_URL"
-    )
-    data_service_url: str = Field(
-        default="http://localhost:8003", validation_alias="DATA_SERVICE_URL"
-    )
     orchestration_url: str = Field(
         default="http://localhost:8080", validation_alias="ORCHESTRATION_URL"
     )

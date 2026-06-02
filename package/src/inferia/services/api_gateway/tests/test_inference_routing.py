@@ -50,9 +50,6 @@ class TestResolveInferenceContext:
                 "org_id": "org-001",
             },
             "config": {
-                "guardrail": {"enabled": False},
-                "rag": {"enabled": False},
-                "prompt_template": {"enabled": False},
                 "rate_limit": None,
             },
             "user_id_context": "user-001",
@@ -70,8 +67,8 @@ class TestResolveInferenceContext:
             assert response.deployment["endpoint"] == "http://llama:8080"
 
     @pytest.mark.asyncio
-    async def test_guardrail_config_forwarded(self):
-        """Guardrail configuration is included in resolved context."""
+    async def test_rate_limit_config_forwarded(self):
+        """rate_limit configuration is forwarded in the resolved context."""
         from inferia.services.api_gateway.gateway.router import (
             resolve_inference_context,
             ResolveContextRequest,
@@ -91,10 +88,7 @@ class TestResolveInferenceContext:
                 "org_id": "org-001",
             },
             "config": {
-                "guardrail": {"enabled": True, "toxicity_threshold": 0.8},
-                "rag": {"enabled": False},
-                "prompt_template": None,
-                "rate_limit": None,
+                "rate_limit": {"enabled": True, "rpm": 60},
             },
             "user_id_context": "user-001",
             "log_payloads": False,
@@ -106,40 +100,8 @@ class TestResolveInferenceContext:
             mock_pe.resolve_context = AsyncMock(return_value=resolved)
             mock_db = AsyncMock()
             response = await resolve_inference_context(request, mock_db)
-            assert response.guardrail_config["enabled"] is True
-            assert response.guardrail_config["toxicity_threshold"] == 0.8
-
-
-class TestScanContent:
-    """scan_content guardrail endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_scan_connection_error_raises_500(self):
-        """Guardrail service unavailable returns 500."""
-        from inferia.services.api_gateway.gateway.router import scan_content
-        from inferia.common.schemas.guardrail import GuardrailScanRequest, ScanType
-        from fastapi import HTTPException
-
-        req_body = GuardrailScanRequest(text="test input", scan_type=ScanType.INPUT)
-        mock_request = MagicMock()
-        mock_request.state = MagicMock(spec=[])
-        mock_request.client = MagicMock()
-        mock_request.client.host = "127.0.0.1"
-
-        with patch(
-            "inferia.services.api_gateway.gateway.router.rate_limiter"
-        ) as mock_rl, patch(
-            "inferia.services.api_gateway.gateway.router.gateway_http_client"
-        ) as mock_hc:
-            mock_rl.check_rate_limit = AsyncMock()
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(side_effect=Exception("Connection refused"))
-            mock_hc.get_service_client.return_value = mock_client
-            mock_hc.get_internal_headers.return_value = {}
-
-            with pytest.raises(HTTPException) as exc:
-                await scan_content(req_body, mock_request)
-            assert exc.value.status_code == 500
+            assert response.rate_limit_config["enabled"] is True
+            assert response.rate_limit_config["rpm"] == 60
 
 
 class TestModelsList:

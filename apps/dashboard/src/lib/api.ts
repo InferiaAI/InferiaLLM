@@ -22,9 +22,6 @@ export const MANAGEMENT_URL = API_GATEWAY_URL;
 export const COMPUTE_URL = `${API_GATEWAY_URL}/api/v1`;
 // Inference Gateway - separate public service
 export const INFERENCE_URL = rc.INFERENCE_URL || import.meta.env.VITE_INFERENCE_URL || "http://localhost:8001";
-// Internal services - accessed through gateway
-export const DATA_URL = API_GATEWAY_URL;
-export const GUARDRAIL_URL = API_GATEWAY_URL;
 // WebSocket still goes through sidecar for DePIN
 export const WEB_SOCKET_URL = rc.WEB_SOCKET_URL || import.meta.env.VITE_WEB_SOCKET_URL || "ws://localhost:3000";
 export const SIDECAR_URL = rc.SIDECAR_URL || import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000";

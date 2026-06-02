@@ -9,37 +9,6 @@ class TestGatewayRouterErrors:
     """Verify gateway router error paths."""
 
     @pytest.mark.asyncio
-    async def test_guardrail_scan_service_unavailable_returns_500(self):
-        """Guardrail service connection failure returns 500."""
-        from inferia.services.api_gateway.gateway.router import scan_content
-        from inferia.common.schemas.guardrail import GuardrailScanRequest, ScanType
-
-        request_body = GuardrailScanRequest(
-            text="test input", scan_type=ScanType.INPUT
-        )
-        mock_request = MagicMock()
-        mock_request.state = MagicMock(spec=[])  # No 'user' attribute
-        mock_request.client = MagicMock()
-        mock_request.client.host = "127.0.0.1"
-
-        with patch(
-            "inferia.services.api_gateway.gateway.router.rate_limiter"
-        ) as mock_rl, patch(
-            "inferia.services.api_gateway.gateway.router.gateway_http_client"
-        ) as mock_hc:
-            mock_rl.check_rate_limit = AsyncMock()
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(
-                side_effect=Exception("Connection refused")
-            )
-            mock_hc.get_service_client.return_value = mock_client
-            mock_hc.get_internal_headers.return_value = {}
-
-            with pytest.raises(HTTPException) as exc:
-                await scan_content(request_body, mock_request)
-            assert exc.value.status_code == 500
-
-    @pytest.mark.asyncio
     async def test_resolve_context_invalid_key_returns_error(self):
         """Context resolution with invalid key returns valid=false."""
         from inferia.services.api_gateway.gateway.router import (

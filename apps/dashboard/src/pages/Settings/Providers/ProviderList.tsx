@@ -18,14 +18,6 @@ const PROVIDERS_MAP: Record<string, ProviderOption[]> = {
         { id: "gcp", name: "Google Cloud Platform", description: "Coming Soon", disabled: true },
         { id: "azure", name: "Microsoft Azure", description: "Coming Soon", disabled: true },
     ],
-    "vector-db": [
-        { id: "chroma", name: "ChromaDB", description: "Open-source embedding database" },
-    ],
-    guardrails: [
-        { id: "pii", name: "Built-in PII Redaction", description: "Local sensitive information masking" },
-        { id: "groq", name: "Llama Guard via Groq", description: "Fast inference for safety" },
-        { id: "lakera", name: "Lakera Guard", description: "Prompt injection protection" },
-    ],
 };
 
 export default function ProviderList() {
@@ -51,9 +43,6 @@ export default function ProviderList() {
         switch (providerId) {
             case "aws": return !!activeConfig.cloud?.aws?.access_key_id;
             case "gcp": return !!activeConfig.cloud?.gcp?.project_id || !!activeConfig.cloud?.gcp?.service_account_json;
-            case "chroma": return activeConfig.vectordb?.chroma?.is_local !== false ? (!!activeConfig.vectordb?.chroma?.url) : !!activeConfig.vectordb?.chroma?.api_key;
-            case "groq": return !!activeConfig.guardrails?.groq?.api_key;
-            case "lakera": return !!activeConfig.guardrails?.lakera?.api_key;
             case "nosana": return !!activeConfig.depin?.nosana?.wallet_private_key;
             case "akash": return !!activeConfig.depin?.akash?.mnemonic;
             case "pii": return true; // Always connected/local

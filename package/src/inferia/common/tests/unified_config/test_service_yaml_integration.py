@@ -86,67 +86,6 @@ class TestInferenceSettingsFromYaml:
         assert s.context_cache_maxsize == 1000
 
 
-# ─── guardrail ───────────────────────────────────────────────────────────────
-
-class TestGuardrailSettingsFromYaml:
-    def test_enable_guardrails_read_from_yaml(self):
-        from inferia.services.guardrail.config import Settings
-        s = Settings(_env_file=None)
-        assert s.enable_guardrails is True
-
-    def test_toxicity_threshold_read_from_yaml(self):
-        from inferia.services.guardrail.config import Settings
-        s = Settings(_env_file=None)
-        assert s.toxicity_threshold == pytest.approx(0.7)
-
-    def test_pii_detection_enabled_from_yaml(self):
-        from inferia.services.guardrail.config import Settings
-        s = Settings(_env_file=None)
-        assert s.pii_detection_enabled is True
-
-    def test_allowed_origins_coerced_from_list(self, monkeypatch):
-        from inferia.services.guardrail.config import Settings
-        monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
-        s = Settings(_env_file=None)
-        assert isinstance(s.allowed_origins, str)
-
-    def test_bias_threshold_from_yaml(self):
-        from inferia.services.guardrail.config import Settings
-        s = Settings(_env_file=None)
-        assert s.bias_threshold == pytest.approx(0.75)
-
-    def test_default_guardrail_engine_from_yaml(self):
-        from inferia.services.guardrail.config import Settings
-        s = Settings(_env_file=None)
-        assert s.default_guardrail_engine == "llm-guard"
-
-
-# ─── data ─────────────────────────────────────────────────────────────────────
-
-class TestDataSettingsFromYaml:
-    def test_max_ingest_documents_from_yaml(self):
-        from inferia.services.data.config import Settings
-        s = Settings(_env_file=None)
-        assert s.max_ingest_documents == 500
-
-    def test_max_document_size_bytes_from_yaml(self):
-        from inferia.services.data.config import Settings
-        s = Settings(_env_file=None)
-        assert s.max_document_size_bytes == 1_000_000
-
-    def test_allowed_origins_coerced_from_list(self, monkeypatch):
-        from inferia.services.data.config import Settings
-        monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
-        s = Settings(_env_file=None)
-        assert isinstance(s.allowed_origins, str)
-
-    def test_enabled_from_yaml(self):
-        from inferia.services.data.config import Settings
-        s = Settings(_env_file=None)
-        # api_gateway_url is env only; just confirm max_document_size works
-        assert s.max_document_size_bytes > 0
-
-
 # ─── orchestration ───────────────────────────────────────────────────────────
 
 class TestOrchestrationSettingsFromYaml:

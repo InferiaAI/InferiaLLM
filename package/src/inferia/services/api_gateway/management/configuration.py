@@ -291,8 +291,6 @@ async def update_provider_config(
         logger.error("Failed to write config: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to save config: {e}")
 
-    # Data engine and guardrail refreshes are now handled by their respective microservices
-
     return {"status": "ok", "message": "Configuration saved to database"}
 
 
@@ -425,21 +423,9 @@ async def get_config(
     policy = result.scalars().first()
 
     if not policy:
-        # Provide explicit disabled defaults for core features to avoid UI confusion
+        # Provide an explicit disabled default to avoid UI confusion. The base
+        # default covers any remaining policy type (e.g. rate_limit).
         default_config = {"enabled": False}
-        if policy_type == "guardrail":
-            default_config.update(
-                {
-                    "guardrail_engine": "llm-guard",
-                    "input_scanners": [],
-                    "output_scanners": [],
-                    "toxicity_threshold": 0.5,
-                }
-            )
-        elif policy_type == "rag":
-            default_config.update({"default_collection": "default", "top_k": 3})
-        elif policy_type == "prompt_template":
-            default_config.update({"template_id": None, "template_vars": {}})
 
         return ConfigResponse(
             policy_type=policy_type,

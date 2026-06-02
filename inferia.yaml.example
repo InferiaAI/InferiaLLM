@@ -85,37 +85,6 @@ services:
       ttl_seconds: 1.0
       maxsize: 10000
 
-  guardrail:
-    enabled: true
-    default_guardrail_engine: llm-guard
-    llama_guard_model_id: meta-llama/llama-guard-4-12b
-    banned_substrings: ""
-    controls:
-      enable_guardrails: true
-      enable_toxicity: false
-      enable_prompt_injection: false
-      enable_secrets: false
-      enable_code_scanning: false
-      enable_sensitive_info: false
-      enable_no_refusal: false
-      enable_bias: false
-      enable_relevance: false
-    thresholds:
-      toxicity_threshold: 0.7
-      prompt_injection_threshold: 0.8
-      bias_threshold: 0.75
-      relevance_threshold: 0.5
-    pii:
-      detection_enabled: true
-      anonymize: true
-      entity_types: []
-      max_scan_time_seconds: 5.0
-
-  data:
-    enabled: true
-    max_ingest_documents: 500
-    max_document_size_bytes: 1000000
-
   orchestration:
     enabled: true
     readiness:

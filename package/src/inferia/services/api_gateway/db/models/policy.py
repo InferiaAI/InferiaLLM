@@ -9,7 +9,7 @@ class Policy(Base):
 
     id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     
-    # Type: "guardrails", "rag", "rate_limit"
+    # Type: "rate_limit"
     policy_type = Column(String, nullable=False)
     
     # Configuration

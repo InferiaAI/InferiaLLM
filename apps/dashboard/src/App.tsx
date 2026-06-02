@@ -19,8 +19,6 @@ import Deployments from "@/pages/Deployments";
 import NewDeployment from "@/pages/NewDeployment";
 import DeploymentDetail from "@/pages/DeploymentDetail";
 import ApiKeys from "@/pages/ApiKeys";
-import Templates from "@/pages/Templates";
-import KnowledgeBase from "@/pages/KnowledgeBase";
 import Roles from "@/pages/Settings/Roles";
 import Users from "@/pages/Settings/Users";
 import Organization from "@/pages/Settings/Organization";
@@ -162,24 +160,6 @@ const router = createBrowserRouter([
               {
                 path: "api-keys",
                 element: <ApiKeys />,
-              },
-            ]
-          },
-          {
-            element: <PermissionGuard permission="knowledge_base:list" />,
-            children: [
-              {
-                path: "knowledge-base",
-                element: <KnowledgeBase />,
-              },
-            ]
-          },
-          {
-            element: <PermissionGuard permission="prompt_template:list" />,
-            children: [
-              {
-                path: "templates",
-                element: <Templates />,
               },
             ]
           },

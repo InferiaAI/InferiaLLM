@@ -41,9 +41,6 @@ class RequestContext:
     user_context_id: str = ""
     org_id: Optional[str] = None
     rate_limit_config: Optional[Dict] = None
-    guardrail_config: Dict = field(default_factory=dict)
-    rag_config: Dict = field(default_factory=dict)
-    template_config: Optional[Dict] = None
     log_payloads: bool = True
 
     # --- Populated by Pipeline.resolve_provider ---
@@ -76,9 +73,6 @@ class Pipeline:
         ctx.user_context_id = context["user_id_context"]
         ctx.org_id = context.get("org_id")
         ctx.rate_limit_config = context.get("rate_limit_config")
-        ctx.guardrail_config = context.get("guardrail_config") or {}
-        ctx.rag_config = context.get("rag_config") or {}
-        ctx.template_config = context.get("template_config")
         ctx.log_payloads = context.get("log_payloads", True)
 
     @staticmethod

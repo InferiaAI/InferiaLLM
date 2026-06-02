@@ -67,6 +67,63 @@ class TestPolicyEngineErrors:
         assert "Invalid" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_resolve_context_forwards_rate_limit_and_ignores_legacy(self):
+        """resolve_context must populate config['rate_limit'] from a rate_limit
+        policy (regression guard: rate_limit was previously dropped because the
+        seed dict only contained guardrail/rag/prompt_template), and must NOT
+        surface removed guardrail/rag/prompt_template policy types."""
+        engine = self._make_engine()
+
+        auth_record = MagicMock()
+        auth_record.deployment_id = "dep-1"
+        auth_record.org_id = "org-1"
+        engine.verify_api_key = AsyncMock(return_value=auth_record)
+        engine._fetch_inference_token = AsyncMock(return_value=None)
+
+        deployment = MagicMock()
+        deployment.id = "dep-1"
+        deployment.model_name = "llama-3"
+        deployment.endpoint = "http://llama:8080"
+        deployment.engine = "vllm"
+        deployment.configuration = "{}"
+        deployment.org_id = "org-1"
+        deployment.inference_model = "meta-llama/Llama-3-8b"
+        deployment.state = "RUNNING"
+        deployment.policies = None  # no inline metadata policies
+        organization = MagicMock()
+
+        rate_limit_policy = MagicMock(
+            policy_type="rate_limit",
+            config_json={"enabled": True, "rpm": 42},
+            deployment_id="dep-1",
+        )
+        # A leftover guardrail row must be ignored (feature removed).
+        legacy_policy = MagicMock(
+            policy_type="guardrail",
+            config_json={"enabled": True},
+            deployment_id="dep-1",
+        )
+
+        deployment_result = MagicMock()
+        deployment_result.first.return_value = (deployment, organization)
+        policy_result = MagicMock()
+        policy_result.scalars.return_value.all.return_value = [
+            rate_limit_policy,
+            legacy_policy,
+        ]
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(side_effect=[deployment_result, policy_result])
+
+        result = await engine.resolve_context(mock_db, "sk-validkey123", "llama-3")
+
+        assert result["valid"] is True
+        assert result["config"]["rate_limit"] == {"enabled": True, "rpm": 42}
+        assert "guardrail" not in result["config"]
+        assert "rag" not in result["config"]
+        assert "prompt_template" not in result["config"]
+
+    @pytest.mark.asyncio
     async def test_usage_tracking_redis_failure_does_not_raise(self):
         """Usage increment failure is non-blocking."""
         engine = self._make_engine()

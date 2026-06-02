@@ -52,7 +52,7 @@ def _make_log(log_id: str) -> SimpleNamespace:
         status_code=200,
         error_message=None,
         is_streaming=False,
-        applied_policies=["guardrail"],
+        applied_policies=["rate_limit"],
         created_at=datetime.now(timezone.utc),
     )
 

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class OrchestrationService:
     """
     Orchestrates the lifecycle of an inference request:
-    Auth -> Context -> RateLimit -> Quota -> Guardrails -> Inference -> Logging
+    Auth -> Context -> RateLimit -> Quota -> Inference -> Logging
 
     Each handler is implemented in its own module under core/handlers/.
     """

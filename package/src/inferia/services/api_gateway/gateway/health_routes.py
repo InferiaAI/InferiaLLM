@@ -117,8 +117,6 @@ async def services_health_check():
             f"{settings.inference_url or 'http://localhost:8001'}/health",
         ),
         ("Orchestration", f"{settings.orchestration_url}/health"),
-        ("Guardrail Service", f"{settings.guardrail_service_url}/health"),
-        ("Data Service", f"{settings.data_service_url}/health"),
     ]
 
     service_tasks = [check_service(name, url) for name, url in services_to_check]

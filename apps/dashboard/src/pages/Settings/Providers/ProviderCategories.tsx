@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Cloud, Database, Shield, ChevronRight } from "lucide-react";
+import { Cloud, ChevronRight } from "lucide-react";
 
 export default function ProviderCategories() {
     const categories = [
@@ -10,22 +10,6 @@ export default function ProviderCategories() {
             icon: Cloud,
             color: "text-ember-500",
             bg: "bg-ember-50 dark:bg-ember-900/20",
-        },
-        {
-            id: "vector-db",
-            title: "Vector Database",
-            description: "Connect Chroma, Pinecone, or Weaviate",
-            icon: Database,
-            color: "text-purple-500",
-            bg: "bg-purple-50 dark:bg-purple-900/20",
-        },
-        {
-            id: "guardrails",
-            title: "Guardrails",
-            description: "Configure Groq, Lakera, and other security providers",
-            icon: Shield,
-            color: "text-green-500",
-            bg: "bg-green-50 dark:bg-green-900/20",
         },
     ];
 

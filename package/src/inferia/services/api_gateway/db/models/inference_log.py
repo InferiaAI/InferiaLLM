@@ -35,6 +35,6 @@ class InferenceLog(Base):
     status_code = Column(Integer, default=200)
     error_message = Column(String, nullable=True)
     is_streaming = Column(Boolean, default=False)
-    applied_policies = Column(JSON, nullable=True)  # List of policies applied (e.g. guardrail, pii, template)
+    applied_policies = Column(JSON, nullable=True)  # List of policies applied (e.g. rate_limit, quota)
     
     created_at = Column(DateTime, default=func.now(), index=True)

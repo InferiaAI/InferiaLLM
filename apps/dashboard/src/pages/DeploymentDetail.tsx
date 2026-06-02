@@ -6,9 +6,6 @@ import { cn } from "@/lib/utils"
 import InferenceLogs from "@/components/InferenceLogs"
 import TrainingLogs from "@/components/deployment/TrainingLogs"
 import DeploymentOverview from "@/components/deployment/DeploymentOverview"
-import DeploymentGuardrails from "@/components/deployment/DeploymentGuardrails"
-import DeploymentRag from "@/components/deployment/DeploymentRag"
-import DeploymentPromptTemplate from "@/components/deployment/DeploymentPromptTemplate"
 import DeploymentRateLimit from "@/components/deployment/DeploymentRateLimit"
 import TerminalLogs from "@/components/deployment/TerminalLogs"
 import DeploymentConfig from "@/components/deployment/DeploymentConfig"
@@ -17,7 +14,7 @@ import { useQuery } from "@tanstack/react-query"
 import { LoadingScreen } from "@/components/ui/LoadingScreen"
 import { useAuth } from "@/context/AuthContext"
 
-type TabType = "overview" | "logs" | "terminal" | "guardrail" | "rag" | "prompt_template" | "rate_limit" | "config"
+type TabType = "overview" | "logs" | "terminal" | "rate_limit" | "config"
 type ActionModalType = "start" | "stop" | "delete" | null
 
 type DeploymentData = {
@@ -149,7 +146,6 @@ export default function DeploymentDetail() {
   const tabs = useMemo(() => {
     const logLabel = isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : isVideoGen ? "Video Gen Logs" : "Inference Logs"
     const list: { id: TabType; label: string }[] = [{ id: "overview", label: "Overview" }, { id: "logs", label: logLabel }, { id: "terminal", label: "Terminal Logs" }, { id: "rate_limit", label: "Rate Limits" }, { id: "config", label: "Configuration" }];
-    if (!isEmbedding && !isTraining && !isImageGen && !isVideoGen) list.splice(1, 0, { id: "guardrail", label: "Guardrails" }, { id: "rag", label: "RAG & Data" }, { id: "prompt_template", label: "Template" });
     return list.filter((t) => !(t.id === "terminal" && !isCompute))
   }, [isEmbedding, isTraining, isImageGen, isVideoGen, isCompute])
 
@@ -322,9 +318,6 @@ function TabContent({ activeTab, deployment, fetchDeployment }: { activeTab: Tab
     );
     case "terminal": return <TerminalLogs deploymentId={id} />;
     case "config": return <DeploymentConfig deployment={deployment} onUpdate={() => fetchDeployment(false)} />;
-    case "guardrail": return <DeploymentGuardrails deploymentId={id} />;
-    case "rag": return <DeploymentRag deploymentId={id} />;
-    case "prompt_template": return <DeploymentPromptTemplate deploymentId={id} />;
     case "rate_limit": return <DeploymentRateLimit deploymentId={id} />;
     default: return null;
   }
