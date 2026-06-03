@@ -36,6 +36,15 @@ async def delete_model(cache_id: str):
     row = await repo.get(cache_id)
     if not row:
         raise HTTPException(404, "not found")
+    # Stop an in-flight download first, so deleting a model mid-download
+    # actually halts the transfer instead of letting it keep writing files.
+    dl = deps.get("downloader")
+    if dl:
+        dl.cancel(
+            source=row["source"],
+            model_id=row["model_id"],
+            revision=row.get("revision", "main"),
+        )
     em = deps.get("eviction")
     if em:
         import shutil

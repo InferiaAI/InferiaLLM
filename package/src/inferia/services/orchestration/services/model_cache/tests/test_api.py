@@ -41,11 +41,18 @@ class _FakeRepo:
 class _FakeDownloader:
     def __init__(self):
         self.calls: list[dict] = []
+        self.cancelled: list[dict] = []
 
     def start(self, *, source, model_id, revision="main", engine_hint=None):
         self.calls.append(
             {"source": source, "model_id": model_id, "revision": revision, "engine_hint": engine_hint}
         )
+
+    def cancel(self, *, source, model_id, revision="main"):
+        self.cancelled.append(
+            {"source": source, "model_id": model_id, "revision": revision}
+        )
+        return True
 
 
 class _FakeEviction:
@@ -179,6 +186,8 @@ async def test_delete_removes_row():
 
         # Confirm repo.delete was called with the correct id
         assert "dddd-4444" in repo.deleted
+        # Delete must also cancel any in-flight download for that model.
+        assert any(c["model_id"] == "org/removable" for c in dl.cancelled)
 
         # Unknown id → 404
         resp = await client.delete("/v1/models/no-such-id")

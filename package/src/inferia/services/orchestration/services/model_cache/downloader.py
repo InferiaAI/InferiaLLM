@@ -32,6 +32,22 @@ class DownloadManager:
         self._fetch_file = fetch_file or self._hf_file
         self._tasks: dict[tuple, asyncio.Task] = {}
 
+    def cancel(self, *, source, model_id, revision="main") -> bool:
+        """Cancel an in-flight pre-warm for this key, if one is running.
+
+        Returns True if a running task was cancelled. Used by the delete
+        endpoint so removing a model mid-download actually stops the transfer
+        (asyncio.CancelledError unwinds the open file/stream; the caller then
+        removes the partial files + row).
+        """
+        key = (source, model_id, revision)
+        t = self._tasks.get(key)
+        if t and not t.done():
+            t.cancel()
+            self._tasks.pop(key, None)
+            return True
+        return False
+
     def start(self, *, source, model_id, revision="main", engine_hint=None):
         """Fire-and-forget pre-warm; deduplicates by ``(source, model_id, revision)`` key.
 

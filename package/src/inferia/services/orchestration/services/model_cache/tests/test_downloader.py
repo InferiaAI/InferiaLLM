@@ -271,3 +271,24 @@ async def test_hf_file_downloads_on_200(tmp_path):
     target = CachePaths(str(tmp_path)).hf_dir("org/m", "main") / "w.bin"
     assert target.read_bytes() == b"WEIGHTS"
     assert sum(got) == len(b"WEIGHTS")
+
+
+async def test_cancel_stops_inflight_task():
+    repo = FakeRepo()
+    gate = asyncio.Event()
+
+    async def slow_fetch_list(model_id, revision):
+        await gate.wait()  # block until released (simulates a long download)
+        return []
+
+    dm = DownloadManager(repo=repo, paths=None, fetch_list=slow_fetch_list,
+                         fetch_file=None)
+    t = dm.start(source="hf", model_id="org/m", revision="main")
+    await asyncio.sleep(0.01)  # let prewarm reach the blocking fetch_list
+
+    assert dm.cancel(source="hf", model_id="org/m", revision="main") is True
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    # No running task now → cancel is a no-op returning False.
+    assert dm.cancel(source="hf", model_id="org/m", revision="main") is False
+    gate.set()  # cleanup
