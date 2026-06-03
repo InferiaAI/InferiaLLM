@@ -46,6 +46,7 @@ from inferia.services.api_gateway.config import (
     CloudConfig,
     DePINConfig,
     VectorDBConfig,
+    HuggingFaceConfig,
 )
 
 router = APIRouter(tags=["Configuration"])
@@ -61,6 +62,7 @@ router = APIRouter(tags=["Configuration"])
 
 class ProviderConfigResponse(BaseModel):
     providers: ProvidersConfig
+    hf_token_from_env: bool = False
 
 
 def _mask_secret(value: Optional[str]) -> Optional[str]:
@@ -172,6 +174,17 @@ def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
         else:
             nos_in.pop("wallet_private_key", None)
 
+    # HuggingFace token.
+    hf_in = out.get("huggingface") or {}
+    hf_ex = (existing.get("providers") or {}).get("huggingface") or {}
+    if _is_masked(hf_in.get("token")):
+        if hf_ex.get("token"):
+            hf_in["token"] = hf_ex["token"]
+        else:
+            hf_in.pop("token", None)
+    if hf_in:
+        out["huggingface"] = hf_in
+
     return out
 
 
@@ -209,6 +222,10 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
             if entry.key:
                 entry.key = _mask_secret(entry.key)
 
+    # HuggingFace — nested under .huggingface
+    if masked.huggingface.token:
+        masked.huggingface.token = "********"
+
     return masked
 
 
@@ -244,7 +261,8 @@ async def get_provider_config(request: Request, db: AsyncSession = Depends(get_d
     _require_provider_read_permission(user_ctx)
 
     masked_providers = _mask_config(settings.providers)
-    return ProviderConfigResponse(providers=masked_providers)
+    hf_token_from_env = bool(os.getenv("INFERIA_HF_TOKEN"))
+    return ProviderConfigResponse(providers=masked_providers, hf_token_from_env=hf_token_from_env)
 
 
 @router.post("/config/providers")

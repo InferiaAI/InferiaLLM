@@ -47,6 +47,27 @@ class DownloadManager:
         self._fetch_list = fetch_list or self._hf_list
         self._fetch_file = fetch_file or self._hf_file
         self._tasks: dict[tuple, asyncio.Task] = {}
+        self._hf_token: str = ""
+
+    async def _load_hf_token(self) -> str:
+        """Return the HF token: DB-stored provider config first, then env fallback.
+
+        Loads the provider config from the database (same path as the Pulumi
+        adapter) to retrieve ``providers.huggingface.token``.  Falls back to
+        ``settings.hf_token`` (i.e. ``INFERIA_HF_TOKEN`` env var) if the DB
+        record is absent, the DB is unreachable, or the stored token is empty.
+        """
+        try:
+            from inferia.services.api_gateway.db.database import AsyncSessionLocal
+            from inferia.services.api_gateway.management.config_manager import config_manager
+            async with AsyncSessionLocal() as db:
+                data = await config_manager.load_config(db) or {}
+            tok = ((data.get("providers") or {}).get("huggingface") or {}).get("token") or ""
+        except Exception:
+            tok = ""
+        if tok:
+            return tok
+        return getattr(self.settings, "hf_token", "") if self.settings else ""
 
     def cancel(self, *, source, model_id, revision="main") -> bool:
         """Cancel an in-flight pre-warm for this key, if one is running.
@@ -98,6 +119,8 @@ class DownloadManager:
         cid = row["id"]
         try:
             if source == "hf":
+                # Resolve token once per pre-warm — avoids per-file DB round-trips
+                self._hf_token = await self._load_hf_token()
                 await self._run_prewarm(
                     cid,
                     list_fn=self._fetch_list,
@@ -222,7 +245,13 @@ class DownloadManager:
         os.replace(tmp, target)
 
     def _hdr(self) -> dict:
-        tok = getattr(self.settings, "hf_token", "") if self.settings else ""
+        """Return auth header for HF requests using the resolved token.
+
+        ``self._hf_token`` is set once in ``prewarm`` before HF downloads
+        begin via ``_load_hf_token()``.  The method remains sync so callers
+        don't need to await it in the stream context.
+        """
+        tok = self._hf_token
         return {"authorization": f"Bearer {tok}"} if tok else {}
 
     # ------------------------------------------------------------------

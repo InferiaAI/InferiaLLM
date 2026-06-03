@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ConfigService, type ProvidersConfig } from "@/services/configService";
+import { ConfigService, type ProvidersConfig, type ProviderConfigResponse } from "@/services/configService";
 import { Check, ChevronRight, Boxes } from "lucide-react";
 
 type ProviderOption = {
@@ -18,15 +18,18 @@ const PROVIDERS_MAP: Record<string, ProviderOption[]> = {
         { id: "gcp", name: "Google Cloud Platform", description: "Coming Soon", disabled: true },
         { id: "azure", name: "Microsoft Azure", description: "Coming Soon", disabled: true },
     ],
+    huggingface: [
+        { id: "huggingface-token", name: "Hugging Face Token", description: "Access token for gated/private model caching from HF Hub" },
+    ],
 };
 
 export default function ProviderList() {
     const { category } = useParams();
-    const { data: activeConfig } = useQuery<ProvidersConfig | null>({
-        queryKey: ["provider-config"],
+    const { data: fullConfig } = useQuery<ProviderConfigResponse | null>({
+        queryKey: ["provider-config-full"],
         queryFn: async () => {
             try {
-                return await ConfigService.getProviderConfig();
+                return await ConfigService.getProviderConfigFull();
             } catch (e) {
                 console.error(e);
                 return null;
@@ -34,6 +37,9 @@ export default function ProviderList() {
         },
         staleTime: 5 * 60 * 1000,
     });
+
+    const activeConfig: ProvidersConfig | null = fullConfig?.providers ?? null;
+    const hfTokenFromEnv: boolean = fullConfig?.hf_token_from_env ?? false;
 
     const providers = category ? PROVIDERS_MAP[category] || [] : [];
     const categoryTitle = category ? category.charAt(0).toUpperCase() + category.slice(1).replace("-", " ") : "Providers";
@@ -45,6 +51,7 @@ export default function ProviderList() {
             case "gcp": return !!activeConfig.cloud?.gcp?.project_id || !!activeConfig.cloud?.gcp?.service_account_json;
             case "nosana": return !!activeConfig.depin?.nosana?.wallet_private_key;
             case "akash": return !!activeConfig.depin?.akash?.mnemonic;
+            case "huggingface-token": return !!activeConfig.huggingface?.token || hfTokenFromEnv;
             case "pii": return true; // Always connected/local
             default: return false;
         }

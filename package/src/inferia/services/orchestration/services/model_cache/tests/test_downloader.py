@@ -564,3 +564,201 @@ async def test_hf_prewarm_unchanged_after_refactor():
     # Both injected functions were called exactly once
     assert fetch_list_calls == [("org/model", "main")]
     assert fetch_file_calls == [("org/model", "main", "model.bin")]
+
+
+# ---------------------------------------------------------------------------
+# _load_hf_token: DB-stored token and env fallback
+# ---------------------------------------------------------------------------
+
+class _FakeSettings:
+    def __init__(self, hf_token=""):
+        self.hf_token = hf_token
+
+
+async def test_load_hf_token_uses_db_token_when_present(monkeypatch):
+    """_load_hf_token returns the provider-config DB token when it is non-empty."""
+    db_config = {"providers": {"huggingface": {"token": "hf_db_token"}}}
+
+    async def fake_load_config(db):
+        return db_config
+
+    # Patch out the DB session and config_manager to avoid a real DB
+    import inferia.services.orchestration.services.model_cache.downloader as _mod
+
+    class _FakeDB:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeCM:
+        async def load_config(self, db):
+            return db_config
+
+    class _FakeASL:
+        def __call__(self):
+            return _FakeDB()
+
+    monkeypatch.setattr(_mod, "_get_async_session_local", lambda: _FakeASL()(), raising=False)
+
+    # Directly monkeypatch the imports inside the method by patching the modules
+    import sys
+    import types
+
+    fake_db_mod = types.ModuleType("inferia.services.api_gateway.db.database")
+    fake_db_mod.AsyncSessionLocal = _FakeDB
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.db.database", fake_db_mod)
+
+    fake_cm_mod = types.ModuleType("inferia.services.api_gateway.management.config_manager")
+    fake_cm_mod.config_manager = _FakeCM()
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.management.config_manager", fake_cm_mod)
+
+    dm = DownloadManager(repo=FakeRepo(), paths=None, settings=_FakeSettings(hf_token="hf_env_token"))
+    tok = await dm._load_hf_token()
+    assert tok == "hf_db_token", f"Expected DB token, got: {tok!r}"
+
+
+async def test_load_hf_token_falls_back_to_env_when_db_empty(monkeypatch):
+    """_load_hf_token returns settings.hf_token when the DB has no HF token."""
+    import sys
+    import types
+
+    # DB returns config with empty huggingface token
+    db_config = {"providers": {"huggingface": {"token": ""}}}
+
+    class _FakeDB:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeCM:
+        async def load_config(self, db):
+            return db_config
+
+    fake_db_mod = types.ModuleType("inferia.services.api_gateway.db.database")
+    fake_db_mod.AsyncSessionLocal = _FakeDB
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.db.database", fake_db_mod)
+
+    fake_cm_mod = types.ModuleType("inferia.services.api_gateway.management.config_manager")
+    fake_cm_mod.config_manager = _FakeCM()
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.management.config_manager", fake_cm_mod)
+
+    dm = DownloadManager(repo=FakeRepo(), paths=None, settings=_FakeSettings(hf_token="hf_from_env"))
+    tok = await dm._load_hf_token()
+    assert tok == "hf_from_env", f"Expected env fallback, got: {tok!r}"
+
+
+async def test_load_hf_token_falls_back_to_env_when_db_raises(monkeypatch):
+    """_load_hf_token returns settings.hf_token when the DB import raises."""
+    import sys
+    import types
+
+    # Force exception by patching load_config to raise
+    class _FakeCMError:
+        async def load_config(self, db):
+            raise RuntimeError("DB connection failed")
+
+    class _FakeDB:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+
+    fake_db_mod = types.ModuleType("inferia.services.api_gateway.db.database")
+    fake_db_mod.AsyncSessionLocal = _FakeDB
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.db.database", fake_db_mod)
+
+    fake_cm_mod = types.ModuleType("inferia.services.api_gateway.management.config_manager")
+    fake_cm_mod.config_manager = _FakeCMError()
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.management.config_manager", fake_cm_mod)
+
+    dm = DownloadManager(repo=FakeRepo(), paths=None, settings=_FakeSettings(hf_token="hf_fallback"))
+    tok = await dm._load_hf_token()
+    assert tok == "hf_fallback", f"Expected fallback on DB error, got: {tok!r}"
+
+
+async def test_load_hf_token_returns_empty_when_no_settings_and_db_empty(monkeypatch):
+    """_load_hf_token returns '' when DB is empty and settings is None."""
+    import sys
+    import types
+
+    class _FakeDB:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeCM:
+        async def load_config(self, db):
+            return {}
+
+    fake_db_mod = types.ModuleType("inferia.services.api_gateway.db.database")
+    fake_db_mod.AsyncSessionLocal = _FakeDB
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.db.database", fake_db_mod)
+
+    fake_cm_mod = types.ModuleType("inferia.services.api_gateway.management.config_manager")
+    fake_cm_mod.config_manager = _FakeCM()
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.management.config_manager", fake_cm_mod)
+
+    dm = DownloadManager(repo=FakeRepo(), paths=None, settings=None)
+    tok = await dm._load_hf_token()
+    assert tok == "", f"Expected empty string, got: {tok!r}"
+
+
+async def test_hdr_returns_empty_when_no_token():
+    """_hdr() returns {} when _hf_token is empty (no auth header for public models)."""
+    dm = DownloadManager(repo=FakeRepo(), paths=None, settings=None)
+    assert dm._hdr() == {}
+
+
+async def test_hdr_returns_auth_when_token_set():
+    """_hdr() returns the Authorization header when _hf_token is set."""
+    dm = DownloadManager(repo=FakeRepo(), paths=None, settings=None)
+    dm._hf_token = "hf_test_token"
+    hdr = dm._hdr()
+    assert hdr == {"authorization": "Bearer hf_test_token"}
+
+
+async def test_prewarm_hf_resolves_token_once_per_prewarm(monkeypatch):
+    """prewarm(source='hf') calls _load_hf_token exactly once and sets _hf_token."""
+    import sys
+    import types
+
+    db_config = {"providers": {"huggingface": {"token": "hf_resolved_token"}}}
+
+    class _FakeDB:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeCM:
+        async def load_config(self, db):
+            return db_config
+
+    fake_db_mod = types.ModuleType("inferia.services.api_gateway.db.database")
+    fake_db_mod.AsyncSessionLocal = _FakeDB
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.db.database", fake_db_mod)
+
+    fake_cm_mod = types.ModuleType("inferia.services.api_gateway.management.config_manager")
+    fake_cm_mod.config_manager = _FakeCM()
+    monkeypatch.setitem(sys.modules, "inferia.services.api_gateway.management.config_manager", fake_cm_mod)
+
+    repo = FakeRepo()
+    files = [{"path": "weights.bin", "size": 10}]
+    headers_used = []
+
+    async def fake_list(model_id, revision):
+        return files
+
+    async def fake_file(model_id, revision, path, on_bytes):
+        await on_bytes(10)
+
+    dm = DownloadManager(repo=repo, paths=None, fetch_list=fake_list, fetch_file=fake_file)
+    await dm.prewarm(source="hf", model_id="org/gated", revision="main")
+
+    # After prewarm, _hf_token must be set to the DB value
+    assert dm._hf_token == "hf_resolved_token"
+    row = next(iter(repo._rows.values()))
+    assert row["status"] == "cached"

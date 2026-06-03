@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Cloud, ChevronRight } from "lucide-react";
+import { Cloud, ChevronRight, Database } from "lucide-react";
 
 export default function ProviderCategories() {
     const categories = [
@@ -10,6 +10,14 @@ export default function ProviderCategories() {
             icon: Cloud,
             color: "text-ember-500",
             bg: "bg-ember-50 dark:bg-ember-900/20",
+        },
+        {
+            id: "huggingface",
+            title: "Hugging Face",
+            description: "Access token for caching gated/private models from the HF Hub",
+            icon: Database,
+            color: "text-yellow-600",
+            bg: "bg-yellow-50 dark:bg-yellow-900/20",
         },
     ];
 

@@ -85,10 +85,15 @@ class DePINConfig(BaseModel):
     nosana: NosanaConfig = Field(default_factory=NosanaConfig)
 
 
+class HuggingFaceConfig(BaseModel):
+    token: str = ""
+
+
 class ProvidersConfig(BaseModel):
     cloud: CloudConfig = Field(default_factory=CloudConfig)
     vectordb: VectorDBConfig = Field(default_factory=VectorDBConfig)
     depin: DePINConfig = Field(default_factory=DePINConfig)
+    huggingface: HuggingFaceConfig = Field(default_factory=HuggingFaceConfig)
 
 
 # --- Provider Credential Model ---

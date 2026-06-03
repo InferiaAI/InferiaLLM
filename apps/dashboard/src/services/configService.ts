@@ -47,19 +47,26 @@ export interface DePINConfig {
     akash: AkashConfig;
 }
 
+export interface HuggingFaceConfig {
+    token: string;
+}
+
 export interface ProvidersConfig {
     cloud: CloudConfig;
     depin: DePINConfig;
+    huggingface: HuggingFaceConfig;
 }
 
 export interface ProviderConfigResponse {
     providers: ProvidersConfig;
+    hf_token_from_env: boolean;
 }
 
 // Initial state helper
 export const initialProviderConfig: ProvidersConfig = {
     cloud: { aws: {}, gcp: {} },
-    depin: { nosana: {}, akash: {} }
+    depin: { nosana: {}, akash: {} },
+    huggingface: { token: "" }
 };
 
 // Universal Provider Credential Types (works for ANY provider)
@@ -90,6 +97,11 @@ export const ConfigService = {
     async getProviderConfig(): Promise<ProvidersConfig> {
         const { data } = await api.get<ProviderConfigResponse>('/management/config/providers');
         return data.providers;
+    },
+
+    async getProviderConfigFull(): Promise<ProviderConfigResponse> {
+        const { data } = await api.get<ProviderConfigResponse>('/management/config/providers');
+        return data;
     },
 
     async updateProviderConfig(config: ProvidersConfig): Promise<void> {

@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "react-router-dom";
-import { useEffect, useState, useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
-import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
+import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle, Info } from "lucide-react";
 import { toast } from "sonner";
 
 // Small inline "where to find" hint rendered below a credential field
@@ -43,6 +43,8 @@ function clearMaskedSecrets(cfg: ProvidersConfig): ProvidersConfig {
     if (nosana && isMaskedSecret(nosana.wallet_private_key)) nosana.wallet_private_key = "";
     const akash = scrubbed.depin?.akash as any;
     if (akash && isMaskedSecret(akash.mnemonic)) akash.mnemonic = "";
+    const hf = scrubbed.huggingface as any;
+    if (hf && isMaskedSecret(hf.token)) hf.token = "";
     return scrubbed;
 }
 
@@ -59,6 +61,7 @@ type State = {
     loadingKeys: boolean;
     showDeleteModal: boolean;
     keyToDelete: string | null;
+    hfTokenFromEnv: boolean;
 };
 
 type Action =
@@ -104,6 +107,7 @@ const initialState: State = {
     loadingKeys: false,
     showDeleteModal: false,
     keyToDelete: null,
+    hfTokenFromEnv: false,
 };
 
 export default function ProviderConfigPage() {
@@ -113,7 +117,7 @@ export default function ProviderConfigPage() {
     const {
         config, loading, saving, isEditing, isConfigured,
         nosanaApiKeys, showAddKeyModal, newKeyName, newKeyValue, loadingKeys,
-        showDeleteModal, keyToDelete
+        showDeleteModal, keyToDelete, hfTokenFromEnv
     } = state;
 
     useEffect(() => {
@@ -125,7 +129,10 @@ export default function ProviderConfigPage() {
 
     const loadConfig = async () => {
         try {
-            const data = await ConfigService.getProviderConfig();
+            const fullResp = await ConfigService.getProviderConfigFull();
+            const data = fullResp.providers;
+            const envFlag = fullResp.hf_token_from_env ?? false;
+
             // Merge with initial to ensure structure exists
             const merged = {
                 cloud: {
@@ -135,17 +142,22 @@ export default function ProviderConfigPage() {
                 depin: {
                     nosana: { ...initialProviderConfig.depin.nosana, ...data.depin?.nosana },
                     akash: { ...initialProviderConfig.depin.akash, ...data.depin?.akash }
+                },
+                huggingface: {
+                    ...initialProviderConfig.huggingface,
+                    ...(data.huggingface ?? {})
                 }
             };
             // Determine configured state from the merged server response
             // (which still carries masked values like "AKIA...XYZ8") BEFORE
             // we scrub. Otherwise an isConfigured pool would look unconfigured.
-            const configured = checkConfigured(merged, providerId);
+            const configured = checkConfigured(merged, providerId, envFlag);
 
             // Scrub masked secret values from the form state so the user can't
             // accidentally round-trip the literal mask back as the real key.
             const scrubbed = clearMaskedSecrets(merged);
             dispatch({ type: 'SET_FIELD', field: 'config', value: scrubbed });
+            dispatch({ type: 'SET_FIELD', field: 'hfTokenFromEnv', value: envFlag });
 
             if (configured) {
                 dispatch({ type: 'SET_FIELD', field: 'isConfigured', value: true });
@@ -212,13 +224,14 @@ export default function ProviderConfigPage() {
         }
     };
 
-    const checkConfigured = (data: ProvidersConfig, pid?: string) => {
+    const checkConfigured = (data: ProvidersConfig, pid?: string, envFlag?: boolean) => {
         if (!pid) return false;
         switch (pid) {
             case "aws": return !!data.cloud.aws.access_key_id;
             case "gcp": return !!data.cloud.gcp?.project_id || !!data.cloud.gcp?.service_account_json;
             case "nosana": return !!data.depin.nosana.wallet_private_key || !!data.depin.nosana.api_key || (nosanaApiKeys && nosanaApiKeys.length > 0);
             case "akash": return !!data.depin.akash.mnemonic;
+            case "huggingface-token": return !!data.huggingface?.token || !!envFlag;
             default: return false;
         }
     };
@@ -308,6 +321,7 @@ export default function ProviderConfigPage() {
                             loadingKeys={loadingKeys}
                             handleAddKey={() => dispatch({ type: 'SET_FIELD', field: 'showAddKeyModal', value: true })}
                             handleDeleteApiKey={handleDeleteApiKey}
+                            hfTokenFromEnv={hfTokenFromEnv}
                         />
 
                         <div className="pt-4 flex justify-end gap-3">
@@ -893,6 +907,47 @@ function AkashFields({ config, updateField, handleAddKey }: { config: ProvidersC
     );
 }
 
+function HuggingFaceFields({
+    config,
+    updateField,
+    hfTokenFromEnv,
+}: {
+    config: ProvidersConfig;
+    updateField: (path: string[], value: any) => void;
+    hfTokenFromEnv?: boolean;
+}) {
+    return (
+        <div className="space-y-4">
+            {hfTokenFromEnv && (
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex items-start gap-2 text-xs text-blue-700">
+                    <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
+                    <span>
+                        A token is configured via the <code className="font-mono font-semibold">INFERIA_HF_TOKEN</code> environment variable.
+                        Entering one here overrides it.
+                    </span>
+                </div>
+            )}
+            <div className="space-y-2">
+                <label htmlFor="hf-token" className="text-sm font-medium">Access Token</label>
+                <input
+                    id="hf-token"
+                    type="password"
+                    value={config.huggingface?.token || ""}
+                    onChange={(e) => updateField(['huggingface', 'token'], e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    placeholder={hfTokenFromEnv ? "(env token active — type to override)" : "hf_..."}
+                    autoComplete="new-password"
+                />
+                <CredHint>
+                    Hugging Face → <strong>Settings</strong> → <strong>Access Tokens</strong>.
+                    Required to download gated or private models (e.g. Llama, Gemma).
+                    Starts with <code>hf_</code>.
+                </CredHint>
+            </div>
+        </div>
+    );
+}
+
 function ProviderFormFields({
     providerId,
     config,
@@ -902,6 +957,7 @@ function ProviderFormFields({
     loadingKeys,
     handleAddKey,
     handleDeleteApiKey,
+    hfTokenFromEnv,
 }: {
     providerId?: string;
     config: ProvidersConfig;
@@ -911,6 +967,7 @@ function ProviderFormFields({
     loadingKeys: boolean;
     handleAddKey: () => void;
     handleDeleteApiKey: (name: string) => void;
+    hfTokenFromEnv?: boolean;
 }) {
     switch (providerId) {
         case "aws":
@@ -930,6 +987,8 @@ function ProviderFormFields({
             );
         case "akash":
             return <AkashFields config={config} updateField={updateField} handleAddKey={handleAddKey} />;
+        case "huggingface-token":
+            return <HuggingFaceFields config={config} updateField={updateField} hfTokenFromEnv={hfTokenFromEnv} />;
         default:
             return <div>Unknown Provider</div>;
     }
