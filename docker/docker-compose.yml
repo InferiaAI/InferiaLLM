@@ -64,8 +64,13 @@ services:
       - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
       - INFERIA_CONFIG=/etc/inferia/inferia.yaml
+      - INFERIA_MODEL_CACHE_DIR=${INFERIA_MODEL_CACHE_DIR:-/var/lib/inferia/models}
+      - INFERIA_MODEL_CACHE_MAX_GB=${INFERIA_MODEL_CACHE_MAX_GB:-100}
+      - INFERIA_HF_TOKEN=${INFERIA_HF_TOKEN:-}
+      - INFERIA_MODEL_MIRROR_BASE=${INFERIA_MODEL_MIRROR_BASE:-}
     volumes:
       - appdata:/data
+      - modelcache:/var/lib/inferia/models
       - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
     ports:
       - "8000:8000"
@@ -238,6 +243,7 @@ volumes:
   pgdata:
   appdata:
   esdata:
+  modelcache:
 
 networks:
   inferia-net:

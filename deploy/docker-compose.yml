@@ -72,8 +72,13 @@ services:
       - LOGSTASH_HOST=${LOGSTASH_HOST:-}
       - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
+      - INFERIA_MODEL_CACHE_DIR=${INFERIA_MODEL_CACHE_DIR:-/var/lib/inferia/models}
+      - INFERIA_MODEL_CACHE_MAX_GB=${INFERIA_MODEL_CACHE_MAX_GB:-100}
+      - INFERIA_HF_TOKEN=${INFERIA_HF_TOKEN:-}
+      - INFERIA_MODEL_MIRROR_BASE=${INFERIA_MODEL_MIRROR_BASE:-}
     volumes:
       - appdata:/data
+      - modelcache:/var/lib/inferia/models
       # Unified config yaml — mounted read-only. Edit the host file to change
       # operational parameters; restart the container to apply.
       - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
@@ -182,6 +187,7 @@ volumes:
   pgdata:
   appdata:
   esdata:
+  modelcache:
 
 networks:
   inferia-net:
