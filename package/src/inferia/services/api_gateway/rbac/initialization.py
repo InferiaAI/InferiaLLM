@@ -46,6 +46,9 @@ async def initialize_default_org(db: AsyncSession):
             PermissionEnum.API_KEY_CREATE.value,
             PermissionEnum.API_KEY_REVOKE.value,
             PermissionEnum.ORG_VIEW.value,
+            PermissionEnum.MODEL_LIST.value,
+            PermissionEnum.MODEL_ADD.value,
+            PermissionEnum.MODEL_DELETE.value,
         ]
         
         member_role_stmt = select(Role).where(Role.name == "member")

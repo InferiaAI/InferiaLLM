@@ -19,6 +19,11 @@ class PermissionEnum(str, Enum):
     # Models
     MODEL_ACCESS = "model:access"
 
+    # Models cache
+    MODEL_LIST = "model:list"
+    MODEL_ADD = "model:add"
+    MODEL_DELETE = "model:delete"
+
     # Member Management
     MEMBER_INVITE = "member:invite"
     MEMBER_DELETE = "member:delete"
