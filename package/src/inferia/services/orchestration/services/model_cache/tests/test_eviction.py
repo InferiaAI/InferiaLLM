@@ -139,7 +139,11 @@ async def test_in_use_never_evicted():
 
 
 def test_dir_for_hf_vs_ollama(tmp_path):
-    """_dir_for returns hf_dir for source='hf' and ollama_root() for source='ollama'."""
+    """_dir_for returns hf_dir for source='hf' and per-model ollama_dir for source='ollama'.
+
+    The per-model dir (contains model_id) is critical: evicting one Ollama model
+    must NOT wipe all other Ollama models from disk.
+    """
     paths = CachePaths(str(tmp_path))
     mgr = EvictionManager(repo=None, paths=paths, max_bytes=0, in_use=lambda: set())
 
@@ -152,6 +156,37 @@ def test_dir_for_hf_vs_ollama(tmp_path):
     )
 
     ollama_path = mgr._dir_for(ollama_row)
-    assert ollama_path == paths.ollama_root(), (
-        f"ollama path mismatch: {ollama_path!r}"
+    # Must be the PER-MODEL dir, NOT the bare ollama root
+    expected_per_model = paths.ollama_dir("llama3", "latest")
+    assert ollama_path == expected_per_model, (
+        f"ollama path should be per-model dir {expected_per_model!r}, got {ollama_path!r}"
     )
+    # Sanity: per-model dir contains model_id, bare root does not
+    assert "llama3" in str(ollama_path), (
+        f"per-model ollama dir should contain 'llama3', got {ollama_path!r}"
+    )
+    assert ollama_path != paths.ollama_root(), (
+        "_dir_for must NOT return the bare ollama root (would wipe ALL ollama models)"
+    )
+
+
+def test_dir_for_ollama_different_models_return_different_dirs(tmp_path):
+    """Two different Ollama model rows return different directories.
+
+    This is the core invariant: evicting model A must not affect model B's blobs.
+    """
+    paths = CachePaths(str(tmp_path))
+    mgr = EvictionManager(repo=None, paths=paths, max_bytes=0, in_use=lambda: set())
+
+    row_a = {"id": "a", "model_id": "llama3", "revision": "latest", "source": "ollama"}
+    row_b = {"id": "b", "model_id": "gemma3", "revision": "4b", "source": "ollama"}
+
+    dir_a = mgr._dir_for(row_a)
+    dir_b = mgr._dir_for(row_b)
+
+    assert dir_a != dir_b, (
+        "Different Ollama models must map to different cache dirs"
+    )
+    # Each dir is a subdirectory of the ollama root, not the root itself
+    assert paths.ollama_root() in dir_a.parents
+    assert paths.ollama_root() in dir_b.parents

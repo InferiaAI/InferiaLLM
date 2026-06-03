@@ -59,7 +59,18 @@ class EvictionManager:
                 break
 
     def _dir_for(self, row: dict):
-        """Return the filesystem directory for *row*."""
+        """Return the filesystem directory for *row*.
+
+        Returns the per-model directory so that eviction/delete removes only
+        the blobs for this specific model rather than wiping the entire source
+        cache.
+        """
         if row["source"] == "hf":
             return self.paths.hf_dir(row["model_id"], row["revision"])
+        if row["source"] == "ollama":
+            # Use per-model dir so a single eviction doesn't wipe ALL ollama
+            # models from disk.
+            return self.paths.ollama_dir(row["model_id"], row["revision"])
+        # Fallback for any other source: use the per-model ollama-style dir if
+        # the paths object supports it, otherwise fall back to ollama_root.
         return self.paths.ollama_root()

@@ -17,6 +17,7 @@ import {
 import type { AxiosError } from "axios";
 
 type ApiErrorResponse = { detail?: string };
+type AddSource = "hf" | "ollama";
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return "0 B";
@@ -59,10 +60,13 @@ export default function Models() {
   const canAdd = hasPermission("model:add");
   const canDelete = hasPermission("model:delete");
 
+  // All hooks unconditional at top — no early return before hooks
   const [showSearch, setShowSearch] = useState(false);
+  const [addSource, setAddSource] = useState<AddSource>("hf");
   const [hfQuery, setHfQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [searchTimer, setSearchTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [ollamaInput, setOllamaInput] = useState("");
 
   const handleSearchChange = (value: string) => {
     setHfQuery(value);
@@ -108,6 +112,19 @@ export default function Models() {
     },
   });
 
+  const addOllamaMutation = useMutation({
+    mutationFn: ({ name, tag }: { name: string; tag: string }) =>
+      addModel({ source: "ollama", model_id: name, revision: tag, engine: "ollama" }),
+    onSuccess: () => {
+      toast.success("Ollama model queued for download");
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      setOllamaInput("");
+    },
+    onError: (err: AxiosError<ApiErrorResponse>) => {
+      toast.error(err.response?.data?.detail || "Failed to add Ollama model");
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteModel(id),
     onSuccess: () => {
@@ -118,6 +135,15 @@ export default function Models() {
       toast.error(err.response?.data?.detail || "Failed to delete model");
     },
   });
+
+  const handleAddOllama = () => {
+    const trimmed = ollamaInput.trim();
+    if (!trimmed) return;
+    const colonIdx = trimmed.lastIndexOf(":");
+    const name = colonIdx > 0 ? trimmed.slice(0, colonIdx) : trimmed;
+    const tag = colonIdx > 0 ? trimmed.slice(colonIdx + 1) : "latest";
+    addOllamaMutation.mutate({ name, tag });
+  };
 
   return (
     <div className="space-y-5 font-sans text-foreground dark:text-cream">
@@ -142,11 +168,11 @@ export default function Models() {
         </div>
       </div>
 
-      {/* HF Search — revealed by the "Add Model" button */}
+      {/* Add Model panel — revealed by the "Add Model" button */}
       {canAdd && showSearch && (
         <div className="rounded-xl border bg-card p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold">Search Hugging Face</h2>
+            <h2 className="text-base font-semibold">Add Model</h2>
             <button
               type="button"
               onClick={() => setShowSearch(false)}
@@ -156,55 +182,115 @@ export default function Models() {
               <X className="w-4 h-4" />
             </button>
           </div>
-          <div className="relative w-full max-w-lg">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <input
-              name="hf-search"
-              autoComplete="off"
-              placeholder="Search models on Hugging Face…"
-              className="h-9 w-full rounded-md border dark:border-border bg-background pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-ember-500 shadow-sm"
-              value={hfQuery}
-              onChange={(e) => handleSearchChange(e.target.value)}
-            />
+
+          {/* Source selector: Hugging Face | Ollama */}
+          <div className="inline-flex rounded-md border overflow-hidden text-sm font-medium">
+            <button
+              type="button"
+              onClick={() => setAddSource("hf")}
+              className={cn(
+                "px-4 py-1.5 transition-colors",
+                addSource === "hf"
+                  ? "bg-ember-600 text-white"
+                  : "bg-background text-muted-foreground hover:bg-muted"
+              )}
+            >
+              Hugging Face
+            </button>
+            <button
+              type="button"
+              onClick={() => setAddSource("ollama")}
+              className={cn(
+                "px-4 py-1.5 transition-colors border-l",
+                addSource === "ollama"
+                  ? "bg-ember-600 text-white"
+                  : "bg-background text-muted-foreground hover:bg-muted"
+              )}
+            >
+              Ollama
+            </button>
           </div>
 
-          {(hfLoading || hfFetching) && debouncedQuery && (
-            <div className="text-sm text-muted-foreground">Searching…</div>
-          )}
+          {/* Hugging Face search (default) */}
+          {addSource === "hf" && (
+            <>
+              <div className="relative w-full max-w-lg">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <input
+                  name="hf-search"
+                  autoComplete="off"
+                  placeholder="Search models on Hugging Face…"
+                  className="h-9 w-full rounded-md border dark:border-border bg-background pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-ember-500 shadow-sm"
+                  value={hfQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                />
+              </div>
 
-          {!hfLoading && !hfFetching && debouncedQuery && hfResults.length === 0 && (
-            <div className="text-sm text-muted-foreground">No results found for "{debouncedQuery}".</div>
-          )}
+              {(hfLoading || hfFetching) && debouncedQuery && (
+                <div className="text-sm text-muted-foreground">Searching…</div>
+              )}
 
-          {hfResults.length > 0 && (
-            <div className="divide-y rounded-lg border overflow-hidden">
-              {hfResults.map((model) => (
-                <div
-                  key={model.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3 bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-sm truncate">{model.id}</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      {model.pipeline_tag && (
-                        <span className="mr-2">{model.pipeline_tag}</span>
-                      )}
-                      {model.downloads != null && (
-                        <span>{model.downloads.toLocaleString()} downloads</span>
-                      )}
+              {!hfLoading && !hfFetching && debouncedQuery && hfResults.length === 0 && (
+                <div className="text-sm text-muted-foreground">No results found for "{debouncedQuery}".</div>
+              )}
+
+              {hfResults.length > 0 && (
+                <div className="divide-y rounded-lg border overflow-hidden">
+                  {hfResults.map((model) => (
+                    <div
+                      key={model.id}
+                      className="flex items-center justify-between gap-4 px-4 py-3 bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-sm truncate">{model.id}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {model.pipeline_tag && (
+                            <span className="mr-2">{model.pipeline_tag}</span>
+                          )}
+                          {model.downloads != null && (
+                            <span>{model.downloads.toLocaleString()} downloads</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={addMutation.isPending}
+                        onClick={() => addMutation.mutate(model.id)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-ember-500/20 bg-ember-500/10 px-2.5 py-1.5 text-xs text-ember-600 dark:text-ember-400 hover:bg-ember-500/20 font-medium disabled:opacity-50 transition-colors shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add
+                      </button>
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={addMutation.isPending}
-                    onClick={() => addMutation.mutate(model.id)}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-ember-500/20 bg-ember-500/10 px-2.5 py-1.5 text-xs text-ember-600 dark:text-ember-400 hover:bg-ember-500/20 font-medium disabled:opacity-50 transition-colors shrink-0"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add
-                  </button>
+                  ))}
                 </div>
-              ))}
+              )}
+            </>
+          )}
+
+          {/* Ollama model input */}
+          {addSource === "ollama" && (
+            <div className="flex items-center gap-3 max-w-lg">
+              <input
+                name="ollama-model"
+                autoComplete="off"
+                placeholder="Ollama model (e.g. gemma3:4b)"
+                className="h-9 flex-1 rounded-md border dark:border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500 shadow-sm"
+                value={ollamaInput}
+                onChange={(e) => setOllamaInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddOllama();
+                }}
+              />
+              <button
+                type="button"
+                disabled={addOllamaMutation.isPending || !ollamaInput.trim()}
+                onClick={handleAddOllama}
+                className="inline-flex items-center gap-1.5 rounded-md border border-ember-500/20 bg-ember-500/10 px-3 py-1.5 text-sm text-ember-600 dark:text-ember-400 hover:bg-ember-500/20 font-medium disabled:opacity-50 transition-colors shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add
+              </button>
             </div>
           )}
         </div>

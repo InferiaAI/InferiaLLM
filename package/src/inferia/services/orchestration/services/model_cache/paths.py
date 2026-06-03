@@ -52,6 +52,14 @@ class CachePaths:
         """Return the root directory for Ollama blobs/manifests."""
         return self.root / "ollama"
 
+    def ollama_dir(self, model_id: str, revision: str) -> Path:
+        """Return the per-model directory for Ollama blobs.
+
+        Using a per-model dir means eviction/delete removes only this model's
+        blobs rather than wiping the entire ollama cache.
+        """
+        return self.ollama_root() / _sanitize(model_id) / _sanitize(revision)
+
     def dir_size_bytes(self, d: Path) -> int:
         """Return the total size in bytes of all files under *d*."""
         if not d.exists():

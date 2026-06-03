@@ -4,14 +4,18 @@ For HuggingFace models, enumerates the repo's file list via the HF API and
 fetches each file into the cache directory, updating ``bytes_done``/``status``
 on the ``model_cache`` row as it goes.
 
+For Ollama models, fetches the manifest from the Ollama registry to get the
+list of blobs (config + layers), then streams each blob to the per-model
+ollama dir in the cache.
+
 Concurrency dedup: one task per ``(source, model_id, revision)`` key.
 Re-triggering while the task is still running joins the in-flight task.
 
 Pre-warm failure is NON-FATAL: the row is marked ``status='error'`` and no
 exception is propagated to the caller.
 
-For ``source != 'hf'`` (e.g. ``ollama``) this phase is a no-op placeholder;
-full support is added in Phase 9.
+For ``source`` values other than ``hf`` or ``ollama``, this phase is a no-op
+(marks "cached" without downloading).
 """
 from __future__ import annotations
 
@@ -20,6 +24,18 @@ import logging
 import os
 
 logger = logging.getLogger("inferia.model_cache.downloader")
+
+# Ollama registry base URL
+_OLLAMA_REGISTRY = "https://registry.ollama.ai"
+_OLLAMA_MANIFEST_ACCEPT = "application/vnd.docker.distribution.manifest.v2+json"
+
+
+def _ollama_name(model_id: str) -> str:
+    """Return the Ollama registry name for *model_id*.
+
+    If *model_id* contains no ``/``, prefix with ``library/``.
+    """
+    return model_id if "/" in model_id else f"library/{model_id}"
 
 
 class DownloadManager:
@@ -68,6 +84,11 @@ class DownloadManager:
     async def prewarm(self, *, source, model_id, revision="main", engine_hint=None):
         """Download all files for *model_id* at *revision* into the cache.
 
+        Dispatches to the appropriate downloader based on *source*:
+        - ``hf``: HuggingFace (uses injectable ``_fetch_list``/``_fetch_file``)
+        - ``ollama``: Ollama registry (uses ``_ollama_list``/``_ollama_file``)
+        - anything else: no-op, marks directly as cached
+
         Failure is caught and recorded as ``status='error'`` on the row; the
         exception is never propagated to callers.
         """
@@ -76,38 +97,62 @@ class DownloadManager:
         )
         cid = row["id"]
         try:
-            if source != "hf":
-                # Ollama and other sources handled in Phase 9 — treat as cached.
+            if source == "hf":
+                await self._run_prewarm(
+                    cid,
+                    list_fn=self._fetch_list,
+                    file_fn=self._fetch_file,
+                    model_id=model_id,
+                    revision=revision,
+                )
+            elif source == "ollama":
+                await self._run_prewarm(
+                    cid,
+                    list_fn=self._ollama_list,
+                    file_fn=self._ollama_file,
+                    model_id=model_id,
+                    revision=revision,
+                )
+            else:
+                # Unknown source — treat as cached (no download needed).
                 await self.repo.set_status(cid, "cached")
-                return
-
-            files = await self._fetch_list(model_id, revision)
-            total = sum(int(f.get("size") or 0) for f in files)
-            done = 0
-            last_reported = 0
-            await self.repo.set_progress(cid, bytes_total=total, bytes_done=0, status="downloading")
-
-            async def on_bytes(n):
-                # Accumulate real downloaded bytes; throttle DB writes to ~every
-                # 8 MB so a multi-GB file doesn't issue an UPDATE per chunk.
-                nonlocal done, last_reported
-                done += n
-                if done - last_reported >= 8 * 1024 * 1024:
-                    last_reported = done
-                    await self.repo.set_progress(cid, bytes_done=done)
-
-            for f in files:
-                await self._fetch_file(model_id, revision, f["path"], on_bytes)
-
-            # Record the ACTUAL downloaded total (do not clobber with the
-            # pre-computed `total`, which is 0 when the listing lacked sizes).
-            await self.repo.set_progress(
-                cid, bytes_total=max(total, done), bytes_done=done, status="cached"
-            )
 
         except Exception as e:  # pre-warm failure is non-fatal to deploys
             logger.warning("prewarm failed %s/%s: %s", model_id, revision, e)
             await self.repo.set_status(cid, "error", str(e))
+
+    # ------------------------------------------------------------------
+    # Shared download loop — both HF and Ollama use this
+    # ------------------------------------------------------------------
+
+    async def _run_prewarm(self, cid, *, list_fn, file_fn, model_id, revision):
+        """Enumerate files via *list_fn*, download each via *file_fn*, update progress.
+
+        Progress is throttled to ~every 8 MB to avoid hammering the DB on
+        large (multi-GB) weight files.  The final ``set_progress`` call
+        records the ACTUAL downloaded total.
+        """
+        files = await list_fn(model_id, revision)
+        total = sum(int(f.get("size") or 0) for f in files)
+        done = 0
+        last_reported = 0
+        await self.repo.set_progress(cid, bytes_total=total, bytes_done=0, status="downloading")
+
+        async def on_bytes(n):
+            nonlocal done, last_reported
+            done += n
+            if done - last_reported >= 8 * 1024 * 1024:
+                last_reported = done
+                await self.repo.set_progress(cid, bytes_done=done)
+
+        for f in files:
+            await file_fn(model_id, revision, f["path"], on_bytes)
+
+        # Record the ACTUAL downloaded total (do not clobber with the
+        # pre-computed `total`, which is 0 when the listing lacked sizes).
+        await self.repo.set_progress(
+            cid, bytes_total=max(total, done), bytes_done=done, status="cached"
+        )
 
     # ------------------------------------------------------------------
     # Default HF implementations (used when no injection is supplied)
@@ -179,3 +224,73 @@ class DownloadManager:
     def _hdr(self) -> dict:
         tok = getattr(self.settings, "hf_token", "") if self.settings else ""
         return {"authorization": f"Bearer {tok}"} if tok else {}
+
+    # ------------------------------------------------------------------
+    # Ollama registry implementations
+    # ------------------------------------------------------------------
+
+    async def _ollama_list(self, model_id: str, revision: str) -> list[dict]:
+        """Fetch the Ollama manifest and return a list of ``{path, size}`` dicts.
+
+        ``path`` is the blob digest (e.g. ``sha256:...``).  The config blob
+        and every layer are included.  No auth header is needed — the Ollama
+        registry is public.
+        """
+        import json
+
+        name = _ollama_name(model_id)
+        url = f"{_OLLAMA_REGISTRY}/v2/{name}/manifests/{revision}"
+        async with self.http_client.stream(
+            "GET", url, headers={"Accept": _OLLAMA_MANIFEST_ACCEPT}
+        ) as up:
+            if up.status_code != 200:
+                raise RuntimeError(
+                    f"Ollama manifest fetch failed for {model_id}:{revision} "
+                    f"(HTTP {up.status_code})"
+                )
+            data = json.loads(b"".join([c async for c in up.aiter_bytes()]).decode())
+
+        blobs: list[dict] = []
+        # Config blob
+        cfg = data.get("config", {})
+        if cfg.get("digest"):
+            blobs.append({"path": cfg["digest"], "size": int(cfg.get("size") or 0)})
+        # Layer blobs
+        for layer in data.get("layers", []):
+            if layer.get("digest"):
+                blobs.append({"path": layer["digest"], "size": int(layer.get("size") or 0)})
+        return blobs
+
+    async def _ollama_file(self, model_id: str, revision: str, path: str, on_bytes) -> None:
+        """Download a single Ollama blob to the per-model cache dir.
+
+        *path* is the blob digest (e.g. ``sha256:abc123``).  The local
+        filename replaces ``:`` with ``_`` so it is safe on all filesystems.
+        Already-present blobs are skipped (on_bytes called with existing size).
+        Downloads go to a ``.part`` file first; ``os.replace`` makes the
+        rename atomic.
+        """
+        # Sanitize digest for filename: "sha256:abc..." → "sha256_abc..."
+        blob_filename = path.replace(":", "_")
+        target = self.paths.ollama_dir(model_id, revision) / blob_filename
+
+        if target.is_file():
+            await on_bytes(target.stat().st_size)
+            return
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".part")
+
+        name = _ollama_name(model_id)
+        url = f"{_OLLAMA_REGISTRY}/v2/{name}/blobs/{path}"
+        # No auth header — Ollama registry is public
+        async with self.http_client.stream("GET", url) as up:
+            if up.status_code != 200:
+                raise RuntimeError(
+                    f"Ollama blob download failed for {path} (HTTP {up.status_code})"
+                )
+            with open(tmp, "wb") as fh:
+                async for chunk in up.aiter_bytes():
+                    fh.write(chunk)
+                    await on_bytes(len(chunk))
+        os.replace(tmp, target)

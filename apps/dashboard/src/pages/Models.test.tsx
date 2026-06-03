@@ -340,6 +340,132 @@ describe("Models page — HF search", () => {
   });
 });
 
+describe("Models page — Ollama Add flow", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listModels).mockResolvedValue([]);
+    vi.mocked(searchHFModels).mockResolvedValue([]);
+    vi.mocked(addModel).mockResolvedValue({ id: "new-id" });
+    mockHasPermission.mockImplementation(() => true);
+  });
+
+  it("calls addModel with ollama params when user types name:tag and clicks Add", async () => {
+    const user = userEvent.setup();
+    renderModels();
+
+    // Open the Add Model panel
+    await user.click(screen.getByRole("button", { name: /add model/i }));
+
+    // Switch to Ollama source
+    await user.click(screen.getByRole("button", { name: /ollama/i }));
+
+    // The Ollama input should now be visible
+    const ollamaInput = screen.getByPlaceholderText(/ollama model/i);
+    expect(ollamaInput).toBeInTheDocument();
+
+    // Type the model name with tag
+    await user.type(ollamaInput, "gemma3:4b");
+
+    // Click Add
+    const addButtons = screen.getAllByRole("button", { name: /^add$/i });
+    // The Ollama add button is the one in the Ollama panel (not the top-level "Add Model")
+    const ollamaAddButton = addButtons.find((btn) => !btn.textContent?.includes("Model"));
+    if (!ollamaAddButton) throw new Error("Could not find Ollama Add button");
+    await user.click(ollamaAddButton);
+
+    await waitFor(() => {
+      expect(addModel).toHaveBeenCalledWith({
+        source: "ollama",
+        model_id: "gemma3",
+        revision: "4b",
+        engine: "ollama",
+      });
+    });
+  });
+
+  it("defaults to 'latest' tag when no colon in ollama input", async () => {
+    const user = userEvent.setup();
+    renderModels();
+
+    await user.click(screen.getByRole("button", { name: /add model/i }));
+    await user.click(screen.getByRole("button", { name: /ollama/i }));
+
+    const ollamaInput = screen.getByPlaceholderText(/ollama model/i);
+    await user.type(ollamaInput, "llama3");
+
+    const addButtons = screen.getAllByRole("button", { name: /^add$/i });
+    const ollamaAddButton = addButtons.find((btn) => !btn.textContent?.includes("Model"));
+    if (!ollamaAddButton) throw new Error("Could not find Ollama Add button");
+    await user.click(ollamaAddButton);
+
+    await waitFor(() => {
+      expect(addModel).toHaveBeenCalledWith({
+        source: "ollama",
+        model_id: "llama3",
+        revision: "latest",
+        engine: "ollama",
+      });
+    });
+  });
+
+  it("clears ollama input after successful add", async () => {
+    const user = userEvent.setup();
+    renderModels();
+
+    await user.click(screen.getByRole("button", { name: /add model/i }));
+    await user.click(screen.getByRole("button", { name: /ollama/i }));
+
+    const ollamaInput = screen.getByPlaceholderText(/ollama model/i);
+    await user.type(ollamaInput, "gemma3:4b");
+
+    const addButtons = screen.getAllByRole("button", { name: /^add$/i });
+    const ollamaAddButton = addButtons.find((btn) => !btn.textContent?.includes("Model"));
+    if (!ollamaAddButton) throw new Error("Could not find Ollama Add button");
+    await user.click(ollamaAddButton);
+
+    await waitFor(() => {
+      expect(addModel).toHaveBeenCalled();
+    });
+
+    // Input should be cleared after success
+    await waitFor(() => {
+      expect(ollamaInput).toHaveValue("");
+    });
+  });
+
+  it("shows HF search by default (source selector defaults to Hugging Face)", async () => {
+    const user = userEvent.setup();
+    renderModels();
+
+    await user.click(screen.getByRole("button", { name: /add model/i }));
+
+    // HF search input should be visible by default
+    expect(screen.getByPlaceholderText(/Search models on Hugging Face/i)).toBeInTheDocument();
+    // Ollama input should NOT be visible
+    expect(screen.queryByPlaceholderText(/ollama model/i)).not.toBeInTheDocument();
+  });
+
+  it("switches from HF to Ollama view and back", async () => {
+    const user = userEvent.setup();
+    renderModels();
+
+    await user.click(screen.getByRole("button", { name: /add model/i }));
+
+    // Start on HF
+    expect(screen.getByPlaceholderText(/Search models on Hugging Face/i)).toBeInTheDocument();
+
+    // Switch to Ollama
+    await user.click(screen.getByRole("button", { name: /ollama/i }));
+    expect(screen.queryByPlaceholderText(/Search models on Hugging Face/i)).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/ollama model/i)).toBeInTheDocument();
+
+    // Switch back to HF
+    await user.click(screen.getByRole("button", { name: /hugging face/i }));
+    expect(screen.getByPlaceholderText(/Search models on Hugging Face/i)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/ollama model/i)).not.toBeInTheDocument();
+  });
+});
+
 describe("Models page — formatBytes helper (via rendered output)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
