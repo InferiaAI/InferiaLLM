@@ -200,3 +200,74 @@ async def test_start_dedups_by_key():
     # After completion, row should be cached
     row = next(iter(repo._rows.values()))
     assert row["status"] == "cached"
+
+
+# ---------------------------------------------------------------------------
+# Real _hf_list (tree API) + _hf_file (status check) behavior
+# ---------------------------------------------------------------------------
+import json as _json
+from inferia.services.orchestration.services.model_cache.paths import CachePaths
+
+
+class _FakeHTTP:
+    """Minimal stand-in for httpx.AsyncClient.stream()."""
+    def __init__(self, *, status=200, body=b"", record=None):
+        self.status, self.body, self.record = status, body, record
+    def stream(self, method, url, headers=None):
+        if self.record is not None:
+            self.record.append(url)
+        outer = self
+        class _Ctx:
+            async def __aenter__(self_):
+                self_.status_code = outer.status
+                return self_
+            async def __aexit__(self_, *a):
+                return False
+            async def aiter_bytes(self_):
+                yield outer.body
+        return _Ctx()
+
+
+async def test_hf_list_uses_tree_api_with_sizes():
+    tree = [
+        {"type": "file", "path": "config.json", "size": 651},
+        {"type": "directory", "path": "sub"},
+        {"type": "file", "path": "model.safetensors", "size": 0,
+         "lfs": {"size": 250540281}},
+    ]
+    urls = []
+    http = _FakeHTTP(status=200, body=_json.dumps(tree).encode(), record=urls)
+    dm = DownloadManager(repo=FakeRepo(), paths=None, http_client=http, settings=None)
+    files = await dm._hf_list("org/m", "main")
+    assert "/tree/main?recursive=true" in urls[0]          # tree API, not siblings
+    assert {"path": "config.json", "size": 651} in files
+    # LFS size falls back from the lfs block:
+    assert {"path": "model.safetensors", "size": 250540281} in files
+    assert all(f["path"] != "sub" for f in files)          # directories skipped
+
+
+async def test_hf_file_gated_raises_and_writes_nothing(tmp_path):
+    http = _FakeHTTP(status=403, body=b'{"error":"gated"}')
+    dm = DownloadManager(repo=FakeRepo(), paths=CachePaths(str(tmp_path)),
+                         http_client=http, settings=None)
+    seen = []
+    with pytest.raises(RuntimeError) as ei:
+        await dm._hf_file("org/m", "main", "model.safetensors", lambda n: seen.append(n))
+    assert "gated" in str(ei.value).lower() or "INFERIA_HF_TOKEN" in str(ei.value)
+    # no file (and no .part) was written
+    target = CachePaths(str(tmp_path)).hf_dir("org/m", "main") / "model.safetensors"
+    assert not target.exists()
+    assert not target.with_suffix(target.suffix + ".part").exists()
+
+
+async def test_hf_file_downloads_on_200(tmp_path):
+    http = _FakeHTTP(status=200, body=b"WEIGHTS")
+    dm = DownloadManager(repo=FakeRepo(), paths=CachePaths(str(tmp_path)),
+                         http_client=http, settings=None)
+    got = []
+    async def on_bytes(n):
+        got.append(n)
+    await dm._hf_file("org/m", "main", "w.bin", on_bytes)
+    target = CachePaths(str(tmp_path)).hf_dir("org/m", "main") / "w.bin"
+    assert target.read_bytes() == b"WEIGHTS"
+    assert sum(got) == len(b"WEIGHTS")

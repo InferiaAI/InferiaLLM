@@ -68,20 +68,26 @@ class DownloadManager:
             files = await self._fetch_list(model_id, revision)
             total = sum(int(f.get("size") or 0) for f in files)
             done = 0
+            last_reported = 0
             await self.repo.set_progress(cid, bytes_total=total, bytes_done=0, status="downloading")
 
-            for f in files:
-                # NOTE: capture cid and the mutable `done` via a default-arg
-                # cell to avoid the classic late-binding closure bug where all
-                # iterations share the same `done` reference.
-                async def on_bytes(n, _cid=cid):
-                    nonlocal done
-                    done += n
-                    await self.repo.set_progress(_cid, bytes_done=done)
+            async def on_bytes(n):
+                # Accumulate real downloaded bytes; throttle DB writes to ~every
+                # 8 MB so a multi-GB file doesn't issue an UPDATE per chunk.
+                nonlocal done, last_reported
+                done += n
+                if done - last_reported >= 8 * 1024 * 1024:
+                    last_reported = done
+                    await self.repo.set_progress(cid, bytes_done=done)
 
+            for f in files:
                 await self._fetch_file(model_id, revision, f["path"], on_bytes)
 
-            await self.repo.set_progress(cid, bytes_done=total, status="cached")
+            # Record the ACTUAL downloaded total (do not clobber with the
+            # pre-computed `total`, which is 0 when the listing lacked sizes).
+            await self.repo.set_progress(
+                cid, bytes_total=max(total, done), bytes_done=done, status="cached"
+            )
 
         except Exception as e:  # pre-warm failure is non-fatal to deploys
             logger.warning("prewarm failed %s/%s: %s", model_id, revision, e)
@@ -92,13 +98,38 @@ class DownloadManager:
     # ------------------------------------------------------------------
 
     async def _hf_list(self, model_id, revision):
-        """Fetch the file list for *model_id* at *revision* from the HF API."""
+        """Fetch the file list (with real sizes) for *model_id* at *revision*.
+
+        Uses the HF *tree* API (``/api/models/{repo}/tree/{rev}?recursive=true``)
+        rather than the model-info ``siblings`` list, because ``siblings`` only
+        carries ``rfilename`` (no size) — which left ``bytes_total`` at 0 and
+        prevented any progress reporting. The tree API returns a per-file
+        ``size`` (the resolved content size, including LFS objects).
+        """
         import json
 
-        url = f"https://huggingface.co/api/models/{model_id}/revision/{revision}"
+        url = (
+            f"https://huggingface.co/api/models/{model_id}/tree/{revision}"
+            "?recursive=true"
+        )
         async with self.http_client.stream("GET", url, headers=self._hdr()) as up:
+            if up.status_code != 200:
+                raise RuntimeError(
+                    f"HF tree listing failed for {model_id}@{revision} "
+                    f"(HTTP {up.status_code})"
+                )
             data = json.loads(b"".join([c async for c in up.aiter_bytes()]).decode())
-        return [{"path": s["rfilename"], "size": s.get("size")} for s in data.get("siblings", [])]
+
+        files = []
+        for entry in data:
+            if entry.get("type") != "file":
+                continue  # skip directories
+            size = entry.get("size")
+            lfs = entry.get("lfs")
+            if (size is None or size == 0) and isinstance(lfs, dict):
+                size = lfs.get("size")
+            files.append({"path": entry["path"], "size": int(size or 0)})
+        return files
 
     async def _hf_file(self, model_id, revision, path, on_bytes):
         """Download a single HF file into the cache; skip if already present."""
@@ -110,8 +141,20 @@ class DownloadManager:
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_suffix(target.suffix + ".part")
         url = f"https://huggingface.co/{model_id}/resolve/{revision}/{path}"
-        with open(tmp, "wb") as fh:
-            async with self.http_client.stream("GET", url, headers=self._hdr()) as up:
+        async with self.http_client.stream("GET", url, headers=self._hdr()) as up:
+            # MUST check status BEFORE writing — a gated/private repo returns a
+            # small 401/403 body which would otherwise be saved to disk as if it
+            # were the real weights (and the model wrongly marked "cached").
+            if up.status_code != 200:
+                if up.status_code in (401, 403):
+                    raise RuntimeError(
+                        f"{model_id} is gated or private; set INFERIA_HF_TOKEN on "
+                        f"the control plane to cache it (HTTP {up.status_code})"
+                    )
+                raise RuntimeError(
+                    f"download failed for {path} (HTTP {up.status_code})"
+                )
+            with open(tmp, "wb") as fh:
                 async for chunk in up.aiter_bytes():
                     fh.write(chunk)
                     await on_bytes(len(chunk))

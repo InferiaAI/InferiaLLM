@@ -298,22 +298,28 @@ function ModelRow({
             {model.revision && (
               <span className="font-mono">{model.revision.slice(0, 8)}</span>
             )}
-            {model.bytes_total > 0 && (
+            {model.status === "cached" && (model.bytes_done > 0 || model.bytes_total > 0) ? (
+              <span className="font-medium text-foreground/80">
+                {formatBytes(model.bytes_done || model.bytes_total)} on disk
+              </span>
+            ) : model.bytes_total > 0 ? (
               <span>
                 {formatBytes(model.bytes_done)} / {formatBytes(model.bytes_total)}
               </span>
-            )}
+            ) : null}
           </div>
 
           {(model.status === "downloading" || model.status === "pending") && model.bytes_total > 0 && (
-            <div className="mt-1">
-              <div className="h-1.5 w-full max-w-xs rounded-full bg-muted overflow-hidden">
+            <div className="mt-1 flex items-center gap-2 max-w-xs">
+              <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full rounded-full bg-blue-500 transition-all duration-500"
                   style={{ width: `${progressPct}%` }}
                 />
               </div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">{progressPct}%</div>
+              <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">
+                {progressPct}%
+              </span>
             </div>
           )}
 
