@@ -155,6 +155,13 @@ async def auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/v1/workers/"):
         return await call_next(request)
 
+    # Skip user-auth for model-artifact streaming passthroughs (/hf, /v2).
+    # Engine containers (ollama, vLLM, etc.) fetch large model files directly
+    # via these paths and carry no dashboard JWT.  The orchestration service's
+    # InternalAuthMiddleware provides the trust boundary on the other side.
+    if request.url.path.startswith("/hf/") or request.url.path.startswith("/v2/"):
+        return await call_next(request)
+
     # Skip auth for public endpoints
     public_paths = [
         "/",
