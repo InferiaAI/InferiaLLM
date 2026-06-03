@@ -154,6 +154,15 @@ class Settings(UnifiedBaseSettings):
         description="PULUMI_CONFIG_PASSPHRASE — empty disables stack-config secrets.",
     )
 
+    # Model Cache
+    model_cache_dir: str = Field(
+        default="/var/lib/inferia/models", validation_alias="INFERIA_MODEL_CACHE_DIR"
+    )
+    model_cache_max_gb: int = Field(
+        default=100, validation_alias="INFERIA_MODEL_CACHE_MAX_GB"
+    )
+    hf_token: str = Field(default="", validation_alias="INFERIA_HF_TOKEN")
+
     # Deployment Log Persistence (Elasticsearch)
     elasticsearch_url: Optional[str] = Field(
         default=None, validation_alias="ELASTICSEARCH_URL"
