@@ -162,6 +162,9 @@ class Settings(UnifiedBaseSettings):
         default=100, validation_alias="INFERIA_MODEL_CACHE_MAX_GB"
     )
     hf_token: str = Field(default="", validation_alias="INFERIA_HF_TOKEN")
+    model_mirror_base: str = Field(
+        default="", validation_alias="INFERIA_MODEL_MIRROR_BASE"
+    )
 
     # Deployment Log Persistence (Elasticsearch)
     elasticsearch_url: Optional[str] = Field(

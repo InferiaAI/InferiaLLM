@@ -1038,6 +1038,33 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         target_node_id=None,
     )
 
+    # 2b. Fire-and-forget pre-warm: start downloading weights to the CP cache
+    # in parallel with EC2 provisioning so the model is ready when the worker
+    # connects.  Best-effort: never block the deploy on cache failures.
+    try:
+        from inferia.services.orchestration.services.model_cache import deps as _mc_deps
+        _dl = _mc_deps.get("downloader")
+        if _dl and req.inference_model:
+            if req.engine in ("vllm", "tei", "infinity"):
+                _dl.start(
+                    source="hf",
+                    model_id=req.inference_model,
+                    revision="main",
+                    engine_hint=req.engine,
+                )
+            elif req.engine == "ollama":
+                # split name:tag from the resolved ollama id
+                _bare = req.inference_model.split("://", 1)[-1]
+                _name, _, _tag = _bare.partition(":")
+                _dl.start(
+                    source="ollama",
+                    model_id=_name,
+                    revision=(_tag or "latest"),
+                    engine_hint="ollama",
+                )
+    except Exception:
+        pass  # pre-warm is best-effort; never block a deploy
+
     # 3. Transactional decision + bind
     # pending_enqueue: set after tx commits; contains kwargs for jobs_repo.enqueue
     bound_for_load: tuple | None = None  # (node_id, deploy_id) for warm path

@@ -67,7 +67,7 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     ) or ""
     recipe = deploy.get("engine") or "vllm"
     gpu_indices = list(range(gpu_required))
-    return {
+    spec: dict = {
         "deployment_id": str(deploy["id"]),
         "recipe": recipe,
         "model": {
@@ -83,7 +83,36 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         "config": cfg.get("config") or {},
         "gpu_indices": gpu_indices,
         "port": 0,
+        "env": {},
     }
+
+    # Inject CP mirror coordinates so the worker fetches weights from the
+    # local model cache instead of the upstream registry.
+    # Guarded by model_mirror_base — empty string = no-op (upstream default).
+    try:
+        from inferia.services.orchestration.config import settings as _orch_settings
+        _base = getattr(_orch_settings, "model_mirror_base", "") or ""
+    except Exception:
+        _base = ""
+
+    if _base:
+        if recipe in ("vllm", "tei", "infinity"):
+            # Redirect HF hub requests to the CP mirror's /hf pull-through.
+            spec["env"]["HF_ENDPOINT"] = _base.rstrip("/") + "/hf"
+        elif recipe == "ollama":
+            # CP Ollama registry mirror ref — verified by Phase 0 spike;
+            # behind model_mirror_base config.
+            _host = _base.split("://", 1)[-1].rstrip("/")
+            # Strip any scheme from the artifact_uri to get bare name:tag
+            _raw = str(artifact_uri).split("://", 1)[-1]
+            if "/" in _raw:
+                # namespace/name:tag — keep the namespace
+                spec["model"]["artifact_uri"] = f"{_host}/{_raw}"
+            else:
+                # bare name:tag (e.g. gemma3:4b) — prefix library/
+                spec["model"]["artifact_uri"] = f"{_host}/library/{_raw}"
+
+    return spec
 
 
 class DeploymentLinker:
