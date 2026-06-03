@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Trash2, Plus, Database, AlertCircle } from "lucide-react";
+import { Search, Trash2, Plus, Database, AlertCircle, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
@@ -59,6 +59,7 @@ export default function Models() {
   const canAdd = hasPermission("model:add");
   const canDelete = hasPermission("model:delete");
 
+  const [showSearch, setShowSearch] = useState(false);
   const [hfQuery, setHfQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [searchTimer, setSearchTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
@@ -129,13 +130,32 @@ export default function Models() {
               Search Hugging Face models and manage your cached model library.
             </p>
           </div>
+          {canAdd && (
+            <button
+              type="button"
+              onClick={() => setShowSearch((v) => !v)}
+              className="h-9 px-4 inline-flex items-center gap-2 bg-ember-600 text-white rounded-md text-sm font-medium hover:bg-ember-700 transition-colors shadow-sm shrink-0"
+            >
+              <Plus className="w-4 h-4" /> Add Model
+            </button>
+          )}
         </div>
       </div>
 
-      {/* HF Search */}
-      {canAdd && (
+      {/* HF Search — revealed by the "Add Model" button */}
+      {canAdd && showSearch && (
         <div className="rounded-xl border bg-card p-5 shadow-sm space-y-4">
-          <h2 className="text-base font-semibold">Search Hugging Face</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold">Search Hugging Face</h2>
+            <button
+              type="button"
+              onClick={() => setShowSearch(false)}
+              aria-label="Close search"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
           <div className="relative w-full max-w-lg">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <input
@@ -208,7 +228,7 @@ export default function Models() {
             <Database className="h-8 w-8 mx-auto mb-2 opacity-25" />
             <p className="text-sm">No cached models yet.</p>
             {canAdd && (
-              <p className="text-xs mt-1">Use the search above to add models from Hugging Face.</p>
+              <p className="text-xs mt-1">Click "Add Model" to search Hugging Face.</p>
             )}
           </div>
         ) : (

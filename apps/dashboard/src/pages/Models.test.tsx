@@ -291,8 +291,14 @@ describe("Models page — HF search", () => {
     });
   });
 
-  it("shows HF search when user has model:add permission", async () => {
+  it("shows HF search after clicking Add Model when user has model:add permission", async () => {
+    const user = userEvent.setup();
     renderModels();
+    // Search is hidden until the user clicks the "Add Model" button.
+    expect(
+      screen.queryByPlaceholderText(/Search models on Hugging Face/i)
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /add model/i }));
     expect(
       screen.getByPlaceholderText(/Search models on Hugging Face/i)
     ).toBeInTheDocument();
@@ -301,6 +307,9 @@ describe("Models page — HF search", () => {
   it("calls addModel with the model id when Add is clicked", async () => {
     const user = userEvent.setup();
     renderModels();
+
+    // Reveal the search box first (it's behind the "Add Model" button).
+    await user.click(screen.getByRole("button", { name: /add model/i }));
 
     // Type a search query to trigger searchHFModels
     const input = screen.getByPlaceholderText(/Search models on Hugging Face/i);

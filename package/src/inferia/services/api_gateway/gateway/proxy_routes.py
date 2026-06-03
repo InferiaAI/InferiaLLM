@@ -326,20 +326,14 @@ async def proxy_providers(
     )
 
 
-@router.api_route("/models/{path:path}", methods=["GET", "POST", "DELETE"])
-async def proxy_models(
-    request: Request,
-    path: str,
-    user_context: UserContext = Depends(get_current_user_from_request),
-):
-    """Proxy model-cache management endpoints to the orchestration service.
+def _require_models_permission(user_context: UserContext, method: str) -> None:
+    """Method-aware RBAC for the model-cache management endpoints.
 
-    Method-aware RBAC:
       GET    → MODEL_LIST   — list cached models / progress
       POST   → MODEL_ADD    — enqueue a model download
       DELETE → MODEL_DELETE — remove a cached model
     """
-    m = request.method.upper()
+    m = method.upper()
     if m == "GET":
         authz_service.require_permission(user_context, PermissionEnum.MODEL_LIST)
     elif m == "POST":
@@ -348,6 +342,37 @@ async def proxy_models(
         authz_service.require_permission(user_context, PermissionEnum.MODEL_DELETE)
     else:
         raise HTTPException(status_code=405, detail="method not allowed")
+
+
+# Bare collection (list + add). Registered WITHOUT a trailing slash so the
+# dashboard's `GET/POST /api/v1/models` matches directly instead of triggering
+# a 307 redirect (the `{path:path}` route below only matches `/models/...`),
+# which broke the add request. Forwards to orchestration's `/v1/models`.
+@router.api_route("/models", methods=["GET", "POST"])
+async def proxy_models_collection(
+    request: Request,
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy the model-cache collection (list/add) to the orchestration service."""
+    _require_models_permission(user_context, request.method)
+    return await proxy_request(
+        method=request.method,
+        path="v1/models",
+        request=request,
+        target_url=ORCHESTRATION_URL,
+        user_context=user_context,
+    )
+
+
+@router.api_route("/models/{path:path}", methods=["GET", "POST", "DELETE"])
+async def proxy_models(
+    request: Request,
+    path: str,
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy model-cache item endpoints ({id}/progress, {id} delete) to
+    the orchestration service."""
+    _require_models_permission(user_context, request.method)
     return await proxy_request(
         method=request.method,
         path=f"v1/models/{path}",
