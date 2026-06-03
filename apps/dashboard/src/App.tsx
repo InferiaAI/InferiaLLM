@@ -29,6 +29,7 @@ import ProviderList from "@/pages/Settings/Providers/ProviderList";
 import ProviderConfigPage from "@/pages/Settings/Providers/ProviderConfig";
 import Status from "@/pages/Status";
 import Sandbox from "@/pages/Sandbox";
+import Models from "@/pages/Models";
 import Pools from "@/pages/Compute/Pools";
 import PoolDetail from "@/pages/Compute/PoolDetail";
 import NewPool from "@/pages/Compute/NewPool";
@@ -153,6 +154,12 @@ const router = createBrowserRouter([
                 element: <Navigate to="/dashboard/compute/pools/new" replace />,
               },
             ]
+          },
+          {
+            element: <PermissionGuard permission="model:list" />,
+            children: [
+              { path: "models", element: <Models /> },
+            ],
           },
           {
             element: <PermissionGuard permission="api_key:list" />,
