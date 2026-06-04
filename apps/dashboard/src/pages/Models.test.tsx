@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -47,7 +47,6 @@ import Models from "@/pages/Models";
 import { listModels, addModel, deleteModel } from "@/services/modelService";
 import { searchHFModels } from "@/services/huggingfaceService";
 import type { CachedModel } from "@/services/modelService";
-import type { HFModel } from "@/services/huggingfaceService";
 
 // ── Test helpers ───────────────────────────────────────────────────────────────
 
@@ -98,31 +97,6 @@ const MOCK_CACHED_MODELS: CachedModel[] = [
     bytes_total: 7 * 1024 * 1024 * 1024,  // 7.0 GB exactly
     bytes_done: Math.round(3.5 * 1024 * 1024 * 1024),  // 3.5 GB exactly
     engine_hint: "vllm",
-  },
-];
-
-const MOCK_HF_RESULTS: HFModel[] = [
-  {
-    id: "facebook/opt-125m",
-    modelId: "facebook/opt-125m",
-    author: "facebook",
-    lastModified: "2023-01-01",
-    tags: ["text-generation"],
-    pipeline_tag: "text-generation",
-    downloads: 100000,
-    likes: 500,
-    library_name: "transformers",
-  },
-  {
-    id: "gpt2",
-    modelId: "gpt2",
-    author: "openai",
-    lastModified: "2023-01-01",
-    tags: ["text-generation"],
-    pipeline_tag: "text-generation",
-    downloads: 5000000,
-    likes: 10000,
-    library_name: "transformers",
   },
 ];
 
@@ -186,24 +160,25 @@ describe("Models page — cached list", () => {
     };
     vi.mocked(listModels).mockResolvedValue([errModel]);
     renderModels();
+
     await waitFor(() => {
       expect(screen.getByText("bad/model")).toBeInTheDocument();
     });
     expect(screen.getByText("Download failed: 404 Not Found")).toBeInTheDocument();
   });
 
-  it("shows the empty state when no models are cached", async () => {
+  it("shows empty state when there are no cached models", async () => {
     vi.mocked(listModels).mockResolvedValue([]);
     renderModels();
+
     await waitFor(() => {
       expect(screen.getByText(/No cached models yet/)).toBeInTheDocument();
     });
   });
 
-  it("shows loading skeleton while fetching", () => {
+  it("does not render rows while loading", () => {
     vi.mocked(listModels).mockReturnValue(new Promise(() => {}));
     renderModels();
-    // While loading, no model IDs should appear
     expect(screen.queryByText("meta-llama/Llama-3-8B")).not.toBeInTheDocument();
   });
 
@@ -212,6 +187,30 @@ describe("Models page — cached list", () => {
     await waitFor(() => {
       expect(listModels).toHaveBeenCalled();
     });
+  });
+});
+
+describe("Models page — Add Model link", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listModels).mockResolvedValue([]);
+    vi.mocked(searchHFModels).mockResolvedValue([]);
+    mockHasPermission.mockImplementation(() => true);
+  });
+
+  it("renders an Add Model link pointing to the dedicated page when user has model:add", async () => {
+    renderModels();
+    const link = await screen.findByRole("link", { name: /add model/i });
+    expect(link).toHaveAttribute("href", "/dashboard/models/new");
+  });
+
+  it("hides the Add Model link when user lacks model:add permission", async () => {
+    mockHasPermission.mockImplementation((perm: string) => perm !== "model:add");
+    renderModels();
+    await waitFor(() => {
+      expect(screen.getByText("Models")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("link", { name: /add model/i })).not.toBeInTheDocument();
   });
 });
 
@@ -270,199 +269,6 @@ describe("Models page — Delete button", () => {
     });
 
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
-  });
-});
-
-describe("Models page — HF search", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(listModels).mockResolvedValue([]);
-    vi.mocked(searchHFModels).mockResolvedValue(MOCK_HF_RESULTS);
-    vi.mocked(addModel).mockResolvedValue({ id: "new-id" });
-    mockHasPermission.mockImplementation(() => true);
-  });
-
-  it("hides HF search when user lacks model:add permission", async () => {
-    mockHasPermission.mockImplementation((perm: string) => perm !== "model:add");
-    renderModels();
-
-    await waitFor(() => {
-      expect(screen.queryByPlaceholderText(/Search models on Hugging Face/i)).not.toBeInTheDocument();
-    });
-  });
-
-  it("shows HF search after clicking Add Model when user has model:add permission", async () => {
-    const user = userEvent.setup();
-    renderModels();
-    // Search is hidden until the user clicks the "Add Model" button.
-    expect(
-      screen.queryByPlaceholderText(/Search models on Hugging Face/i)
-    ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /add model/i }));
-    expect(
-      screen.getByPlaceholderText(/Search models on Hugging Face/i)
-    ).toBeInTheDocument();
-  });
-
-  it("calls addModel with the model id when Add is clicked", async () => {
-    const user = userEvent.setup();
-    renderModels();
-
-    // Reveal the search box first (it's behind the "Add Model" button).
-    await user.click(screen.getByRole("button", { name: /add model/i }));
-
-    // Type a search query to trigger searchHFModels
-    const input = screen.getByPlaceholderText(/Search models on Hugging Face/i);
-    await user.type(input, "opt");
-
-    // Wait for HF results to appear (query fires after 400ms debounce — skip
-    // timer and set query directly via the queryClient cache injection)
-    await waitFor(() => {
-      expect(screen.getByText("facebook/opt-125m")).toBeInTheDocument();
-    }, { timeout: 2000 });
-
-    // Click the Add button next to the first result.
-    // Structure: outer flex row div > [info div, button]
-    // The text node lives inside info div; go up 2 levels to reach the flex row.
-    const textEl = screen.getByText("facebook/opt-125m");
-    const flexRow = textEl.closest("div")?.parentElement?.parentElement;
-    if (!flexRow) throw new Error("Could not find opt-125m row");
-    const addButton = within(flexRow).getByRole("button", { name: /add/i });
-    await user.click(addButton);
-
-    await waitFor(() => {
-      expect(addModel).toHaveBeenCalledWith({
-        source: "hf",
-        model_id: "facebook/opt-125m",
-        engine: "vllm",
-      });
-    });
-  });
-});
-
-describe("Models page — Ollama Add flow", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(listModels).mockResolvedValue([]);
-    vi.mocked(searchHFModels).mockResolvedValue([]);
-    vi.mocked(addModel).mockResolvedValue({ id: "new-id" });
-    mockHasPermission.mockImplementation(() => true);
-  });
-
-  it("calls addModel with ollama params when user types name:tag and clicks Add", async () => {
-    const user = userEvent.setup();
-    renderModels();
-
-    // Open the Add Model panel
-    await user.click(screen.getByRole("button", { name: /add model/i }));
-
-    // Switch to Ollama source
-    await user.click(screen.getByRole("button", { name: /ollama/i }));
-
-    // The Ollama input should now be visible
-    const ollamaInput = screen.getByPlaceholderText(/ollama model/i);
-    expect(ollamaInput).toBeInTheDocument();
-
-    // Type the model name with tag
-    await user.type(ollamaInput, "gemma3:4b");
-
-    // Click Add
-    const addButtons = screen.getAllByRole("button", { name: /^add$/i });
-    // The Ollama add button is the one in the Ollama panel (not the top-level "Add Model")
-    const ollamaAddButton = addButtons.find((btn) => !btn.textContent?.includes("Model"));
-    if (!ollamaAddButton) throw new Error("Could not find Ollama Add button");
-    await user.click(ollamaAddButton);
-
-    await waitFor(() => {
-      expect(addModel).toHaveBeenCalledWith({
-        source: "ollama",
-        model_id: "gemma3",
-        revision: "4b",
-        engine: "ollama",
-      });
-    });
-  });
-
-  it("defaults to 'latest' tag when no colon in ollama input", async () => {
-    const user = userEvent.setup();
-    renderModels();
-
-    await user.click(screen.getByRole("button", { name: /add model/i }));
-    await user.click(screen.getByRole("button", { name: /ollama/i }));
-
-    const ollamaInput = screen.getByPlaceholderText(/ollama model/i);
-    await user.type(ollamaInput, "llama3");
-
-    const addButtons = screen.getAllByRole("button", { name: /^add$/i });
-    const ollamaAddButton = addButtons.find((btn) => !btn.textContent?.includes("Model"));
-    if (!ollamaAddButton) throw new Error("Could not find Ollama Add button");
-    await user.click(ollamaAddButton);
-
-    await waitFor(() => {
-      expect(addModel).toHaveBeenCalledWith({
-        source: "ollama",
-        model_id: "llama3",
-        revision: "latest",
-        engine: "ollama",
-      });
-    });
-  });
-
-  it("clears ollama input after successful add", async () => {
-    const user = userEvent.setup();
-    renderModels();
-
-    await user.click(screen.getByRole("button", { name: /add model/i }));
-    await user.click(screen.getByRole("button", { name: /ollama/i }));
-
-    const ollamaInput = screen.getByPlaceholderText(/ollama model/i);
-    await user.type(ollamaInput, "gemma3:4b");
-
-    const addButtons = screen.getAllByRole("button", { name: /^add$/i });
-    const ollamaAddButton = addButtons.find((btn) => !btn.textContent?.includes("Model"));
-    if (!ollamaAddButton) throw new Error("Could not find Ollama Add button");
-    await user.click(ollamaAddButton);
-
-    await waitFor(() => {
-      expect(addModel).toHaveBeenCalled();
-    });
-
-    // Input should be cleared after success
-    await waitFor(() => {
-      expect(ollamaInput).toHaveValue("");
-    });
-  });
-
-  it("shows HF search by default (source selector defaults to Hugging Face)", async () => {
-    const user = userEvent.setup();
-    renderModels();
-
-    await user.click(screen.getByRole("button", { name: /add model/i }));
-
-    // HF search input should be visible by default
-    expect(screen.getByPlaceholderText(/Search models on Hugging Face/i)).toBeInTheDocument();
-    // Ollama input should NOT be visible
-    expect(screen.queryByPlaceholderText(/ollama model/i)).not.toBeInTheDocument();
-  });
-
-  it("switches from HF to Ollama view and back", async () => {
-    const user = userEvent.setup();
-    renderModels();
-
-    await user.click(screen.getByRole("button", { name: /add model/i }));
-
-    // Start on HF
-    expect(screen.getByPlaceholderText(/Search models on Hugging Face/i)).toBeInTheDocument();
-
-    // Switch to Ollama
-    await user.click(screen.getByRole("button", { name: /ollama/i }));
-    expect(screen.queryByPlaceholderText(/Search models on Hugging Face/i)).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/ollama model/i)).toBeInTheDocument();
-
-    // Switch back to HF
-    await user.click(screen.getByRole("button", { name: /hugging face/i }));
-    expect(screen.getByPlaceholderText(/Search models on Hugging Face/i)).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText(/ollama model/i)).not.toBeInTheDocument();
   });
 });
 
