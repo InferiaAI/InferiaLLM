@@ -54,6 +54,17 @@ class NetworkError(TransientError):
     code = "NETWORK_ERROR"
 
 
+class CapacityUnavailableError(TransientError):
+    """AWS has no spare capacity for the instance type/AZ right now.
+
+    Unlike quota/subnet exhaustion (which need an operator action and never
+    self-heal), capacity routinely returns within minutes — especially during
+    launch storms — so it is RETRYABLE. After TRANSIENT_MAX_ATTEMPTS a
+    sustained shortage escalates to RETRIES_EXHAUSTED with the capacity hint
+    preserved, prompting the operator to try a different AZ/instance type."""
+    code = "INSUFFICIENT_CAPACITY"
+
+
 # --- PERMANENT -------------------------------------------------------------
 
 
@@ -93,17 +104,14 @@ class SecurityGroupNotFoundError(PermanentError):
 
 
 class InfrastructureError(ProvisioningError):
-    """Operator must take an AWS-account-level action (quota, capacity).
+    """Operator must take an AWS-account-level action (quota, subnet CIDR).
     Treated as PERMANENT for retry purposes — operator clicks Retry once
-    the underlying issue is addressed."""
+    the underlying issue is addressed. (Capacity is NOT here: it self-heals
+    and is a TransientError above.)"""
 
 
 class QuotaExceededError(InfrastructureError):
     code = "QUOTA_EXCEEDED"
-
-
-class CapacityUnavailableError(InfrastructureError):
-    code = "INSUFFICIENT_CAPACITY"
 
 
 class SubnetExhaustedError(InfrastructureError):

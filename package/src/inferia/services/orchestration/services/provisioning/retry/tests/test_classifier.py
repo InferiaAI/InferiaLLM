@@ -33,7 +33,8 @@ from inferia.services.orchestration.services.provisioning.retry.classifier impor
     (SecurityGroupNotFoundError("x"),    "SG_NOT_FOUND",          ErrorClass.PERMANENT),
     (InvalidInstanceTypeError("x"),      "INVALID_INSTANCE_TYPE", ErrorClass.PERMANENT),
     (QuotaExceededError("x"),            "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
-    (CapacityUnavailableError("x"),      "INSUFFICIENT_CAPACITY", ErrorClass.INFRASTRUCTURE),
+    # Capacity self-heals → TRANSIENT (auto-retried), unlike quota/subnet.
+    (CapacityUnavailableError("x"),      "INSUFFICIENT_CAPACITY", ErrorClass.TRANSIENT),
 ])
 def test_typed_provisioning_errors_passthrough(exc, expected_code, expected_class):
     ce = classify_error(exc)
@@ -72,7 +73,8 @@ def _client_error(code: str, msg: str = "boom"):
     ("InvalidGroup.NotFound",       "SG_NOT_FOUND",          ErrorClass.PERMANENT),
     ("VcpuLimitExceeded",           "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
     ("InstanceLimitExceeded",       "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
-    ("InsufficientInstanceCapacity","INSUFFICIENT_CAPACITY", ErrorClass.INFRASTRUCTURE),
+    ("InsufficientInstanceCapacity",    "INSUFFICIENT_CAPACITY", ErrorClass.TRANSIENT),
+    ("InsufficientSpotInstanceCapacity","INSUFFICIENT_CAPACITY", ErrorClass.TRANSIENT),
 ])
 def test_botocore_error_codes_map_correctly(aws_code, expected_code, expected_class):
     exc = _client_error(aws_code)

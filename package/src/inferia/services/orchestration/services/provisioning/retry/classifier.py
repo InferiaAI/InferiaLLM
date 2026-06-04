@@ -56,9 +56,10 @@ _DEFAULT_HINTS: dict[str, str] = {
                               "unavailable in the region.",
     "QUOTA_EXCEEDED":         "Request a quota increase from AWS Support for "
                               "the relevant instance family in the region.",
-    "INSUFFICIENT_CAPACITY":  "AWS has no spare capacity. Try a different AZ, "
-                              "instance type, or wait and retry. Spot is "
-                              "especially prone to this.",
+    "INSUFFICIENT_CAPACITY":  "AWS has no spare capacity for this instance "
+                              "type/AZ. Retrying automatically with backoff; "
+                              "if it persists, try a different AZ or instance "
+                              "type. Spot is especially prone to this.",
     "SUBNET_EXHAUSTED":       "The subnet has no free IPs. Use a different "
                               "subnet or expand the CIDR.",
     "AWS_THROTTLED":          "AWS rate limited the request. The reconciler "
@@ -87,8 +88,9 @@ _AWS_CODE_MAP: dict[str, type[ProvisioningError]] = {
     "InvalidGroup.NotFound":          SecurityGroupNotFoundError,
     "VcpuLimitExceeded":              QuotaExceededError,
     "InstanceLimitExceeded":          QuotaExceededError,
-    "InsufficientInstanceCapacity":   CapacityUnavailableError,
-    "InvalidParameterValue":          InvalidInstanceTypeError,
+    "InsufficientInstanceCapacity":      CapacityUnavailableError,
+    "InsufficientSpotInstanceCapacity":  CapacityUnavailableError,
+    "InvalidParameterValue":             InvalidInstanceTypeError,
 }
 
 
