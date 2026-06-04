@@ -19,6 +19,16 @@ import type { AxiosError } from "axios";
 type ApiErrorResponse = { detail?: string };
 type AddSource = "hf" | "ollama";
 
+// Ollama has no public JSON search API (unlike HF), so we surface a curated
+// list of popular models and filter it as the user types. The free-form input
+// still lets you add any exact `name:tag` reference (e.g. a specific quant).
+const OLLAMA_POPULAR = [
+  "llama3.3", "llama3.2", "llama3.1", "llama3", "qwen3", "qwen2.5",
+  "qwen2.5-coder", "gemma3", "gemma2", "phi4", "phi3", "mistral",
+  "mistral-nemo", "mixtral", "deepseek-r1", "codellama", "llava",
+  "nomic-embed-text", "snowflake-arctic-embed", "tinyllama", "smollm2",
+];
+
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -136,14 +146,23 @@ export default function Models() {
     },
   });
 
-  const handleAddOllama = () => {
-    const trimmed = ollamaInput.trim();
+  const addOllamaByRef = (ref: string) => {
+    const trimmed = ref.trim();
     if (!trimmed) return;
     const colonIdx = trimmed.lastIndexOf(":");
     const name = colonIdx > 0 ? trimmed.slice(0, colonIdx) : trimmed;
     const tag = colonIdx > 0 ? trimmed.slice(colonIdx + 1) : "latest";
     addOllamaMutation.mutate({ name, tag });
   };
+
+  const handleAddOllama = () => addOllamaByRef(ollamaInput);
+
+  // Curated suggestions filtered by the typed model name (the part before any
+  // ":tag"). Shown below the input like the HF search results.
+  const ollamaQuery = ollamaInput.split(":")[0].trim().toLowerCase();
+  const ollamaSuggestions = OLLAMA_POPULAR.filter(
+    (m) => !ollamaQuery || m.toLowerCase().includes(ollamaQuery)
+  );
 
   return (
     <div className="space-y-5 font-sans text-foreground dark:text-cream">
@@ -268,29 +287,71 @@ export default function Models() {
             </>
           )}
 
-          {/* Ollama model input */}
+          {/* Ollama model input + live suggestions (like HF search) */}
           {addSource === "ollama" && (
-            <div className="flex items-center gap-3 max-w-lg">
-              <input
-                name="ollama-model"
-                autoComplete="off"
-                placeholder="Ollama model (e.g. gemma3:4b)"
-                className="h-9 flex-1 rounded-md border dark:border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ember-500 shadow-sm"
-                value={ollamaInput}
-                onChange={(e) => setOllamaInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAddOllama();
-                }}
-              />
-              <button
-                type="button"
-                disabled={addOllamaMutation.isPending || !ollamaInput.trim()}
-                onClick={handleAddOllama}
-                className="inline-flex items-center gap-1.5 rounded-md border border-ember-500/20 bg-ember-500/10 px-3 py-1.5 text-sm text-ember-600 dark:text-ember-400 hover:bg-ember-500/20 font-medium disabled:opacity-50 transition-colors shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add
-              </button>
+            <div className="space-y-4">
+              <div className="relative w-full max-w-lg">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <input
+                  name="ollama-model"
+                  autoComplete="off"
+                  placeholder="Search Ollama models, or type a name:tag (e.g. gemma3:4b)…"
+                  className="h-9 w-full rounded-md border dark:border-border bg-background pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-ember-500 shadow-sm"
+                  value={ollamaInput}
+                  onChange={(e) => setOllamaInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleAddOllama();
+                  }}
+                />
+              </div>
+
+              {(ollamaInput.trim() || ollamaSuggestions.length > 0) && (
+                <div className="divide-y rounded-lg border overflow-hidden">
+                  {/* Add exactly what was typed (covers specific tags). */}
+                  {ollamaInput.trim() && (
+                    <div className="flex items-center justify-between gap-4 px-4 py-3 bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-sm truncate">{ollamaInput.trim()}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {ollamaInput.includes(":") ? "exact reference" : "tag: latest"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={addOllamaMutation.isPending}
+                        onClick={() => addOllamaByRef(ollamaInput)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-ember-500/20 bg-ember-500/10 px-2.5 py-1.5 text-xs text-ember-600 dark:text-ember-400 hover:bg-ember-500/20 font-medium disabled:opacity-50 transition-colors shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add
+                      </button>
+                    </div>
+                  )}
+                  {/* Curated popular models, filtered by the typed query. */}
+                  {ollamaSuggestions
+                    .filter((m) => m !== ollamaInput.trim())
+                    .map((m) => (
+                      <div
+                        key={m}
+                        className="flex items-center justify-between gap-4 px-4 py-3 bg-background hover:bg-muted/50 dark:hover:bg-muted/10 transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm truncate">{m}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">popular · tag: latest</div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={addOllamaMutation.isPending}
+                          onClick={() => addOllamaByRef(m)}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-ember-500/20 bg-ember-500/10 px-2.5 py-1.5 text-xs text-ember-600 dark:text-ember-400 hover:bg-ember-500/20 font-medium disabled:opacity-50 transition-colors shrink-0"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           )}
         </div>
