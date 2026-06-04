@@ -369,9 +369,10 @@ async def retry_provisioning(
 ):
     """Re-enqueue a failed provisioning job.
 
-    Resets the job row to phase='pending', attempt_count=0, and clears
+    Resets the job row to phase='preflight', attempt_count=0, and clears
     all error fields so the reconciler picks it up on the next claim
-    tick. Inventory state transitions failed → provisioning so the
+    tick. (Must be 'preflight', not 'pending' — there is no 'pending'
+    handler.) Inventory state transitions failed → provisioning so the
     dashboard reflects the requeue immediately.
 
     Returns 409 if the job is not in 'failed' state (e.g. the user

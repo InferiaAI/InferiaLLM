@@ -327,7 +327,10 @@ async def test_reset_for_retry_returns_job_and_clears_error_fields():
     assert job is not None
     sql = conn.fetchrow.await_args.args[0]
     assert "UPDATE provisioning_jobs" in sql
-    assert "phase = 'pending'" in sql or "phase='pending'" in sql
+    # Retry must reset to 'preflight' (the start phase), NOT 'pending' — there
+    # is no 'pending' handler, so a retried job left in 'pending' fails with
+    # "no handler for phase pending".
+    assert "phase = 'preflight'" in sql or "phase='preflight'" in sql
     assert "phase = 'failed'" in sql or "phase='failed'" in sql  # WHERE guard
 
 

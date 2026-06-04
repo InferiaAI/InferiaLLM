@@ -5,7 +5,7 @@ Walks the full retry round-trip:
 1. First run patches verify_credentials to raise InvalidCredentialsError
    (PERMANENT). After one tick the job lands in phase='failed' with
    error.code='INVALID_CREDENTIALS' exposed via GET /provisioning.
-2. POST .../provisioning/retry resets the row to phase='pending' and
+2. POST .../provisioning/retry resets the row to phase='preflight' and
    clears attempt_count + error_* columns (the reset_for_retry repo
    method does this atomically).
 3. Second run patches everything to succeed. After enough ticks the
@@ -59,13 +59,13 @@ async def test_failed_job_retried_to_ready(app_with_real_db):
         assert body["error"]["code"] == "INVALID_CREDENTIALS"
         assert body["terminal"] is True
 
-    # --- POST /retry resets to pending -----------------------------------
+    # --- POST /retry resets to preflight ---------------------------------
     resp = await client.post(
         f"/v1/nodes/{node_id}/provisioning/retry",
         headers={"Authorization": "Bearer test"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["phase"] == "pending"
+    assert resp.json()["phase"] == "preflight"
 
     # --- Run 2: creds work + pulumi works -> ready ------------------------
     with patch(

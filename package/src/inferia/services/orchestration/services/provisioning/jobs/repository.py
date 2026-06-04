@@ -339,14 +339,19 @@ class ProvisioningJobRepository:
         return _affected_count(res)
 
     async def reset_for_retry(self, *, node_id: UUID) -> ProvisioningJob | None:
-        """Re-enqueue a failed job: phase='pending', attempt_count=0, all
+        """Re-enqueue a failed job: phase='preflight', attempt_count=0, all
         error fields cleared. Returns the updated job, or None if the
-        current job for this node isn't in 'failed'."""
+        current job for this node isn't in 'failed'.
+
+        NOTE: must reset to 'preflight' (the same start phase as enqueue), NOT
+        'pending' — there is no registered handler for 'pending', so a retried
+        job left in 'pending' fails immediately with 'no handler for phase
+        pending' on the next reconciler tick."""
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(
                 """
                 UPDATE provisioning_jobs
-                SET phase = 'pending',
+                SET phase = 'preflight',
                     attempt_count = 0,
                     next_attempt_after = NULL,
                     last_error_code = NULL,
