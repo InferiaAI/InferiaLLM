@@ -80,9 +80,10 @@ async def test_delete_pool_404_when_missing():
     assert r.status_code == 404
 
 
-async def test_delete_pool_202_cascade_terminates_active_deployments():
-    """Active deployments no longer 409: the pool delete now cascade-terminates
-    them (the nodes are being destroyed anyway) and returns 202."""
+async def test_delete_pool_202_cascade_deletes_deployments():
+    """Active deployments no longer 409: the pool delete now cascade-DELETES
+    every deployment in the pool (and detaches/removes their dependents) and
+    returns 202."""
     pid = uuid4()
     conn = _FakeConn(pool_row={"id": pid, "is_active": True}, active_count=2)
     p1, p2, p3 = _patches(conn)
@@ -91,13 +92,17 @@ async def test_delete_pool_202_cascade_terminates_active_deployments():
     assert r.status_code == 202, r.text
     assert r.json()["status"] == "TERMINATING"
     sqls = [sql for sql, _ in conn.executed]
-    # Cascade-terminates every non-terminal deployment in the pool.
+    # Hard-deletes every deployment in the pool.
     assert any(
-        "model_deployments" in s and "state = 'TERMINATED'" in s
-        and "pool_id = $1" in s
-        and "state NOT IN ('STOPPED', 'TERMINATED', 'FAILED')" in s
+        "DELETE FROM model_deployments" in s and "pool_id = $1" in s
         for s in sqls
     )
+    # Detaches dependents that lack ON DELETE behavior before the delete.
+    assert any("UPDATE policies SET deployment_id = NULL" in s for s in sqls)
+    assert any("UPDATE api_keys SET deployment_id = NULL" in s for s in sqls)
+    assert any("DELETE FROM inference_logs" in s for s in sqls)
+    # Must NOT leave them as TERMINATED rows.
+    assert not any("state = 'TERMINATED'" in s for s in sqls)
 
 
 async def test_delete_pool_202_force_cancels_jobs_and_soft_deletes():

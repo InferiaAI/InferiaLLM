@@ -2261,9 +2261,11 @@ async def delete_pool_rest(pool_id: str):
     supersedes the two-step POST /stoppool + POST /deletepool flow:
 
       1. 404 if the pool is gone.
-      2. cascade-terminate EVERY non-terminal deployment in the pool (the
-         nodes are being destroyed, so the deployments must not linger as
-         zombie RUNNING rows pointing at torn-down nodes).
+      2. cascade-DELETE EVERY deployment in the pool (the pool is going away,
+         so its deployments go with it — no zombie rows pointing at torn-down
+         nodes). Dependent rows that lack ON DELETE behavior (policies,
+         api_keys, inference_logs) are detached/removed first, mirroring the
+         single-deployment DELETE /deployment/delete/{id} cleanup.
       3. force-cancel EVERY provisioning job in the pool so the reconciler's
          CancelHandler destroys each ``inferia-<node_id>`` stack with the
          matching local backend, and flips each node's row to terminating.
@@ -2296,22 +2298,32 @@ async def delete_pool_rest(pool_id: str):
         # pool half-deleted (e.g. jobs cancelled but the pool row still
         # active, or deployments orphaned onto torn-down nodes).
         async with conn.transaction():
-            # 1. Terminate EVERY non-terminal deployment in the pool. The
-            #    pool's nodes are all being torn down below, so we simply mark
-            #    them TERMINATED (the EC2 destroy reclaims the GPUs — no
-            #    per-node refcount needed). This makes "Delete Pool" a
-            #    one-click cascade instead of 409'ing until the user stops
-            #    each deployment, and prevents zombie RUNNING deployments
-            #    pointing at destroyed nodes.
+            # 1. DELETE EVERY deployment in the pool. The pool is going away,
+            #    so its deployments go with it (the EC2 nodes are torn down in
+            #    step 2, reclaiming any GPUs — no per-node refcount needed).
+            #    Detach/remove dependent rows first because these FKs were
+            #    created without ON DELETE behavior (same cleanup as the
+            #    single-deployment DELETE /deployment/delete/{id} path).
             await conn.execute(
-                """
-                UPDATE model_deployments
-                SET state = 'TERMINATED',
-                    error_message = 'pool deleted',
-                    updated_at = now()
-                WHERE pool_id = $1
-                  AND state NOT IN ('STOPPED', 'TERMINATED', 'FAILED')
-                """,
+                "UPDATE policies SET deployment_id = NULL "
+                "WHERE deployment_id IN "
+                "(SELECT deployment_id FROM model_deployments WHERE pool_id = $1)",
+                pool_uuid,
+            )
+            await conn.execute(
+                "UPDATE api_keys SET deployment_id = NULL "
+                "WHERE deployment_id IN "
+                "(SELECT deployment_id FROM model_deployments WHERE pool_id = $1)",
+                pool_uuid,
+            )
+            await conn.execute(
+                "DELETE FROM inference_logs "
+                "WHERE deployment_id IN "
+                "(SELECT deployment_id FROM model_deployments WHERE pool_id = $1)",
+                pool_uuid,
+            )
+            await conn.execute(
+                "DELETE FROM model_deployments WHERE pool_id = $1",
                 pool_uuid,
             )
             # 2. Tear down every node's EC2 via the reconciler (see docstring):
