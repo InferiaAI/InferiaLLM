@@ -73,6 +73,28 @@ class ModelCacheRepo:
                 UUID(str(cache_id)), status, error,
             )
 
+    async def reconcile_orphaned_downloads(self, *, message: str) -> int:
+        """Mark every still-``downloading`` row as ``error``; return the count.
+
+        Called once on control-plane startup. In-flight download tasks live
+        only in the :class:`DownloadManager`'s in-memory ``_tasks`` dict, so a
+        crash/restart loses them while the DB row stays ``downloading`` forever
+        — never finishing, never eviction-eligible (``lru_candidates`` only
+        considers ``cached``). Resetting them to ``error`` surfaces the failure
+        in the UI and lets the user re-add (which starts a fresh download).
+        """
+        async with self.db.acquire() as conn:
+            res = await conn.execute(
+                "UPDATE model_cache SET status='error', error=$1, updated_at=now() "
+                "WHERE status='downloading'",
+                message,
+            )
+        # asyncpg returns e.g. "UPDATE 3" — parse the trailing count.
+        try:
+            return int(res.rsplit(" ", 1)[-1])
+        except (ValueError, AttributeError):
+            return 0
+
     async def touch(self, cache_id) -> None:
         """Refresh ``last_used_at`` to now (record access)."""
         async with self.db.acquire() as conn:

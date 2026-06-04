@@ -277,6 +277,89 @@ async def test_hf_file_downloads_on_200(tmp_path):
     assert sum(got) == len(b"WEIGHTS")
 
 
+async def test_cancel_pops_finished_task_so_readd_starts_fresh():
+    """cancel() on an already-finished task drops its key, so a later re-add
+    starts a NEW download instead of joining the stale (done) task."""
+    repo = FakeRepo()
+
+    async def quick_list(model_id, revision):
+        return []
+
+    dm = DownloadManager(repo=repo, paths=None, fetch_list=quick_list, fetch_file=None)
+    t1 = dm.start(source="hf", model_id="org/m", revision="main")
+    await t1  # let it finish
+    key = ("hf", "org/m", "main")
+    assert key in dm._tasks and dm._tasks[key].done()
+
+    # cancel() of a finished task: nothing running (returns False) but the
+    # stale key MUST be removed.
+    assert dm.cancel(source="hf", model_id="org/m", revision="main") is False
+    assert key not in dm._tasks
+
+    # A fresh re-add creates a brand-new task object.
+    t2 = dm.start(source="hf", model_id="org/m", revision="main")
+    assert t2 is not t1
+    await t2
+
+
+async def test_hf_file_removes_part_on_stream_error(tmp_path):
+    """A mid-stream error during an HF download must not leak a .part file."""
+    class _ErrHTTP:
+        def stream(self, method, url, headers=None):
+            class _Ctx:
+                async def __aenter__(self_):
+                    self_.status_code = 200
+                    return self_
+                async def __aexit__(self_, *a):
+                    return False
+                async def aiter_bytes(self_):
+                    yield b"partial"
+                    raise RuntimeError("connection reset")
+            return _Ctx()
+
+    paths = CachePaths(str(tmp_path))
+    dm = DownloadManager(repo=FakeRepo(), paths=paths, http_client=_ErrHTTP(), settings=None)
+
+    async def on_bytes(n):
+        pass
+
+    with pytest.raises(RuntimeError, match="connection reset"):
+        await dm._hf_file("org/m", "main", "w.bin", on_bytes)
+
+    target = paths.hf_dir("org/m", "main") / "w.bin"
+    assert not target.exists()
+    assert not target.with_suffix(target.suffix + ".part").exists()
+
+
+async def test_ollama_file_removes_part_on_stream_error(tmp_path):
+    """A mid-stream error during an Ollama blob download must not leak a .part."""
+    class _ErrHTTP:
+        def stream(self, method, url, headers=None):
+            class _Ctx:
+                async def __aenter__(self_):
+                    self_.status_code = 200
+                    return self_
+                async def __aexit__(self_, *a):
+                    return False
+                async def aiter_bytes(self_):
+                    yield b"partial"
+                    raise RuntimeError("connection reset")
+            return _Ctx()
+
+    paths = CachePaths(str(tmp_path))
+    dm = DownloadManager(repo=FakeRepo(), paths=paths, http_client=_ErrHTTP(), settings=None)
+
+    async def on_bytes(n):
+        pass
+
+    with pytest.raises(RuntimeError, match="connection reset"):
+        await dm._ollama_file("gemma3", "4b", "sha256:m", on_bytes)
+
+    blob = paths.ollama_dir("gemma3", "4b") / "sha256_m"
+    assert not blob.exists()
+    assert not blob.with_suffix(blob.suffix + ".part").exists()
+
+
 async def test_cancel_stops_inflight_task():
     repo = FakeRepo()
     gate = asyncio.Event()

@@ -54,6 +54,29 @@ async def test_lru_only_returns_cached_rows(db_pool):
     assert "org/pending" not in candidate_ids
 
 
+async def test_reconcile_orphaned_downloads(db_pool):
+    """reconcile_orphaned_downloads flips only 'downloading' rows to 'error'
+    (with the message) and returns the count; cached/pending rows untouched."""
+    repo = ModelCacheRepo(db_pool)
+    dl = await repo.upsert(source="hf", model_id="org/dl", revision="main")
+    cached = await repo.upsert(source="hf", model_id="org/cc", revision="main")
+    pending = await repo.upsert(source="hf", model_id="org/pp", revision="main")
+    await repo.set_progress(dl["id"], status="downloading")
+    await repo.set_status(cached["id"], "cached")
+    # pending stays 'pending'
+
+    n = await repo.reconcile_orphaned_downloads(message="restart")
+    assert n == 1
+    got_dl = await repo.get(dl["id"])
+    assert got_dl["status"] == "error"
+    assert got_dl["error"] == "restart"
+    assert (await repo.get(cached["id"]))["status"] == "cached"
+    assert (await repo.get(pending["id"]))["status"] == "pending"
+
+    # Idempotent: a second pass finds nothing.
+    assert await repo.reconcile_orphaned_downloads(message="restart") == 0
+
+
 async def test_get_by_key_and_missing(db_pool):
     repo = ModelCacheRepo(db_pool)
     row = await repo.upsert(source="hf", model_id="org/x", revision="v1")

@@ -460,6 +460,21 @@ async def serve():
     app.include_router(mc_mirror_hf.router)
     # NOTE: mirror_ollama is NOT mounted here — that is Phase 9.
 
+    # Reset any rows left in 'downloading' by a previous process: their
+    # in-flight tasks died with that process and would otherwise stay
+    # 'downloading' forever (never finishing, never eviction-eligible).
+    try:
+        _orphaned = await _mc_repo_inst.reconcile_orphaned_downloads(
+            message="download interrupted by control-plane restart; re-add to retry",
+        )
+        if _orphaned:
+            logger.warning(
+                "reset %d orphaned model-cache download(s) to error on startup",
+                _orphaned,
+            )
+    except Exception:
+        logger.warning("model-cache orphaned-download reconciliation failed", exc_info=True)
+
     # Share pool with routes
     app.state.pool = db_pool
     app.state.worker_controller = worker_controller

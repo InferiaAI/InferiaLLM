@@ -63,7 +63,11 @@ class DownloadManager:
             async with AsyncSessionLocal() as db:
                 data = await config_manager.load_config(db) or {}
             tok = ((data.get("providers") or {}).get("huggingface") or {}).get("token") or ""
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "could not load HF token from provider config (%s); "
+                "falling back to INFERIA_HF_TOKEN env", e
+            )
             tok = ""
         if tok:
             return tok
@@ -79,11 +83,16 @@ class DownloadManager:
         """
         key = (source, model_id, revision)
         t = self._tasks.get(key)
-        if t and not t.done():
+        if t is None:
+            return False
+        running = not t.done()
+        if running:
             t.cancel()
-            self._tasks.pop(key, None)
-            return True
-        return False
+        # Always drop the key — leaving a *finished* task in the dict makes a
+        # subsequent re-add of the same model silently join the stale (done)
+        # task instead of starting a fresh download.
+        self._tasks.pop(key, None)
+        return running
 
     def start(self, *, source, model_id, revision="main", engine_hint=None):
         """Fire-and-forget pre-warm; deduplicates by ``(source, model_id, revision)`` key.
@@ -238,10 +247,21 @@ class DownloadManager:
                 raise RuntimeError(
                     f"download failed for {path} (HTTP {up.status_code})"
                 )
-            with open(tmp, "wb") as fh:
-                async for chunk in up.aiter_bytes():
-                    fh.write(chunk)
-                    await on_bytes(len(chunk))
+            try:
+                with open(tmp, "wb") as fh:
+                    async for chunk in up.aiter_bytes():
+                        fh.write(chunk)
+                        await on_bytes(len(chunk))
+            except BaseException:
+                # On cancel (delete-mid-download) or any stream error, the
+                # ``.part`` file is never promoted — remove it so it doesn't
+                # leak disk and count against the cache size cap. BaseException
+                # so asyncio.CancelledError is caught too; re-raised below.
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
         os.replace(tmp, target)
 
     def _hdr(self) -> dict:
@@ -318,8 +338,18 @@ class DownloadManager:
                 raise RuntimeError(
                     f"Ollama blob download failed for {path} (HTTP {up.status_code})"
                 )
-            with open(tmp, "wb") as fh:
-                async for chunk in up.aiter_bytes():
-                    fh.write(chunk)
-                    await on_bytes(len(chunk))
+            try:
+                with open(tmp, "wb") as fh:
+                    async for chunk in up.aiter_bytes():
+                        fh.write(chunk)
+                        await on_bytes(len(chunk))
+            except BaseException:
+                # On cancel (delete-mid-download) or any stream error, drop the
+                # unfinished ``.part`` blob so it doesn't leak disk / count
+                # against the cache size cap. BaseException catches CancelledError.
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
         os.replace(tmp, target)
