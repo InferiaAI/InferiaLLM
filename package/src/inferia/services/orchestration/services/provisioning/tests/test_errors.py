@@ -19,6 +19,8 @@ _ALL_TYPED = [
     (AWSServerError, "AWS_5XX", TransientError),
     (PulumiTransientError, "PULUMI_TRANSIENT", TransientError),
     (NetworkError, "NETWORK_ERROR", TransientError),
+    # Capacity self-heals → TransientError (auto-retried), not INFRASTRUCTURE.
+    (CapacityUnavailableError, "INSUFFICIENT_CAPACITY", TransientError),
     (PulumiCliMissingError, "PULUMI_CLI_MISSING", PermanentError),
     (InvalidCredentialsError, "INVALID_CREDENTIALS", PermanentError),
     (InvalidSpecError, "INVALID_SPEC", PermanentError),
@@ -27,7 +29,6 @@ _ALL_TYPED = [
     (SubnetNotFoundError, "SUBNET_NOT_FOUND", PermanentError),
     (SecurityGroupNotFoundError, "SG_NOT_FOUND", PermanentError),
     (QuotaExceededError, "QUOTA_EXCEEDED", InfrastructureError),
-    (CapacityUnavailableError, "INSUFFICIENT_CAPACITY", InfrastructureError),
     (SubnetExhaustedError, "SUBNET_EXHAUSTED", InfrastructureError),
 ]
 
