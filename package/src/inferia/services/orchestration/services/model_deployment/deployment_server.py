@@ -1457,16 +1457,28 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
             )
 
     if state == "PENDING_NODE":
+        should_destroy = False
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await deploys.unbind(deploy_uuid, tx=conn)
-                await deploys.set_state(deploy_uuid, "TERMINATED", tx=conn)
-                should_destroy = False
-                if target_node_id is not None and gpu_per_replica > 0:
-                    result = await inventory.release_gpu(
-                        target_node_id, gpu_per_replica, tx=conn,
-                    )
-                    should_destroy = result.should_destroy
+                # Atomically claim the TERMINATED transition. A concurrent
+                # terminate of the SAME deploy (double-click / retry) would
+                # otherwise both pass the early terminal-state check and both
+                # release_gpu, under-counting gpu_allocated. Only the winner
+                # of this guarded UPDATE releases the GPU.
+                won = await deploys.update_state_if(
+                    deploy_uuid, expected_state="PENDING_NODE",
+                    new_state="TERMINATED", tx=conn,
+                )
+                if won:
+                    await deploys.unbind(deploy_uuid, tx=conn)
+                    if target_node_id is not None and gpu_per_replica > 0:
+                        result = await inventory.release_gpu(
+                            target_node_id, gpu_per_replica, tx=conn,
+                        )
+                        should_destroy = result.should_destroy
+        if not won:
+            # Lost the race — already terminated. Idempotent success.
+            return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
         if should_destroy and target_node_id is not None and pool_provider:
             destroy_ok = await _initiate_node_destroy(
                 db_pool=db_pool, jobs_repo=jobs_repo,
@@ -1519,19 +1531,25 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
                 deploy_uuid, target_node_id, e,
             )
 
+    should_destroy = False
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            await deploys.update_state(
-                deployment_id=deploy_uuid,
-                state="TERMINATED",
-                tx=conn,
+            # Guard the GPU release behind an atomic TERMINATED claim so two
+            # concurrent terminates of the same deploy can't both release
+            # (which would under-count gpu_allocated). `state` is the value
+            # read before unload_model; if it drifted/was already terminated,
+            # the claim fails and we skip the release.
+            won = await deploys.update_state_if(
+                deploy_uuid, expected_state=state,
+                new_state="TERMINATED", tx=conn,
             )
-            should_destroy = False
-            if target_node_id is not None and gpu_per_replica > 0:
+            if won and target_node_id is not None and gpu_per_replica > 0:
                 result = await inventory.release_gpu(
                     target_node_id, gpu_per_replica, tx=conn,
                 )
                 should_destroy = result.should_destroy
+    if not won:
+        return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
 
     if should_destroy and target_node_id is not None and pool_provider:
         destroy_ok = await _initiate_node_destroy(
@@ -1631,14 +1649,23 @@ async def delete_deployment(deployment_id: str):
         try:
             # Check if deployment exists and is stopped
             row = await conn.fetchrow(
-                "SELECT state FROM model_deployments WHERE deployment_id = $1", dep_uuid
+                "SELECT state, target_node_id FROM model_deployments "
+                "WHERE deployment_id = $1", dep_uuid
             )
 
             if not row:
                 raise HTTPException(status_code=404, detail="Deployment not found")
 
-            # Only allow deletion of stopped/terminated/failed deployments
-            if row["state"] not in ("STOPPED", "TERMINATED", "FAILED"):
+            # Allow deletion of terminal deployments, plus the pre-binding
+            # CREATED/PENDING states (no node bound, no GPU allocated, nothing
+            # loaded on a worker — safe to drop directly without a terminate
+            # round-trip). Anything else (PENDING_NODE/DEPLOYING/RUNNING) holds
+            # resources and must be terminated first.
+            _deletable = row["state"] in ("STOPPED", "TERMINATED", "FAILED")
+            if not _deletable and row["state"] in ("CREATED", "PENDING") \
+                    and row["target_node_id"] is None:
+                _deletable = True
+            if not _deletable:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Cannot delete deployment in state '{row['state']}'. Stop it first.",
@@ -2234,14 +2261,17 @@ async def delete_pool_rest(pool_id: str):
     supersedes the two-step POST /stoppool + POST /deletepool flow:
 
       1. 404 if the pool is gone.
-      2. 409 if live deployments remain (the UI surfaces this and prompts the
-         user to stop them first).
+      2. cascade-terminate EVERY non-terminal deployment in the pool (the
+         nodes are being destroyed, so the deployments must not linger as
+         zombie RUNNING rows pointing at torn-down nodes).
       3. force-cancel EVERY provisioning job in the pool so the reconciler's
          CancelHandler destroys each ``inferia-<node_id>`` stack with the
          matching local backend, and flips each node's row to terminating.
          (The old pool-scoped direct-adapter destroy targeted a stack that
          never existed and silently leaked the EC2s.)
       4. soft-delete the pool row (lifecycle_state=terminated, is_active=FALSE).
+
+    All of 2-4 run in one DB transaction so a crash can't half-delete the pool.
 
     Returns 202 — node teardown is asynchronous (~60-90s per EC2); the
     reconciler marks each node terminated as it finishes.
@@ -2262,53 +2292,65 @@ async def delete_pool_rest(pool_id: str):
         if not pool:
             raise HTTPException(status_code=404, detail="Pool not found")
 
-        active = await conn.fetchval(
-            "SELECT count(*) FROM model_deployments "
-            "WHERE pool_id = $1 "
-            "  AND state NOT IN ('STOPPED','TERMINATED','FAILED','PENDING')",
-            pool_uuid,
-        )
-        if active:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Pool has {active} active deployment(s). Stop them before "
-                    f"deleting the pool."
-                ),
+        # Cascade everything in one transaction so a crash can't leave the
+        # pool half-deleted (e.g. jobs cancelled but the pool row still
+        # active, or deployments orphaned onto torn-down nodes).
+        async with conn.transaction():
+            # 1. Terminate EVERY non-terminal deployment in the pool. The
+            #    pool's nodes are all being torn down below, so we simply mark
+            #    them TERMINATED (the EC2 destroy reclaims the GPUs — no
+            #    per-node refcount needed). This makes "Delete Pool" a
+            #    one-click cascade instead of 409'ing until the user stops
+            #    each deployment, and prevents zombie RUNNING deployments
+            #    pointing at destroyed nodes.
+            await conn.execute(
+                """
+                UPDATE model_deployments
+                SET state = 'TERMINATED',
+                    error_message = 'pool deleted',
+                    updated_at = now()
+                WHERE pool_id = $1
+                  AND state NOT IN ('STOPPED', 'TERMINATED', 'FAILED')
+                """,
+                pool_uuid,
             )
-
-        # Tear down every node's EC2 via the reconciler (see docstring).
-        await conn.execute(
-            """
-            UPDATE provisioning_jobs
-            SET phase = 'cancelling',
-                next_attempt_after = NULL,
-                lease_holder = NULL,
-                lease_expires_at = NULL,
-                updated_at = now()
-            WHERE pool_id = $1
-              AND phase NOT IN ('cancelling', 'terminated')
-            """,
-            pool_uuid,
-        )
-        await conn.execute(
-            """
-            UPDATE compute_inventory
-            SET metadata = COALESCE(metadata, '{}'::jsonb)
-                           || jsonb_build_object('terminating', true),
-                updated_at = now()
-            WHERE pool_id = $1 AND state IS DISTINCT FROM 'terminated'
-            """,
-            pool_uuid,
-        )
-        await conn.execute(
-            """
-            UPDATE compute_pools
-            SET lifecycle_state = $2, is_active = FALSE, updated_at = now()
-            WHERE id = $1
-            """,
-            pool_uuid, POOL_STATE_TERMINATED,
-        )
+            # 2. Tear down every node's EC2 via the reconciler (see docstring):
+            #    flip live jobs to 'cancelling' so the CancelHandler destroys
+            #    each inferia-<node_id> stack.
+            await conn.execute(
+                """
+                UPDATE provisioning_jobs
+                SET phase = 'cancelling',
+                    next_attempt_after = NULL,
+                    lease_holder = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = now()
+                WHERE pool_id = $1
+                  AND phase NOT IN ('cancelling', 'terminated')
+                """,
+                pool_uuid,
+            )
+            # 3. Flag each node row terminating so the dashboard shows the
+            #    teardown spinner immediately.
+            await conn.execute(
+                """
+                UPDATE compute_inventory
+                SET metadata = COALESCE(metadata, '{}'::jsonb)
+                               || jsonb_build_object('terminating', true),
+                    updated_at = now()
+                WHERE pool_id = $1 AND state IS DISTINCT FROM 'terminated'
+                """,
+                pool_uuid,
+            )
+            # 4. Soft-delete the pool row.
+            await conn.execute(
+                """
+                UPDATE compute_pools
+                SET lifecycle_state = $2, is_active = FALSE, updated_at = now()
+                WHERE id = $1
+                """,
+                pool_uuid, POOL_STATE_TERMINATED,
+            )
     finally:
         if conn:
             await conn.close()

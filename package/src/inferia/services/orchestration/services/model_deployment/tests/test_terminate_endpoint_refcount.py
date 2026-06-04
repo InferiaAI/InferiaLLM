@@ -369,6 +369,52 @@ async def test_terminate_with_other_deploys_does_not_destroy(app_and_pool):
     assert gpu_alloc == 1
 
 
+async def test_concurrent_double_terminate_releases_gpu_once(app_and_pool):
+    """Two concurrent terminates of the SAME deploy must release the GPU only
+    once. Node has two 1-GPU deploys (gpu_allocated=2); terminating deploy A
+    twice concurrently must leave gpu_allocated=1 (deploy B's), not 0 — the
+    atomic TERMINATED claim guards the release."""
+    import asyncio as _asyncio
+
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool, provider="aws")
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=2)
+    org_id = str(uuid4())
+    deploy_a = await _seed_deploy(
+        pool, pool_id, state="RUNNING", gpu_per_replica=1,
+        target_node_id=node_id, org_id=org_id,
+    )
+    # deploy B keeps the node referenced so should_destroy stays False.
+    await _seed_deploy(
+        pool, pool_id, state="RUNNING", gpu_per_replica=1,
+        target_node_id=node_id, org_id=org_id,
+    )
+
+    with patch(
+        "inferia.services.orchestration.services.provisioning.jobs.repository."
+        "ProvisioningJobRepository.enqueue",
+        new_callable=AsyncMock,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r1, r2 = await _asyncio.gather(
+                client.post("/deployment/terminate",
+                            json={"deployment_id": str(deploy_a)}),
+                client.post("/deployment/terminate",
+                            json={"deployment_id": str(deploy_a)}),
+            )
+
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert {r1.json()["status"], r2.json()["status"]} == {"TERMINATED"}
+    async with pool.acquire() as c:
+        gpu_alloc = await c.fetchval(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
+        )
+    # Released exactly once (2 - 1), NOT twice (which would wrongly hit 0).
+    assert gpu_alloc == 1, f"double-release: gpu_allocated={gpu_alloc}, expected 1"
+
+
 async def test_terminate_already_terminal_is_noop(app_and_pool):
     """Terminal-state no-op: FAILED deploy returns current state without side effects."""
     app, pool = app_and_pool

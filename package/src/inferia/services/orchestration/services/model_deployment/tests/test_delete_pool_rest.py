@@ -38,6 +38,14 @@ class _FakeConn:
         self.executed.append((" ".join(sql.split()), args))
         return "UPDATE 1"
 
+    def transaction(self):
+        class _Tx:
+            async def __aenter__(self_):
+                return self_
+            async def __aexit__(self_, *a):
+                return False
+        return _Tx()
+
     async def close(self):
         pass
 
@@ -72,15 +80,24 @@ async def test_delete_pool_404_when_missing():
     assert r.status_code == 404
 
 
-async def test_delete_pool_409_when_active_deployments():
-    conn = _FakeConn(pool_row={"id": uuid4(), "is_active": True}, active_count=2)
+async def test_delete_pool_202_cascade_terminates_active_deployments():
+    """Active deployments no longer 409: the pool delete now cascade-terminates
+    them (the nodes are being destroyed anyway) and returns 202."""
+    pid = uuid4()
+    conn = _FakeConn(pool_row={"id": pid, "is_active": True}, active_count=2)
     p1, p2, p3 = _patches(conn)
     with p1, p2, p3:
-        r = await _delete(f"/deployment/pool/{uuid4()}")
-    assert r.status_code == 409
-    assert "active" in r.json()["detail"].lower()
-    # Must NOT have touched provisioning_jobs when refusing.
-    assert not any("provisioning_jobs" in sql for sql, _ in conn.executed)
+        r = await _delete(f"/deployment/pool/{pid}")
+    assert r.status_code == 202, r.text
+    assert r.json()["status"] == "TERMINATING"
+    sqls = [sql for sql, _ in conn.executed]
+    # Cascade-terminates every non-terminal deployment in the pool.
+    assert any(
+        "model_deployments" in s and "state = 'TERMINATED'" in s
+        and "pool_id = $1" in s
+        and "state NOT IN ('STOPPED', 'TERMINATED', 'FAILED')" in s
+        for s in sqls
+    )
 
 
 async def test_delete_pool_202_force_cancels_jobs_and_soft_deletes():
