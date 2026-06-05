@@ -190,15 +190,19 @@ async def test_head_resolve_returns_200_with_metadata_headers(monkeypatch):
     from httpx import AsyncClient, ASGITransport
 
     class _HeadHTTP:
+        # Mimic HF: resolve HEAD returns a 302 redirect carrying the metadata in
+        # x-repo-commit / x-linked-etag / x-linked-size (the LFS shape).
         def stream(self, method, url, headers=None, follow_redirects=False):
             assert method == "HEAD"
             class _Ctx:
                 async def __aenter__(self_):
-                    self_.status_code = 200
+                    self_.status_code = 302
                     self_.headers = {
                         "x-repo-commit": "abc123",
-                        "etag": '"deadbeef"',
-                        "content-length": "726",
+                        "x-linked-etag": '"deadbeef"',
+                        "x-linked-size": "1503300328",
+                        "content-length": "1010",  # the redirect body, NOT the file
+                        "location": "https://cdn-lfs.hf.co/blob",
                     }
                     return self_
                 async def __aexit__(self_, *a):
@@ -212,6 +216,6 @@ async def test_head_resolve_returns_200_with_metadata_headers(monkeypatch):
         r = await c.head("/hf/org/m/resolve/main/model.safetensors")
     assert r.status_code == 200
     assert r.headers.get("x-repo-commit") == "abc123"
-    assert r.headers.get("etag") == '"deadbeef"'
-    assert r.headers.get("content-length") == "726"
+    assert r.headers.get("etag") == '"deadbeef"'          # from x-linked-etag
+    assert r.headers.get("content-length") == "1503300328"  # from x-linked-size, not 1010
     assert r.headers.get("accept-ranges") == "bytes"

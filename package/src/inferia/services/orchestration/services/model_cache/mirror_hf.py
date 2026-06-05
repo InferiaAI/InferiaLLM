@@ -72,24 +72,40 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
     metadata call) and reply 200 with the headers huggingface_hub needs; the
     big file itself is still served from the local cache on the follow-up GET.
     """
+    from urllib.parse import urljoin
+
     url = f"{_HF}/{repo}/resolve/{rev}/{filename}"
     headers: dict[str, str] = {"accept-ranges": "bytes"}
     try:
-        # First hop, no redirect: carries X-Repo-Commit + ETag (+ Location/size
-        # for LFS files, which then redirect to the CDN).
+        # First hop, no redirect. HF answers resolve HEADs with a 302/307 to the
+        # actual blob (CDN for LFS, /api/resolve-cache for small files) and
+        # carries the metadata huggingface_hub needs on THIS response:
+        #   X-Repo-Commit, X-Linked-Etag (the per-file etag), X-Linked-Size.
         async with _client().stream(
             "HEAD", url, headers=_hf_headers(), follow_redirects=False,
         ) as r0:
             commit = r0.headers.get("x-repo-commit")
-            etag = r0.headers.get("etag") or r0.headers.get("x-linked-etag")
-            size = r0.headers.get("content-length") or r0.headers.get("x-linked-size")
+            etag = r0.headers.get("x-linked-etag") or r0.headers.get("etag")
+            size = r0.headers.get("x-linked-size")
             location = r0.headers.get("location")
-            status0 = r0.status_code
-        # LFS file → HEAD the CDN target for the real etag/size.
-        if location and status0 in (301, 302, 303, 307, 308):
-            async with _client().stream("HEAD", location, follow_redirects=True) as r1:
-                etag = r1.headers.get("etag") or r1.headers.get("x-linked-etag") or etag
-                size = r1.headers.get("content-length") or size
+            if not size and r0.status_code == 200:
+                size = r0.headers.get("content-length")
+        # If the size wasn't on the first hop (small non-LFS files), follow the
+        # redirect for Content-Length. The Location is often RELATIVE
+        # (/api/resolve-cache/...) — resolve it against huggingface.co, else
+        # httpx raises on a relative URL and we lose the metadata.
+        if not size and location:
+            try:
+                async with _client().stream(
+                    "HEAD", urljoin(_HF + "/", location), headers=_hf_headers(),
+                    follow_redirects=True,
+                ) as r1:
+                    size = r1.headers.get("content-length") or size
+                    etag = etag or r1.headers.get("etag")
+            except Exception:
+                pass  # size is optional; commit+etag already captured
+        # Reply 200 (NOT a redirect) so huggingface_hub treats the mirror URL as
+        # the download source and GETs it from us (served from cache).
         if commit:
             headers["x-repo-commit"] = commit
         if etag:
