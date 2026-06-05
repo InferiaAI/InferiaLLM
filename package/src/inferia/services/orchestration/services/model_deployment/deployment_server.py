@@ -1278,7 +1278,22 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                 "config": (req.configuration or {}).get("config") or {},
                 "gpu_indices": list(range(req.gpu_per_replica or 0)),
                 "port": 0,
+                "env": {},
             }
+            try:
+                from inferia.services.orchestration.config import settings as _s
+                _mirror_base = getattr(_s, "model_mirror_base", "") or ""
+                from inferia.services.orchestration.services.model_deployment.mirror_decision import (
+                    resolve_and_apply_mirror,
+                )
+                from inferia.services.orchestration.services.model_cache import deps as _mc_deps
+                await resolve_and_apply_mirror(
+                    spec, recipe=spec["recipe"],
+                    artifact_uri=spec["model"]["artifact_uri"],
+                    mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
+                )
+            except Exception:
+                pass  # mirror is best-effort; never block a warm deploy
             await controller.load_model(node_id=str(node_id), spec=spec)
         except Exception as exc:
             logger.exception("deploy: load_model failed for %s: %s", deploy_id, exc)
