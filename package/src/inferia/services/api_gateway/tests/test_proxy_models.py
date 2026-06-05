@@ -257,6 +257,44 @@ async def test_hf_passthrough_forwards_range_header(client):
 
 
 @pytest.mark.asyncio
+async def test_hf_passthrough_forwards_hf_metadata_headers(client):
+    """huggingface_hub HEADs the resolve URL and REQUIRES X-Repo-Commit (the
+    commit hash) — without it it raises FileMetadataError 'Distant resource does
+    not seem to be on huggingface.co' and the vLLM/TEI container crashes before
+    downloading any weights. The gateway's streaming passthrough must forward the
+    HF metadata headers (x-repo-commit + the LFS x-linked-etag/x-linked-size),
+    not just content-type/length, or the whole HF cache-first path is dead."""
+    with patch(
+        "inferia.services.api_gateway.gateway.proxy_routes.gateway_http_client"
+    ) as mock_client_mgr:
+        mock_proxy = MagicMock()
+        mock_proxy.stream = MagicMock(
+            return_value=_make_mock_stream_ctx(
+                200, b"",
+                headers={
+                    "content-type": "application/json",
+                    "content-length": "726",
+                    "etag": '"f5c3703b"',
+                    "accept-ranges": "bytes",
+                    "x-repo-commit": "c1899de289a04d12100db370d81485cdf75e47ca",
+                    "x-linked-etag": '"f5c3703b"',
+                    "x-linked-size": "1503300328",
+                },
+            )
+        )
+        mock_client_mgr.get_proxy_client.return_value = mock_proxy
+        response = await client.get("/hf/Qwen/Qwen3-0.6B/resolve/main/config.json")
+
+    assert response.status_code == 200
+    h = {k.lower(): v for k, v in response.headers.items()}
+    assert h.get("x-repo-commit") == "c1899de289a04d12100db370d81485cdf75e47ca"
+    assert h.get("x-linked-etag") == '"f5c3703b"'
+    assert h.get("x-linked-size") == "1503300328"
+    assert h.get("etag") == '"f5c3703b"'
+    assert h.get("accept-ranges") == "bytes"
+
+
+@pytest.mark.asyncio
 async def test_v2_passthrough_unauthenticated_no_auth_error(client):
     """GET /v2/org/m/blobs/sha256:abc — no JWT needed; streams upstream body."""
     upstream_body = b"oci-blob-content"

@@ -665,7 +665,18 @@ async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath
 # and return a StreamingResponse that pipes bytes directly to the client.
 
 _STREAM_FORWARD_HEADERS = frozenset(
-    {"content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified"}
+    {
+        "content-type", "content-length", "content-range", "accept-ranges",
+        "etag", "last-modified",
+        # HuggingFace metadata huggingface_hub REQUIRES on the resolve HEAD.
+        # `X-Repo-Commit` is the commit hash: if it's absent huggingface_hub
+        # raises FileMetadataError("Distant resource does not seem to be on
+        # huggingface.co ...") and the vLLM/TEI container crashes before
+        # downloading any weights — so the whole HF cache-first path dies.
+        # `X-Linked-Etag`/`X-Linked-Size` carry the per-file etag/size for LFS
+        # pointer files. Forward them all verbatim from the orchestration mirror.
+        "x-repo-commit", "x-linked-etag", "x-linked-size",
+    }
 )
 
 
