@@ -803,6 +803,31 @@ async def test_hdr_returns_auth_when_token_set():
     assert hdr == {"authorization": "Bearer hf_test_token"}
 
 
+async def test_await_key_waits_for_inflight_and_noop_otherwise():
+    repo = FakeRepo()
+    gate = asyncio.Event()
+
+    async def gated_list(model_id, revision):
+        await gate.wait()
+        return []
+
+    dm = DownloadManager(repo=repo, paths=None, fetch_list=gated_list, fetch_file=None)
+    # No task yet -> await_key is an immediate no-op.
+    await dm.await_key(source="hf", model_id="org/m", revision="main")
+
+    t = dm.start(source="hf", model_id="org/m", revision="main")
+    await asyncio.sleep(0)  # let prewarm reach the gate
+
+    waiter = asyncio.create_task(
+        dm.await_key(source="hf", model_id="org/m", revision="main")
+    )
+    await asyncio.sleep(0)
+    assert not waiter.done(), "await_key must block while the task is in-flight"
+    gate.set()
+    await waiter            # unblocks once the task completes
+    await t
+
+
 async def test_prewarm_hf_resolves_token_once_per_prewarm(monkeypatch):
     """prewarm(source='hf') calls _load_hf_token exactly once and sets _hf_token."""
     import sys

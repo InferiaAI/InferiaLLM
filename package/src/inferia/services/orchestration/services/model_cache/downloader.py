@@ -94,6 +94,22 @@ class DownloadManager:
         self._tasks.pop(key, None)
         return running
 
+    async def await_key(self, *, source, model_id, revision="main") -> None:
+        """Await the in-flight pre-warm task for this key if one is running.
+
+        Used by the mirror handlers: when a worker requests an artifact the CP
+        is still downloading, block until the pre-warm finishes (then the file
+        is on disk) instead of re-streaming the same bytes from origin. No-op if
+        there is no task or it is already done. A failed task is swallowed — the
+        caller sees the (now 'error') cache state and falls back to origin.
+        """
+        t = self._tasks.get((source, model_id, revision))
+        if t and not t.done():
+            try:
+                await t
+            except BaseException:
+                pass
+
     def start(self, *, source, model_id, revision="main", engine_hint=None):
         """Fire-and-forget pre-warm; deduplicates by ``(source, model_id, revision)`` key.
 
