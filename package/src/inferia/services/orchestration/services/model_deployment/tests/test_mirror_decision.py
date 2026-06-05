@@ -38,6 +38,8 @@ def test_apply_mirror_ollama_rewrites_ref():
     # http:// scheme so the worker's validateArtifactURI accepts it; stripScheme
     # drops it before `ollama pull`.
     assert spec["model"]["artifact_uri"] == "http://cp.example/library/gemma3:4b"
+    # The bare served name is passed so the worker re-tags after pull.
+    assert spec["env"]["INFERIA_OLLAMA_SERVED_NAME"] == "gemma3:4b"
     spec2 = {"recipe": "ollama", "model": {"artifact_uri": "ns/m:tag"}, "env": {}}
     apply_mirror_to_spec(spec2, recipe="ollama", mirror_base="https://cp.example")
     assert spec2["model"]["artifact_uri"] == "http://cp.example/ns/m:tag"

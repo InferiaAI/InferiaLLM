@@ -47,6 +47,10 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
         # stripScheme() removes it again before `ollama pull`, leaving the bare
         # host/name:tag ollama needs (it derives the registry from the host).
         spec["model"]["artifact_uri"] = f"http://{ref}"
+        # ollama serves the model under the pulled (host-prefixed) ref, but
+        # inference sends the bare model id. Pass the bare name so the worker
+        # re-tags (ollama cp) the pulled mirror ref to it -> inference resolves.
+        spec.setdefault("env", {})["INFERIA_OLLAMA_SERVED_NAME"] = raw
 
 
 async def resolve_and_apply_mirror(
