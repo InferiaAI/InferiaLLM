@@ -1,0 +1,128 @@
+"""Ollama /v2 OCI registry mirror.
+
+Lets a worker `ollama pull <cp-host>/library/<name>:<tag>` fetch from the CP
+cache. Serves the persisted manifest.json and per-digest blobs; on a miss it
+first joins any in-flight pre-warm (await_key), then serves from disk; only if
+still missing does it stream from registry.ollama.ai and cache.
+
+Cache key mapping: the registry name `library/<name>` (or `<ns>/<name>`) maps to
+the cache model_id by stripping a leading `library/`; the manifest ref is the
+cache revision (tag). Mirrors downloader._ollama_name / ollama_dir layout.
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, Response, StreamingResponse
+
+from . import deps
+
+router = APIRouter(prefix="/v2", tags=["ollama-mirror"])
+
+_OLLAMA = "https://registry.ollama.ai"
+_MANIFEST_CT = "application/vnd.docker.distribution.manifest.v2+json"
+
+
+def _model_id(name: str) -> str:
+    """Registry name -> cache model_id (strip a leading 'library/')."""
+    return name[len("library/"):] if name.startswith("library/") else name
+
+
+@router.get("")
+@router.get("/")
+async def root() -> Response:
+    """Registry probe — ollama checks /v2/ returns 200 before pulling."""
+    return Response(content=b"{}", media_type="application/json")
+
+
+@router.get("/{name:path}/manifests/{ref}")
+async def get_manifest(name: str, ref: str) -> Response:
+    paths = deps.get("paths")
+    model_id = _model_id(name)
+    mpath: Path = paths.ollama_dir(model_id, ref) / "manifest.json"
+
+    if mpath.is_file():
+        return Response(content=mpath.read_bytes(), media_type=_MANIFEST_CT)
+
+    dl = deps.get("downloader")
+    if dl is not None:
+        await dl.await_key(source="ollama", model_id=model_id, revision=ref)
+        if mpath.is_file():
+            return Response(content=mpath.read_bytes(), media_type=_MANIFEST_CT)
+
+    # Last resort: fetch from origin (not cached, no in-flight pre-warm).
+    url = f"{_OLLAMA}/v2/{name}/manifests/{ref}"
+    async with deps.get("http_client").stream(
+        "GET", url, headers={"Accept": _MANIFEST_CT}
+    ) as up:
+        body = b"".join([c async for c in up.aiter_bytes()])
+        if up.status_code != 200:
+            raise HTTPException(up.status_code, "upstream error")
+        try:
+            mpath.parent.mkdir(parents=True, exist_ok=True)
+            mpath.write_bytes(body)
+        except OSError:
+            pass
+        return Response(content=body, media_type=_MANIFEST_CT)
+
+
+@router.get("/{name:path}/blobs/{digest}")
+async def get_blob(name: str, digest: str) -> Response:
+    paths = deps.get("paths")
+    model_id = _model_id(name)
+    fname = digest.replace(":", "_")
+    root = paths.ollama_root() / model_id  # {root}/ollama/{model_id}
+    # Containment guard: model_id comes from the URL — reject any value that
+    # escapes the ollama cache root (e.g. name='library/../../etc').
+    _oroot = paths.ollama_root().resolve()
+    if not root.resolve().is_relative_to(_oroot):
+        raise HTTPException(400, "bad path")
+
+    # Blobs are shared across tags; search this model's revision dirs.
+    if root.is_dir():
+        for rev_dir in root.iterdir():
+            cand = rev_dir / fname
+            if cand.is_file():
+                return FileResponse(str(cand))
+
+    dl = deps.get("downloader")
+    if dl is not None and root.is_dir():
+        for rev_dir in root.iterdir():
+            await dl.await_key(source="ollama", model_id=model_id, revision=rev_dir.name)
+            cand = rev_dir / fname
+            if cand.is_file():
+                return FileResponse(str(cand))
+
+    url = f"{_OLLAMA}/v2/{name}/blobs/{digest}"
+    upstream_ctx = deps.get("http_client").stream("GET", url)
+    up = await upstream_ctx.__aenter__()
+    if up.status_code != 200:
+        await upstream_ctx.__aexit__(None, None, None)
+        raise HTTPException(up.status_code, "upstream error")
+
+    target_dir = next(iter(root.iterdir()), None) if root.is_dir() else None
+    if target_dir is None:
+        target_dir = paths.ollama_root() / model_id / "_blobs"
+    target = target_dir / fname
+    if not target.resolve().is_relative_to(_oroot):
+        raise HTTPException(400, "bad path")
+    tmp = target.with_suffix(target.suffix + ".part")
+
+    async def _gen():
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "wb") as fh:
+                async for chunk in up.aiter_bytes():
+                    fh.write(chunk)
+                    yield chunk
+            os.replace(tmp, target)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
+        finally:
+            await upstream_ctx.__aexit__(None, None, None)
+
+    return StreamingResponse(_gen(), media_type="application/octet-stream")
