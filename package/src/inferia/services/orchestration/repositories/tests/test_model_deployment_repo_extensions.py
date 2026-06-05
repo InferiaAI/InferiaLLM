@@ -81,6 +81,31 @@ async def test_list_pending_for_pool_returns_fifo(pool):
     assert ids == [early, late]
 
 
+async def test_list_pending_for_pool_includes_inference_model(pool):
+    """Regression: the cold-path linker resolves the model from inference_model;
+    if the SELECT drops it, resolve_artifact_uri falls back to model_name and
+    the worker pulls the wrong model (e.g. 'gemma3-ollama' instead of
+    'gemma3:4b' -> ollama 'file does not exist')."""
+    repo = ModelDeploymentRepository(pool, event_bus=None)
+    _, pool_id = await _seed_pool_row(pool)
+    did = uuid4()
+    async with pool.acquire() as c:
+        await c.execute(
+            """
+            INSERT INTO model_deployments(deployment_id, model_name,
+              inference_model, replicas, gpu_per_replica, pool_id,
+              target_pool_id, state, org_id)
+            VALUES ($1, 'gemma3-ollama', 'gemma3:4b', 1, 1, $2, $2,
+                    'PENDING_NODE', $3)
+            """,
+            str(did), str(pool_id), str(uuid4()),
+        )
+    rows = await repo.list_pending_for_pool(pool_id)
+    row = next(r for r in rows if r["id"] == did)
+    assert row["inference_model"] == "gemma3:4b"
+    assert row["model_name"] == "gemma3-ollama"
+
+
 async def test_bind_to_node_sets_target_node_id(pool):
     repo = ModelDeploymentRepository(pool, event_bus=None)
     _, pool_id = await _seed_pool_row(pool)

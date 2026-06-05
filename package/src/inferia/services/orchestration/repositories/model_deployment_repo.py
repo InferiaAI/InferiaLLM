@@ -425,7 +425,7 @@ class ModelDeploymentRepository(BaseRepository):
         """
         q = """
             SELECT deployment_id AS id, target_node_id, gpu_per_replica,
-                   replicas, model_name, engine, configuration
+                   replicas, model_name, inference_model, engine, configuration
               FROM model_deployments
              WHERE target_pool_id = $1
                AND state = 'PENDING_NODE'
