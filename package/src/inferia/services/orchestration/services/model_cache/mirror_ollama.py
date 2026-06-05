@@ -68,6 +68,118 @@ async def get_manifest(name: str, ref: str) -> Response:
         return Response(content=body, media_type=_MANIFEST_CT)
 
 
+@router.head("/{name:path}/manifests/{ref}")
+async def head_manifest(name: str, ref: str) -> Response:
+    """Answer ollama's manifest existence HEAD.
+
+    OCI clients may HEAD the manifest before GET. Without this route FastAPI
+    returns 405 and the pull aborts. We mirror get_manifest's lookup but reply
+    with headers only (no body): 200 when the manifest is cached or in-flight,
+    otherwise proxy a HEAD to origin and relay its status.
+    """
+    paths = deps.get("paths")
+    model_id = _model_id(name)
+    mpath: Path = paths.ollama_dir(model_id, ref) / "manifest.json"
+
+    def _ok(size: int) -> Response:
+        return Response(
+            status_code=200,
+            headers={
+                "content-type": _MANIFEST_CT,
+                "content-length": str(size),
+            },
+        )
+
+    if mpath.is_file():
+        return _ok(mpath.stat().st_size)
+
+    dl = deps.get("downloader")
+    if dl is not None:
+        await dl.await_key(source="ollama", model_id=model_id, revision=ref)
+        if mpath.is_file():
+            return _ok(mpath.stat().st_size)
+
+    client = deps.get("http_client")
+    if client is None:
+        raise HTTPException(404, "not found")
+    url = f"{_OLLAMA}/v2/{name}/manifests/{ref}"
+    async with client.stream(
+        "HEAD", url, headers={"Accept": _MANIFEST_CT}
+    ) as up:
+        if up.status_code != 200:
+            raise HTTPException(up.status_code, "upstream error")
+        hdrs = {"content-type": _MANIFEST_CT}
+        cl = up.headers.get("content-length")
+        if cl:
+            hdrs["content-length"] = cl
+        return Response(status_code=200, headers=hdrs)
+
+
+@router.head("/{name:path}/blobs/{digest}")
+async def head_blob(name: str, digest: str) -> Response:
+    """Answer ollama's per-blob existence HEAD.
+
+    `ollama pull` HEADs every blob (config + layers) before downloading to
+    check existence and size. Without this route FastAPI returned 405 and the
+    pull aborted with {"error":"405: "}, breaking every ollama cache-first
+    deploy. We locate the blob the same way get_blob does and reply 200 with
+    Content-Length + Docker-Content-Digest (no body); on a true miss we proxy a
+    HEAD to origin and relay its metadata.
+    """
+    paths = deps.get("paths")
+    model_id = _model_id(name)
+    fname = digest.replace(":", "_")
+    root = paths.ollama_model_dir(model_id)
+    _oroot = paths.ollama_root().resolve()
+    if not root.resolve().is_relative_to(_oroot):
+        raise HTTPException(400, "bad path")
+
+    def _ok(size: int) -> Response:
+        return Response(
+            status_code=200,
+            headers={
+                "content-length": str(size),
+                "docker-content-digest": digest,
+                "accept-ranges": "bytes",
+            },
+        )
+
+    def _find() -> Path | None:
+        if root.is_dir():
+            for rev_dir in root.iterdir():
+                cand = rev_dir / fname
+                if cand.is_file():
+                    return cand
+        return None
+
+    cand = _find()
+    if cand is not None:
+        return _ok(cand.stat().st_size)
+
+    dl = deps.get("downloader")
+    if dl is not None and root.is_dir():
+        for rev_dir in root.iterdir():
+            await dl.await_key(
+                source="ollama", model_id=model_id, revision=rev_dir.name
+            )
+        cand = _find()
+        if cand is not None:
+            return _ok(cand.stat().st_size)
+
+    client = deps.get("http_client")
+    if client is None:
+        raise HTTPException(404, "not found")
+    url = f"{_OLLAMA}/v2/{name}/blobs/{digest}"
+    async with client.stream("HEAD", url) as up:
+        if up.status_code != 200:
+            raise HTTPException(up.status_code, "upstream error")
+        hdrs = {"docker-content-digest": digest, "accept-ranges": "bytes"}
+        cl = up.headers.get("content-length")
+        if cl:
+            hdrs["content-length"] = cl
+        return Response(status_code=200, headers=hdrs)
+
+
 @router.get("/{name:path}/blobs/{digest}")
 async def get_blob(name: str, digest: str) -> Response:
     paths = deps.get("paths")
