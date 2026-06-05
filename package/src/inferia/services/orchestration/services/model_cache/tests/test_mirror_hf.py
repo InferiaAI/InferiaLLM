@@ -150,3 +150,33 @@ async def test_traversal_filename_rejected(tmp_path):
     assert not any(True for _ in (tmp_path / "hf").rglob("*") if os.path.isfile(_)), (
         "No file should be written for a rejected traversal path"
     )
+
+
+async def test_resolve_awaits_inflight_then_serves_from_disk(tmp_path):
+    from inferia.services.orchestration.services.model_cache import deps
+    from inferia.services.orchestration.services.model_cache.paths import CachePaths
+    from inferia.services.orchestration.services.model_cache import mirror_hf
+    from fastapi import FastAPI
+    from httpx import AsyncClient, ASGITransport
+
+    paths = CachePaths(str(tmp_path))
+    target = paths.hf_dir("org/m", "main") / "w.bin"
+
+    class _DL:
+        async def await_key(self, *, source, model_id, revision):
+            # Simulate the pre-warm finishing: publish the file during the await.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"WEIGHTS")
+
+    class _HTTP:  # would raise if origin is hit
+        def stream(self, *a, **k):
+            raise AssertionError("origin must not be called")
+
+    deps._reset()
+    deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=None)
+
+    app = FastAPI(); app.include_router(mirror_hf.router)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get("/hf/org/m/resolve/main/w.bin")
+    assert r.status_code == 200
+    assert r.content == b"WEIGHTS"

@@ -116,6 +116,20 @@ async def resolve_file(
         return FileResponse(str(target))
 
     # ------------------------------------------------------------------
+    # Cache miss — first join any in-flight pre-warm for this model. If the
+    # CP is downloading these weights, wait for that to finish and serve from
+    # disk instead of re-streaming the same bytes from origin.
+    # ------------------------------------------------------------------
+    dl = deps.get("downloader")
+    if dl is not None:
+        await dl.await_key(source="hf", model_id=repo, revision=rev)
+        if target.is_file():
+            repo_obj = deps.get("repo")
+            if repo_obj:
+                await repo_obj.touch_by_key(source="hf", model_id=repo, revision=rev)
+            return FileResponse(str(target))
+
+    # ------------------------------------------------------------------
     # Cache miss — pre-flight upstream check then stream
     # ------------------------------------------------------------------
     url = f"{_HF}/{repo}/resolve/{rev}/{filename}"
