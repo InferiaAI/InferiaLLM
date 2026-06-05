@@ -127,6 +127,7 @@ docker run -d --name inferia-worker --restart=always $GPU_FLAG \
   -e INFERENCE_TOKEN={inference_token} \
   -e ALLOCATABLE_GPU_OVERRIDE={gpu_count_literal} \
   -e ALLOCATABLE_GPU_MODELS_OVERRIDE={gpu_models_override} \
+  -e READINESS_TIMEOUT_SECONDS={readiness_timeout_seconds} \
   {image_full}
 
 # --- inferia diagnostic block (cloud-init console output) ---------------------
@@ -206,6 +207,7 @@ def build_user_data(
     instance_class: str = "normal_gpu",
     gpu_count: int = 1,
     worker_image: str | None = None,
+    readiness_timeout_seconds: int = 900,
 ) -> str:
     """Build a shell-safe cloud-init user-data script.
 
@@ -320,4 +322,5 @@ def build_user_data(
         nvidia_block=nvidia_block,
         gpu_flag_line=gpu_flag_line,
         gpu_models_override=gpu_models_override,
+        readiness_timeout_seconds=int(readiness_timeout_seconds),
     )

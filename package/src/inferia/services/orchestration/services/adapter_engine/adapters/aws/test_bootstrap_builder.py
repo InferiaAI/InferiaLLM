@@ -36,6 +36,14 @@ def test_renders_bash_script_with_all_pieces():
     assert "--gpus all" in script
     assert "BOOTSTRAP_TOKEN=" in script
     assert "ghcr.io/example/inferia-worker:v1.0.0" in script
+    # Readiness timeout must be injected so cold vLLM starts (slow weight
+    # download + CUDA graph capture) don't trip the worker's 180s default.
+    assert "READINESS_TIMEOUT_SECONDS=900" in script
+
+
+def test_readiness_timeout_is_configurable():
+    script = build_user_data(**VALID, readiness_timeout_seconds=1200)
+    assert "READINESS_TIMEOUT_SECONDS=1200" in script
 
 
 def test_waits_for_dpkg_lock_before_apt():
