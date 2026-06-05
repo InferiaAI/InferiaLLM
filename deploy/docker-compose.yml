@@ -75,7 +75,7 @@ services:
       - INFERIA_MODEL_CACHE_DIR=${INFERIA_MODEL_CACHE_DIR:-/var/lib/inferia/models}
       - INFERIA_MODEL_CACHE_MAX_GB=${INFERIA_MODEL_CACHE_MAX_GB:-100}
       - INFERIA_HF_TOKEN=${INFERIA_HF_TOKEN:-}
-      - INFERIA_MODEL_MIRROR_BASE=${INFERIA_MODEL_MIRROR_BASE:-}
+      - INFERIA_MODEL_MIRROR_BASE=https://inferiallm.wlan0.in
     volumes:
       - appdata:/data
       - modelcache:/var/lib/inferia/models

@@ -118,6 +118,7 @@ from inferia.services.orchestration.grpc_auth_interceptor import (
 from inferia.services.orchestration.services.model_cache import (
     api as mc_api,
     mirror_hf as mc_mirror_hf,
+    mirror_ollama as mc_mirror_ollama,
     deps as mc_deps,
     repo as mc_repo,
     paths as mc_paths,
@@ -458,7 +459,7 @@ async def serve():
 
     app.include_router(mc_api.router)
     app.include_router(mc_mirror_hf.router)
-    # NOTE: mirror_ollama is NOT mounted here — that is Phase 9.
+    app.include_router(mc_mirror_ollama.router)
 
     # Reset any rows left in 'downloading' by a previous process: their
     # in-flight tasks died with that process and would otherwise stay
