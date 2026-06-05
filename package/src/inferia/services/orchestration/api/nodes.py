@@ -477,11 +477,21 @@ async def get_provisioning(
     # Phases summary via the legacy node_provisioning_events log. Repo
     # may be None for nodes that predate the event log entirely
     # (worker / nosana / akash), in which case the phases list is empty.
+    # Scope the phase summary to THIS node — a pool accumulates many nodes and a
+    # pool-wide DISTINCT ON (phase) mixes their events (e.g. a prior node's
+    # bootstrapping/failed showing on a fresh node before it has provisioned).
+    try:
+        _summary_node_uuid: uuid.UUID | None = uuid.UUID(str(node_id))
+    except (ValueError, TypeError):
+        _summary_node_uuid = None
+
     phases: list[ProvisioningPhase] = []
     if _deps.node_events_repo is not None and pool_id and hasattr(
         _deps.node_events_repo, "summarize_phases",
     ):
-        summary = await _deps.node_events_repo.summarize_phases(pool_id=pool_id)
+        summary = await _deps.node_events_repo.summarize_phases(
+            pool_id=pool_id, node_id=_summary_node_uuid,
+        )
         phases = [ProvisioningPhase(
             phase=p["phase"], status=p["status"],
             started_at=p["started_at"].isoformat() if p["started_at"] else None,
@@ -498,7 +508,9 @@ async def get_provisioning(
     elif _deps.node_events_repo is not None and pool_id and hasattr(
         _deps.node_events_repo, "current_phase",
     ):
-        current_phase = await _deps.node_events_repo.current_phase(pool_id=pool_id)
+        current_phase = await _deps.node_events_repo.current_phase(
+            pool_id=pool_id, node_id=_summary_node_uuid,
+        )
         node_state = row.get("state")
         terminal = current_phase is None or node_state in ("ready", "terminated")
     else:

@@ -45,11 +45,18 @@ class FakeConn:
             ][:limit]
         # summarize_phases: SELECT DISTINCT ON (phase) ...
         if "DISTINCT ON" in query:
-            (pool_id,) = args
+            # Node-scoped query binds (pool_id, node_id); pool-wide binds (pool_id,).
+            node_id = None
+            if len(args) == 2:
+                pool_id, node_id = args
+            else:
+                (pool_id,) = args
             latest = {}
             firsts = {}
             for r in self.events:
                 if r["pool_id"] != pool_id:
+                    continue
+                if node_id is not None and r["node_id"] != node_id:
                     continue
                 if r["status"] == "log":
                     continue
@@ -154,6 +161,41 @@ async def test_summarize_phases_ignores_log_events(repo):
 async def test_summarize_phases_unknown_pool_returns_empty(repo):
     out = await repo.summarize_phases(pool_id=uuid4())
     assert out == []
+
+
+@pytest.mark.asyncio
+async def test_summarize_phases_scoped_to_node_excludes_other_nodes(repo):
+    """A pool with two nodes: node A failed bootstrapping, node B is still in
+    preflight. Scoping by node_id must NOT leak A's bootstrapping/failed into
+    B's timeline (the 'Bootstrap setup failed before it provisioned' bug)."""
+    pool = uuid4()
+    node_a = uuid4()
+    node_b = uuid4()
+    # Node A: a completed-but-FAILED prior attempt.
+    await repo.append_event(pool_id=pool, node_id=node_a, phase="preflight", status="succeeded")
+    await repo.append_event(pool_id=pool, node_id=node_a, phase="bootstrapping", status="failed")
+    # Node B: a fresh attempt, only preflight running so far.
+    await repo.append_event(pool_id=pool, node_id=node_b, phase="preflight", status="running")
+
+    b_summary = await repo.summarize_phases(pool_id=pool, node_id=node_b)
+    b_phases = {r["phase"]: r["status"] for r in b_summary}
+    assert b_phases == {"preflight": "running"}, "node B must not show node A's phases"
+    assert "bootstrapping" not in b_phases
+
+    a_summary = await repo.summarize_phases(pool_id=pool, node_id=node_a)
+    a_phases = {r["phase"]: r["status"] for r in a_summary}
+    assert a_phases["bootstrapping"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_current_phase_scoped_to_node(repo):
+    pool = uuid4()
+    node_a = uuid4()
+    node_b = uuid4()
+    await repo.append_event(pool_id=pool, node_id=node_a, phase="bootstrapping", status="running")
+    await repo.append_event(pool_id=pool, node_id=node_b, phase="preflight", status="running")
+    assert await repo.current_phase(pool_id=pool, node_id=node_b) == "preflight"
+    assert await repo.current_phase(pool_id=pool, node_id=node_a) == "bootstrapping"
 
 
 @pytest.mark.asyncio

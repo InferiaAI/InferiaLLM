@@ -66,13 +66,47 @@ class NodeProvisioningRepo:
         )
         return [dict(r) for r in rows]
 
-    async def summarize_phases(self, *, pool_id: UUID) -> Sequence[dict]:
+    async def summarize_phases(
+        self, *, pool_id: UUID, node_id: Optional[UUID] = None,
+    ) -> Sequence[dict]:
         """Latest non-log row per phase, with started_at = first row time.
+
+        When ``node_id`` is given the summary is scoped to that ONE node — this
+        is REQUIRED for the per-node provisioning view. A pool holds many nodes
+        over its lifetime; ``DISTINCT ON (phase)`` across the whole pool mixes
+        their events, so a prior node's ``bootstrapping/failed`` (or any stale
+        phase row) leaks into a fresh node's timeline — the dashboard then shows
+        "Bootstrap setup failed" before the new node has even provisioned, until
+        that node emits its own higher-id row. Always pass node_id for a single
+        node's view; omit it only for a genuinely pool-wide rollup.
 
         Returned shape per phase:
             {phase, status, started_at, ended_at, last_message}
         ended_at is set only when status in ('succeeded','failed').
         """
+        if node_id is not None:
+            rows = await self.db.fetch(
+                """
+                SELECT DISTINCT ON (phase)
+                    phase,
+                    status,
+                    message AS last_message,
+                    CASE WHEN status IN ('succeeded', 'failed') THEN created_at
+                         ELSE NULL
+                    END AS ended_at,
+                    (SELECT MIN(created_at)
+                       FROM node_provisioning_events e2
+                      WHERE e2.pool_id = $1 AND e2.node_id = $2
+                            AND e2.phase = e1.phase
+                    ) AS started_at
+                FROM node_provisioning_events e1
+                WHERE pool_id = $1 AND node_id = $2 AND status <> 'log'
+                ORDER BY phase, id DESC
+                """,
+                pool_id, node_id,
+            )
+            return [dict(r) for r in rows]
+
         rows = await self.db.fetch(
             """
             SELECT DISTINCT ON (phase)
@@ -94,8 +128,10 @@ class NodeProvisioningRepo:
         )
         return [dict(r) for r in rows]
 
-    async def current_phase(self, *, pool_id: UUID) -> Optional[str]:
-        summary = await self.summarize_phases(pool_id=pool_id)
+    async def current_phase(
+        self, *, pool_id: UUID, node_id: Optional[UUID] = None,
+    ) -> Optional[str]:
+        summary = await self.summarize_phases(pool_id=pool_id, node_id=node_id)
         for r in summary:
             if r["status"] == "running":
                 return r["phase"]
