@@ -34,6 +34,10 @@ from inferia.services.orchestration.repositories.model_deployment_repo import (
 from inferia.services.orchestration.services.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
+from inferia.services.orchestration.services.model_deployment.mirror_decision import (
+    resolve_and_apply_mirror,
+)
+from inferia.services.orchestration.services.model_cache import deps as _mc_deps
 
 logger = logging.getLogger(__name__)
 
@@ -85,32 +89,6 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         "port": 0,
         "env": {},
     }
-
-    # Inject CP mirror coordinates so the worker fetches weights from the
-    # local model cache instead of the upstream registry.
-    # Guarded by model_mirror_base — empty string = no-op (upstream default).
-    try:
-        from inferia.services.orchestration.config import settings as _orch_settings
-        _base = getattr(_orch_settings, "model_mirror_base", "") or ""
-    except Exception:
-        _base = ""
-
-    if _base:
-        if recipe in ("vllm", "tei", "infinity"):
-            # Redirect HF hub requests to the CP mirror's /hf pull-through.
-            spec["env"]["HF_ENDPOINT"] = _base.rstrip("/") + "/hf"
-        elif recipe == "ollama":
-            # CP Ollama registry mirror ref — verified by Phase 0 spike;
-            # behind model_mirror_base config.
-            _host = _base.split("://", 1)[-1].rstrip("/")
-            # Strip any scheme from the artifact_uri to get bare name:tag
-            _raw = str(artifact_uri).split("://", 1)[-1]
-            if "/" in _raw:
-                # namespace/name:tag — keep the namespace
-                spec["model"]["artifact_uri"] = f"{_host}/{_raw}"
-            else:
-                # bare name:tag (e.g. gemma3:4b) — prefix library/
-                spec["model"]["artifact_uri"] = f"{_host}/library/{_raw}"
 
     return spec
 
@@ -181,6 +159,16 @@ class DeploymentLinker:
             gpu_required = int(deploy.get("gpu_per_replica") or 1)
             try:
                 spec = _spec_from_pending(deploy, gpu_required)
+                try:
+                    from inferia.services.orchestration.config import settings as _s
+                    _mirror_base = getattr(_s, "model_mirror_base", "") or ""
+                except Exception:
+                    _mirror_base = ""
+                await resolve_and_apply_mirror(
+                    spec, recipe=spec["recipe"],
+                    artifact_uri=spec["model"]["artifact_uri"],
+                    mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
+                )
                 result = await self._controller.load_model(
                     node_id=str(node_id), spec=spec,
                 )

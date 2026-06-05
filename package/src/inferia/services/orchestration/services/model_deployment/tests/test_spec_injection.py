@@ -1,111 +1,86 @@
-"""Unit tests for _spec_from_pending mirror-injection logic (Phase 8).
-
-Verifies that:
-  - vllm + model_mirror_base set  → spec["env"]["HF_ENDPOINT"] points at the
-    CP mirror's /hf pull-through endpoint.
-  - ollama + model_mirror_base set → spec["model"]["artifact_uri"] is rewritten
-    to the CP Ollama registry host.
-  - model_mirror_base EMPTY         → no injection (upstream default unchanged).
-
-No DB, no gRPC; the function is pure (settings monkeypatched).
-"""
-from __future__ import annotations
-
-import json
-from uuid import uuid4
-
 import pytest
-
-from inferia.services.orchestration.services.model_deployment.deployment_linker import (
-    _spec_from_pending,
-)
+from inferia.services.orchestration.services.model_deployment.deployment_linker import _spec_from_pending
+from inferia.services.orchestration.services.model_deployment.mirror_decision import resolve_and_apply_mirror
 
 
-def _vllm_deploy(**over) -> dict:
-    base = {
-        "id": uuid4(),
-        "engine": "vllm",
-        "model_name": "my-llm",
-        "inference_model": "hf://Qwen/Qwen3-0.6B",
-        "configuration": json.dumps({
-            "engine": "vllm",
-            "artifact_uri": "hf://Qwen/Qwen3-0.6B",
-        }),
-        "gpu_per_replica": 1,
-    }
-    base.update(over)
-    return base
+def _vllm_deploy():
+    return {"id": "d1", "engine": "vllm", "inference_model": "Qwen/Qwen3-0.6B",
+            "model_name": "Qwen/Qwen3-0.6B", "gpu_per_replica": 1, "configuration": {}}
 
 
-def _ollama_deploy(**over) -> dict:
-    base = {
-        "id": uuid4(),
-        "engine": "ollama",
-        "model_name": "my-chatbot",
-        "inference_model": "hf://gemma3:4b",
-        "configuration": json.dumps({
-            "engine": "ollama",
-            "model_id": "gemma3:4b",
-        }),
-        "gpu_per_replica": 1,
-    }
-    base.update(over)
-    return base
+def _ollama_deploy():
+    return {"id": "d2", "engine": "ollama", "inference_model": "gemma3:4b",
+            "model_name": "gemma3:4b", "gpu_per_replica": 1,
+            "configuration": {"model_id": "gemma3:4b"}}
 
 
-# ---------------------------------------------------------------------------
-# Test 1: vllm + base set → HF_ENDPOINT injected
-# ---------------------------------------------------------------------------
+class _FakeRepo:
+    def __init__(self, row): self._row = row
+    async def get_by_key(self, *, source, model_id, revision): return self._row
 
-def test_vllm_hf_endpoint_injected(monkeypatch):
-    monkeypatch.setattr(
-        "inferia.services.orchestration.config.settings.model_mirror_base",
-        "https://cp.example.com",
-    )
+
+def test_spec_from_pending_has_no_inline_injection():
+    """_spec_from_pending now builds a plain spec; mirror injection is applied
+    separately by resolve_and_apply_mirror in on_worker_ready."""
     spec = _spec_from_pending(_vllm_deploy(), 1)
-    assert spec["env"]["HF_ENDPOINT"] == "https://cp.example.com/hf"
-    # recipe and model uri should be unchanged
-    assert spec["recipe"] == "vllm"
+    assert "HF_ENDPOINT" not in spec.get("env", {})
+    assert spec["env"] == {}
     assert spec["model"]["artifact_uri"] == "hf://Qwen/Qwen3-0.6B"
 
 
-# ---------------------------------------------------------------------------
-# Test 2: ollama + base set → artifact_uri rewritten to CP registry
-# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_injection_applied_when_cached():
+    spec = _spec_from_pending(_vllm_deploy(), 1)
+    await resolve_and_apply_mirror(spec, recipe=spec["recipe"],
+        artifact_uri=spec["model"]["artifact_uri"], mirror_base="https://cp",
+        cache_repo=_FakeRepo({"status": "cached"}))
+    assert spec["env"]["HF_ENDPOINT"] == "https://cp/hf"
 
-def test_ollama_artifact_uri_rewritten(monkeypatch):
-    monkeypatch.setattr(
-        "inferia.services.orchestration.config.settings.model_mirror_base",
-        "https://cp.example.com",
-    )
-    spec = _spec_from_pending(_ollama_deploy(), 1)
-    uri = spec["model"]["artifact_uri"]
-    # Must route through the CP registry host
-    assert "cp.example.com" in uri
-    # bare name (no namespace) must get library/ prefix
-    assert uri.endswith("cp.example.com/library/gemma3:4b"), (
-        f"unexpected uri: {uri!r}"
-    )
-    # No HF_ENDPOINT for ollama
+
+@pytest.mark.asyncio
+async def test_injection_skipped_when_error():
+    spec = _spec_from_pending(_vllm_deploy(), 1)
+    await resolve_and_apply_mirror(spec, recipe=spec["recipe"],
+        artifact_uri=spec["model"]["artifact_uri"], mirror_base="https://cp",
+        cache_repo=_FakeRepo({"status": "error"}))
     assert "HF_ENDPOINT" not in spec.get("env", {})
 
 
-# ---------------------------------------------------------------------------
-# Test 3: base EMPTY → no injection (no-op)
-# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mirror_status", ["downloading", "pending"])
+async def test_injection_applied_when_in_progress(mirror_status):
+    """Mirror injection fires for 'downloading' and 'pending' states, not just
+    'cached': the worker should pull through the CP mirror while it pre-warms."""
+    spec = _spec_from_pending(_vllm_deploy(), 1)
+    await resolve_and_apply_mirror(spec, recipe=spec["recipe"],
+        artifact_uri=spec["model"]["artifact_uri"], mirror_base="https://cp",
+        cache_repo=_FakeRepo({"status": mirror_status}))
+    assert spec["env"]["HF_ENDPOINT"] == "https://cp/hf"
 
-def test_no_injection_when_base_empty(monkeypatch):
-    monkeypatch.setattr(
-        "inferia.services.orchestration.config.settings.model_mirror_base",
-        "",
+
+@pytest.mark.asyncio
+async def test_ollama_mirror_rewrites_artifact_uri():
+    """For ollama deploys the mirror rewrite changes artifact_uri (not env).
+
+    _spec_from_pending with configuration={'model_id': 'gemma3:4b'} produces
+    artifact_uri='hf://gemma3:4b' (bare ref, no slash after scheme-strip).
+    apply_mirror_to_spec prepends '<host>/library/' for bare (non-namespaced)
+    refs, yielding 'cp/library/gemma3:4b'. HF_ENDPOINT must NOT be set because
+    ollama uses a registry pull, not huggingface_hub.
+    """
+    spec = _spec_from_pending(_ollama_deploy(), 1)
+    # Confirm pre-rewrite value (bare ref with hf:// scheme).
+    assert spec["model"]["artifact_uri"] == "hf://gemma3:4b"
+    assert spec["recipe"] == "ollama"
+
+    await resolve_and_apply_mirror(
+        spec, recipe=spec["recipe"],
+        artifact_uri=spec["model"]["artifact_uri"],
+        mirror_base="https://cp",
+        cache_repo=_FakeRepo({"status": "cached"}),
     )
-    # vllm deploy
-    vllm_spec = _spec_from_pending(_vllm_deploy(), 1)
-    assert "HF_ENDPOINT" not in vllm_spec.get("env", {})
-    assert vllm_spec["model"]["artifact_uri"] == "hf://Qwen/Qwen3-0.6B"
 
-    # ollama deploy
-    ollama_spec = _spec_from_pending(_ollama_deploy(), 1)
-    assert "HF_ENDPOINT" not in ollama_spec.get("env", {})
-    # artifact_uri should remain scheme-prefixed original (hf://gemma3:4b)
-    assert "cp.example.com" not in ollama_spec["model"]["artifact_uri"]
+    # After rewrite: scheme stripped, library/ prefix added for bare ref.
+    assert spec["model"]["artifact_uri"] == "cp/library/gemma3:4b"
+    # Ollama uses registry pull; HF_ENDPOINT must not be injected.
+    assert "HF_ENDPOINT" not in spec.get("env", {})
