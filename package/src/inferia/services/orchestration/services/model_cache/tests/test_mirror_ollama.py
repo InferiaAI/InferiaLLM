@@ -125,10 +125,12 @@ async def test_blob_origin_fallback_streams_and_caches(tmp_path):
     assert r.status_code == 200 and r.content == b"BLOBDATA"
 
 
-async def test_blob_rejects_path_traversal():
-    from inferia.services.orchestration.services.model_cache import mirror_ollama
-    from fastapi import HTTPException
-    deps._reset(); deps.configure(paths=CachePaths("/tmp/ollamatest"))
-    with pytest.raises(HTTPException) as ei:
-        await mirror_ollama.get_blob(name="library/../../../../etc", digest="sha256:m")
-    assert ei.value.status_code == 400
+async def test_blob_path_traversal_is_contained(tmp_path):
+    """A traversal-y registry name cannot escape the ollama cache root: the
+    model_id is sanitised into a single safe segment (matching the downloader's
+    write path), so the resolved model dir stays under ollama_root."""
+    paths = CachePaths(str(tmp_path))
+    root = paths.ollama_model_dir("../../../../etc")  # what get_blob computes
+    oroot = paths.ollama_root().resolve()
+    assert root.resolve().is_relative_to(oroot)
+    assert not (root / "sha256_m").exists()

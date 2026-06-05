@@ -73,7 +73,7 @@ async def get_blob(name: str, digest: str) -> Response:
     paths = deps.get("paths")
     model_id = _model_id(name)
     fname = digest.replace(":", "_")
-    root = paths.ollama_root() / model_id  # {root}/ollama/{model_id}
+    root = paths.ollama_model_dir(model_id)  # {root}/ollama/_sanitize(model_id)
     # Containment guard: model_id comes from the URL — reject any value that
     # escapes the ollama cache root (e.g. name='library/../../etc').
     _oroot = paths.ollama_root().resolve()
@@ -104,7 +104,7 @@ async def get_blob(name: str, digest: str) -> Response:
 
     target_dir = next(iter(root.iterdir()), None) if root.is_dir() else None
     if target_dir is None:
-        target_dir = paths.ollama_root() / model_id / "_blobs"
+        target_dir = root / "_blobs"
     target = target_dir / fname
     if not target.resolve().is_relative_to(_oroot):
         raise HTTPException(400, "bad path")

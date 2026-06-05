@@ -80,7 +80,8 @@ async def test_ollama_mirror_rewrites_artifact_uri():
         cache_repo=_FakeRepo({"status": "cached"}),
     )
 
-    # After rewrite: scheme stripped, library/ prefix added for bare ref.
-    assert spec["model"]["artifact_uri"] == "cp/library/gemma3:4b"
+    # After rewrite: http:// scheme (worker validateArtifactURI), library/
+    # prefix for the bare ref.
+    assert spec["model"]["artifact_uri"] == "http://cp/library/gemma3:4b"
     # Ollama uses registry pull; HF_ENDPOINT must not be injected.
     assert "HF_ENDPOINT" not in spec.get("env", {})

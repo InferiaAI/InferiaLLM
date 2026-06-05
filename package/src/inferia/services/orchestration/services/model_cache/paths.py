@@ -52,13 +52,20 @@ class CachePaths:
         """Return the root directory for Ollama blobs/manifests."""
         return self.root / "ollama"
 
+    def ollama_model_dir(self, model_id: str) -> Path:
+        """Return the per-model root (all revisions) for an Ollama model,
+        sanitised identically to ``ollama_dir``. The /v2 blob mirror uses this
+        so its blob lookups land on the SAME path the downloader wrote to
+        (a raw ``ollama_root()/model_id`` join misses sanitised/namespaced ids)."""
+        return self.ollama_root() / _sanitize(model_id)
+
     def ollama_dir(self, model_id: str, revision: str) -> Path:
         """Return the per-model directory for Ollama blobs.
 
         Using a per-model dir means eviction/delete removes only this model's
         blobs rather than wiping the entire ollama cache.
         """
-        return self.ollama_root() / _sanitize(model_id) / _sanitize(revision)
+        return self.ollama_model_dir(model_id) / _sanitize(revision)
 
     def dir_size_bytes(self, d: Path) -> int:
         """Return the total size in bytes of all files under *d*."""

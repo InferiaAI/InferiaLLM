@@ -41,9 +41,12 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
     elif recipe == "ollama":
         host = base.split("://", 1)[-1].rstrip("/")
         raw = str(spec["model"]["artifact_uri"]).split("://", 1)[-1]
-        spec["model"]["artifact_uri"] = (
-            f"{host}/{raw}" if "/" in raw else f"{host}/library/{raw}"
-        )
+        ref = f"{host}/{raw}" if "/" in raw else f"{host}/library/{raw}"
+        # Keep an http:// scheme: the worker's validateArtifactURI only accepts
+        # known schemes (s3/gs/hf/http/https/oci) and rejects a bare ref;
+        # stripScheme() removes it again before `ollama pull`, leaving the bare
+        # host/name:tag ollama needs (it derives the registry from the host).
+        spec["model"]["artifact_uri"] = f"http://{ref}"
 
 
 async def resolve_and_apply_mirror(

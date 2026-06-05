@@ -180,3 +180,38 @@ async def test_resolve_awaits_inflight_then_serves_from_disk(tmp_path):
         r = await c.get("/hf/org/m/resolve/main/w.bin")
     assert r.status_code == 200
     assert r.content == b"WEIGHTS"
+
+
+async def test_head_resolve_returns_200_with_metadata_headers(monkeypatch):
+    """huggingface_hub HEADs the resolve URL for metadata before download.
+    The mirror must answer 200 (not 405) with etag/x-repo-commit/content-length."""
+    from inferia.services.orchestration.services.model_cache import deps, mirror_hf
+    from fastapi import FastAPI
+    from httpx import AsyncClient, ASGITransport
+
+    class _HeadHTTP:
+        def stream(self, method, url, headers=None, follow_redirects=False):
+            assert method == "HEAD"
+            class _Ctx:
+                async def __aenter__(self_):
+                    self_.status_code = 200
+                    self_.headers = {
+                        "x-repo-commit": "abc123",
+                        "etag": '"deadbeef"',
+                        "content-length": "726",
+                    }
+                    return self_
+                async def __aexit__(self_, *a):
+                    return False
+            return _Ctx()
+
+    deps._reset()
+    deps.configure(http_client=_HeadHTTP(), settings=None, paths=None, repo=None)
+    app = FastAPI(); app.include_router(mirror_hf.router)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.head("/hf/org/m/resolve/main/model.safetensors")
+    assert r.status_code == 200
+    assert r.headers.get("x-repo-commit") == "abc123"
+    assert r.headers.get("etag") == '"deadbeef"'
+    assert r.headers.get("content-length") == "726"
+    assert r.headers.get("accept-ranges") == "bytes"

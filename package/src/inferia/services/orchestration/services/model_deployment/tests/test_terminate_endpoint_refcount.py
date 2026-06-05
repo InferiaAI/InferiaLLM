@@ -256,7 +256,10 @@ async def test_terminate_running_calls_unload_and_releases(app_and_pool):
 
 
 async def test_terminate_last_deploy_triggers_destroy(app_and_pool):
-    """Last reference released => metadata.terminating='true' + CancelJob enqueued."""
+    """Last reference released => metadata.terminating='true' + the EXISTING
+    provisioning job is force_cancelled (so the reconciler's CancelHandler runs
+    pulumi destroy). NOT a new enqueue — that inserted a preflight job which the
+    reconciler tried to PROVISION, leaking the EC2."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool, provider="aws")
     node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=1)
@@ -268,6 +271,10 @@ async def test_terminate_last_deploy_triggers_destroy(app_and_pool):
     )
 
     with patch(
+        "inferia.services.orchestration.services.provisioning.jobs.repository."
+        "ProvisioningJobRepository.force_cancel",
+        new_callable=AsyncMock, return_value=True,
+    ) as mock_force_cancel, patch(
         "inferia.services.orchestration.services.provisioning.jobs.repository."
         "ProvisioningJobRepository.enqueue",
         new_callable=AsyncMock,
@@ -283,19 +290,10 @@ async def test_terminate_last_deploy_triggers_destroy(app_and_pool):
     body = resp.json()
     assert body["status"] == "TERMINATED"
 
-    # The enqueue must have been called with spec containing "cancel": True
-    mock_enqueue.assert_awaited_once()
-    call_kwargs = mock_enqueue.await_args.kwargs
-    assert call_kwargs["spec"].get("cancel") is True
-
-    # Verify the call shape matches ProvisioningJobRepository.enqueue's
-    # real signature — guards against regressions where the kwargs drift
-    # (per memory feedback_asyncmock_signature_blindness).
-    assert call_kwargs["spec"]["cancel"] is True
-    assert call_kwargs["spec"]["node_id"] == str(node_id)
-    assert call_kwargs["provider"] == "aws"
-    assert call_kwargs["node_id"] == node_id   # UUID, not str
-    assert call_kwargs["pool_id"] == pool_id   # UUID, not str
+    # The destroy flips the EXISTING job via force_cancel(node_id=...), NOT enqueue.
+    mock_force_cancel.assert_awaited_once()
+    assert mock_force_cancel.await_args.kwargs["node_id"] == node_id   # UUID
+    mock_enqueue.assert_not_awaited()
 
     # Node metadata must have terminating=true
     async with pool.acquire() as c:
@@ -489,9 +487,9 @@ async def test_terminate_destroys_node_even_when_pool_soft_deleted(app_and_pool)
 
     with patch(
         "inferia.services.orchestration.services.provisioning.jobs.repository."
-        "ProvisioningJobRepository.enqueue",
-        new_callable=AsyncMock,
-    ) as mock_enqueue:
+        "ProvisioningJobRepository.force_cancel",
+        new_callable=AsyncMock, return_value=True,
+    ) as mock_force_cancel:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -499,5 +497,58 @@ async def test_terminate_destroys_node_even_when_pool_soft_deleted(app_and_pool)
                 json={"deployment_id": str(deploy_id)},
             )
     assert resp.status_code == 200
-    mock_enqueue.assert_awaited_once()
-    assert mock_enqueue.await_args.kwargs["provider"] == "aws"
+    mock_force_cancel.assert_awaited_once()
+    assert mock_force_cancel.await_args.kwargs["node_id"] == node_id
+
+
+async def test_terminate_failed_deploy_destroys_orphan_node(app_and_pool):
+    """C9: a FAILED deploy that still owns the last reference to a live node
+    must force_cancel that node so its EC2 doesn't leak (e.g. FAILED after a
+    successful pulumi up / bootstrap timeout)."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool, provider="aws")
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=0)
+    deploy_id = await _seed_deploy(
+        pool, pool_id, state="FAILED", gpu_per_replica=1, target_node_id=node_id,
+    )
+    with patch(
+        "inferia.services.orchestration.services.provisioning.jobs.repository."
+        "ProvisioningJobRepository.force_cancel",
+        new_callable=AsyncMock, return_value=True,
+    ) as mock_force_cancel:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+            )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "FAILED"
+    mock_force_cancel.assert_awaited_once()
+    assert mock_force_cancel.await_args.kwargs["node_id"] == node_id
+
+
+async def test_terminate_failed_deploy_keeps_node_with_other_live_deploy(app_and_pool):
+    """C9 guard: a FAILED deploy must NOT destroy the node if another live
+    deploy still targets it."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool, provider="aws")
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=1)
+    org = str(__import__("uuid").uuid4())
+    failed = await _seed_deploy(pool, pool_id, state="FAILED", gpu_per_replica=1,
+                                target_node_id=node_id, org_id=org)
+    await _seed_deploy(pool, pool_id, state="RUNNING", gpu_per_replica=1,
+                       target_node_id=node_id, org_id=org)
+    with patch(
+        "inferia.services.orchestration.services.provisioning.jobs.repository."
+        "ProvisioningJobRepository.force_cancel",
+        new_callable=AsyncMock, return_value=True,
+    ) as mock_force_cancel:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/deployment/terminate", json={"deployment_id": str(failed)}
+            )
+    assert resp.status_code == 200
+    mock_force_cancel.assert_not_awaited()

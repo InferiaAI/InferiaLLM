@@ -41,3 +41,12 @@ def test_traversal_attempt_stays_under_root(tmp_path):
     assert str(d3).startswith(str(tmp_path)), (
         f"Path {d3!r} escaped cache root {tmp_path!r}"
     )
+
+
+def test_ollama_model_dir_matches_ollama_dir_parent(tmp_path):
+    from inferia.services.orchestration.services.model_cache.paths import CachePaths
+    p = CachePaths(str(tmp_path))
+    # The blob mirror's model root must equal the parent of any revision dir.
+    assert p.ollama_dir("ns/gemma3", "4b").parent == p.ollama_model_dir("ns/gemma3")
+    # And it stays under the ollama root (sanitised).
+    assert p.ollama_model_dir("../../etc").resolve().is_relative_to(p.ollama_root().resolve())

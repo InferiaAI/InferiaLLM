@@ -401,12 +401,18 @@ async def _initiate_node_destroy(
     org_id,
     provider: str,
 ) -> bool:
-    """Mark the node terminating and enqueue a CancelJob.
+    """Mark the node terminating and flip its provisioning job to 'cancelling'
+    so the reconciler's CancelHandler runs `pulumi destroy` on the real stack
+    ``inferia-<node_id>``.
 
-    Returns True on success, False if the enqueue failed (in which case
-    the metadata.terminating flag is still set so the dashboard can
-    render the spinner — but the caller should signal the failure so
-    the operator can retry).
+    Uses ``force_cancel`` (the same mechanism as DELETE /nodes/{id}) — NOT
+    ``enqueue``. Enqueue inserts a NEW job at phase='preflight', which the
+    reconciler routes to PreflightHandler (it tries to PROVISION, never
+    destroys) -> the EC2 leaked on every refcount=0 terminate. force_cancel
+    flips the EXISTING job (from any phase incl. READY/FAILED) to 'cancelling'.
+
+    Returns True on success (job flipped, or already cancelling/terminated =
+    destroy already in flight); False only if force_cancel raised.
     """
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -416,17 +422,19 @@ async def _initiate_node_destroy(
             node_id,
         )
     try:
-        await jobs_repo.enqueue(
-            node_id=node_id,
-            pool_id=pool_id,
-            org_id=str(org_id) if org_id else "",
-            provider=provider,
-            spec={"cancel": True, "node_id": str(node_id)},
-        )
+        flipped = await jobs_repo.force_cancel(node_id=node_id)
+        if not flipped:
+            # No non-terminal job to flip: the node's job is already
+            # cancelling/terminated (destroy in progress/done) or there is no
+            # reconciler job for it. Idempotent — nothing more to do.
+            logger.info(
+                "_initiate_node_destroy: no live job to cancel for node=%s "
+                "(already terminating, or no reconciler job)", node_id,
+            )
         return True
     except Exception as e:
         logger.exception(
-            "_initiate_node_destroy: enqueue failed for node=%s: %s",
+            "_initiate_node_destroy: force_cancel failed for node=%s: %s",
             node_id, e,
         )
         return False
@@ -1043,25 +1051,24 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     # connects.  Best-effort: never block the deploy on cache failures.
     try:
         from inferia.services.orchestration.services.model_cache import deps as _mc_deps
+        from inferia.services.orchestration.services.model_deployment.mirror_decision import (
+            derive_cache_key,
+        )
         _dl = _mc_deps.get("downloader")
-        if _dl and req.inference_model:
-            if req.engine in ("vllm", "tei", "infinity"):
-                _dl.start(
-                    source="hf",
-                    model_id=req.inference_model,
-                    revision="main",
-                    engine_hint=req.engine,
-                )
-            elif req.engine == "ollama":
-                # split name:tag from the resolved ollama id
-                _bare = req.inference_model.split("://", 1)[-1]
-                _name, _, _tag = _bare.partition(":")
-                _dl.start(
-                    source="ollama",
-                    model_id=_name,
-                    revision=(_tag or "latest"),
-                    engine_hint="ollama",
-                )
+        # Key the pre-warm off the SAME (resolve_artifact_uri -> derive_cache_key)
+        # chain the mirror decision uses (resolve_and_apply_mirror), so the row
+        # the pre-warm writes is found by the mirror lookup. Keying off
+        # req.inference_model directly diverged (scheme prefix on HF, or a
+        # display name vs configuration.model_id on ollama) -> get_by_key miss
+        # -> worker re-downloaded from origin instead of the CP mirror.
+        _uri = resolve_artifact_uri(
+            configuration=req.configuration,
+            inference_model=req.inference_model,
+            model_name=req.model_name,
+        )
+        if _dl and _uri and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
+            _src, _mid, _rev = derive_cache_key(req.engine or "vllm", str(_uri))
+            _dl.start(source=_src, model_id=_mid, revision=_rev, engine_hint=req.engine)
     except Exception:
         pass  # pre-warm is best-effort; never block a deploy
 
@@ -1444,6 +1451,32 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
     org_id = row.get("org_id")
 
     if state in ("STOPPED", "TERMINATED", "FAILED"):
+        # C9: a terminal deploy may still own a LIVE EC2 — e.g. it reached
+        # FAILED after a successful pulumi up (bootstrap timeout). If no OTHER
+        # live deploy targets its node, destroy the node so the instance does
+        # not leak. Best-effort: never fail the (idempotent) terminate on it.
+        if target_node_id is not None:
+            try:
+                async with db_pool.acquire() as _c:
+                    _others = await _c.fetchval(
+                        "SELECT count(*) FROM model_deployments "
+                        "WHERE target_node_id=$1 AND deployment_id<>$2 "
+                        "AND state IN ('PENDING_NODE','DEPLOYING','RUNNING','CREATED','PENDING')",
+                        target_node_id, deploy_uuid,
+                    )
+                    _node_provider = await _c.fetchval(
+                        "SELECT provider::text FROM compute_inventory WHERE id=$1",
+                        target_node_id,
+                    )
+                if not _others and _node_provider:
+                    await _initiate_node_destroy(
+                        db_pool=db_pool, jobs_repo=jobs_repo,
+                        node_id=target_node_id, pool_id=pool_id,
+                        org_id=org_id, provider=_node_provider,
+                    )
+            except Exception:
+                logger.warning("terminal-deploy node cleanup failed for %s",
+                               target_node_id, exc_info=True)
         await log_audit_event(
             user_id=None,
             action="deployment.terminate",

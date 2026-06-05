@@ -35,10 +35,12 @@ def test_apply_mirror_hf_sets_endpoint():
 def test_apply_mirror_ollama_rewrites_ref():
     spec = {"recipe": "ollama", "model": {"artifact_uri": "hf://gemma3:4b"}, "env": {}}
     apply_mirror_to_spec(spec, recipe="ollama", mirror_base="https://cp.example")
-    assert spec["model"]["artifact_uri"] == "cp.example/library/gemma3:4b"
+    # http:// scheme so the worker's validateArtifactURI accepts it; stripScheme
+    # drops it before `ollama pull`.
+    assert spec["model"]["artifact_uri"] == "http://cp.example/library/gemma3:4b"
     spec2 = {"recipe": "ollama", "model": {"artifact_uri": "ns/m:tag"}, "env": {}}
     apply_mirror_to_spec(spec2, recipe="ollama", mirror_base="https://cp.example")
-    assert spec2["model"]["artifact_uri"] == "cp.example/ns/m:tag"
+    assert spec2["model"]["artifact_uri"] == "http://cp.example/ns/m:tag"
 
 
 def test_apply_mirror_infinity_recipe():
