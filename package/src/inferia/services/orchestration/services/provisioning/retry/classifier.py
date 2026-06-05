@@ -119,12 +119,45 @@ def classify_error(exc: BaseException) -> ClassifiedError:
                         TimeoutError, asyncio.TimeoutError)):
         return _build("NETWORK_ERROR", ErrorClass.TRANSIENT, _safe_str(exc) or repr(exc))
 
+    # 3b. AWS error surfaced as a STRING, not a botocore ClientError.
+    #     The EC2-launch path runs `pulumi up`, whose automation API raises a
+    #     CommandError whose str() embeds the RunInstances error
+    #     (e.g. "api error VcpuLimitExceeded: ..."). Branch 2 never matches it,
+    #     so without this scan every Pulumi-surfaced AWS error became
+    #     UNCLASSIFIED PERMANENT — no clear message, and capacity errors (which
+    #     SHOULD auto-retry) never did. Scan the message for a known AWS code.
+    aws_from_str = _classify_aws_error_string(_safe_str(exc))
+    if aws_from_str is not None:
+        return aws_from_str
+
     # 4. Fall back: UNCLASSIFIED PERMANENT (fail loud, include type for triage).
     return _build(
         "UNCLASSIFIED",
         ErrorClass.PERMANENT,
         f"{type(exc).__name__}: {_safe_str(exc)}",
     )
+
+
+def _classify_aws_error_string(msg: str) -> "ClassifiedError | None":
+    """Map an AWS error code embedded in a free-form message to a ClassifiedError.
+
+    Used for AWS errors that arrive as a string rather than a botocore
+    ClientError — chiefly Pulumi automation ``CommandError``, which wraps the
+    ``RunInstances`` failure in its stdout. Returns None when no known AWS code
+    is present (so the caller falls through to UNCLASSIFIED). The codes are the
+    exact AWS error strings (e.g. ``VcpuLimitExceeded``) and appear verbatim in
+    the Pulumi output as ``api error <Code>:``.
+    """
+    if not msg:
+        return None
+    for code, cls in _AWS_CODE_MAP.items():
+        if code in msg:
+            # Trim to a readable head — the full Pulumi stdout is preserved on
+            # the job row's last_error_message separately.
+            head = msg.strip().splitlines()[0][:300] if msg.strip() else msg[:300]
+            return _build(cls.code, _class_to_error_class(cls),
+                          f"AWS {code}: {head}")
+    return None
 
 
 def _classify_aws_client_error(exc: Any) -> ClassifiedError:

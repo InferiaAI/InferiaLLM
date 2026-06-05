@@ -199,6 +199,54 @@ def test_botocore_unknown_code_with_4xx_status_is_unclassified():
     assert "SomeNewCode4xx" in ce.message
 
 
+# ---- Pulumi-wrapped AWS errors (string, not botocore ClientError) ----------
+#
+# The EC2-launch path runs `pulumi up`, whose automation API raises a
+# CommandError whose str() embeds the RunInstances error (e.g.
+# "api error VcpuLimitExceeded: ..."). It is NOT a botocore ClientError, so
+# without a string-scan fallback every such error became UNCLASSIFIED PERMANENT
+# — no clear message and no capacity auto-retry. These lock in the scan.
+
+
+def _pulumi_err(aws_code: str) -> Exception:
+    """Mimic a pulumi.automation CommandError: a plain exception whose message
+    embeds the AWS RunInstances error inside the Pulumi stdout."""
+    return Exception(
+        "CommandError: \n code: 1\n stdout: Updating (inferia-x):\n"
+        f"    error: creating EC2 Instance: operation error EC2: RunInstances, "
+        f"https response error StatusCode: 400, api error {aws_code}: "
+        "You have requested more vCPU capacity than your current vCPU limit of 8 "
+        "allows ...: provider=aws@6.83.4"
+    )
+
+
+@pytest.mark.parametrize("aws_code, expected_code, expected_class", [
+    ("VcpuLimitExceeded",                "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
+    ("InstanceLimitExceeded",            "QUOTA_EXCEEDED",        ErrorClass.INFRASTRUCTURE),
+    ("InsufficientInstanceCapacity",     "INSUFFICIENT_CAPACITY", ErrorClass.TRANSIENT),
+    ("InsufficientSpotInstanceCapacity", "INSUFFICIENT_CAPACITY", ErrorClass.TRANSIENT),
+    ("InvalidAMIID.NotFound",            "AMI_NOT_FOUND",         ErrorClass.PERMANENT),
+    ("AuthFailure",                      "INVALID_CREDENTIALS",   ErrorClass.PERMANENT),
+])
+def test_pulumi_wrapped_aws_error_is_classified(aws_code, expected_code, expected_class):
+    ce = classify_error(_pulumi_err(aws_code))
+    assert ce.code == expected_code, f"{aws_code} → {ce.code}"
+    assert ce.error_class == expected_class
+
+
+def test_pulumi_quota_error_carries_actionable_hint():
+    ce = classify_error(_pulumi_err("VcpuLimitExceeded"))
+    assert ce.hint is not None
+    assert "quota" in ce.hint.lower() or "limit" in ce.hint.lower()
+
+
+def test_pulumi_error_without_known_aws_code_is_unclassified():
+    """A Pulumi failure with no recognizable AWS code still fails loud."""
+    ce = classify_error(Exception("CommandError: code 1\n stdout: state file is locked"))
+    assert ce.code == "UNCLASSIFIED"
+    assert ce.error_class == ErrorClass.PERMANENT
+
+
 def test_classify_error_safe_against_broken_str():
     """If exc.__str__ raises, classify_error still returns a ClassifiedError
     instead of propagating."""
