@@ -51,7 +51,7 @@ _NVIDIA_INSTALL_BLOCK = r"""if lspci 2>/dev/null | grep -qi nvidia && ! command 
   curl -fsSL "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" | \
     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
     tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-  apt-get update && apt-get install -y nvidia-container-toolkit
+  apt-get ${APT_OPTS:-} update && apt-get ${APT_OPTS:-} install -y nvidia-container-toolkit
   nvidia-ctk runtime configure --runtime=docker
   systemctl restart docker
 fi
@@ -70,6 +70,21 @@ set -euo pipefail
 exec > >(tee /var/log/inferia-bootstrap.log) 2>&1
 
 echo "[inferia-bootstrap] starting at $(date -Is) (instance_class={instance_class}, gpu_count={gpu_count_literal})"
+
+# The DLAMI auto-runs unattended-upgrades + apt-daily at boot, which hold the
+# dpkg lock. Under `set -e` the FIRST apt-get below would race that lock, fail
+# with "Could not get lock /var/lib/dpkg/lock-frontend", and abort the ENTIRE
+# bootstrap -> the worker is never installed -> the node never registers ->
+# the deployment hangs in 'bootstrapping' forever. Quiesce those units, wait
+# for any in-flight run to release the lock, and tell apt itself to wait too
+# (DPkg::Lock::Timeout) in case the lock is briefly re-acquired mid-run.
+echo "[inferia-bootstrap] quiescing unattended-upgrades / apt-daily before install"
+systemctl stop unattended-upgrades.service apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+APT_OPTS="-o DPkg::Lock::Timeout=600"
+for _i in $(seq 1 120); do
+  fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1 || break
+  sleep 5
+done
 
 # zsh + SSH for ubuntu and root, when authorized_keys is supplied.
 {ssh_block}
@@ -154,8 +169,8 @@ def _build_ssh_block(ssh_authorized_keys: str) -> str:
     quoted = shlex.quote(keys + "\n")
     return f"""\
 echo "[inferia-bootstrap] installing zsh + bash"
-DEBIAN_FRONTEND=noninteractive apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh bash openssh-server
+DEBIAN_FRONTEND=noninteractive apt-get ${{APT_OPTS:-}} update -qq
+DEBIAN_FRONTEND=noninteractive apt-get ${{APT_OPTS:-}} install -y -qq zsh bash openssh-server
 
 echo "[inferia-bootstrap] injecting authorized_keys for ubuntu + root"
 SSH_KEYS={quoted}

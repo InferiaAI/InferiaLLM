@@ -38,6 +38,28 @@ def test_renders_bash_script_with_all_pieces():
     assert "ghcr.io/example/inferia-worker:v1.0.0" in script
 
 
+def test_waits_for_dpkg_lock_before_apt():
+    """Regression: the DLAMI runs unattended-upgrades at boot, holding the dpkg
+    lock. Under `set -e` an unguarded apt-get races it, fails, and aborts the
+    whole bootstrap -> the worker never registers -> the deploy hangs. The
+    script must quiesce those units, wait for the lock, and tell apt to wait.
+    """
+    # The failing path: ssh keys present -> the zsh apt-get block is rendered.
+    script = build_user_data(**VALID, ssh_authorized_keys="ssh-ed25519 AAAA u@h")
+    # Quiesce the boot-time apt units before any install.
+    assert "unattended-upgrades.service" in script
+    assert "apt-daily.timer" in script
+    # Wait for any in-flight run to release the lock.
+    assert "fuser /var/lib/dpkg/lock-frontend" in script
+    # apt itself waits if the lock is briefly re-acquired mid-run.
+    assert "DPkg::Lock::Timeout" in script
+    # Both controlled apt-get calls carry the lock-wait option.
+    assert "apt-get ${APT_OPTS:-} install -y -qq zsh" in script
+    assert "apt-get ${APT_OPTS:-} install -y nvidia-container-toolkit" in script
+    # The quiesce/wait must come BEFORE the first apt install.
+    assert script.index("DPkg::Lock::Timeout") < script.index("zsh bash openssh-server")
+
+
 def test_size_under_16kb_with_long_inputs():
     script = build_user_data(
         bootstrap_token="x" * 128,
