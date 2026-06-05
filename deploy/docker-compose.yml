@@ -79,6 +79,14 @@ services:
     volumes:
       - appdata:/data
       - modelcache:/var/lib/inferia/models
+      # Pulumi local-backend state. MUST be a persistent volume: it is the only
+      # record of which AWS resources each node stack owns. If the container is
+      # recreated (rebuild/redeploy/crash) between `pulumi up` and the later
+      # `pulumi destroy`, an ephemeral state dir is wiped → destroy finds an
+      # empty stack, silently "succeeds", and the EC2 leaks (DB flips the job to
+      # terminated, so no retry ever fires). Persisting it keeps delete able to
+      # actually tear the instance down.
+      - pulumistate:/var/lib/inferia/pulumi-state
       # Unified config yaml — mounted read-only. Edit the host file to change
       # operational parameters; restart the container to apply.
       - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
@@ -188,6 +196,7 @@ volumes:
   appdata:
   esdata:
   modelcache:
+  pulumistate:
 
 networks:
   inferia-net:
