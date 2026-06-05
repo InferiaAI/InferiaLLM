@@ -37,13 +37,27 @@ async def test_manifest_served_from_cache(tmp_path):
     assert r.json()["config"]["digest"] == "sha256:c"
 
 
+async def test_blob_plain_get_redirects(tmp_path):
+    """ollama calls Go's resp.Location() on the blob GET and aborts with
+    'http: no Location header in response' unless the registry redirects. The
+    plain GET must 307 back to ?download=1 (so bytes still come from the CP)."""
+    paths = CachePaths(str(tmp_path))
+    d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
+    (d / "sha256_m").write_bytes(b"BLOB")
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
+        r = await c.get("/v2/library/gemma3/blobs/sha256:m")  # follow_redirects defaults False
+    assert r.status_code == 307
+    assert r.headers["location"] == "/v2/library/gemma3/blobs/sha256:m?download=1"
+
+
 async def test_blob_served_from_cache(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "sha256_m").write_bytes(b"BLOB")
     deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
-        r = await c.get("/v2/library/gemma3/blobs/sha256:m")
+        r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1")
     assert r.status_code == 200 and r.content == b"BLOB"
 
 
@@ -82,7 +96,7 @@ async def test_blob_awaits_inflight_then_serves(tmp_path):
     paths.ollama_dir("gemma3", "4b").mkdir(parents=True, exist_ok=True)
     deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=None)
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
-        r = await c.get("/v2/library/gemma3/blobs/sha256:m")
+        r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1")
     assert r.status_code == 200 and r.content == b"BLOB"
 
 
@@ -121,7 +135,7 @@ async def test_blob_origin_fallback_streams_and_caches(tmp_path):
     deps._reset()
     deps.configure(paths=paths, downloader=None, http_client=_StreamHTTP(200, b"BLOBDATA"), repo=None)
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
-        r = await c.get("/v2/library/gemma3/blobs/sha256:z")
+        r = await c.get("/v2/library/gemma3/blobs/sha256:z?download=1")
     assert r.status_code == 200 and r.content == b"BLOBDATA"
 
 

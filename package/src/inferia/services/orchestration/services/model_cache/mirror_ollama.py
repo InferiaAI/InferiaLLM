@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from . import deps
@@ -181,7 +181,18 @@ async def head_blob(name: str, digest: str) -> Response:
 
 
 @router.get("/{name:path}/blobs/{digest}")
-async def get_blob(name: str, digest: str) -> Response:
+async def get_blob(name: str, digest: str, request: Request) -> Response:
+    # ollama's blob downloader calls Go's resp.Location() on the blob GET
+    # UNCONDITIONALLY (registry.ollama.ai always 307s to a CDN). On a plain 200
+    # that returns the stdlib error "http: no Location header in response" and
+    # `ollama pull` aborts. So the registry-facing GET must redirect; we point
+    # it back at ourselves with ?download=1 so the bytes still stream from the
+    # CP cache (not origin) on the follow-up request. resp.Location() resolves
+    # this relative ref against the request URL → same host the worker dialed.
+    if not request.query_params.get("download"):
+        loc = f"/v2/{name}/blobs/{digest}?download=1"
+        return Response(status_code=307, headers={"location": loc})
+
     paths = deps.get("paths")
     model_id = _model_id(name)
     fname = digest.replace(":", "_")

@@ -676,6 +676,9 @@ _STREAM_FORWARD_HEADERS = frozenset(
         # `X-Linked-Etag`/`X-Linked-Size` carry the per-file etag/size for LFS
         # pointer files. Forward them all verbatim from the orchestration mirror.
         "x-repo-commit", "x-linked-etag", "x-linked-size",
+        # `Location` is required for the Ollama /v2 blob redirect: ollama's
+        # downloader calls resp.Location() on the blob GET and aborts without it.
+        "location",
     }
 )
 

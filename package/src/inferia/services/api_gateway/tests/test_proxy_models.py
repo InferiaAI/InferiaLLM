@@ -295,6 +295,29 @@ async def test_hf_passthrough_forwards_hf_metadata_headers(client):
 
 
 @pytest.mark.asyncio
+async def test_v2_blob_redirect_location_forwarded(client):
+    """The /v2 ollama blob GET 307s to ?download=1; the gateway MUST forward the
+    Location header (ollama calls resp.Location() and aborts without it)."""
+    with patch(
+        "inferia.services.api_gateway.gateway.proxy_routes.gateway_http_client"
+    ) as mock_client_mgr:
+        mock_proxy = MagicMock()
+        mock_proxy.stream = MagicMock(
+            return_value=_make_mock_stream_ctx(
+                307, b"",
+                headers={"location": "/v2/library/gemma3/blobs/sha256:m?download=1"},
+            )
+        )
+        mock_client_mgr.get_proxy_client.return_value = mock_proxy
+        # httpx test client must NOT auto-follow so we can assert the 307.
+        response = await client.get(
+            "/v2/library/gemma3/blobs/sha256:m", follow_redirects=False,
+        )
+    assert response.status_code == 307
+    assert response.headers["location"] == "/v2/library/gemma3/blobs/sha256:m?download=1"
+
+
+@pytest.mark.asyncio
 async def test_v2_passthrough_unauthenticated_no_auth_error(client):
     """GET /v2/org/m/blobs/sha256:abc — no JWT needed; streams upstream body."""
     upstream_body = b"oci-blob-content"
