@@ -315,6 +315,17 @@ class DownloadManager:
                 )
             data = json.loads(b"".join([c async for c in up.aiter_bytes()]).decode())
 
+        # Persist the raw manifest so the /v2 mirror can serve it back to a
+        # worker (ollama pull manifests/{tag}). Best-effort: a failure here
+        # doesn't break the blob enumeration / download.
+        if self.paths is not None:
+            try:
+                mdir = self.paths.ollama_dir(model_id, revision)
+                mdir.mkdir(parents=True, exist_ok=True)
+                (mdir / "manifest.json").write_text(json.dumps(data))
+            except OSError:
+                pass
+
         blobs: list[dict] = []
         # Config blob
         cfg = data.get("config", {})

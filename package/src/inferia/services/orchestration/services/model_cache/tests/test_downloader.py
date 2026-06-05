@@ -870,3 +870,15 @@ async def test_prewarm_hf_resolves_token_once_per_prewarm(monkeypatch):
     assert dm._hf_token == "hf_resolved_token"
     row = next(iter(repo._rows.values()))
     assert row["status"] == "cached"
+
+
+async def test_ollama_list_persists_manifest(tmp_path):
+    paths = CachePaths(str(tmp_path))
+    http = _RouterFakeHTTP({"/manifests/": (200, _MANIFEST_JSON)})
+    dm = DownloadManager(repo=FakeRepo(), paths=paths, http_client=http, settings=None)
+    await dm._ollama_list("gemma3", "4b")
+    manifest = paths.ollama_dir("gemma3", "4b") / "manifest.json"
+    assert manifest.is_file()
+    import json
+    data = json.loads(manifest.read_text())
+    assert data["config"]["digest"] == "sha256:c"
