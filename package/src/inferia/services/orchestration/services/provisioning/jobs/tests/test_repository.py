@@ -247,6 +247,24 @@ async def test_fail_writes_terminal_phase_and_error_fields():
 
 
 @pytest.mark.asyncio
+async def test_fail_deployments_for_node_updates_bound_nonterminal_deploys():
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value="UPDATE 2")
+    repo = ProvisioningJobRepository(_make_db_with_conn(conn))
+    node_id = uuid.uuid4()
+    n = await repo.fail_deployments_for_node(node_id=node_id, message="boom")
+    assert n == 2
+    sql = conn.execute.await_args.args[0]
+    args = conn.execute.await_args.args
+    assert "UPDATE model_deployments" in sql
+    assert "state = 'FAILED'" in sql
+    assert "target_node_id = $1" in sql
+    # Only non-terminal deploys are touched.
+    assert "state IN ('PENDING_NODE', 'PENDING', 'DEPLOYING', 'CREATED')" in sql
+    assert args[1] == node_id and args[2] == "boom"
+
+
+@pytest.mark.asyncio
 async def test_request_cancel_sets_phase_when_non_terminal():
     conn = MagicMock()
     conn.execute = AsyncMock(return_value="UPDATE 1")

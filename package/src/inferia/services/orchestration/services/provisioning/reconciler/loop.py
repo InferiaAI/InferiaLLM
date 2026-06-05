@@ -364,6 +364,30 @@ class ProvisioningReconciler:
         # PERMANENT / INFRASTRUCTURE → fail terminal.
         await self._fail_loud(job, ce)
 
+    async def _fail_dependent_deployments(
+        self, *, node_id: Any, ce: ClassifiedError,
+    ) -> None:
+        """Mark deployments bound to a permanently-failed node as FAILED.
+
+        Each pool-first deploy binds to its own placeholder node
+        (``model_deployments.target_node_id``). When that node's provisioning
+        fails terminally, the deploy would otherwise stay PENDING_NODE forever.
+        Best-effort: logs and swallows so it never blocks the state machine.
+        The message carries the actionable reason (hint preferred) so the
+        dashboard shows e.g. "node provisioning failed (QUOTA_EXCEEDED): ...".
+        """
+        reason = ce.hint or ce.message or ce.code
+        message = f"node provisioning failed ({ce.code}): {reason}"[:500]
+        try:
+            await self.repo.fail_deployments_for_node(
+                node_id=node_id, message=message,
+            )
+        except Exception:
+            logger.exception(
+                "fail_deployments_for_node(%s) failed; a deployment may hang "
+                "in PENDING_NODE", node_id,
+            )
+
     async def _fail_loud(self, job: ProvisioningJob, ce: ClassifiedError) -> None:
         ok = await self.repo.fail(
             job_id=job.id, current_phase=job.phase,
@@ -378,6 +402,9 @@ class ProvisioningReconciler:
         # dashboard's failed banner renders without waiting for a manual
         # poll/refresh of the provisioning_jobs row.
         await self._inventory_set_state(node_id=job.node_id, state="failed")
+        # Fail the deployment(s) bound to this dead node, with the real reason,
+        # so they don't hang in PENDING_NODE forever (the node will never come).
+        await self._fail_dependent_deployments(node_id=job.node_id, ce=ce)
         await self.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=job.phase,
             status="failed", message=ce.message,

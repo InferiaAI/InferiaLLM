@@ -263,6 +263,29 @@ class ProvisioningJobRepository:
             )
         return _affected_one(res)
 
+    async def fail_deployments_for_node(self, *, node_id: UUID, message: str) -> int:
+        """Mark the deployment(s) bound to a permanently-failed node as FAILED.
+
+        Pool-first deploys bind to their placeholder node via
+        ``model_deployments.target_node_id``; when that node's provisioning
+        fails terminally the deploys would otherwise hang in PENDING_NODE
+        forever (the node will never come up). Only non-terminal deploys are
+        touched. Returns the number of deployments failed.
+        """
+        async with self.db.acquire() as conn:
+            res = await conn.execute(
+                """
+                UPDATE model_deployments
+                SET state = 'FAILED',
+                    error_message = $2,
+                    updated_at = now()
+                WHERE target_node_id = $1
+                  AND state IN ('PENDING_NODE', 'PENDING', 'DEPLOYING', 'CREATED')
+                """,
+                node_id, message,
+            )
+        return _affected_count(res)
+
     async def request_cancel(self, *, node_id: UUID) -> bool:
         """Mark the (non-terminal) job for cancellation. Returns False if
         the job is already terminal or there's no job for this node."""

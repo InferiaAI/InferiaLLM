@@ -43,6 +43,7 @@ class _FakeRepo:
         self.retries: list[tuple] = []
         self.failures: list[tuple] = []
         self.releases: list[tuple] = []
+        self.failed_deployments: list[dict] = []
         self.renew_calls = 0
 
     async def claim_next_job(self, *, lease_holder, lease_seconds=300):
@@ -59,6 +60,10 @@ class _FakeRepo:
     async def fail(self, **kwargs):
         self.failures.append(kwargs)
         return True
+
+    async def fail_deployments_for_node(self, *, node_id, message):
+        self.failed_deployments.append({"node_id": node_id, "message": message})
+        return 1
 
     async def release_lease(self, **kwargs):
         self.releases.append(kwargs)
@@ -329,6 +334,23 @@ async def test_permanent_error_mirrors_failed_to_inventory_state():
     inventory_repo.set_state.assert_awaited_once_with(
         node_id=job.node_id, state="failed",
     )
+
+
+@pytest.mark.asyncio
+async def test_permanent_error_fails_waiting_deployment():
+    """_fail_loud also fails the deployment bound to the dead node, so it does
+    not hang in PENDING_NODE forever after the node provisioning fails."""
+    job = _job(Phase.PREFLIGHT)
+    repo = _FakeRepo([job])
+    h = _RaisingHandler(Phase.PREFLIGHT, InvalidCredentialsError("bad creds"))
+    rec = _make_reconciler(repo, [h])
+
+    await rec.tick_once()
+
+    assert len(repo.failed_deployments) == 1, "deployment(s) on the dead node must be failed"
+    call = repo.failed_deployments[0]
+    assert call["node_id"] == job.node_id
+    assert call["message"]  # carries an actionable reason
 
 
 @pytest.mark.asyncio
