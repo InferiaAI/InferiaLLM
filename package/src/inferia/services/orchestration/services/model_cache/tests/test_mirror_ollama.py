@@ -37,17 +37,19 @@ async def test_manifest_served_from_cache(tmp_path):
     assert r.json()["config"]["digest"] == "sha256:c"
 
 
-async def test_blob_plain_get_redirects(tmp_path):
-    """ollama calls Go's resp.Location() on the blob GET and aborts with
-    'http: no Location header in response' unless the registry redirects. The
-    plain GET must 307 back to ?download=1 (so bytes still come from the CP)."""
+async def test_blob_plain_get_returns_200_with_location(tmp_path):
+    """ollama resolves the blob's direct URL by GETting it and reading
+    resp.Location() — but its CheckRedirect FOLLOWS same-host redirects, so a
+    307 gets followed to the 200 (no Location) -> 'http: no Location header in
+    response'. We reply 200 WITH a Location (ollama doesn't follow a 200, reads
+    Location off it) pointing at ?download=1 so bytes still come from the CP."""
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "sha256_m").write_bytes(b"BLOB")
     deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
-        r = await c.get("/v2/library/gemma3/blobs/sha256:m")  # follow_redirects defaults False
-    assert r.status_code == 307
+        r = await c.get("/v2/library/gemma3/blobs/sha256:m")
+    assert r.status_code == 200
     assert r.headers["location"] == "/v2/library/gemma3/blobs/sha256:m?download=1"
 
 

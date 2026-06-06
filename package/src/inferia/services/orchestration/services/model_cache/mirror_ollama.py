@@ -182,16 +182,19 @@ async def head_blob(name: str, digest: str) -> Response:
 
 @router.get("/{name:path}/blobs/{digest}")
 async def get_blob(name: str, digest: str, request: Request) -> Response:
-    # ollama's blob downloader calls Go's resp.Location() on the blob GET
-    # UNCONDITIONALLY (registry.ollama.ai always 307s to a CDN). On a plain 200
-    # that returns the stdlib error "http: no Location header in response" and
-    # `ollama pull` aborts. So the registry-facing GET must redirect; we point
-    # it back at ourselves with ?download=1 so the bytes still stream from the
-    # CP cache (not origin) on the follow-up request. resp.Location() resolves
-    # this relative ref against the request URL → same host the worker dialed.
+    # ollama's blob downloader resolves a "direct URL" by GETting the blob and
+    # calling Go's resp.Location() on the response — UNCONDITIONALLY, on both the
+    # 307 and 200 branches (registry.ollama.ai 307s to a CDN). Crucially its
+    # CheckRedirect FOLLOWS same-host redirects automatically but STOPS (keeps
+    # the response) on cross-host ones. So a same-host 307 gets followed to our
+    # ?download=1 200, which has no Location -> "http: no Location header in
+    # response" and `ollama pull` aborts. We can't hand out a real cross-host CDN
+    # (that would defeat cache-first), so instead reply 200 WITH a Location
+    # header: ollama doesn't follow a 200, reads Location off it, and downloads
+    # the bytes from ?download=1 — still served from the CP cache, not origin.
     if not request.query_params.get("download"):
         loc = f"/v2/{name}/blobs/{digest}?download=1"
-        return Response(status_code=307, headers={"location": loc})
+        return Response(status_code=200, headers={"location": loc})
 
     paths = deps.get("paths")
     model_id = _model_id(name)
