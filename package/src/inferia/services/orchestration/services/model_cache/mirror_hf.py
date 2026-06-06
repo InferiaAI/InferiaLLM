@@ -76,6 +76,28 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
 
     url = f"{_HF}/{repo}/resolve/{rev}/{filename}"
     headers: dict[str, str] = {"accept-ranges": "bytes"}
+
+    # Is this file already in the local cache? If so its on-disk size is the
+    # AUTHORITATIVE Content-Length: the follow-up GET serves exactly these bytes
+    # via FileResponse. We must NOT trust HF's resolve-HEAD size here — for
+    # non-LFS files HF answers with a 307 whose Content-Length is the redirect
+    # body (not the file) and carries NO X-Linked-Size, so our extraction can
+    # land on 0. A Content-Length of 0 makes huggingface_hub's http_get skip the
+    # download entirely (resume_size == expected_size == 0) and write an EMPTY
+    # file -> the engine then parses empty JSON and dies with "Expecting value:
+    # line 1 column 1 (char 0)" (seen live for tokenizer_config.json /
+    # vocab.json on a vLLM deploy).
+    cached_size: str | None = None
+    cp = deps.get("paths")
+    if cp is not None:
+        try:
+            base = cp.hf_dir(repo, rev)
+            target = base / filename
+            if target.resolve().is_relative_to(base.resolve()) and target.is_file():
+                cached_size = str(target.stat().st_size)
+        except Exception:
+            cached_size = None
+
     try:
         # First hop, no redirect. HF answers resolve HEADs with a 302/307 to the
         # actual blob (CDN for LFS, /api/resolve-cache for small files) and
@@ -84,12 +106,19 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
         async with _client().stream(
             "HEAD", url, headers=_hf_headers(), follow_redirects=False,
         ) as r0:
+            status0 = r0.status_code
             commit = r0.headers.get("x-repo-commit")
             etag = r0.headers.get("x-linked-etag") or r0.headers.get("etag")
             size = r0.headers.get("x-linked-size")
             location = r0.headers.get("location")
             if not size and r0.status_code == 200:
                 size = r0.headers.get("content-length")
+        # A genuine 404 (with nothing cached) must surface as 404 so the engine's
+        # optional-file probes (special_tokens_map.json / preprocessor_config.json
+        # on a text model) resolve as "absent" — not a fake 200 whose GET then
+        # 404s, an inconsistency that confuses some clients.
+        if status0 == 404 and cached_size is None:
+            return Response(status_code=404)
         # If the size wasn't on the first hop (small non-LFS files), follow the
         # redirect for Content-Length. The Location is often RELATIVE
         # (/api/resolve-cache/...) — resolve it against huggingface.co, else
@@ -104,6 +133,9 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
                     etag = etag or r1.headers.get("etag")
             except Exception:
                 pass  # size is optional; commit+etag already captured
+        # Cached on-disk size wins over whatever HF reported (see above).
+        if cached_size is not None:
+            size = cached_size
         # Reply 200 (NOT a redirect) so huggingface_hub treats the mirror URL as
         # the download source and GETs it from us (served from cache).
         if commit:
@@ -114,8 +146,10 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
             headers["content-length"] = size
         return Response(status_code=200, headers=headers)
     except Exception:
-        # Metadata HEAD is best-effort; a 200 with no etag still lets
-        # huggingface_hub fall back to its no-etag download path.
+        # Metadata HEAD is best-effort. If we at least know the cached size,
+        # still report it so huggingface_hub downloads the real bytes.
+        if cached_size is not None:
+            headers["content-length"] = cached_size
         return Response(status_code=200, headers=headers)
 
 

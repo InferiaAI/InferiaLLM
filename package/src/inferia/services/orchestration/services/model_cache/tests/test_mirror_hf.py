@@ -219,3 +219,63 @@ async def test_head_resolve_returns_200_with_metadata_headers(monkeypatch):
     assert r.headers.get("etag") == '"deadbeef"'          # from x-linked-etag
     assert r.headers.get("content-length") == "1503300328"  # from x-linked-size, not 1010
     assert r.headers.get("accept-ranges") == "bytes"
+
+
+async def test_head_uses_cached_size_when_hf_reports_zero(tmp_path):
+    """For a non-LFS file HF's resolve HEAD is a 307 whose Content-Length is the
+    redirect body and which has NO X-Linked-Size, so size extraction can land on
+    0. A 0 makes huggingface_hub skip the download and write an empty file. When
+    the file is cached, its real on-disk size MUST win."""
+    cp = paths_mod.CachePaths(str(tmp_path))
+    d = cp.hf_dir("org/m", "main"); d.mkdir(parents=True)
+    (d / "tokenizer_config.json").write_bytes(b'{"k": "v"}' * 100)  # 1000 bytes
+    real = (d / "tokenizer_config.json").stat().st_size
+
+    class _ZeroSizeHTTP:
+        def stream(self, method, url, headers=None, follow_redirects=False):
+            class _Ctx:
+                async def __aenter__(self_):
+                    self_.status_code = 307
+                    self_.headers = {
+                        "x-repo-commit": "abc123",
+                        "x-linked-etag": '"deadbeef"',
+                        "content-length": "254",  # redirect body, NOT the file
+                        "location": "/api/resolve-cache/x",
+                    }
+                    return self_
+                async def __aexit__(self_, *a):
+                    return False
+            return _Ctx()
+
+    deps._reset()
+    deps.configure(http_client=_ZeroSizeHTTP(), settings=None, paths=cp, repo=None)
+    app = FastAPI(); app.include_router(mirror_hf.router)
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.head("/hf/org/m/resolve/main/tokenizer_config.json")
+    assert r.status_code == 200
+    assert r.headers.get("content-length") == str(real)  # cached size, not 0/254
+    assert r.headers.get("x-repo-commit") == "abc123"
+
+
+async def test_head_404_for_missing_uncached_file(tmp_path):
+    """A genuine HF 404 with nothing cached must surface as 404 (not a fake 200
+    whose GET then 404s), so optional-file probes resolve as absent."""
+    cp = paths_mod.CachePaths(str(tmp_path))
+
+    class _NotFoundHTTP:
+        def stream(self, method, url, headers=None, follow_redirects=False):
+            class _Ctx:
+                async def __aenter__(self_):
+                    self_.status_code = 404
+                    self_.headers = {}
+                    return self_
+                async def __aexit__(self_, *a):
+                    return False
+            return _Ctx()
+
+    deps._reset()
+    deps.configure(http_client=_NotFoundHTTP(), settings=None, paths=cp, repo=None)
+    app = FastAPI(); app.include_router(mirror_hf.router)
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.head("/hf/org/m/resolve/main/special_tokens_map.json")
+    assert r.status_code == 404
