@@ -355,3 +355,32 @@ async def test_blob_head_origin_no_content_length(tmp_path):
     # We did not forward an upstream content-length; Starlette only adds its own
     # content-length: 0 for the empty HEAD body, never a real (wrong) size.
     assert r.headers.get("content-length") in (None, "0")
+
+
+async def test_blob_download_honors_range(tmp_path):
+    """ollama downloads a blob as parallel byte-range parts; ?download=1 MUST
+    return 206 with exactly the requested slice, else parts assemble into a
+    digest mismatch ('file must be downloaded again')."""
+    paths = CachePaths(str(tmp_path))
+    d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
+    (d / "sha256_m").write_bytes(b"0123456789ABCDEF")  # 16 bytes
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
+        r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1",
+                        headers={"Range": "bytes=4-7"})
+    assert r.status_code == 206
+    assert r.content == b"4567"
+    assert r.headers["content-range"] == "bytes 4-7/16"
+    assert r.headers["content-length"] == "4"
+    assert r.headers["accept-ranges"] == "bytes"
+
+
+async def test_blob_download_full_when_no_range(tmp_path):
+    paths = CachePaths(str(tmp_path))
+    d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
+    (d / "sha256_m").write_bytes(b"0123456789ABCDEF")
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
+        r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1")
+    assert r.status_code == 200
+    assert r.content == b"0123456789ABCDEF"

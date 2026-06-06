@@ -180,6 +180,67 @@ async def head_blob(name: str, digest: str) -> Response:
         return Response(status_code=200, headers=hdrs)
 
 
+def _serve_cached_blob(path: Path, request: Request, digest: str) -> Response:
+    """Serve a cached blob file with explicit HTTP Range support.
+
+    ollama downloads a blob as N parallel byte-range parts (e.g. "16 208 MB
+    part(s)"). If the server ignores Range and returns the whole file (200) for
+    each part, the parts assemble into garbage and `ollama pull` aborts with
+    "digest mismatch, file must be downloaded again". Starlette's FileResponse
+    did NOT honor Range through our stack (returned 200 for a Range request), so
+    we parse Range ourselves and stream exactly the requested slice as 206.
+    """
+    size = path.stat().st_size
+    rng = request.headers.get("range") if request is not None else None
+    if not rng or not rng.startswith("bytes="):
+        return FileResponse(
+            str(path),
+            headers={"accept-ranges": "bytes", "docker-content-digest": digest},
+        )
+    spec = rng[len("bytes="):].split(",")[0].strip()
+    start_s, _, end_s = spec.partition("-")
+    try:
+        if start_s == "":
+            # suffix range: bytes=-N -> last N bytes
+            n = int(end_s)
+            start = max(0, size - n)
+            end = size - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s else size - 1
+    except ValueError:
+        return FileResponse(str(path), headers={"accept-ranges": "bytes"})
+    if start >= size or start > end:
+        return Response(
+            status_code=416, headers={"content-range": f"bytes */{size}"},
+        )
+    end = min(end, size - 1)
+    length = end - start + 1
+
+    def _iter():
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = fh.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(
+        _iter(),
+        status_code=206,
+        headers={
+            "content-range": f"bytes {start}-{end}/{size}",
+            "content-length": str(length),
+            "accept-ranges": "bytes",
+            "docker-content-digest": digest,
+        },
+        media_type="application/octet-stream",
+    )
+
+
 @router.get("/{name:path}/blobs/{digest}")
 async def get_blob(name: str, digest: str, request: Request) -> Response:
     # ollama's blob downloader resolves a "direct URL" by GETting the blob and
@@ -211,7 +272,7 @@ async def get_blob(name: str, digest: str, request: Request) -> Response:
         for rev_dir in root.iterdir():
             cand = rev_dir / fname
             if cand.is_file():
-                return FileResponse(str(cand))
+                return _serve_cached_blob(cand, request, digest)
 
     dl = deps.get("downloader")
     if dl is not None and root.is_dir():
@@ -219,7 +280,7 @@ async def get_blob(name: str, digest: str, request: Request) -> Response:
             await dl.await_key(source="ollama", model_id=model_id, revision=rev_dir.name)
             cand = rev_dir / fname
             if cand.is_file():
-                return FileResponse(str(cand))
+                return _serve_cached_blob(cand, request, digest)
 
     url = f"{_OLLAMA}/v2/{name}/blobs/{digest}"
     upstream_ctx = deps.get("http_client").stream("GET", url)
