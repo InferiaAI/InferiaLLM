@@ -155,7 +155,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
             const c = deployment.configuration
             const updates: Partial<State> = { config: c };
             if (isVllm) {
-                updates.vllmImage = c.image || "vllm/vllm-openai:latest";
+                updates.vllmImage = c.image || "docker.io/vllm/vllm-openai:v0.22.1";
                 if (c.cmd) {
                     const mLenIdx = c.cmd.indexOf("--max-model-len")
                     if (mLenIdx !== -1) updates.maxModelLen = c.cmd[mLenIdx + 1]

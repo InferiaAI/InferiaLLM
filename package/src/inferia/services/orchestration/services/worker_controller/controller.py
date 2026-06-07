@@ -31,7 +31,11 @@ class NodeUnreachableError(Exception):
     """Raised when the caller targets a node that has no live WS connection."""
 
 
-_DEFAULT_TIMEOUT = 900.0  # seconds — covers cold image pulls + ollama model downloads (qwen3:0.6b ≈ 5 GiB)
+_DEFAULT_TIMEOUT = 2400.0  # seconds — must exceed the worker's pull budget
+# (PULL_TIMEOUT_SECONDS, default 1800s) plus container start + readiness.
+# Large vLLM images (e.g. vllm-openai:v0.22.x ≈ 35 GiB uncompressed) take well
+# over 10 min to pull+extract on a gp3 root volume; at the old 900s the CP timed
+# out the load_model command before the worker finished pulling.
 
 
 class WorkerController:

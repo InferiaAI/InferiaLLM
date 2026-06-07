@@ -93,7 +93,7 @@ const computeEngines = [
     id: "vllm",
     name: "vLLM",
     desc: "High-throughput and memory-efficient LLM serving engine.",
-    image: "docker.io/vllm/vllm-openai:v0.16.0",
+    image: "docker.io/vllm/vllm-openai:v0.22.1",
     icon: Cpu,
     types: ["inference", "multimodal"],
     modelTypes: ["inference", "multimodal"]
@@ -292,7 +292,7 @@ const initialState: State = {
   maxModelLen: "4192",
   gpuUtil: "0.80",
   hfToken: "",
-  vllmImage: "docker.io/vllm/vllm-openai:v0.16.0",
+  vllmImage: "docker.io/vllm/vllm-openai:v0.22.1",
   cudaVersions: ["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"],
   selectedProvider: "",
   customProviderName: "",
