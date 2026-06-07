@@ -2508,17 +2508,25 @@ async def get_deployment_logs(deployment_id: str):
         # We fetch the first node ID from the deployment's node_ids array
         dep_nodes = await conn.fetchrow(
             """
-            SELECT node_ids
+            SELECT node_ids, target_node_id
             FROM model_deployments
             WHERE deployment_id = $1
             """,
             dep_uuid,
         )
 
-        if not dep_nodes or not dep_nodes["node_ids"]:
+        if not dep_nodes:
             return {"logs": ["Waiting for node provisioning..."]}
 
-        node_id = dep_nodes["node_ids"][0]
+        # node_ids is set only at RUNNING; during DEPLOYING fall back to the
+        # bound target_node_id so pull/lifecycle logs are reachable.
+        node_id = (
+            dep_nodes["node_ids"][0]
+            if dep_nodes["node_ids"]
+            else dep_nodes["target_node_id"]
+        )
+        if not node_id:
+            return {"logs": ["Waiting for node provisioning..."]}
 
         node = await conn.fetchrow(
             """
@@ -2610,7 +2618,8 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
         # 1. Get deployment, provider, and credential name
         dep = await conn.fetchrow(
             """
-            SELECT p.provider, p.provider_credential_name, d.node_ids, d.org_id
+            SELECT p.provider, p.provider_credential_name, d.node_ids,
+                   d.target_node_id, d.org_id
             FROM model_deployments d
             JOIN compute_pools p ON d.pool_id = p.id
             WHERE d.deployment_id = $1
@@ -2623,10 +2632,13 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
 
         provider = dep["provider"]
         provider_credential_name = dep.get("provider_credential_name")
-        if not dep["node_ids"]:
+        # During DEPLOYING the deployment is bound (target_node_id) but node_ids
+        # is only populated at RUNNING. Fall back to target_node_id so the
+        # dashboard can stream image-pull / lifecycle logs while the model
+        # container is still being pulled.
+        node_id = dep["node_ids"][0] if dep["node_ids"] else dep["target_node_id"]
+        if not node_id:
             return {"error": "No nodes assigned to this deployment yet."}
-
-        node_id = dep["node_ids"][0]
 
         node = await conn.fetchrow(
             "SELECT provider_instance_id, agent_kind FROM compute_inventory WHERE id = $1", node_id
