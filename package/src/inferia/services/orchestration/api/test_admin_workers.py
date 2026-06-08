@@ -362,6 +362,9 @@ class TestRevokeWorker:
 
 
 from inferia.services.orchestration.services.adapter_engine import aws_deprovision  # noqa: E402
+from inferia.services.orchestration.services.provisioning.jobs import (  # noqa: E402
+    repository as jobs_repository,
+)
 
 
 class AwsFakeInventory(FakeInventory):
@@ -418,24 +421,44 @@ def aws_app_and_deps():
     return app, inventory
 
 
+class _FakeJobsRepoFactory:
+    """Builds a fake ProvisioningJobRepository class whose force_cancel
+    records its calls and returns a configurable result."""
+
+    def __init__(self, *, result: bool = True):
+        self.result = result
+        self.calls: list[dict] = []
+
+    def __call__(self, db):
+        # Mimic ``ProvisioningJobRepository(db_pool)`` construction.
+        outer = self
+
+        class _Repo:
+            def __init__(self, _db):
+                self.db = _db
+
+            async def force_cancel(self, *, node_id):
+                outer.calls.append({"node_id": node_id})
+                return outer.result
+
+        return _Repo(db)
+
+
 class TestRevokeAwsWorker:
     @pytest.mark.asyncio
-    async def test_aws_worker_kicks_destroy_and_returns_202(self, aws_app_and_deps):
+    async def test_aws_worker_force_cancels_and_returns_202(self, aws_app_and_deps):
+        """AWS revoke routes through the reconciler force_cancel (node-scoped
+        stack), NOT the leaky pool-scoped aws_deprovision._spawn_destroy."""
         app, inventory = aws_app_and_deps
         inventory.workers = [{
             "id": NODE_ID, "agent_kind": "worker",
             "provider": "aws", "pool_id": POOL_ID, "state": "ready",
         }]
-        spy: list[dict] = []
+        fake_factory = _FakeJobsRepoFactory(result=True)
 
-        class _T:
-            pass
-
-        def fake_spawn(**kw):
-            spy.append(kw)
-            return _T()
-
-        with patch.object(aws_deprovision, "_spawn_destroy", side_effect=fake_spawn):
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", fake_factory,
+        ), patch.object(aws_deprovision, "_spawn_destroy") as spawn:
             transport = ASGITransport(app=app)
             async with _httpx.AsyncClient(
                 transport=transport, base_url="http://t",
@@ -450,9 +473,43 @@ class TestRevokeAwsWorker:
         assert body["node_id"] == NODE_ID
         assert body["state"] == "terminating"
         assert NODE_ID in inventory.terminating_calls
-        assert len(spy) == 1
-        assert spy[0]["pool_id"] == POOL_ID
-        assert spy[0]["node_id"] == NODE_ID
+        # force_cancel was called with this node's id (UUID-coerced).
+        assert len(fake_factory.calls) == 1
+        assert str(fake_factory.calls[0]["node_id"]) == NODE_ID
+        # The leaky pool-scoped destroy was NOT used.
+        spawn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_aws_worker_no_live_job_falls_back_to_soft_delete(
+        self, aws_app_and_deps,
+    ):
+        """If force_cancel finds no live job (already terminated / never
+        reconciler-created), the AWS branch falls through to the idempotent
+        legacy soft-delete (204)."""
+        app, inventory = aws_app_and_deps
+        inventory.workers = [{
+            "id": NODE_ID, "agent_kind": "worker",
+            "provider": "aws", "pool_id": POOL_ID, "state": "ready",
+        }]
+        fake_factory = _FakeJobsRepoFactory(result=False)
+
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", fake_factory,
+        ), patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+            transport = ASGITransport(app=app)
+            async with _httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/admin/workers/{NODE_ID}",
+                    headers={"Authorization": "Bearer deployment:delete"},
+                )
+
+        assert r.status_code == 204, r.text
+        assert len(fake_factory.calls) == 1
+        spawn.assert_not_called()
+        # Fell through to the legacy soft-delete path.
+        assert NODE_ID in inventory.terminated
 
     @pytest.mark.asyncio
     async def test_non_aws_worker_keeps_legacy_path(self, aws_app_and_deps):
@@ -461,7 +518,9 @@ class TestRevokeAwsWorker:
             "id": NODE_ID, "agent_kind": "worker",
             "provider": "on_prem", "pool_id": POOL_ID,
         }]
-        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn, patch.object(
+            jobs_repository, "ProvisioningJobRepository",
+        ) as jobs_repo_cls:
             transport = ASGITransport(app=app)
             async with _httpx.AsyncClient(
                 transport=transport, base_url="http://t",
@@ -472,23 +531,5 @@ class TestRevokeAwsWorker:
                 )
         assert r.status_code == 204
         spawn.assert_not_called()
+        jobs_repo_cls.assert_not_called()
         assert NODE_ID in inventory.terminated
-
-    @pytest.mark.asyncio
-    async def test_aws_worker_no_pool_id_falls_back(self, aws_app_and_deps):
-        app, inventory = aws_app_and_deps
-        inventory.workers = [{
-            "id": NODE_ID, "agent_kind": "worker",
-            "provider": "aws", "pool_id": None,
-        }]
-        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
-            transport = ASGITransport(app=app)
-            async with _httpx.AsyncClient(
-                transport=transport, base_url="http://t",
-            ) as c:
-                r = await c.delete(
-                    f"/v1/admin/workers/{NODE_ID}",
-                    headers={"Authorization": "Bearer deployment:delete"},
-                )
-        assert r.status_code == 204
-        spawn.assert_not_called()

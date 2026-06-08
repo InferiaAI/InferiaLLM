@@ -251,39 +251,57 @@ async def revoke_worker(
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
 
-    # AWS branch: kick the destroy task and return 202 instead of the
-    # legacy 204 "soft delete only" path. The EC2 stack tear-down can
-    # take up to 90s and runs in the background.
+    # AWS branch: route the EC2 tear-down through the provisioning
+    # reconciler's CancelHandler (the SAME mechanism DELETE /nodes/{id}
+    # uses) and return 202 instead of the legacy 204 "soft delete only"
+    # path. ``force_cancel`` flips the node's provisioning job to
+    # 'cancelling' so the reconciler destroys the node-scoped stack
+    # ``inferia-<node_id>``. The previous direct-adapter destroy keyed on
+    # a pool-scoped stack (``inferia-pool-<pool_id>``) that never existed,
+    # so ``pulumi destroy`` reported success while the real EC2 LEAKED.
     provider = node.get("provider") if isinstance(node, dict) else None
-    pool_id = node.get("pool_id") if isinstance(node, dict) else None
-    if provider == "aws" and _deps.db_pool is not None and pool_id:
-        from inferia.services.orchestration.services.adapter_engine import (
-            aws_deprovision,
+    if provider == "aws" and _deps.db_pool is not None:
+        from inferia.services.orchestration.services.provisioning.jobs.repository import (
+            ProvisioningJobRepository,
         )
-        if hasattr(_inventory(), "mark_terminating_node"):
-            await _inventory().mark_terminating_node(node_id=node_id)
-        # Also tear down the open WS now so the worker stops heartbeating.
-        conn = _registry().get(node_id)
-        if conn is not None:
-            try:
-                await conn.ws.close(1008, "revoked by admin")
-            except Exception:
-                pass
-            try:
-                await _registry().detach(node_id, conn.ws)
-            except Exception:
-                pass
-        aws_deprovision._spawn_destroy(
-            pool_id=str(pool_id),
-            node_id=str(node_id),
-            db_pool=_deps.db_pool,
-        )
-        import json as _json
-        return Response(
-            content=_json.dumps({"node_id": str(node_id), "state": "terminating"}),
-            media_type="application/json",
-            status_code=status.HTTP_202_ACCEPTED,
-        )
+        try:
+            nuuid = uuid.UUID(str(node_id))
+        except (ValueError, TypeError):
+            nuuid = node_id
+        jobs_repo = ProvisioningJobRepository(_deps.db_pool)
+        flipped = await jobs_repo.force_cancel(node_id=nuuid)
+        if not flipped:
+            # No live provisioning job for this node (already cancelling/
+            # terminated, or AWS infra was never reconciler-created). There
+            # is nothing for the reconciler to tear down, so fall through to
+            # the idempotent legacy soft-delete below.
+            logger.info(
+                "revoke_worker: force_cancel found no live job for AWS node "
+                "%s; falling back to soft-delete",
+                node_id,
+            )
+        else:
+            if hasattr(_inventory(), "mark_terminating_node"):
+                await _inventory().mark_terminating_node(node_id=node_id)
+            # Also tear down the open WS now so the worker stops heartbeating.
+            conn = _registry().get(node_id)
+            if conn is not None:
+                try:
+                    await conn.ws.close(1008, "revoked by admin")
+                except Exception:
+                    pass
+                try:
+                    await _registry().detach(node_id, conn.ws)
+                except Exception:
+                    pass
+            import json as _json
+            return Response(
+                content=_json.dumps(
+                    {"node_id": str(node_id), "state": "terminating"},
+                ),
+                media_type="application/json",
+                status_code=status.HTTP_202_ACCEPTED,
+            )
 
     # Legacy path (workers, nosana, akash, gcp/azure for now).
     await _inventory().mark_terminated_worker(node_id=node_id)

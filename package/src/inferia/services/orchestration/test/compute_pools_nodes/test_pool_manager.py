@@ -125,20 +125,22 @@ class TestPoolManager:
         pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
 
     @pytest.mark.asyncio
-    async def test_delete_aws_pool_destroys_nodes_before_soft_delete(
+    async def test_delete_aws_pool_routes_through_force_cancel_pool(
         self, pool_service,
     ):
-        """When an AWS pool is deleted, each non-terminated node's EC2
-        stack must be torn down before the pool row is soft-deleted."""
+        """When an AWS pool is deleted, teardown must route through the
+        reconciler via ``force_cancel_pool(pool_id)`` (per-node
+        ``inferia-<node_id>`` stacks) — NOT the leaky pool-scoped
+        ``aws_deprovision._spawn_destroy`` path."""
         from inferia.services.orchestration.services.adapter_engine import (
             aws_deprovision,
+        )
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
         )
         from unittest.mock import patch
 
         pool_id = uuid4()
-        node_a = uuid4()
-        node_b = uuid4()
-        node_c = uuid4()
         pool_service.repo.get = AsyncMock(
             return_value={
                 "id": pool_id,
@@ -146,51 +148,83 @@ class TestPoolManager:
                 "provider": "aws",
             },
         )
-        pool_service.repo.list_pool_inventory = AsyncMock(
-            return_value=[
-                {"node_id": str(node_a), "state": "ready"},
-                {"node_id": str(node_b), "state": "provisioning"},
-                # Already terminated — must NOT trigger a destroy.
-                {"node_id": str(node_c), "state": "terminated"},
-            ],
-        )
         pool_service.deployment_repo.list = AsyncMock(return_value=[])
         pool_service.repo.db = MagicMock()  # any truthy db_pool
 
-        spawn_spy: list[dict] = []
+        # Fake ProvisioningJobRepository capturing force_cancel_pool args.
+        force_cancel_pool_calls: list[dict] = []
 
-        async def _completed(): return None
+        class FakeJobsRepo:
+            def __init__(self, db):
+                self.db = db
 
-        def fake_spawn(**kw):
-            spawn_spy.append(kw)
-            task = AsyncMock()
-            # asyncio.gather expects awaitables; return a real awaitable.
-            import asyncio
-            return asyncio.ensure_future(_completed())
+            async def force_cancel_pool(self, *, pool_id):
+                force_cancel_pool_calls.append({"pool_id": pool_id})
+                return 2  # number of node jobs flipped
 
-        with patch.object(aws_deprovision, "_spawn_destroy", side_effect=fake_spawn):
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", FakeJobsRepo,
+        ), patch.object(aws_deprovision, "_spawn_destroy") as spawn:
             request = MagicMock()
             request.pool_id = str(pool_id)
             ctx = make_mock_context()
             await pool_service.DeletePool(request, ctx)
 
-        # Only the two non-terminated nodes get a destroy task.
-        assert len(spawn_spy) == 2
-        spawned_ids = {kw["node_id"] for kw in spawn_spy}
-        assert str(node_a) in spawned_ids
-        assert str(node_b) in spawned_ids
-        assert str(node_c) not in spawned_ids
-        # Pool row soft-deleted AFTER the destroys settled.
+        # The reconciler force_cancel_pool was used (node-scoped teardown).
+        assert force_cancel_pool_calls == [{"pool_id": pool_id}]
+        # The leaky pool-scoped destroy was NOT used.
+        spawn.assert_not_called()
+        # Pool row soft-deleted after teardown was queued.
         pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
-        # Every destroy was called with the pool_id as the stack key.
-        for kw in spawn_spy:
-            assert kw["pool_id"] == str(pool_id)
+
+    @pytest.mark.asyncio
+    async def test_delete_aws_pool_soft_deletes_even_if_force_cancel_fails(
+        self, pool_service,
+    ):
+        """A force_cancel_pool error must not block the pool soft-delete;
+        the reconciler/orphan-sweep is the backstop."""
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
+        )
+        from unittest.mock import patch
+
+        pool_id = uuid4()
+        pool_service.repo.get = AsyncMock(
+            return_value={
+                "id": pool_id,
+                "lifecycle_state": "terminated",
+                "provider": "aws",
+            },
+        )
+        pool_service.deployment_repo.list = AsyncMock(return_value=[])
+        pool_service.repo.db = MagicMock()
+
+        class BoomJobsRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def force_cancel_pool(self, *, pool_id):
+                raise RuntimeError("queue down")
+
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", BoomJobsRepo,
+        ):
+            request = MagicMock()
+            request.pool_id = str(pool_id)
+            ctx = make_mock_context()
+            await pool_service.DeletePool(request, ctx)
+
+        pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
 
     @pytest.mark.asyncio
     async def test_delete_non_aws_pool_keeps_legacy_path(self, pool_service):
-        """Non-AWS pools (worker/nosana/akash) skip the EC2 destroy entirely."""
+        """Non-AWS pools (worker/nosana/akash) skip EC2 teardown entirely —
+        neither the reconciler force_cancel_pool nor the legacy destroy run."""
         from inferia.services.orchestration.services.adapter_engine import (
             aws_deprovision,
+        )
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
         )
         from unittest.mock import patch
 
@@ -203,14 +237,18 @@ class TestPoolManager:
             },
         )
         pool_service.deployment_repo.list = AsyncMock(return_value=[])
+        pool_service.repo.db = MagicMock()
 
-        with patch.object(aws_deprovision, "_spawn_destroy") as spawn:
+        with patch.object(aws_deprovision, "_spawn_destroy") as spawn, patch.object(
+            jobs_repository, "ProvisioningJobRepository",
+        ) as jobs_repo_cls:
             request = MagicMock()
             request.pool_id = str(pool_id)
             ctx = make_mock_context()
             await pool_service.DeletePool(request, ctx)
 
         spawn.assert_not_called()
+        jobs_repo_cls.assert_not_called()
         pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
 
     @pytest.mark.asyncio

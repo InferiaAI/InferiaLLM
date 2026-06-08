@@ -288,54 +288,48 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                     f"Error during deployment cascade cleanup for pool {pool_id}: {e}"
                 )
 
-        # AWS branch: destroy the underlying EC2 stacks before we drop
-        # the pool row. We intentionally block grpc until every node's
-        # destroy task settles (each takes ~60-90s for a single t3.micro,
-        # longer for GPU AMIs). The alternative — fire-and-forget plus
-        # background pool finalization — leaves the dashboard in a
-        # confusing half-deleted state and is harder to debug; the
-        # simple synchronous tear-down keeps the state machine linear.
-        # Operators on slow links should bump the grpc deadline.
+        # AWS branch: route EC2 tear-down through the provisioning
+        # reconciler. Each node owns its OWN node-scoped Pulumi stack
+        # (``inferia-<node_id>``); ``force_cancel_pool`` flips every live
+        # provisioning job in the pool to 'cancelling' so the reconciler's
+        # CancelHandler destroys each of those stacks (and, post Task 2.3,
+        # purges the DB rows + sweeps any orphaned EC2). The previous
+        # direct-adapter path keyed teardown on a pool-scoped stack
+        # (``inferia-pool-<pool_id>``) that never existed — ``pulumi
+        # destroy`` swallowed "no stack named" as success, so every node's
+        # real EC2 LEAKED while the pool row flipped to deleted. This is
+        # the SAME mechanism the REST ``DELETE /deployment/pool/{id}`` and
+        # ``DELETE /nodes/{id}`` routes use.
         if pool.get("provider") == "aws":
-            try:
-                inventory = await self.repo.list_pool_inventory(pool_id)
-            except Exception as e:
-                logger.error(
-                    "list_pool_inventory failed during AWS pool delete: %s", e,
-                )
-                inventory = []
             db_pool = getattr(self.repo, "db", None)
-            if db_pool is not None and inventory:
-                # Lazy import keeps test discovery cheap.
-                from inferia.services.orchestration.services.adapter_engine import (
-                    aws_deprovision,
+            if db_pool is not None:
+                # Lazy import keeps test discovery cheap and avoids dragging
+                # the reconciler graph into unrelated unit tests.
+                from inferia.services.orchestration.services.provisioning.jobs.repository import (
+                    ProvisioningJobRepository,
                 )
-                pending = []
-                for row in inventory:
-                    state = (
-                        row.get("state") if hasattr(row, "get")
-                        else dict(row).get("state")
+                jobs_repo = ProvisioningJobRepository(db_pool)
+                try:
+                    flipped = await jobs_repo.force_cancel_pool(pool_id=pool_id)
+                    logger.info(
+                        "force_cancel_pool flipped %s node job(s) to "
+                        "'cancelling' for pool %s",
+                        flipped, pool_id,
                     )
-                    if state == "terminated":
-                        continue
-                    node_id = (
-                        row.get("node_id") if hasattr(row, "get")
-                        else dict(row).get("node_id")
+                except Exception as e:
+                    # Don't block the pool soft-delete on a teardown-queue
+                    # error; the reconciler/orphan-sweep is the backstop.
+                    logger.error(
+                        "force_cancel_pool failed during AWS pool delete "
+                        "for pool %s: %s",
+                        pool_id, e,
                     )
-                    if not node_id:
-                        continue
-                    task = aws_deprovision._spawn_destroy(
-                        pool_id=str(pool_id),
-                        node_id=str(node_id),
-                        db_pool=db_pool,
-                    )
-                    pending.append(task)
-                if pending:
-                    # asyncio.gather waits for all destroys to finish; the
-                    # gathered tasks tolerate individual failures because
-                    # deprovision_aws_node already records destroy_failed
-                    # to the row metadata and does not re-raise.
-                    await asyncio.gather(*pending, return_exceptions=True)
+            else:
+                logger.warning(
+                    "AWS pool %s deleted without reconciler routing: repo "
+                    "has no db handle; cannot guarantee EC2 teardown",
+                    pool_id,
+                )
 
         await self.repo.soft_delete_pool(pool_id)
         return compute_pool_pb2.poolEmpty()

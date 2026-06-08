@@ -153,11 +153,36 @@ async def deprovision_aws_node(
 
 
 def _spawn_destroy(*, pool_id: str, node_id: str, db_pool) -> asyncio.Task:
-    """Create + track a background destroy task.
+    """DEPRECATED pool-scoped destroy. Do NOT use for pool/node delete.
 
-    Returns the task so callers (e.g. DeletePool) may ``gather`` on
-    them; the task self-discards from ``_BG`` once done.
+    This spawns ``deprovision_aws_node``, which calls
+    ``adapter.deprovision_node(provider_instance_id=pool_id)`` — i.e. it
+    selects/destroys a *pool-scoped* Pulumi stack
+    (``inferia-pool-<pool_id>``) that the AWS provisioning pipeline never
+    creates. Every node owns its OWN node-scoped stack
+    (``inferia-<node_id>``), so this path leaks every node's EC2:
+    ``pulumi destroy`` swallows "no stack named" as success while the
+    real instance keeps running and billing.
+
+    All pool-delete / worker-revoke / node-delete paths now route through
+    the provisioning reconciler instead
+    (``ProvisioningJobRepository.force_cancel`` /
+    ``force_cancel_pool`` → CancelHandler → per-node ``pulumi destroy``).
+    This function is retained only so the historical DB-transition unit
+    tests keep exercising ``deprovision_aws_node``'s state-machine
+    primitives; it has NO remaining production callers. It logs a loud
+    warning so any accidental reintroduction is immediately visible.
+
+    Returns the task so legacy callers may ``gather`` on it; the task
+    self-discards from ``_BG`` once done.
     """
+    logger.warning(
+        "aws_deprovision._spawn_destroy is DEPRECATED and leaks EC2 "
+        "(pool-scoped stack inferia-pool-%s never existed). Route deletes "
+        "through ProvisioningJobRepository.force_cancel / force_cancel_pool "
+        "instead. Called for pool=%s node=%s.",
+        pool_id, pool_id, node_id,
+    )
     task = asyncio.create_task(
         deprovision_aws_node(pool_id=pool_id, node_id=node_id, db_pool=db_pool),
     )
