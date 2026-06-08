@@ -69,6 +69,7 @@ class ProvisioningReconciler:
         lease_holder: str = "inferia-app",
         load_aws_context: Callable[[ProvisioningJob], Awaitable[tuple[Any, dict[str, str]]]] | None = None,
         inventory_repo: Any = None,
+        worker_registry: Any = None,
     ):
         self.repo = repo
         self.handlers = handlers
@@ -80,6 +81,13 @@ class ProvisioningReconciler:
         self.renew_interval_s = renew_interval_s
         self.lease_holder = lease_holder
         self.load_aws_context = load_aws_context
+        # worker_registry is the in-memory node_id → live-WS cache. On a
+        # successful node teardown the reconciler calls
+        # worker_registry.detach_node(node_id) to close the worker socket +
+        # any open shell/logs streams (defense-in-depth: the worker WS read
+        # loop already detaches on disconnect). Optional — tests / split
+        # deployments that don't run the worker controller pass None.
+        self.worker_registry = worker_registry
         # inventory_repo bridges the provisioning_jobs state machine to
         # compute_inventory.state. On every terminal transition (ready /
         # terminated) and on _fail_loud (failed) the reconciler calls
@@ -90,6 +98,96 @@ class ProvisioningReconciler:
         self.inventory_repo = inventory_repo
         self.now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
         self._pool: WorkerPool | None = None
+
+    @staticmethod
+    def _region_for_job(job: ProvisioningJob) -> str | None:
+        """Resolve the AWS region for the orphan sweep.
+
+        Preferred source is the job spec (``region`` is a required field the
+        PreflightHandler validates and the add-node route writes). Fall back
+        to ``pulumi_stack_outputs['region']`` (PreflightHandler echoes it
+        there) for older rows whose spec predates the field. Returns None if
+        neither carries a region — the sweep then short-circuits to [].
+        """
+        spec = job.spec or {}
+        region = spec.get("region")
+        if region:
+            return str(region)
+        outputs = job.pulumi_stack_outputs or {}
+        region = outputs.get("region")
+        return str(region) if region else None
+
+    async def _teardown_node(self, job: ProvisioningJob) -> None:
+        """Canonical, leak-proof teardown after a successful pulumi destroy.
+
+        Runs ONLY on the CANCELLING → TERMINATED transition (destroy
+        confirmed — including the idempotent 'missing stack' case, which the
+        CancelHandler returns as success). Replaces the old soft
+        ``inventory.set_state(node_id, 'terminated')`` write, which left the
+        compute_inventory row + provisioning_jobs / events / tokens piling up
+        forever and never reclaimed orphan EC2.
+
+        Order:
+          1. ``sweep_node_instances`` FIRST — boto3 tag backstop that
+             terminates any orphan/duplicate EC2 tagged InferiaNodeId that
+             pulumi never tracked (retry double-launches). Best-effort.
+          2. ``inventory.purge_node`` — ONE-tx hard purge of the node row and
+             all its DB residue (replaces the soft terminated write).
+          3. ``worker_registry.detach_node`` — close the in-memory worker
+             socket + shell/logs streams (defense-in-depth; the worker WS
+             read loop also detaches on disconnect).
+
+        Every step is best-effort and isolated: a failure in one is logged
+        and never blocks the others, so a flaky AWS describe can't strand the
+        DB purge and vice-versa.
+        """
+        node_id = job.node_id
+
+        # 1. Orphan/duplicate EC2 sweep (boto3 tag backstop).
+        region = self._region_for_job(job)
+        if region:
+            try:
+                from inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep import (
+                    sweep_node_instances,
+                )
+                terminated = await asyncio.to_thread(
+                    sweep_node_instances, str(node_id), region,
+                )
+                if terminated:
+                    logger.info(
+                        "orphan sweep terminated %d EC2 for node=%s: %s",
+                        len(terminated), node_id, ", ".join(terminated),
+                    )
+            except Exception:
+                logger.exception(
+                    "orphan sweep failed for node=%s region=%s; continuing "
+                    "with DB purge", node_id, region,
+                )
+        else:
+            logger.warning(
+                "no region for node=%s; skipping orphan EC2 sweep "
+                "(pulumi destroy is still authoritative)", node_id,
+            )
+
+        # 2. Hard DB purge (replaces the soft state='terminated' write).
+        if self.inventory_repo is not None:
+            try:
+                await self.inventory_repo.purge_node(node_id)
+            except Exception:
+                logger.exception(
+                    "purge_node(%s) failed; the inventory row + residue may "
+                    "linger (EC2 already swept/destroyed)", node_id,
+                )
+
+        # 3. Drop the in-memory worker connection (defense-in-depth).
+        if self.worker_registry is not None:
+            try:
+                await self.worker_registry.detach_node(str(node_id))
+            except Exception:
+                logger.exception(
+                    "worker_registry.detach_node(%s) failed; the worker WS "
+                    "close path will still detach on disconnect", node_id,
+                )
 
     async def _inventory_set_state(
         self, *, node_id: Any, state: str,
@@ -305,18 +403,26 @@ class ProvisioningReconciler:
         # dashboard's "is this node alive" check (which reads inventory,
         # not provisioning_jobs) reflects the state machine outcome.
         # Phase.FAILED is handled separately in _fail_loud.
+        #
+        # TERMINATED is special: the destroy has SUCCEEDED (CancelHandler
+        # returns next_phase=TERMINATED only on a confirmed/idempotent
+        # destroy — a real failure raises and never reaches here). Instead of
+        # a soft state='terminated' write that leaks the row + EC2 orphans,
+        # we run the canonical leak-proof teardown (sweep orphan EC2, hard
+        # purge the DB residue, detach the worker conn) AFTER emitting the
+        # terminal event so the purge sweeps that event row too — zero
+        # residue. We use only in-memory ``job`` fields below, so the row
+        # vanishing under us is safe.
         if result.next_phase == Phase.READY:
             await self._inventory_set_state(node_id=job.node_id, state="ready")
-        elif result.next_phase == Phase.TERMINATED:
-            await self._inventory_set_state(
-                node_id=job.node_id, state="terminated",
-            )
         if result.event is not None:
             await self.emit_event(
                 pool_id=job.pool_id, node_id=job.node_id,
                 phase=result.event.phase, status=result.event.status,
                 message=result.event.message, extra=result.event.extra,
             )
+        if result.next_phase == Phase.TERMINATED:
+            await self._teardown_node(job)
 
     async def _handle_error(self, job: ProvisioningJob, exc: BaseException) -> None:
         try:

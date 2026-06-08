@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.programs import (
     build_program,
@@ -15,6 +16,8 @@ from inferia.services.orchestration.services.provisioning.jobs.model import (
 from inferia.services.orchestration.services.provisioning.phases.base import (
     PhaseContext, stack_name_for_job,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CancelHandler:
@@ -56,13 +59,61 @@ class CancelHandler:
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.CANCELLING,
             status="running", message=f"Destroying stack {stack_name}",
         )
-        await asyncio.to_thread(
-            run_pulumi_destroy_sync,
-            stack_name=stack_name, program=program, env=env,
-            state_dir=state_dir,
-        )
+        # ``run_pulumi_destroy_sync`` already swallows the idempotent
+        # "missing stack" case internally (returns None) — so any exception
+        # that escapes here is a REAL destroy failure. The node's EC2 may
+        # still be running; we must NOT let the reconciler advance to
+        # TERMINATED (and purge the row) while the instance keeps billing.
+        # Stamp ``metadata.destroy_failed`` so the dashboard surfaces the
+        # teardown failure, log loudly, then re-raise so the reconciler's
+        # classifier keeps the job retryable instead of marking it done.
+        try:
+            await asyncio.to_thread(
+                run_pulumi_destroy_sync,
+                stack_name=stack_name, program=program, env=env,
+                state_dir=state_dir,
+            )
+        except Exception as e:
+            reason = f"{type(e).__name__}: {e}"
+            logger.error(
+                "pulumi destroy FAILED for node=%s stack=%s; EC2 may still be "
+                "running — keeping job retryable: %s",
+                job.node_id, stack_name, reason,
+            )
+            await self._record_destroy_failure(job, ctx, reason)
+            await ctx.emit_event(
+                pool_id=job.pool_id, node_id=job.node_id,
+                phase=Phase.CANCELLING, status="log",
+                message=f"Stack destroy failed; will retry: {reason}"[:500],
+                extra={"destroy_failed": True},
+            )
+            raise
         await ctx.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.CANCELLING,
             status="succeeded", message="Stack destroyed",
         )
         return PhaseResult(next_phase=Phase.TERMINATED)
+
+    async def _record_destroy_failure(
+        self, job: ProvisioningJob, ctx: PhaseContext, reason: str,
+    ) -> None:
+        """Stamp metadata.destroy_failed on the node's inventory row.
+
+        Best-effort: a failure to record the flag must not mask the original
+        destroy exception (which the caller re-raises). Builds an
+        InventoryRepository from ``ctx.db`` because the handler is only
+        handed the provisioning-jobs repo, not the inventory repo.
+        """
+        try:
+            from inferia.services.orchestration.repositories.inventory_repo import (
+                InventoryRepository,
+            )
+            await InventoryRepository(ctx.db).mark_destroy_failed(
+                job.node_id, reason,
+            )
+        except Exception:
+            logger.exception(
+                "failed to record destroy_failed metadata for node=%s; "
+                "the destroy error is still surfaced via the job",
+                job.node_id,
+            )

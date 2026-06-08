@@ -162,6 +162,7 @@ async def start_reconciler(
     poll_for_lock_s: float = 15.0,
     inventory_repo=None,
     load_aws_context=None,
+    worker_registry=None,
 ) -> None:
     """Single-active reconciler loop.
 
@@ -215,6 +216,7 @@ async def start_reconciler(
                     lease_holder=lease_holder,
                     inventory_repo=inventory_repo,
                     load_aws_context=load_aws_context,
+                    worker_registry=worker_registry,
                 )
                 run_task = asyncio.create_task(rec.run())
                 try:
@@ -723,6 +725,7 @@ async def serve():
                     ),
                     inventory_repo=inventory_repo,
                     load_aws_context=_load_aws_context,
+                    worker_registry=worker_registry,
                 )
             )
             app.state.reconciler_stop = reconciler_stop

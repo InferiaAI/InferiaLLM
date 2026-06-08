@@ -162,6 +162,50 @@ class WorkerRegistry:
             handle.incoming.put_nowait(err)
             handle.closed.set()
 
+    async def detach_node(self, node_id: str) -> bool:
+        """Forcibly drop a node's live connection by id, regardless of which
+        ws object is current.
+
+        Unlike :meth:`detach` (which is ws-matched so a fast reconnect can't
+        be clobbered), this is the *teardown* path: when the reconciler has
+        destroyed a node's EC2 it wants the in-memory connection gone for
+        good. Closes the worker ws, closes every open shell/logs stream owned
+        by the node (synthetic "worker disconnected" + ``closed`` set), and
+        removes the registry entry. Best-effort and idempotent — returns
+        ``True`` if a connection was present, ``False`` if the node had none.
+
+        Defense-in-depth: the worker WS read loop already calls
+        :meth:`detach` on disconnect, so a destroyed node's socket normally
+        tears itself down. This makes the teardown deterministic even if the
+        worker never observes the destroy.
+        """
+        async with self._lock:
+            conn = self._conns.pop(node_id, None)
+            orphaned = [
+                handle
+                for handle in self._streams.values()
+                if handle.node_id == node_id
+            ]
+            for handle in orphaned:
+                self._streams.pop(handle.stream_id, None)
+
+        for handle in orphaned:
+            err = ShellErrorBody(
+                stream_id=handle.stream_id,
+                message="worker disconnected",
+            )
+            handle.incoming.put_nowait(err)
+            handle.closed.set()
+
+        if conn is None:
+            return False
+        try:
+            await conn.ws.close(1000, "node torn down")
+        except Exception:
+            # Best-effort; the socket may already be gone.
+            pass
+        return True
+
     def get(self, node_id: str) -> WorkerConn | None:
         return self._conns.get(node_id)
 

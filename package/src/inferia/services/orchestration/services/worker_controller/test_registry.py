@@ -11,6 +11,7 @@ from inferia.services.orchestration.services.worker_controller.registry import (
 from inferia.services.orchestration.services.worker_controller.protocol import (
     Envelope,
     CommandResultBody,
+    ShellOpenBody,
 )
 
 
@@ -65,6 +66,47 @@ async def test_detach_removes_only_matching_conn():
     # Detaching the current one does drop it.
     await reg.detach("node-1", ws2)
     assert reg.get("node-1") is None
+
+
+@pytest.mark.asyncio
+async def test_detach_node_closes_conn_and_removes_it():
+    """detach_node forcibly drops a node's live connection by id (the
+    reconciler teardown path), closing the ws and removing the entry —
+    regardless of which ws is current."""
+    reg = WorkerRegistry()
+    ws = FakeWS()
+    await reg.attach("node-1", WorkerConn(ws=ws, pool_id="p"))
+    existed = await reg.detach_node("node-1")
+    assert existed is True
+    assert ws.closed is True
+    assert reg.get("node-1") is None
+
+
+@pytest.mark.asyncio
+async def test_detach_node_unknown_returns_false():
+    """detach_node on a node with no live connection is a no-op → False."""
+    reg = WorkerRegistry()
+    assert await reg.detach_node("ghost") is False
+
+
+@pytest.mark.asyncio
+async def test_detach_node_closes_open_streams():
+    """detach_node tears down every open shell/logs stream owned by the node:
+    each handle gets a synthetic error frame + its closed event is set."""
+    reg = WorkerRegistry()
+    ws = FakeWS()
+    await reg.attach("node-1", WorkerConn(ws=ws, pool_id="p"))
+    handle = await reg.open_shell_stream(
+        "node-1", ShellOpenBody(stream_id="s1", cols=80, rows=24),
+    )
+    assert not handle.closed.is_set()
+
+    await reg.detach_node("node-1")
+
+    assert handle.closed.is_set()
+    # A synthetic "worker disconnected" frame was pushed for the proxy.
+    frame = handle.incoming.get_nowait()
+    assert getattr(frame, "message", "") == "worker disconnected"
 
 
 @pytest.mark.asyncio

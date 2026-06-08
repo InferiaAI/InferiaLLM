@@ -8,10 +8,11 @@ End-to-end:
    'cancelling' (the route returns 204).
 3. The next reconciler tick claims the cancelling job; CancelHandler
    runs (patched) run_pulumi_destroy_sync and transitions to terminated.
-4. Assert destroy was called AND the job row is in phase='terminated'
-   AND compute_inventory.state == 'terminated' (the reconciler mirrors
-   terminal phases onto inventory so the dashboard's "is this node
-   alive" view stays consistent with the state-machine outcome).
+4. Assert destroy was called AND the canonical leak-proof teardown ran:
+   BOTH the provisioning_jobs row and the compute_inventory row are GONE.
+   Task 2.3 replaced the old soft state='terminated' write with
+   purge_node, which hard-deletes the inventory row + provisioning_jobs +
+   events + tokens in one tx (the soft write leaked those rows forever).
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
 
     destroy_called = {"value": False}
 
-    def _fake_destroy(*, stack_name, program, env):
+    def _fake_destroy(*, stack_name, program, env, state_dir=None):
         destroy_called["value"] = True
 
     with patch(
@@ -55,7 +56,13 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
     ), patch(
         "inferia.services.orchestration.services.provisioning.phases."
         "cancel.run_pulumi_destroy_sync", side_effect=_fake_destroy,
-    ):
+    ), patch(
+        # The reconciler's teardown runs a boto3 tag-based orphan sweep on
+        # the TERMINATED transition. Patch it so the test never touches AWS;
+        # its own unit tests cover the sweep internals.
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ) as sweep:
         # 1. Submit + drive one tick (preflight -> provisioning).
         resp = await client.post(
             "/v1/nodes/add/aws",
@@ -84,22 +91,28 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
         # jobs ahead of fresh work so this picks up our job immediately.
         await rec.tick_once()
 
-        # 4. Assert destroy ran + the job row reached the terminated phase
-        # + compute_inventory.state mirrored the terminal phase.
+        # 4. Assert destroy ran AND the canonical leak-proof teardown
+        # purged ALL of the node's DB residue: the provisioning_jobs row
+        # AND the compute_inventory row are both GONE (Task 2.3 replaced the
+        # old soft state='terminated' write with a hard purge_node).
         assert destroy_called["value"], (
             "run_pulumi_destroy_sync was not invoked by CancelHandler"
         )
+        # The orphan-EC2 sweep ran with (node_id, region) as a backstop.
+        sweep.assert_called_once_with(node_id, "us-east-1")
         async with pool.acquire() as conn:
-            phase = await conn.fetchval(
-                "SELECT phase FROM provisioning_jobs WHERE node_id=$1",
+            job_count = await conn.fetchval(
+                "SELECT count(*) FROM provisioning_jobs WHERE node_id=$1",
                 uuid.UUID(node_id),
             )
-            inventory_state = await conn.fetchval(
-                "SELECT state FROM compute_inventory WHERE id=$1",
+            node_count = await conn.fetchval(
+                "SELECT count(*) FROM compute_inventory WHERE id=$1",
                 uuid.UUID(node_id),
             )
-        assert phase == "terminated"
-        assert inventory_state == "terminated", (
-            f"compute_inventory.state should mirror terminal phase; "
-            f"got {inventory_state!r}"
-        )
+            event_count = await conn.fetchval(
+                "SELECT count(*) FROM node_provisioning_events WHERE node_id=$1",
+                uuid.UUID(node_id),
+            )
+        assert job_count == 0, "provisioning_jobs row must be purged"
+        assert node_count == 0, "compute_inventory row must be purged"
+        assert event_count == 0, "node_provisioning_events must be purged"

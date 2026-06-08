@@ -423,6 +423,38 @@ class InventoryRepository:
         async with self.db.acquire() as conn:
             await conn.execute(query, node_id)
 
+    async def mark_destroy_failed(self, node_id, reason: str, *, tx=None) -> None:
+        """Record a pulumi-destroy failure on the inventory row WITHOUT
+        flipping ``state`` to terminated.
+
+        When the reconciler's CancelHandler runs ``pulumi destroy`` and it
+        raises a *real* failure (not the idempotent "missing stack" case),
+        the node must NOT silently show terminated while its EC2 keeps
+        billing. We stamp two metadata flags — ``destroy_failed=true`` and
+        ``destroy_error=<reason>`` — and leave the SQL ``state`` column
+        untouched so the job can stay retryable and the dashboard can render
+        a "teardown failed" banner. Mirrors the metadata shape written by
+        ``aws_deprovision._mark_destroy_failed`` so existing greps/tests for
+        ``destroy_failed`` keep working.
+
+        Idempotent. Pass ``tx`` to run inside a caller's transaction.
+        """
+        q = """
+            UPDATE compute_inventory
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                           || jsonb_build_object(
+                                  'destroy_failed', true,
+                                  'destroy_error', $2::text
+                              ),
+                updated_at = now()
+            WHERE id = $1
+            """
+        if tx is not None:
+            await tx.execute(q, node_id, reason)
+        else:
+            async with self.db.acquire() as conn:
+                await conn.execute(q, node_id, reason)
+
     async def recycle_node(self, node_id: UUID):
         query = """
         UPDATE compute_inventory

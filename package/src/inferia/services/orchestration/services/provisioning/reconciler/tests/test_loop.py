@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -297,26 +297,153 @@ async def test_terminal_ready_mirrors_to_inventory_state_ready():
 
 
 @pytest.mark.asyncio
-async def test_terminal_terminated_mirrors_to_inventory_state_terminated():
-    """transition_to(TERMINATED) → inventory.set_state(node_id, 'terminated').
+async def test_terminal_terminated_purges_node_and_sweeps_orphans():
+    """transition_to(TERMINATED) → canonical leak-proof teardown.
 
     This is the cancel path: CancelHandler returns PhaseResult(next_phase=
-    TERMINATED) after pulumi destroy completes, and the reconciler must
-    mirror the terminal phase onto compute_inventory.state so the
-    dashboard stops showing the node as 'provisioning'.
+    TERMINATED) ONLY after pulumi destroy succeeds. The reconciler must then
+    (a) sweep orphan/duplicate EC2 by tag, (b) HARD-purge the node's DB
+    residue (NOT a soft state='terminated' write — that leaked the row +
+    jobs + events forever), and (c) detach the in-memory worker conn.
     """
-    job = _job(Phase.CANCELLING)
+    region = "us-west-2"
+    job = _job(Phase.CANCELLING, spec={"region": region})
     repo = _FakeRepo([job])
     h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
     inventory_repo = MagicMock()
+    inventory_repo.purge_node = AsyncMock()
     inventory_repo.set_state = AsyncMock()
+    registry = MagicMock()
+    registry.detach_node = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+    rec.worker_registry = registry
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances",
+        return_value=["i-orphan"],
+    ) as sweep:
+        await rec.tick_once()
+
+    # Hard purge replaces the soft terminated write entirely.
+    inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
+    inventory_repo.set_state.assert_not_awaited()
+    # Orphan sweep ran with (node_id, region).
+    sweep.assert_called_once_with(str(job.node_id), region)
+    # In-memory worker connection detached (defense-in-depth).
+    registry.detach_node.assert_awaited_once_with(str(job.node_id))
+
+
+@pytest.mark.asyncio
+async def test_terminated_sweep_failure_does_not_block_purge():
+    """A flaky orphan sweep must not strand the DB purge — the sweep is a
+    best-effort backstop that runs AFTER the authoritative pulumi destroy."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
+    inventory_repo = MagicMock()
+    inventory_repo.purge_node = AsyncMock()
     rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
 
-    await rec.tick_once()
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances",
+        side_effect=RuntimeError("AWS describe blew up"),
+    ):
+        await rec.tick_once()
 
-    inventory_repo.set_state.assert_awaited_once_with(
-        node_id=job.node_id, state="terminated",
+    inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
+
+
+@pytest.mark.asyncio
+async def test_terminated_no_region_skips_sweep_but_still_purges():
+    """If the job carries no region anywhere, the sweep short-circuits but the
+    DB purge (pulumi destroy already ran) must still happen."""
+    job = _job(Phase.CANCELLING, spec={})  # no region in spec
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
+    inventory_repo = MagicMock()
+    inventory_repo.purge_node = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances",
+    ) as sweep:
+        await rec.tick_once()
+
+    sweep.assert_not_called()
+    inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
+
+
+@pytest.mark.asyncio
+async def test_terminated_region_falls_back_to_stack_outputs():
+    """Older rows whose spec predates the region field still sweep — region
+    is echoed into pulumi_stack_outputs by PreflightHandler."""
+    job = _job(
+        Phase.CANCELLING, spec={},
+        pulumi_stack_outputs={"region": "eu-central-1"},
     )
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
+    inventory_repo = MagicMock()
+    inventory_repo.purge_node = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances",
+        return_value=[],
+    ) as sweep:
+        await rec.tick_once()
+
+    sweep.assert_called_once_with(str(job.node_id), "eu-central-1")
+    inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
+
+
+@pytest.mark.asyncio
+async def test_terminated_purge_failure_is_swallowed():
+    """A failing purge must not abort the state machine — the job already
+    recorded its terminal phase via transition_to."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
+    inventory_repo = MagicMock()
+    inventory_repo.purge_node = AsyncMock(side_effect=RuntimeError("DB blip"))
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances",
+        return_value=[],
+    ):
+        await rec.tick_once()
+
+    # transition_to still recorded the terminal phase.
+    assert len(repo.transitions) == 1
+    assert repo.transitions[0]["next_phase"] == Phase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_terminated_no_registry_purges_without_crashing():
+    """worker_registry=None (split deploy / tests) → purge + sweep still run,
+    no AttributeError on the missing detach."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
+    inventory_repo = MagicMock()
+    inventory_repo.purge_node = AsyncMock()
+    rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
+    rec.worker_registry = None  # explicit
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances",
+        return_value=[],
+    ):
+        await rec.tick_once()
+
+    inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
 
 
 @pytest.mark.asyncio

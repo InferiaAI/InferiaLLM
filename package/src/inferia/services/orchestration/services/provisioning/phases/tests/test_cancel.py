@@ -65,3 +65,49 @@ async def test_destroy_on_empty_state_is_noop():
         result = await CancelHandler().run(j, _ctx())
     assert result.next_phase == Phase.TERMINATED
     destroy.assert_called_once()  # we still call it (idempotent)
+
+
+@pytest.mark.asyncio
+async def test_real_destroy_failure_stamps_metadata_and_reraises():
+    """A REAL pulumi destroy failure (not the idempotent 'missing stack'
+    case, which run_pulumi_destroy_sync swallows internally) must NOT advance
+    to TERMINATED. The handler stamps metadata.destroy_failed on the
+    inventory row and re-raises so the reconciler keeps the job retryable —
+    the node must never silently show terminated while its EC2 lives.
+    """
+    from inferia.services.orchestration.repositories import inventory_repo as ir
+
+    inv = MagicMock()
+    inv.mark_destroy_failed = AsyncMock()
+    boom = RuntimeError("pulumi destroy: api error in-use dependency")
+
+    with patch(
+        "inferia.services.orchestration.services.provisioning.phases."
+        "cancel.run_pulumi_destroy_sync", side_effect=boom,
+    ), patch.object(ir, "InventoryRepository", return_value=inv):
+        with pytest.raises(RuntimeError, match="api error"):
+            await CancelHandler().run(_job(), _ctx())
+
+    # The failure was recorded with (node_id, reason) and NOT swallowed.
+    inv.mark_destroy_failed.assert_awaited_once()
+    args = inv.mark_destroy_failed.await_args.args
+    assert "RuntimeError" in args[1] and "api error" in args[1]
+
+
+@pytest.mark.asyncio
+async def test_destroy_failure_metadata_record_error_does_not_mask_destroy_exc():
+    """If recording the destroy_failed flag ALSO fails, the original destroy
+    exception must still propagate (the reconciler needs the real error to
+    classify retry-vs-fail)."""
+    from inferia.services.orchestration.repositories import inventory_repo as ir
+
+    inv = MagicMock()
+    inv.mark_destroy_failed = AsyncMock(side_effect=RuntimeError("DB down"))
+
+    with patch(
+        "inferia.services.orchestration.services.provisioning.phases."
+        "cancel.run_pulumi_destroy_sync",
+        side_effect=ValueError("destroy exploded"),
+    ), patch.object(ir, "InventoryRepository", return_value=inv):
+        with pytest.raises(ValueError, match="destroy exploded"):
+            await CancelHandler().run(_job(), _ctx())

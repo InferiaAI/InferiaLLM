@@ -283,6 +283,34 @@ async def test_purge_node_nonexistent_id_is_noop(pool):
     await repo.purge_node(ghost)  # must not raise
 
 
+async def test_mark_destroy_failed_stamps_metadata_keeps_state(pool):
+    """mark_destroy_failed records destroy_failed/destroy_error on metadata
+    WITHOUT flipping state — so a real pulumi-destroy failure surfaces to the
+    dashboard while the job stays retryable and the row stays queryable."""
+    import json
+    repo = InventoryRepository(pool)
+    org_id, pool_id = await _seed_org_and_pool(pool)
+    node_id = await _seed_node(pool, pool_id, state="ready")
+    try:
+        await repo.mark_destroy_failed(
+            node_id, "RuntimeError: api error in-use dependency",
+        )
+        async with pool.acquire() as c:
+            row = await c.fetchrow(
+                "SELECT state, metadata FROM compute_inventory WHERE id=$1",
+                node_id,
+            )
+        meta = row["metadata"]
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        # state untouched (NOT terminated) — the EC2 may still be running.
+        assert row["state"] == "ready"
+        assert meta.get("destroy_failed") is True
+        assert "api error" in meta.get("destroy_error", "")
+    finally:
+        await _cleanup(pool, org_id=org_id, pool_id=pool_id, node_id=node_id)
+
+
 async def test_purge_node_uses_external_tx(pool):
     """When a caller passes tx, all the deletes/updates land in that tx and
     only persist after the caller commits."""
