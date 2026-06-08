@@ -45,6 +45,7 @@ NODE = "11111111-2222-3333-4444-555555555555"
 class FakeInventory:
     def __init__(self):
         self.nodes: dict[str, dict] = {}
+        self.purge_calls: list[str] = []
 
     async def list_nodes(self, *, org_id, selector=None):
         out = []
@@ -79,6 +80,15 @@ class FakeInventory:
     async def soft_delete_node(self, *, node_id):
         if node_id in self.nodes:
             self.nodes[node_id]["state"] = "terminated"
+
+    async def purge_node(self, node_id, *, tx=None):
+        # Mirrors InventoryRepository.purge_node: hard-delete the node row
+        # (and, in prod, all of its bound provisioning_jobs /
+        # node_provisioning_events / worker_bootstrap_tokens residue). The
+        # production handler calls this positionally on the already-TERMINATED
+        # branch. Record the call for assertions and drop the row.
+        self.purge_calls.append(node_id)
+        self.nodes.pop(node_id, None)
 
     async def get_deployments_for_node(self, node_id):
         return []  # default: no deployments
@@ -1115,16 +1125,23 @@ def test_delete_live_node_force_cancels_and_returns_202(phase, node_state):
     inventory.set_state.assert_not_called()
 
 
-def test_delete_terminated_job_is_idempotent_204():
-    """A job already in the TERMINATED phase means the stack was already
-    destroyed by a prior cancel → just drop the row (204), do NOT
-    re-cancel."""
+def test_delete_terminated_job_purges_node_residue_204():
+    """A job already in the TERMINATED phase means the stack (EC2) was
+    already destroyed by a prior CancelHandler run → there is nothing left
+    to tear down, so HARD-DELETE the node + ALL its DB residue via
+    purge_node (compute_inventory row + provisioning_jobs /
+    node_provisioning_events / worker_bootstrap_tokens). The old behavior
+    only soft-flipped state='terminated', leaving every bound row dangling
+    forever. We must NOT re-cancel, and must NOT just soft-flip state."""
     resp, inventory, repo, nid = _delete_with_job(
         Phase.TERMINATED, node_state="terminated",
     )
     assert resp.status_code == 204, resp.text
-    inventory.set_state.assert_awaited_once()
-    assert inventory.set_state.await_args.kwargs["state"] == "terminated"
+    # The node + its residue is purged (hard-delete), not merely state-flipped.
+    assert inventory.purge_calls == [nid]
+    assert nid not in inventory.nodes
+    # No soft state-flip, no re-cancel (the EC2 is already gone).
+    inventory.set_state.assert_not_called()
     repo.force_cancel.assert_not_called()
 
 

@@ -328,11 +328,16 @@ async def delete_node(
         job = await _deps.provisioning_repo.get_by_node(node_id=nuuid)
         if job is not None:
             if job.phase == Phase.TERMINATED:
-                # The stack was already destroyed by a prior cancel; just
-                # drop the inventory row. Nothing left to tear down.
-                await _deps.inventory_repo.set_state(
-                    node_id=node_id, state="terminated",
-                )
+                # The stack was already destroyed by a prior CancelHandler
+                # run (the EC2 is gone), so there is nothing left to tear
+                # down — but the previous soft-delete (state='terminated')
+                # left the compute_inventory row plus every row logically
+                # bound to it (provisioning_jobs, node_provisioning_events,
+                # worker_bootstrap_tokens) dangling forever. Hard-delete the
+                # node and ALL of its residue instead. purge_node is
+                # idempotent and safe precisely because the EC2 is already
+                # destroyed; the reconciler is NOT involved on this path.
+                await _deps.inventory_repo.purge_node(node_id)
                 return Response(status_code=status.HTTP_204_NO_CONTENT)
             # Any non-terminated job (in-flight, READY, or FAILED-after-up)
             # may own a live EC2. Flip it to 'cancelling' so the reconciler

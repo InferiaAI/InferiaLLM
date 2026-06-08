@@ -288,6 +288,134 @@ class TestPoolManager:
         pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
 
     @pytest.mark.asyncio
+    async def test_delete_aws_pool_flags_nodes_terminating_for_reaper(
+        self, pool_service,
+    ):
+        """AWS pool delete must, in addition to force_cancel_pool, stamp
+        ``metadata.terminating='true'`` on every live node (mirrors the REST
+        ``DELETE /deployment/pool/{id}`` path). Without this, a node whose
+        destroy fails TERMINALLY on the gRPC pool-delete path is invisible to
+        the periodic TerminationReaper, whose stuck-node query keys off
+        ``metadata->>'terminating'='true'`` (+ no live cancelling job). Assert
+        ``mark_terminating_node`` is called once per pool node."""
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
+        )
+        from inferia.services.orchestration.repositories import (
+            inventory_repo as inventory_repo_module,
+        )
+        from unittest.mock import patch
+
+        pool_id = uuid4()
+        node_a, node_b = uuid4(), uuid4()
+        pool_service.repo.get = AsyncMock(
+            return_value={
+                "id": pool_id,
+                "lifecycle_state": "terminated",
+                "provider": "aws",
+            },
+        )
+        pool_service.deployment_repo.list = AsyncMock(return_value=[])
+        pool_service.repo.db = MagicMock()  # any truthy db_pool
+        # Non-empty so the delete-time finalize does NOT fire here.
+        pool_service.repo.count_live_inventory = AsyncMock(return_value=2)
+        # The two live nodes the manager must flag terminating.
+        pool_service.repo.list_pool_inventory = AsyncMock(
+            return_value=[{"node_id": node_a}, {"node_id": node_b}],
+        )
+
+        class FakeJobsRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def force_cancel_pool(self, *, pool_id):
+                return 2
+
+        # Capture mark_terminating_node calls on the inventory repo the
+        # manager constructs from the shared db handle.
+        mark_terminating = AsyncMock(spec=inventory_repo_module.InventoryRepository.mark_terminating_node)
+
+        class FakeInventoryRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def mark_terminating_node(self, *, node_id):
+                await mark_terminating(node_id=node_id)
+
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", FakeJobsRepo,
+        ), patch.object(
+            inventory_repo_module, "InventoryRepository", FakeInventoryRepo,
+        ):
+            request = MagicMock()
+            request.pool_id = str(pool_id)
+            ctx = make_mock_context()
+            await pool_service.DeletePool(request, ctx)
+
+        # Every live pool node was flagged terminating for the reaper.
+        flagged = {c.kwargs["node_id"] for c in mark_terminating.await_args_list}
+        assert flagged == {node_a, node_b}
+        assert mark_terminating.await_count == 2
+        # Pool still soft-deleted after queueing teardown + flagging.
+        pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
+
+    @pytest.mark.asyncio
+    async def test_delete_aws_pool_node_flag_failure_does_not_block_soft_delete(
+        self, pool_service,
+    ):
+        """Node-flagging is best-effort: a list_pool_inventory / flag error
+        must NOT block the pool soft-delete (consistent with the
+        force_cancel_pool best-effort branch above)."""
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
+        )
+        from inferia.services.orchestration.repositories import (
+            inventory_repo as inventory_repo_module,
+        )
+        from unittest.mock import patch
+
+        pool_id = uuid4()
+        pool_service.repo.get = AsyncMock(
+            return_value={
+                "id": pool_id,
+                "lifecycle_state": "terminated",
+                "provider": "aws",
+            },
+        )
+        pool_service.deployment_repo.list = AsyncMock(return_value=[])
+        pool_service.repo.db = MagicMock()
+        pool_service.repo.count_live_inventory = AsyncMock(return_value=1)
+        pool_service.repo.list_pool_inventory = AsyncMock(
+            side_effect=RuntimeError("inventory query down"),
+        )
+
+        class FakeJobsRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def force_cancel_pool(self, *, pool_id):
+                return 1
+
+        class FakeInventoryRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def mark_terminating_node(self, *, node_id):
+                pass
+
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", FakeJobsRepo,
+        ), patch.object(
+            inventory_repo_module, "InventoryRepository", FakeInventoryRepo,
+        ):
+            request = MagicMock()
+            request.pool_id = str(pool_id)
+            ctx = make_mock_context()
+            await pool_service.DeletePool(request, ctx)
+
+        pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
+
+    @pytest.mark.asyncio
     async def test_delete_empty_aws_pool_finalizes_immediately(self, pool_service):
         """An AWS pool deleted with ZERO live nodes (a) empty/never-provisioned
         or (b) the two-step stop→delete where the prior stop already purged

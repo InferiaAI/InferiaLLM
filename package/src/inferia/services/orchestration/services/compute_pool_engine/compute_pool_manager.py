@@ -324,6 +324,34 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                         "for pool %s: %s",
                         pool_id, e,
                     )
+
+                # Flag every live node 'terminating' (mirrors the REST
+                # ``DELETE /deployment/pool/{id}`` path's step 3). Without
+                # this, a node whose destroy fails TERMINALLY on the gRPC
+                # pool-delete path is invisible to the periodic
+                # TerminationReaper, whose stuck-node query keys off
+                # ``metadata->>'terminating'='true'`` (+ no live cancelling
+                # job). Best-effort + AWS-only, consistent with the branch
+                # above: a flagging error must not block the pool soft-delete.
+                try:
+                    from inferia.services.orchestration.repositories.inventory_repo import (
+                        InventoryRepository,
+                    )
+                    inv_repo = InventoryRepository(db_pool)
+                    nodes = await self.repo.list_pool_inventory(pool_id)
+                    for node in nodes or []:
+                        node_id = node["node_id"]
+                        await inv_repo.mark_terminating_node(node_id=node_id)
+                    logger.info(
+                        "flagged %s node(s) 'terminating' for AWS pool %s",
+                        len(nodes or []), pool_id,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "marking pool nodes 'terminating' failed during AWS "
+                        "pool delete for pool %s: %s",
+                        pool_id, e,
+                    )
             else:
                 logger.warning(
                     "AWS pool %s deleted without reconciler routing: repo "
