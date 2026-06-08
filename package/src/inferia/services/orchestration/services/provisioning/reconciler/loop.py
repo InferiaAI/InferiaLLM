@@ -161,10 +161,18 @@ class ProvisioningReconciler:
         if region:
             try:
                 from inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep import (
+                    resolve_sweep_aws_env,
                     sweep_node_instances,
                 )
+                # Resolve creds HERE — on the reconciler's main loop where the
+                # asyncpg-backed ProvidersConfig session works. Resolving them
+                # inside the to_thread worker (a thread with no running loop)
+                # would spin up a new loop and blow up cross-loop, silently
+                # no-op'ing the sweep in production. Best-effort: None ⇒ the
+                # sweep logs a no-creds WARNING and returns [].
+                aws_env = await resolve_sweep_aws_env()
                 terminated = await asyncio.to_thread(
-                    sweep_node_instances, str(node_id), region,
+                    sweep_node_instances, str(node_id), region, aws_env,
                 )
                 if terminated:
                     logger.info(
@@ -301,10 +309,15 @@ class ProvisioningReconciler:
         if region:
             try:
                 from inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep import (
+                    resolve_sweep_aws_env,
                     sweep_pool_instances,
                 )
+                # Resolve creds on the main loop (asyncpg-bound session works
+                # here) BEFORE the to_thread sweep — see _teardown_node. None ⇒
+                # the sweep logs a no-creds WARNING and returns [].
+                aws_env = await resolve_sweep_aws_env()
                 terminated = await asyncio.to_thread(
-                    sweep_pool_instances, str(pool_id), region,
+                    sweep_pool_instances, str(pool_id), region, aws_env,
                 )
                 if terminated:
                     logger.info(

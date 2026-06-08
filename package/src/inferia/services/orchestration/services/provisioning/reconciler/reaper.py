@@ -192,10 +192,16 @@ class TerminationReaper:
         if provider == "aws" and region:
             try:
                 from inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep import (
+                    resolve_sweep_aws_env,
                     sweep_node_instances,
                 )
+                # Resolve creds HERE on the reaper's loop (asyncpg-bound
+                # ProvidersConfig session works) BEFORE the to_thread sweep;
+                # resolving inside the worker thread would crash cross-loop and
+                # no-op the backstop. Best-effort: None ⇒ no-creds WARNING + [].
+                aws_env = await resolve_sweep_aws_env()
                 terminated = await asyncio.to_thread(
-                    sweep_node_instances, str(node_id), str(region),
+                    sweep_node_instances, str(node_id), str(region), aws_env,
                 )
                 if terminated:
                     logger.info(

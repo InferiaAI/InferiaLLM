@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -328,8 +328,10 @@ async def test_terminal_terminated_purges_node_and_sweeps_orphans():
     # Hard purge replaces the soft terminated write entirely.
     inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
     inventory_repo.set_state.assert_not_awaited()
-    # Orphan sweep ran with (node_id, region).
-    sweep.assert_called_once_with(str(job.node_id), region)
+    # Orphan sweep ran with (node_id, region, aws_env). aws_env is resolved
+    # on the reconciler's main loop and passed in (None here — no DB in this
+    # test env); ANY keeps the assertion focused on node_id/region.
+    sweep.assert_called_once_with(str(job.node_id), region, ANY)
     # In-memory worker connection detached (defense-in-depth).
     registry.detach_node.assert_awaited_once_with(str(job.node_id))
 
@@ -397,7 +399,7 @@ async def test_terminated_region_falls_back_to_stack_outputs():
     ) as sweep:
         await rec.tick_once()
 
-    sweep.assert_called_once_with(str(job.node_id), "eu-central-1")
+    sweep.assert_called_once_with(str(job.node_id), "eu-central-1", ANY)
     inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
 
 
@@ -611,7 +613,7 @@ async def test_last_node_of_terminating_pool_finalizes_and_sweeps():
     pool_repo.get_lifecycle_state.assert_awaited_once_with(job.pool_id)
     pool_repo.count_live_inventory.assert_awaited_once_with(job.pool_id)
     pool_repo.finalize_pool_delete.assert_awaited_once_with(job.pool_id)
-    pool_sweep.assert_called_once_with(str(job.pool_id), region)
+    pool_sweep.assert_called_once_with(str(job.pool_id), region, ANY)
 
 
 @pytest.mark.asyncio
