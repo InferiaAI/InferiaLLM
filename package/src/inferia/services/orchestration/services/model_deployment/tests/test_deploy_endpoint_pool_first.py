@@ -203,11 +203,23 @@ async def test_deploy_to_empty_pool_returns_pending_node(app_and_pool):
         assert inv_count == 1, "expected exactly one placeholder node"
 
 
-async def test_deploy_to_warm_pool_returns_deploying(app_and_pool):
-    """BindToReady path: pool with ready node => DEPLOYING, GPU allocated, load_model called."""
+async def test_deploy_to_warm_pool_returns_running(app_and_pool):
+    """BindToReady path: pool with ready node => the model loads on the worker
+    (status=ok) and the deploy is promoted to RUNNING, GPU allocated,
+    load_model called. Previously this returned DEPLOYING and never promoted —
+    a successful warm load stayed DEPLOYING forever."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
     node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=0)
+
+    # Worker reports the model loaded successfully.
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        CommandResultBody,
+    )
+    app.state.worker_controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9000",
+    )
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -219,7 +231,7 @@ async def test_deploy_to_warm_pool_returns_deploying(app_and_pool):
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["state"] == "DEPLOYING"
+    assert body["state"] == "RUNNING"
     assert UUID(body["target_node_id"]) == node_id
 
     async with pool.acquire() as c:

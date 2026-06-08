@@ -1279,7 +1279,9 @@ async def place_and_provision(
                 )
             except Exception:
                 pass  # mirror is best-effort; never block a warm deploy
-            await controller.load_model(node_id=str(node_id), spec=spec)
+            result = await controller.load_model(
+                node_id=str(node_id), spec=spec,
+            )
         except Exception as exc:
             logger.exception("deploy: load_model failed for %s: %s", deploy_id, exc)
             # Rollback: release the GPU and mark FAILED
@@ -1291,6 +1293,66 @@ async def place_and_provision(
                     await deploys.set_state(deploy_id, "FAILED", tx=conn)
             raise HTTPException(status_code=502,
                                   detail=f"load_model failed: {exc}")
+
+        # controller.load_model AWAITS the worker's reply and returns a
+        # CommandResultBody verbatim. The worker can report status='failed'
+        # (container create/start failed, readiness-probe timeout, vLLM engine
+        # crash) WITHOUT raising — the except above only catches transport
+        # errors (NodeUnreachable / timeout / ValueError). We must act on the
+        # returned status, mirroring the cold-path linker, or a failed warm
+        # load leaves the deploy stuck DEPLOYING forever (no container, no
+        # error) and a successful one is never promoted to RUNNING.
+        if getattr(result, "status", None) == "failed":
+            detail = getattr(result, "detail", "") or "load_model returned status=failed"
+            logger.error(
+                "deploy: load_model returned status=failed for %s: %s",
+                deploy_id, detail,
+            )
+            # Atomic rollback: release GPU + mark FAILED. Use update_state (not
+            # set_state) so the worker's error reaches the dashboard/API via
+            # error_message + the published state-change event.
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    await inventory.release_gpu(
+                        node_id, gpu_per_replica or 0, tx=conn,
+                    )
+                    await deploys.update_state(
+                        deploy_id, "FAILED", tx=conn,
+                        error_message=detail,
+                    )
+            raise HTTPException(
+                status_code=502,
+                detail=f"load_model failed: {detail}",
+            )
+
+        # status=ok: the model is serving. Promote DEPLOYING -> RUNNING and
+        # publish the inference endpoint so the data plane can route to this
+        # worker. We publish the node's CP-reachable advertise_url — NOT the
+        # worker's reported endpoint_url, which is a 127.0.0.1:<port> loopback
+        # useless to the control plane (mirrors the linker success branch).
+        async with db_pool.acquire() as conn:
+            await deploys.set_state(deploy_id, "RUNNING", tx=conn)
+        response_body["state"] = "RUNNING"
+        try:
+            async with db_pool.acquire() as conn:
+                advertise = await conn.fetchval(
+                    "SELECT advertise_url FROM compute_inventory WHERE id=$1",
+                    node_id,
+                )
+            if advertise:
+                await deploys.update_endpoint(deploy_id, advertise)
+            else:
+                logger.warning(
+                    "deploy: node=%s has no advertise_url; deploy=%s endpoint "
+                    "not set (inference unreachable)",
+                    node_id, deploy_id,
+                )
+        except Exception:
+            # Endpoint publish is best-effort — never fail the deploy on it
+            # (mirrors the linker, which wraps this in try/except).
+            logger.exception(
+                "deploy: failed to set endpoint for deploy=%s", deploy_id,
+            )
 
     return response_body, response_status
 

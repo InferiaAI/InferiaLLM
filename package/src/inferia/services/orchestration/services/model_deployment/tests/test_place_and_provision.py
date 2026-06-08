@@ -41,6 +41,14 @@ from inferia.services.orchestration.repositories.model_deployment_repo import (
 from inferia.services.orchestration.services.provisioning.jobs.repository import (
     ProvisioningJobRepository,
 )
+from inferia.services.orchestration.services.worker_controller.protocol import (
+    CommandResultBody,
+)
+from inferia.services.orchestration.services.worker_controller.controller import (
+    WorkerController,
+)
+
+import fastapi
 
 pytestmark = pytest.mark.asyncio
 
@@ -71,15 +79,24 @@ class _TxCtx:
         return False
 
 
-def _make_conn() -> MagicMock:
+def _make_conn(advertise_url=None) -> MagicMock:
     conn = MagicMock(name="conn")
     conn.transaction = MagicMock(return_value=_TxCtx())
+    # The warm-path success branch reads advertise_url via ``await
+    # conn.fetchval(...)`` to publish the inference endpoint (mirrors the
+    # linker). Make it awaitable so the publish path executes for real.
+    conn.fetchval = AsyncMock(return_value=advertise_url)
     return conn
 
 
-def _make_db_pool() -> MagicMock:
-    """A db_pool whose ``.acquire()`` yields a fresh mock connection."""
-    conn = _make_conn()
+def _make_db_pool(advertise_url=None) -> MagicMock:
+    """A db_pool whose ``.acquire()`` yields a fresh mock connection.
+
+    ``advertise_url`` is what ``conn.fetchval`` returns for the
+    ``SELECT advertise_url FROM compute_inventory`` lookup the warm-path
+    success branch performs before publishing the endpoint.
+    """
+    conn = _make_conn(advertise_url=advertise_url)
     pool = MagicMock(name="db_pool")
     pool.acquire = MagicMock(return_value=_AcquireCtx(conn))
     return pool
@@ -345,10 +362,16 @@ async def test_bind_to_ready_warm_path_fires_load_model(monkeypatch):
 
     deploys = AsyncMock(spec=ModelDeploymentRepository)
     jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
-    controller = AsyncMock()
+    controller = AsyncMock(spec=WorkerController)
+    # The worker replies status=ok: the model loaded. place_and_provision must
+    # promote DEPLOYING -> RUNNING and publish the endpoint (mirrors linker).
+    controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9000",
+    )
 
     deps = SimpleNamespace(
-        db_pool=_make_db_pool(),
+        db_pool=_make_db_pool(advertise_url="http://10.0.0.5:8080"),
         controller=controller,
         inventory=inventory,
         deploys=deploys,
@@ -377,7 +400,10 @@ async def test_bind_to_ready_warm_path_fires_load_model(monkeypatch):
     )
 
     assert status == 200
-    assert body["state"] == "DEPLOYING"
+    # On a successful warm load, the deployment is promoted to RUNNING (the
+    # worker is serving). Previously the body said DEPLOYING and the deploy was
+    # never promoted — it stayed DEPLOYING forever.
+    assert body["state"] == "RUNNING"
     assert body["target_node_id"] == str(node_id)
 
     # Warm path: no provisioning job.
@@ -392,3 +418,182 @@ async def test_bind_to_ready_warm_path_fires_load_model(monkeypatch):
         "format": "safetensors",
         "backend": "vllm",
     }
+
+    # Promoted to RUNNING (the warm bind set DEPLOYING in-tx first; the final
+    # set_state promotes RUNNING) and endpoint published with advertise_url.
+    ss_states = [c.args[1] for c in deploys.set_state.await_args_list]
+    assert ss_states[-1] == "RUNNING"
+    assert deploys.set_state.await_args.args[0] == deploy_id
+
+    deploys.update_endpoint.assert_awaited_once()
+    ue_args = deploys.update_endpoint.await_args
+    assert ue_args.args[0] == deploy_id
+    assert ue_args.args[1] == "http://10.0.0.5:8080"
+
+    # No FAILED transition on the happy path.
+    for call in deploys.update_state.await_args_list:
+        assert call.kwargs.get("state") != "FAILED"
+        if len(call.args) >= 2:
+            assert call.args[1] != "FAILED"
+
+
+async def test_bind_to_ready_warm_path_failed_status_marks_failed(monkeypatch):
+    """BindToReady warm path where the worker replies status='failed' WITHOUT
+    raising (e.g. vLLM engine init crash, readiness-probe timeout). The
+    previous code discarded the CommandResultBody and left the deploy stuck
+    DEPLOYING forever. It must now: release the GPU, mark FAILED with the
+    worker's detail as error_message, NOT publish an endpoint / RUNNING, and
+    surface a 502 (mirrors the linker + the existing exception path)."""
+    async def _no_mirror(*a, **k):
+        return None
+
+    monkeypatch.setattr(
+        deployment_server, "resolve_and_apply_mirror", _no_mirror, raising=False
+    )
+
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = BindToReady(node_id=node_id)
+
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.allocate_gpu.return_value = True
+
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    controller = AsyncMock(spec=WorkerController)
+    controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="failed", detail="vllm engine init error",
+    )
+
+    deps = SimpleNamespace(
+        db_pool=_make_db_pool(),
+        controller=controller,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    source = SimpleNamespace(
+        engine="vllm",
+        configuration=_row_configuration(),
+        inference_model=None,
+        model_name="my-model",
+        gpu_per_replica=1,
+    )
+
+    with pytest.raises(fastapi.HTTPException) as ei:
+        await place_and_provision(
+            deploy_id=deploy_id,
+            pool_id=pool_id,
+            pool_row={"id": pool_id},
+            pool_meta={},
+            gpu_per_replica=1,
+            org_id=str(uuid4()),
+            engine="vllm",
+            load_spec_source=source,
+            deps=deps,
+        )
+
+    assert ei.value.status_code == 502
+    assert "vllm engine init error" in str(ei.value.detail)
+
+    # GPU released.
+    inventory.release_gpu.assert_awaited()
+    rg_args = inventory.release_gpu.await_args
+    assert rg_args.args[0] == node_id
+
+    # Marked FAILED with the worker's detail as error_message (visible in the
+    # dashboard) — use update_state (publishes), not set_state.
+    deploys.update_state.assert_awaited()
+    us_call = deploys.update_state.await_args
+    # state positional or kw
+    state = us_call.kwargs.get("state")
+    if state is None and len(us_call.args) >= 2:
+        state = us_call.args[1]
+    assert state == "FAILED"
+    err = us_call.kwargs.get("error_message", "")
+    assert "vllm engine init error" in (err or "")
+
+    # NOT promoted to RUNNING and NO endpoint published.
+    deploys.update_endpoint.assert_not_awaited()
+    for call in deploys.set_state.await_args_list:
+        if len(call.args) >= 2:
+            assert call.args[1] != "RUNNING"
+
+
+async def test_bind_to_ready_warm_path_ok_status_runs_and_publishes(monkeypatch):
+    """BindToReady warm path where the worker replies status='ok'. The deploy
+    is promoted to RUNNING and the node's advertise_url is published as the
+    inference endpoint (mirrors the linker success branch)."""
+    async def _no_mirror(*a, **k):
+        return None
+
+    monkeypatch.setattr(
+        deployment_server, "resolve_and_apply_mirror", _no_mirror, raising=False
+    )
+
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = BindToReady(node_id=node_id)
+
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.allocate_gpu.return_value = True
+
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    controller = AsyncMock(spec=WorkerController)
+    controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9000",
+    )
+
+    deps = SimpleNamespace(
+        db_pool=_make_db_pool(advertise_url="http://10.0.0.7:8080"),
+        controller=controller,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    source = SimpleNamespace(
+        engine="vllm",
+        configuration=_row_configuration(),
+        inference_model=None,
+        model_name="my-model",
+        gpu_per_replica=1,
+    )
+
+    body, status = await place_and_provision(
+        deploy_id=deploy_id,
+        pool_id=pool_id,
+        pool_row={"id": pool_id},
+        pool_meta={},
+        gpu_per_replica=1,
+        org_id=str(uuid4()),
+        engine="vllm",
+        load_spec_source=source,
+        deps=deps,
+    )
+
+    assert status == 200
+    assert body["state"] == "RUNNING"
+
+    # Final state transition promotes RUNNING (DEPLOYING was set in the bind tx).
+    ss_states = [c.args[1] for c in deploys.set_state.await_args_list]
+    assert ss_states[-1] == "RUNNING"
+
+    # Endpoint published with the node's CP-reachable advertise_url, NOT the
+    # worker's loopback endpoint_url.
+    deploys.update_endpoint.assert_awaited_once()
+    assert deploys.update_endpoint.await_args.args[1] == "http://10.0.0.7:8080"
+
+    # GPU not released on success.
+    inventory.release_gpu.assert_not_awaited()

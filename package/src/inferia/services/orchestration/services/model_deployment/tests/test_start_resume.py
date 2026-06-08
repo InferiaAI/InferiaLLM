@@ -254,8 +254,9 @@ async def test_resume_terminated_reprovisions_clears_stale_binding(app_and_pool)
 
 async def test_resume_warm_pool_binds_to_ready_node(app_and_pool):
     """Resume onto a pool that already has a ready node with capacity:
-    BindToReady warm path => DEPLOYING + load_model, no provisioning job,
-    no legacy event."""
+    BindToReady warm path => load_model (status=ok) => RUNNING, no
+    provisioning job, no legacy event. Previously a successful warm load
+    stayed DEPLOYING forever; it now promotes to RUNNING."""
     app, pool = app_and_pool
     pool_id, org_id = await _seed_pool(pool)
     ready_node = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=0)
@@ -270,6 +271,14 @@ async def test_resume_warm_pool_binds_to_ready_node(app_and_pool):
         configuration={"model": {"artifact_uri": "hf://resume-model"}},
     )
 
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        CommandResultBody,
+    )
+    app.state.worker_controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9000",
+    )
+
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -279,7 +288,7 @@ async def test_resume_warm_pool_binds_to_ready_node(app_and_pool):
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["state"] == "DEPLOYING"
+    assert body["state"] == "RUNNING"
     assert UUID(body["target_node_id"]) == ready_node
 
     row = await _get_deploy(pool, deploy_id)
