@@ -331,7 +331,56 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
                     pool_id,
                 )
 
+            # Mark the pool NON-FINAL 'terminating' (NOT 'terminated'): the
+            # per-node EC2 destroys are async, so the pool row must outlive
+            # this RPC. The reconciler's PHASE-2 finalizer hard-deletes the
+            # compute_pools row + every pool-scoped DB row once the LAST node
+            # is purged (zero residue). Keying the finalizer off 'terminating'
+            # is what distinguishes "delete in flight" from "delete finished".
+            # MUST run before soft_delete_pool — set_pool_lifecycle_state
+            # guards on is_active=TRUE, which the soft-delete clears.
+            try:
+                await self.repo.set_pool_lifecycle_state(pool_id, "terminating")
+            except Exception as e:
+                logger.error(
+                    "set_pool_lifecycle_state('terminating') failed for AWS "
+                    "pool %s: %s; finalizer may not hard-delete the pool row",
+                    pool_id, e,
+                )
+
         await self.repo.soft_delete_pool(pool_id)
+
+        # Empty / already-drained AWS pool: finalize NOW. The reconciler's
+        # PHASE-2 finalizer (``_teardown_node`` → ``finalize_pool_delete``)
+        # only fires off a per-node teardown EVENT. A pool with ZERO live nodes
+        # — empty/never-provisioned, or the gRPC two-step stop→delete where the
+        # prior StopPool already purged every node — produces NO such event, so
+        # that pool would be stuck soft-deleted 'terminating' forever (DB
+        # residue: the pool row + the UNIQUE(pool_name, owner_type, owner_id)
+        # never freed; NO EC2 leak — there are no live nodes). So when no node
+        # remains, run the finalizer right here instead of waiting for a
+        # teardown that will never come. Best-effort: a failure leaves the pool
+        # soft-deleted and a later node teardown still finalizes it (finalize is
+        # idempotent, so a double-fire is a harmless no-op). AWS-only: only the
+        # branch above set lifecycle='terminating', which the finalizer keys
+        # off. No EC2 sweep here — there are no live nodes to reclaim.
+        if pool.get("provider") == "aws":
+            try:
+                remaining = await self.repo.count_live_inventory(pool_id)
+                if remaining == 0:
+                    deleted = await self.repo.finalize_pool_delete(pool_id)
+                    if deleted:
+                        logger.info(
+                            "DeletePool: AWS pool %s had zero live nodes; "
+                            "finalized (hard-deleted) immediately", pool_id,
+                        )
+            except Exception as e:
+                logger.warning(
+                    "DeletePool: empty-pool finalize for %s failed "
+                    "(best-effort; a later node teardown will finalize): %s",
+                    pool_id, e,
+                )
+
         return compute_pool_pb2.poolEmpty()
 
     async def BindProviderResource(self, request, context):

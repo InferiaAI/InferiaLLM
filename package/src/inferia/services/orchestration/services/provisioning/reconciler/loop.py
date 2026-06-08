@@ -70,6 +70,7 @@ class ProvisioningReconciler:
         load_aws_context: Callable[[ProvisioningJob], Awaitable[tuple[Any, dict[str, str]]]] | None = None,
         inventory_repo: Any = None,
         worker_registry: Any = None,
+        pool_repo: Any = None,
     ):
         self.repo = repo
         self.handlers = handlers
@@ -96,6 +97,18 @@ class ProvisioningReconciler:
         # compute_inventory.state) reflects the state machine outcome.
         # Optional: tests pass None to skip the bridge.
         self.inventory_repo = inventory_repo
+        # pool_repo (ComputePoolRepository) drives PHASE 2 of pool teardown.
+        # A pool delete only SOFT-deletes the pool (is_active=FALSE /
+        # lifecycle_state='terminating') and fires per-node teardown via
+        # force_cancel_pool; the EC2 destroys are async (per-node
+        # CancelHandler → pulumi destroy). When the LAST node of a
+        # 'terminating' pool is purged here, _teardown_node hard-deletes the
+        # pool + its pool-scoped residue via pool_repo.finalize_pool_delete
+        # and runs the boto3 pool sweep as the orphan-EC2 backstop. Optional:
+        # tests / split deployments that don't run the pool finalizer pass
+        # None (the per-node teardown still runs, the pool row just stays
+        # soft-deleted).
+        self.pool_repo = pool_repo
         self.now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
         self._pool: WorkerPool | None = None
 
@@ -179,6 +192,15 @@ class ProvisioningReconciler:
                     "linger (EC2 already swept/destroyed)", node_id,
                 )
 
+        # 2b. PHASE-2 pool finalizer. If this node's purge was the LAST one of
+        # a pool whose delete request put it in lifecycle_state='terminating',
+        # hard-delete the pool + its pool-scoped residue and sweep any orphan
+        # pool EC2. Best-effort + isolated: a finalizer failure here never
+        # blocks the worker-registry detach below, and a still-populated pool
+        # (more nodes to tear down) is simply left for the next node's
+        # teardown to finalize.
+        await self._finalize_pool_if_empty(job)
+
         # 3. Drop the in-memory worker connection (defense-in-depth).
         if self.worker_registry is not None:
             try:
@@ -188,6 +210,118 @@ class ProvisioningReconciler:
                     "worker_registry.detach_node(%s) failed; the worker WS "
                     "close path will still detach on disconnect", node_id,
                 )
+
+    async def _finalize_pool_if_empty(self, job: ProvisioningJob) -> None:
+        """PHASE 2 of pool teardown: hard-delete a pool once its last node is
+        gone.
+
+        Trigger condition (the clean seam — runs right after a node's
+        ``purge_node`` in :meth:`_teardown_node`):
+
+          * the pool is in ``lifecycle_state = 'terminating'`` (set by the
+            delete request — NOT 'terminated' yet, because the EC2 destroys
+            were async), AND
+          * the pool now has ZERO ``compute_inventory`` rows (this node's purge
+            was the last one).
+
+        When both hold we, in order:
+
+          1. ``pool_repo.finalize_pool_delete(pool_id)`` — ONE transaction that
+             deletes ``node_provisioning_events`` (no FK) +
+             ``worker_bootstrap_tokens`` (pool tokens) + the ``compute_pools``
+             row (HARD delete → the ON DELETE CASCADE FKs fire for
+             ``autoscaler_state`` and any stragglers; frees the unique
+             pool_name).
+          2. ``sweep_pool_instances(pool_id, region)`` — OUTSIDE the tx,
+             best-effort boto3 backstop that terminates any pool EC2 a per-node
+             ``force_cancel_pool`` skipped (a node whose job already reached the
+             terminal 'terminated' phase, or a retry double-launch Pulumi never
+             tracked). This is the re-arm backstop: rather than re-enqueueing
+             already-'terminated' jobs (which risks an unbounded loop), we rely
+             on the tag sweep to reclaim those leaks.
+
+        Best-effort and fully isolated: a None ``pool_repo`` (tests / split
+        deploys) short-circuits; every step is wrapped so a failure is logged
+        and never propagates back into the node teardown flow. Idempotent —
+        ``finalize_pool_delete`` returns False (and we skip the sweep's "pool
+        finalized" log) if the pool row was already removed by a concurrent
+        teardown.
+        """
+        if self.pool_repo is None:
+            return
+        pool_id = job.pool_id
+        try:
+            lifecycle = await self.pool_repo.get_lifecycle_state(pool_id)
+        except Exception:
+            logger.exception(
+                "pool finalizer: get_lifecycle_state(%s) failed; leaving the "
+                "pool row soft-deleted", pool_id,
+            )
+            return
+        if lifecycle != "terminating":
+            # Not a pool being deleted (e.g. a single node dropped from a live
+            # pool) — nothing to finalize.
+            return
+        try:
+            remaining = await self.pool_repo.count_live_inventory(pool_id)
+        except Exception:
+            logger.exception(
+                "pool finalizer: count_live_inventory(%s) failed; deferring "
+                "finalize to the next node teardown", pool_id,
+            )
+            return
+        if remaining > 0:
+            # More nodes still tearing down; the LAST one to be purged will
+            # finalize the pool.
+            logger.info(
+                "pool finalizer: pool=%s still has %d inventory row(s); "
+                "deferring hard-delete", pool_id, remaining,
+            )
+            return
+
+        # Last node gone → hard-delete the pool + pool-scoped residue.
+        try:
+            deleted = await self.pool_repo.finalize_pool_delete(pool_id)
+        except Exception:
+            logger.exception(
+                "pool finalizer: finalize_pool_delete(%s) failed; the pool "
+                "row + pool-scoped residue may linger", pool_id,
+            )
+            return
+        if deleted:
+            logger.info(
+                "pool finalizer: hard-deleted pool=%s and its pool-scoped "
+                "residue (last node purged)", pool_id,
+            )
+
+        # Orphan/duplicate pool-EC2 sweep (boto3 tag backstop) — OUTSIDE the
+        # DB tx. Catches EC2 the per-node force_cancel skipped (terminated-job
+        # nodes / retry double-launches). Best-effort.
+        region = self._region_for_job(job)
+        if region:
+            try:
+                from inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep import (
+                    sweep_pool_instances,
+                )
+                terminated = await asyncio.to_thread(
+                    sweep_pool_instances, str(pool_id), region,
+                )
+                if terminated:
+                    logger.info(
+                        "pool sweep terminated %d orphan EC2 for pool=%s: %s",
+                        len(terminated), pool_id, ", ".join(terminated),
+                    )
+            except Exception:
+                logger.exception(
+                    "pool sweep failed for pool=%s region=%s; per-node pulumi "
+                    "destroy is still authoritative", pool_id, region,
+                )
+        else:
+            logger.warning(
+                "pool finalizer: no region for pool=%s; skipping orphan EC2 "
+                "sweep (per-node pulumi destroy is still authoritative)",
+                pool_id,
+            )
 
     async def _inventory_set_state(
         self, *, node_id: Any, state: str,

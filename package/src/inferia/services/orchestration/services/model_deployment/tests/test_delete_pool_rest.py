@@ -23,15 +23,21 @@ pytestmark = pytest.mark.asyncio
 
 
 class _FakeConn:
-    def __init__(self, *, pool_row, active_count):
+    def __init__(self, *, pool_row, active_count, live_inventory=0):
         self._pool_row = pool_row
         self._active = active_count
+        self._live_inventory = live_inventory
         self.executed: list[tuple] = []
 
     async def fetchrow(self, sql, *args):
         return self._pool_row
 
     async def fetchval(self, sql, *args):
+        # The empty-pool finalize check counts compute_inventory rows still
+        # attached to the pool; everything else (duplicate-name guard etc.)
+        # reuses ``active_count``.
+        if "compute_inventory" in sql and "count" in sql.lower():
+            return self._live_inventory
         return self._active
 
     async def execute(self, sql, *args):
@@ -134,3 +140,63 @@ async def test_delete_pool_400_on_bad_uuid():
     with p1, p2, p3:
         r = await _delete("/deployment/pool/not-a-uuid")
     assert r.status_code == 400
+
+
+async def test_delete_empty_pool_finalizes_immediately():
+    """An empty / already-drained pool (zero live compute_inventory rows) has
+    NO node teardown event coming — the reconciler finalizer would never fire,
+    so the delete path itself must finalize: HARD-delete the compute_pools row
+    in the same request instead of leaving it stuck 'terminating' forever."""
+    pid = uuid4()
+    conn = _FakeConn(
+        pool_row={"id": pid, "is_active": True},
+        active_count=0,
+        live_inventory=0,  # zero nodes → finalize-when-empty must fire
+    )
+    p1, p2, p3 = _patches(conn)
+    with p1, p2, p3:
+        r = await _delete(f"/deployment/pool/{pid}")
+    assert r.status_code == 202, r.text
+    sqls = [sql for sql, _ in conn.executed]
+    # The finalizer HARD-deletes the compute_pools row (frees the unique name).
+    assert any(
+        "DELETE FROM compute_pools WHERE id = $1" in s for s in sqls
+    ), sqls
+    # ...and detaches any divergent target_pool_id before that delete.
+    assert any(
+        "UPDATE model_deployments SET target_pool_id = NULL" in s for s in sqls
+    ), sqls
+    # ...and removes pool-scoped residue (events + bootstrap tokens).
+    assert any(
+        "DELETE FROM node_provisioning_events WHERE pool_id = $1" in s
+        for s in sqls
+    ), sqls
+    assert any(
+        "DELETE FROM worker_bootstrap_tokens WHERE pool_id = $1" in s
+        for s in sqls
+    ), sqls
+
+
+async def test_delete_pool_with_live_nodes_defers_finalize():
+    """A pool with live nodes still tearing down must NOT be hard-deleted at
+    delete time — the per-node ``_teardown_node`` finalizes once the LAST node
+    is purged. Only the soft-delete (terminating) lands now."""
+    pid = uuid4()
+    conn = _FakeConn(
+        pool_row={"id": pid, "is_active": True},
+        active_count=0,
+        live_inventory=2,  # two nodes still tearing down
+    )
+    p1, p2, p3 = _patches(conn)
+    with p1, p2, p3:
+        r = await _delete(f"/deployment/pool/{pid}")
+    assert r.status_code == 202, r.text
+    sqls = [sql for sql, _ in conn.executed]
+    # Soft-delete to terminating happened...
+    assert any(
+        "compute_pools" in s and "is_active = FALSE" in s for s in sqls
+    )
+    # ...but the HARD finalize delete did NOT (nodes still alive).
+    assert not any(
+        "DELETE FROM compute_pools WHERE id = $1" in s for s in sqls
+    ), sqls

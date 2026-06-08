@@ -163,6 +163,7 @@ async def start_reconciler(
     inventory_repo=None,
     load_aws_context=None,
     worker_registry=None,
+    pool_repo=None,
 ) -> None:
     """Single-active reconciler loop.
 
@@ -217,6 +218,7 @@ async def start_reconciler(
                     inventory_repo=inventory_repo,
                     load_aws_context=load_aws_context,
                     worker_registry=worker_registry,
+                    pool_repo=pool_repo,
                 )
                 run_task = asyncio.create_task(rec.run())
                 try:
@@ -729,6 +731,7 @@ async def serve():
                     inventory_repo=inventory_repo,
                     load_aws_context=_load_aws_context,
                     worker_registry=worker_registry,
+                    pool_repo=pool_repo,
                 )
             )
             app.state.reconciler_stop = reconciler_stop

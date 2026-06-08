@@ -2746,12 +2746,20 @@ async def delete_pool_rest(pool_id: str):
          matching local backend, and flips each node's row to terminating.
          (The old pool-scoped direct-adapter destroy targeted a stack that
          never existed and silently leaked the EC2s.)
-      4. soft-delete the pool row (lifecycle_state=terminated, is_active=FALSE).
+      4. soft-delete the pool row to the NON-FINAL ``lifecycle_state=
+         'terminating'`` (is_active=FALSE). It is deliberately NOT set to
+         'terminated' here: the EC2 destroys are asynchronous, so the pool row
+         must outlive the delete request. The reconciler's PHASE-2 finalizer
+         (``_teardown_node`` → ``finalize_pool_delete``) HARD-deletes the
+         ``compute_pools`` row + every pool-scoped DB row once the LAST node
+         has actually been purged — so a deleted pool eventually leaves ZERO
+         residue instead of a permanent soft-deleted shell.
 
     All of 2-4 run in one DB transaction so a crash can't half-delete the pool.
 
     Returns 202 — node teardown is asynchronous (~60-90s per EC2); the
-    reconciler marks each node terminated as it finishes.
+    reconciler purges each node as it finishes and finalizes the pool once the
+    last node is gone.
     """
     try:
         pool_uuid = UUID(pool_id)
@@ -2829,14 +2837,61 @@ async def delete_pool_rest(pool_id: str):
                 """,
                 pool_uuid,
             )
-            # 4. Soft-delete the pool row.
+            # 4. Soft-delete the pool row to the NON-FINAL 'terminating'
+            #    state. NOT 'terminated': the EC2 destroys are async, so the
+            #    pool row must outlive this request. The reconciler's PHASE-2
+            #    finalizer hard-deletes compute_pools + every pool-scoped row
+            #    once the LAST node is purged (zero residue). Keying the
+            #    finalizer trigger off 'terminating' (vs the final
+            #    'terminated') is what lets it distinguish "delete in flight"
+            #    from "delete already finished".
             await conn.execute(
                 """
                 UPDATE compute_pools
                 SET lifecycle_state = $2, is_active = FALSE, updated_at = now()
                 WHERE id = $1
                 """,
-                pool_uuid, POOL_STATE_TERMINATED,
+                pool_uuid, POOL_STATE_TERMINATING,
+            )
+
+        # 5. Empty / already-drained pool: finalize NOW. The reconciler's
+        #    PHASE-2 finalizer (``_teardown_node`` → ``finalize_pool_delete``)
+        #    only fires off a per-node teardown EVENT — and a pool with ZERO
+        #    live nodes (one whose nodes already failed/never provisioned, or
+        #    whose nodes were purged by a prior stop) produces no such event,
+        #    so that pool would be stuck 'terminating' forever (DB residue: the
+        #    pool row + the UNIQUE(pool_name, owner_type, owner_id) never
+        #    freed). Step 2 already DELETEd the pool's deployments and step 3
+        #    flagged any nodes terminating, so check whether any
+        #    compute_inventory rows remain; if none, run the finalizer right
+        #    here. Best-effort: a failure leaves the pool soft-deleted and a
+        #    later node teardown still finalizes it (finalize is idempotent, so
+        #    a double-fire is a harmless no-op). No EC2 sweep here — there are
+        #    no live nodes (and the per-node sweeps already ran for any that
+        #    were torn down).
+        try:
+            remaining = await conn.fetchval(
+                "SELECT count(*) FROM compute_inventory WHERE pool_id = $1",
+                pool_uuid,
+            )
+            if int(remaining or 0) == 0:
+                from inferia.services.orchestration.repositories.pool_repo import (
+                    ComputePoolRepository,
+                )
+                async with conn.transaction():
+                    deleted = await ComputePoolRepository(None).finalize_pool_delete(
+                        pool_uuid, tx=conn,
+                    )
+                if deleted:
+                    logger.info(
+                        "delete_pool_rest: pool %s had zero live nodes; "
+                        "finalized (hard-deleted) immediately", pool_uuid,
+                    )
+        except Exception as e:
+            logger.warning(
+                "delete_pool_rest: empty-pool finalize for %s failed "
+                "(best-effort; a later node teardown will finalize): %s",
+                pool_uuid, e,
             )
     finally:
         if conn:

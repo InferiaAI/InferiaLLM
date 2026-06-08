@@ -546,3 +546,255 @@ async def test_inventory_repo_none_skips_set_state_without_crashing():
 
     await rec.tick_once()
     assert len(repo.transitions) == 1
+
+
+# ---------------------------------------------------------------------------
+# PHASE-2 pool finalizer (Task 2.7).
+#
+# After a node's purge in _teardown_node, if it was the LAST node of a pool
+# whose delete request put it in lifecycle_state='terminating', the reconciler
+# hard-deletes the pool + its pool-scoped residue (finalize_pool_delete) and
+# runs the boto3 pool sweep (sweep_pool_instances) as the orphan-EC2 backstop.
+#
+# Trigger conditions (both must hold):
+#   * pool_repo.get_lifecycle_state(pool_id) == 'terminating'
+#   * pool_repo.count_live_inventory(pool_id) == 0  (this purge was the last)
+# ---------------------------------------------------------------------------
+
+
+def _terminated_rec(repo, *, pool_repo):
+    """Reconciler wired for a CANCELLING→TERMINATED transition with a pool_repo
+    so _teardown_node fires _finalize_pool_if_empty."""
+    h = _OkHandler(Phase.CANCELLING, Phase.TERMINATED)
+    inventory_repo = MagicMock()
+    inventory_repo.purge_node = AsyncMock()
+    inventory_repo.set_state = AsyncMock()
+    rec = ProvisioningReconciler(
+        repo=repo,
+        handlers={h.name: h},
+        emit_event=AsyncMock(),
+        db=MagicMock(),
+        concurrency=1,
+        poll_interval_s=0.01,
+        lease_seconds=300,
+        renew_interval_s=10.0,
+        lease_holder="test-rec",
+        load_aws_context=AsyncMock(return_value=(MagicMock(), {})),
+        inventory_repo=inventory_repo,
+        pool_repo=pool_repo,
+    )
+    return rec
+
+
+@pytest.mark.asyncio
+async def test_last_node_of_terminating_pool_finalizes_and_sweeps():
+    """terminating pool + 0 inventory after purge → finalize_pool_delete +
+    sweep_pool_instances(pool_id, region)."""
+    region = "us-west-2"
+    job = _job(Phase.CANCELLING, spec={"region": region})
+    repo = _FakeRepo([job])
+    pool_repo = MagicMock()
+    pool_repo.get_lifecycle_state = AsyncMock(return_value="terminating")
+    pool_repo.count_live_inventory = AsyncMock(return_value=0)
+    pool_repo.finalize_pool_delete = AsyncMock(return_value=True)
+    rec = _terminated_rec(repo, pool_repo=pool_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances", return_value=["i-poolorphan"],
+    ) as pool_sweep:
+        await rec.tick_once()
+
+    pool_repo.get_lifecycle_state.assert_awaited_once_with(job.pool_id)
+    pool_repo.count_live_inventory.assert_awaited_once_with(job.pool_id)
+    pool_repo.finalize_pool_delete.assert_awaited_once_with(job.pool_id)
+    pool_sweep.assert_called_once_with(str(job.pool_id), region)
+
+
+@pytest.mark.asyncio
+async def test_terminating_pool_with_nodes_left_does_not_finalize():
+    """terminating pool but inventory rows still remain → NOT finalized; the
+    LAST node's teardown will finalize later."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    pool_repo = MagicMock()
+    pool_repo.get_lifecycle_state = AsyncMock(return_value="terminating")
+    pool_repo.count_live_inventory = AsyncMock(return_value=1)  # one left
+    pool_repo.finalize_pool_delete = AsyncMock(return_value=True)
+    rec = _terminated_rec(repo, pool_repo=pool_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances",
+    ) as pool_sweep:
+        await rec.tick_once()
+
+    pool_repo.finalize_pool_delete.assert_not_awaited()
+    pool_sweep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_non_terminating_pool_purges_node_but_does_not_finalize():
+    """A node dropped from a LIVE (running) pool → purge runs, pool finalizer
+    short-circuits at the lifecycle check (count is never even read)."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    pool_repo = MagicMock()
+    pool_repo.get_lifecycle_state = AsyncMock(return_value="running")
+    pool_repo.count_live_inventory = AsyncMock(return_value=0)
+    pool_repo.finalize_pool_delete = AsyncMock(return_value=True)
+    rec = _terminated_rec(repo, pool_repo=pool_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances",
+    ) as pool_sweep:
+        await rec.tick_once()
+
+    # The node itself is still purged (refcount teardown).
+    rec.inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
+    # Not a pool delete → never count, never finalize, never pool-sweep.
+    pool_repo.count_live_inventory.assert_not_awaited()
+    pool_repo.finalize_pool_delete.assert_not_awaited()
+    pool_sweep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pool_repo_none_skips_finalizer_without_crashing():
+    """pool_repo=None (split deploy / older tests) → node purged, no finalize,
+    no crash."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    rec = _terminated_rec(repo, pool_repo=None)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances",
+    ) as pool_sweep:
+        await rec.tick_once()
+
+    rec.inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
+    pool_sweep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_failure_does_not_block_node_teardown():
+    """A failing finalize_pool_delete must not crash the node teardown — the
+    job already recorded its terminal phase, and the worker detach still runs."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    pool_repo = MagicMock()
+    pool_repo.get_lifecycle_state = AsyncMock(return_value="terminating")
+    pool_repo.count_live_inventory = AsyncMock(return_value=0)
+    pool_repo.finalize_pool_delete = AsyncMock(side_effect=RuntimeError("DB blip"))
+    rec = _terminated_rec(repo, pool_repo=pool_repo)
+    registry = MagicMock()
+    registry.detach_node = AsyncMock()
+    rec.worker_registry = registry
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances",
+    ) as pool_sweep:
+        await rec.tick_once()
+
+    # transition_to still recorded TERMINATED; detach still ran; the sweep is
+    # skipped because the finalize raised (we never reach it).
+    assert repo.transitions[0]["next_phase"] == Phase.TERMINATED
+    registry.detach_node.assert_awaited_once_with(str(job.node_id))
+    pool_sweep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pool_sweep_failure_does_not_block_node_teardown():
+    """A flaky pool sweep (boto3) must not strand the rest of teardown — the
+    pool row was already hard-deleted and the worker detach still runs."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    pool_repo = MagicMock()
+    pool_repo.get_lifecycle_state = AsyncMock(return_value="terminating")
+    pool_repo.count_live_inventory = AsyncMock(return_value=0)
+    pool_repo.finalize_pool_delete = AsyncMock(return_value=True)
+    rec = _terminated_rec(repo, pool_repo=pool_repo)
+    registry = MagicMock()
+    registry.detach_node = AsyncMock()
+    rec.worker_registry = registry
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances",
+        side_effect=RuntimeError("AWS describe blew up"),
+    ):
+        await rec.tick_once()
+
+    pool_repo.finalize_pool_delete.assert_awaited_once_with(job.pool_id)
+    registry.detach_node.assert_awaited_once_with(str(job.node_id))
+
+
+@pytest.mark.asyncio
+async def test_finalize_no_region_skips_pool_sweep_but_finalizes():
+    """terminating pool + 0 inventory but no region anywhere → the pool row is
+    still hard-deleted (DB residue gone); only the boto3 sweep is skipped."""
+    job = _job(Phase.CANCELLING, spec={})  # no region
+    repo = _FakeRepo([job])
+    pool_repo = MagicMock()
+    pool_repo.get_lifecycle_state = AsyncMock(return_value="terminating")
+    pool_repo.count_live_inventory = AsyncMock(return_value=0)
+    pool_repo.finalize_pool_delete = AsyncMock(return_value=True)
+    rec = _terminated_rec(repo, pool_repo=pool_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances",
+    ) as pool_sweep:
+        await rec.tick_once()
+
+    pool_repo.finalize_pool_delete.assert_awaited_once_with(job.pool_id)
+    pool_sweep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_lifecycle_read_failure_swallowed():
+    """get_lifecycle_state raising must not crash teardown — the pool row is
+    left soft-deleted, the node purge already happened."""
+    job = _job(Phase.CANCELLING, spec={"region": "us-east-1"})
+    repo = _FakeRepo([job])
+    pool_repo = MagicMock()
+    pool_repo.get_lifecycle_state = AsyncMock(side_effect=RuntimeError("DB blip"))
+    pool_repo.count_live_inventory = AsyncMock(return_value=0)
+    pool_repo.finalize_pool_delete = AsyncMock(return_value=True)
+    rec = _terminated_rec(repo, pool_repo=pool_repo)
+
+    with patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_node_instances", return_value=[],
+    ), patch(
+        "inferia.services.orchestration.services.adapter_engine."
+        "aws_orphan_sweep.sweep_pool_instances",
+    ) as pool_sweep:
+        await rec.tick_once()
+
+    rec.inventory_repo.purge_node.assert_awaited_once_with(job.node_id)
+    pool_repo.finalize_pool_delete.assert_not_awaited()
+    pool_sweep.assert_not_called()

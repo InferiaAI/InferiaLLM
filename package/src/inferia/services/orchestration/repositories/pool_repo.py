@@ -332,6 +332,117 @@ class ComputePoolRepository:
             )
         return int(row or 0)
 
+    async def count_live_inventory(self, pool_id: UUID) -> int:
+        """Count EVERY ``compute_inventory`` row still attached to the pool,
+        regardless of state.
+
+        Unlike :meth:`count_nodes` (which is a scheduler capacity gate and so
+        filters to ready/provisioning, excluding terminating rows), this is the
+        teardown progress signal the pool finalizer keys off: a pool is only
+        finalized (hard-deleted) once its LAST node's inventory row has been
+        purged. ``purge_node`` HARD-deletes the row, so a fully-torn-down pool
+        returns 0 here — at which point the pool row + its pool-scoped residue
+        can be safely removed.
+        """
+        async with self.db.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT COUNT(*) FROM compute_inventory WHERE pool_id = $1",
+                pool_id,
+            )
+        return int(row or 0)
+
+    async def get_lifecycle_state(self, pool_id: UUID) -> str | None:
+        """Return the pool's ``lifecycle_state`` (or None if the row is gone).
+
+        Reads WITHOUT the ``is_active = TRUE`` filter the public ``get`` uses,
+        because a pool mid-teardown has already been soft-deleted
+        (``is_active = FALSE``) by the delete request — the finalizer still
+        needs to see its ``lifecycle_state = 'terminating'`` to decide whether
+        to hard-delete it.
+        """
+        async with self.db.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT lifecycle_state FROM compute_pools WHERE id = $1",
+                pool_id,
+            )
+
+    async def finalize_pool_delete(self, pool_id: UUID, *, tx=None) -> bool:
+        """HARD-delete a fully-torn-down pool and its pool-scoped DB residue.
+
+        Phase 2 of the two-phase pool teardown. The delete request only
+        SOFT-deletes the pool (``is_active = FALSE`` /
+        ``lifecycle_state = 'terminating'``) and fires per-node teardown via
+        ``force_cancel_pool``; the EC2 destroys are async (the reconciler's
+        CancelHandler runs ``pulumi destroy`` per node). This finalizer is the
+        SECOND phase — invoked once the LAST node has been purged (no
+        ``compute_inventory`` rows remain) — and removes everything the
+        soft-delete left behind so a deleted pool eventually leaves ZERO DB
+        residue:
+
+          1. ``node_provisioning_events`` — ``pool_id`` has NO FK (plain UUID
+             column), so the ``compute_pools`` cascade never reaches it; the
+             per-node purge already removed by-node rows, this catches any
+             pool-only / orphan rows.
+          2. ``worker_bootstrap_tokens`` — although ``pool_id`` IS an
+             ``ON DELETE CASCADE`` FK, we delete it explicitly so UNconsumed
+             pool tokens are gone deterministically (consumed-by-node tokens
+             were already purged per node), and so the behaviour is identical
+             whether or not the cascade fires first.
+          3. ``compute_pools`` — the HARD delete. Removing the row finally lets
+             the ``ON DELETE CASCADE`` FKs that pointed AT it fire
+             (``autoscaler_state``, plus any straggler ``compute_inventory`` /
+             ``model_deployments`` / ``worker_bootstrap_tokens.pool_id`` rows),
+             and frees the UNIQUE(pool_name, owner_type, owner_id) so a
+             same-named pool can be re-created.
+
+        Runs as ONE transaction (the caller's ``tx`` when supplied, else a
+        freshly acquired connection + transaction). The boto3
+        ``sweep_pool_instances`` orphan/duplicate-EC2 backstop is deliberately
+        NOT part of this method — it must run OUTSIDE the DB transaction
+        (boto3 is sync + best-effort); the reconciler's ``_teardown_node``
+        invokes it after this returns.
+
+        Returns True if the ``compute_pools`` row was actually deleted, False
+        if it was already gone (idempotent — safe to call twice).
+        """
+
+        async def _run(conn) -> bool:
+            await conn.execute(
+                "DELETE FROM node_provisioning_events WHERE pool_id = $1",
+                pool_id,
+            )
+            await conn.execute(
+                "DELETE FROM worker_bootstrap_tokens WHERE pool_id = $1",
+                pool_id,
+            )
+            # Detach any SURVIVING deployment whose ``target_pool_id`` still
+            # points at this pool. ``model_deployments.target_pool_id`` is an
+            # ON DELETE NO ACTION FK (the 20260530 migration added it with no
+            # ON DELETE clause), so a row that diverged — ``pool_id`` re-placed
+            # onto another live pool while ``target_pool_id`` still references
+            # THIS one — would make the ``DELETE FROM compute_pools`` below
+            # raise ForeignKeyViolation, rolling the whole finalize back and
+            # leaving the pool stuck 'terminating' forever. Rows with
+            # ``pool_id == this`` cascade-delete anyway (that FK IS ON DELETE
+            # CASCADE), so this NULL-out only affects the divergent stragglers.
+            await conn.execute(
+                "UPDATE model_deployments SET target_pool_id = NULL "
+                "WHERE target_pool_id = $1",
+                pool_id,
+            )
+            res = await conn.execute(
+                "DELETE FROM compute_pools WHERE id = $1",
+                pool_id,
+            )
+            # asyncpg DELETE status is 'DELETE <rowcount>'.
+            return res.rsplit(" ", 1)[-1] == "1"
+
+        if tx is not None:
+            return await _run(tx)
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                return await _run(conn)
+
 
 # ---------------------------------------------------------------------------
 # Worker-agent extensions (inferia-worker integration).

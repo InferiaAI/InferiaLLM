@@ -150,6 +150,9 @@ class TestPoolManager:
         )
         pool_service.deployment_repo.list = AsyncMock(return_value=[])
         pool_service.repo.db = MagicMock()  # any truthy db_pool
+        # Non-empty so the delete-time finalize does NOT fire here (this test
+        # only asserts the teardown routing).
+        pool_service.repo.count_live_inventory = AsyncMock(return_value=2)
 
         # Fake ProvisioningJobRepository capturing force_cancel_pool args.
         force_cancel_pool_calls: list[dict] = []
@@ -176,6 +179,73 @@ class TestPoolManager:
         spawn.assert_not_called()
         # Pool row soft-deleted after teardown was queued.
         pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
+        # Non-empty pool → the delete-time finalizer must NOT fire (the
+        # per-node teardown finalizes once the last node is purged).
+        pool_service.repo.finalize_pool_delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_aws_pool_marks_lifecycle_terminating_before_soft_delete(
+        self, pool_service,
+    ):
+        """The AWS pool delete must set lifecycle_state='terminating' (the
+        NON-final state the reconciler's PHASE-2 finalizer keys off) BEFORE
+        soft_delete_pool clears is_active — set_pool_lifecycle_state guards on
+        is_active=TRUE, so the order matters. The finalizer later hard-deletes
+        the row once the last node is purged (zero residue).
+
+        Note the gRPC two-step flow: StopPool first sets lifecycle='terminated'
+        (the precondition DeletePool gates on); DeletePool then OVERWRITES it to
+        the non-final 'terminating' so the async finalizer can later hard-delete
+        the row once the EC2 destroys complete. So the entry state here is
+        'terminated' (StopPool ran), and we assert the override to 'terminating'."""
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
+        )
+        from unittest.mock import patch
+
+        pool_id = uuid4()
+        pool_service.repo.get = AsyncMock(
+            return_value={
+                "id": pool_id,
+                "lifecycle_state": "terminated",
+                "provider": "aws",
+            },
+        )
+        pool_service.deployment_repo.list = AsyncMock(return_value=[])
+        pool_service.repo.db = MagicMock()
+        # Non-empty: no delete-time finalize so we isolate the ordering check.
+        pool_service.repo.count_live_inventory = AsyncMock(return_value=1)
+
+        # Record call order across the two repo writes.
+        order: list[str] = []
+        pool_service.repo.set_pool_lifecycle_state = AsyncMock(
+            side_effect=lambda *a, **k: order.append("lifecycle")
+        )
+        pool_service.repo.soft_delete_pool = AsyncMock(
+            side_effect=lambda *a, **k: order.append("soft_delete")
+        )
+
+        class FakeJobsRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def force_cancel_pool(self, *, pool_id):
+                return 1
+
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", FakeJobsRepo,
+        ):
+            request = MagicMock()
+            request.pool_id = str(pool_id)
+            ctx = make_mock_context()
+            await pool_service.DeletePool(request, ctx)
+
+        pool_service.repo.set_pool_lifecycle_state.assert_awaited_once_with(
+            pool_id, "terminating",
+        )
+        pool_service.repo.soft_delete_pool.assert_awaited_once_with(pool_id)
+        # lifecycle='terminating' MUST be written before is_active is cleared.
+        assert order == ["lifecycle", "soft_delete"]
 
     @pytest.mark.asyncio
     async def test_delete_aws_pool_soft_deletes_even_if_force_cancel_fails(
@@ -198,6 +268,7 @@ class TestPoolManager:
         )
         pool_service.deployment_repo.list = AsyncMock(return_value=[])
         pool_service.repo.db = MagicMock()
+        pool_service.repo.count_live_inventory = AsyncMock(return_value=1)
 
         class BoomJobsRepo:
             def __init__(self, db):
@@ -215,6 +286,100 @@ class TestPoolManager:
             await pool_service.DeletePool(request, ctx)
 
         pool_service.repo.soft_delete_pool.assert_called_once_with(pool_id)
+
+    @pytest.mark.asyncio
+    async def test_delete_empty_aws_pool_finalizes_immediately(self, pool_service):
+        """An AWS pool deleted with ZERO live nodes (a) empty/never-provisioned
+        or (b) the two-step stop→delete where the prior stop already purged
+        every node, fires NO per-node teardown event — so the reconciler's
+        PHASE-2 finalizer would never run and the pool would be stuck
+        'terminating' forever (DB residue: pool row + unique name never freed).
+        DeletePool must finalize it itself: count_live_inventory==0 →
+        finalize_pool_delete(pool_id)."""
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
+        )
+        from unittest.mock import patch
+
+        pool_id = uuid4()
+        pool_service.repo.get = AsyncMock(
+            return_value={
+                "id": pool_id,
+                "lifecycle_state": "terminated",
+                "provider": "aws",
+            },
+        )
+        pool_service.deployment_repo.list = AsyncMock(return_value=[])
+        pool_service.repo.db = MagicMock()
+        # Zero live inventory → the delete-time finalizer must fire.
+        pool_service.repo.count_live_inventory = AsyncMock(return_value=0)
+        pool_service.repo.finalize_pool_delete = AsyncMock(return_value=True)
+
+        class FakeJobsRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def force_cancel_pool(self, *, pool_id):
+                return 0  # no live node jobs
+
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", FakeJobsRepo,
+        ):
+            request = MagicMock()
+            request.pool_id = str(pool_id)
+            ctx = make_mock_context()
+            await pool_service.DeletePool(request, ctx)
+
+        # Pool soft-deleted AND immediately finalized (hard-deleted).
+        pool_service.repo.soft_delete_pool.assert_awaited_once_with(pool_id)
+        pool_service.repo.count_live_inventory.assert_awaited_once_with(pool_id)
+        pool_service.repo.finalize_pool_delete.assert_awaited_once_with(pool_id)
+
+    @pytest.mark.asyncio
+    async def test_delete_empty_aws_pool_soft_deletes_even_if_finalize_fails(
+        self, pool_service,
+    ):
+        """The empty-pool finalize is best-effort: a finalize_pool_delete error
+        must NOT break the delete RPC (a later teardown still finalizes, and
+        finalize is idempotent)."""
+        from inferia.services.orchestration.services.provisioning.jobs import (
+            repository as jobs_repository,
+        )
+        from unittest.mock import patch
+
+        pool_id = uuid4()
+        pool_service.repo.get = AsyncMock(
+            return_value={
+                "id": pool_id,
+                "lifecycle_state": "terminated",
+                "provider": "aws",
+            },
+        )
+        pool_service.deployment_repo.list = AsyncMock(return_value=[])
+        pool_service.repo.db = MagicMock()
+        pool_service.repo.count_live_inventory = AsyncMock(return_value=0)
+        pool_service.repo.finalize_pool_delete = AsyncMock(
+            side_effect=RuntimeError("finalize boom")
+        )
+
+        class FakeJobsRepo:
+            def __init__(self, db):
+                self.db = db
+
+            async def force_cancel_pool(self, *, pool_id):
+                return 0
+
+        with patch.object(
+            jobs_repository, "ProvisioningJobRepository", FakeJobsRepo,
+        ):
+            request = MagicMock()
+            request.pool_id = str(pool_id)
+            ctx = make_mock_context()
+            # Must NOT raise despite the finalize error.
+            await pool_service.DeletePool(request, ctx)
+
+        pool_service.repo.soft_delete_pool.assert_awaited_once_with(pool_id)
+        pool_service.repo.finalize_pool_delete.assert_awaited_once_with(pool_id)
 
     @pytest.mark.asyncio
     async def test_delete_non_aws_pool_keeps_legacy_path(self, pool_service):
