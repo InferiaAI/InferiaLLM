@@ -40,6 +40,7 @@ from inferia.services.orchestration.services.model_deployment.deployment_server 
 )
 from inferia.services.orchestration.api import workers as workers_api
 from inferia.services.orchestration.api import admin_workers as admin_workers_api
+from inferia.services.orchestration.api import admin_engine_ami as admin_engine_ami_api
 from inferia.services.orchestration.api import nodes as nodes_api
 from inferia.services.orchestration.api import providers as providers_api
 from inferia.services.orchestration.services.adapter_engine.registry import (
@@ -364,6 +365,7 @@ async def serve():
         require_permission=_permit_all,
         db_pool=db_pool,
     )
+    admin_engine_ami_api.configure(require_permission=_permit_all)
 
     # /v1/nodes/* — the new node-centric API. Wires only those adapters that
     # implement provision_single_node (Nosana, Akash); the worker adapter is
@@ -450,6 +452,7 @@ async def serve():
     app.include_router(deployment_engine_router)
     app.include_router(workers_api.router)
     app.include_router(admin_workers_api.router)
+    app.include_router(admin_engine_ami_api.router)
     app.include_router(nodes_api.router)
     app.include_router(providers_api.router)
 
