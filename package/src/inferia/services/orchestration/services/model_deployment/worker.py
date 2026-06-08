@@ -333,6 +333,36 @@ class ModelDeploymentWorker:
                     )
                     return
 
+                # ----------------------------------------------------------
+                # FENCE: reconciler-managed providers must NOT be provisioned
+                # through this legacy path.  PulumiAWSAdapter.provision_node
+                # (and WorkerAdapter.provision_node) raise NotImplementedError
+                # because they were intentionally removed in T10/T23.  Short-
+                # circuit here so the failure is LOUD and actionable rather
+                # than an opaque NotImplementedError that leaks into the outer
+                # except and produces a cryptic error_message.
+                # ----------------------------------------------------------
+                _RECONCILER_MANAGED_PROVIDERS = frozenset(
+                    {"aws", "gcp", "azure", "on_prem", "worker"}
+                )
+                _provider = pool.get("provider", "")
+                if _provider in _RECONCILER_MANAGED_PROVIDERS:
+                    _msg = (
+                        f"resume/auto-provision for provider '{_provider}' must go "
+                        "through the pool-first reconciler (POST /deployment/start or "
+                        "/deploy), not the legacy deploy-requested worker"
+                    )
+                    log.error(
+                        f"Fencing legacy provision_node call for deployment "
+                        f"{deployment_id}: provider={_provider!r} is reconciler-managed"
+                    )
+                    await self.deployments.update_state(
+                        deployment_id,
+                        "FAILED",
+                        error_message=_msg,
+                    )
+                    return
+
                 node_spec = await adapter.provision_node(
                     provider_resource_id=pool["allowed_gpu_types"][0],
                     pool_id=pool["provider_pool_id"],
