@@ -14,10 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pulumi.automation import CommandResult, ConcurrentUpdateError
+
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
     PulumiAWSAdapter,
     ProvisionError,
     StackOutputs,
+    run_pulumi_destroy_sync,
     run_pulumi_up_sync,
 )
 from inferia.services.orchestration.services.provisioning.errors import (
@@ -26,6 +29,28 @@ from inferia.services.orchestration.services.provisioning.errors import (
     PulumiCliMissingError,
     PulumiTransientError,
 )
+
+_MAKE_STACK = (
+    "inferia.services.orchestration.services.adapter_engine."
+    "adapters.pulumi.pulumi_aws_adapter._make_stack"
+)
+
+
+def _stale_lock_error() -> ConcurrentUpdateError:
+    """Build a real ConcurrentUpdateError as pulumi.automation raises it
+    when the file-backend lock is held (e.g. a prior pulumi process died
+    mid-run under host memory pressure)."""
+    return ConcurrentUpdateError(
+        CommandResult(
+            stdout="",
+            stderr=(
+                "error: the stack is currently locked by 1 lock(s). Either wait "
+                "for the other process(es) to end or delete the lock file with "
+                "'pulumi cancel'."
+            ),
+            code=255,
+        )
+    )
 
 
 def _aws_cfg_dict(**kw):
@@ -492,3 +517,109 @@ async def test_get_logs_error_returns_empty(fake_db, aws_config, tmp_path):
         adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
         logs = await adapter.get_logs(provider_instance_id="i-abc")
     assert logs == {"logs": []}
+
+
+# ---------------------------------------------------------------------------
+# Stale pulumi-lock recovery: a prior pulumi process dying mid-run under host
+# memory pressure leaves a file-backend lock. The next reconciler retry hits a
+# ConcurrentUpdateError. Both run_pulumi_up_sync and run_pulumi_destroy_sync
+# must clear the stale lock with stack.cancel() and retry exactly ONCE; a
+# persistent lock must propagate (no infinite loop). Per-node stacks are never
+# operated on concurrently, so a lock seen here is always stale → cancel() is
+# safe. (Root-caused live: died-process locks were looping the reconciler so
+# the node never purged + the pool never finalized.)
+# ---------------------------------------------------------------------------
+
+
+def test_run_pulumi_destroy_sync_recovers_from_stale_lock():
+    """destroy hits a stale lock once, then succeeds on retry: cancel() runs
+    once, destroy runs twice, the call returns success."""
+    fake_stack = MagicMock()
+    fake_stack.destroy.side_effect = [_stale_lock_error(), None]
+    fake_stack.cancel = MagicMock()
+    with patch(_MAKE_STACK, return_value=fake_stack):
+        run_pulumi_destroy_sync(stack_name="org-pool-node", program=lambda: None, env={})
+    assert fake_stack.cancel.call_count == 1
+    assert fake_stack.destroy.call_count == 2
+
+
+def test_run_pulumi_up_sync_recovers_from_stale_lock():
+    """up hits a stale lock once, then succeeds on retry: cancel() runs once,
+    up runs twice, outputs are returned."""
+    fake_stack = MagicMock()
+    fake_stack.up.side_effect = [
+        _stale_lock_error(),
+        MagicMock(outputs={"instance_id": MagicMock(value="i-recovered")}),
+    ]
+    fake_stack.cancel = MagicMock()
+    with patch(_MAKE_STACK, return_value=fake_stack):
+        out = run_pulumi_up_sync(stack_name="org-pool-node", program=lambda: None, env={})
+    assert fake_stack.cancel.call_count == 1
+    assert fake_stack.up.call_count == 2
+    assert isinstance(out, StackOutputs)
+    assert out.instance_id == "i-recovered"
+
+
+def test_run_pulumi_destroy_sync_persistent_lock_propagates():
+    """A lock that is STILL held after cancel() (destroy raises
+    ConcurrentUpdateError both times) propagates — no infinite loop. cancel()
+    runs once, destroy runs exactly twice."""
+    fake_stack = MagicMock()
+    fake_stack.destroy.side_effect = [_stale_lock_error(), _stale_lock_error()]
+    fake_stack.cancel = MagicMock()
+    with patch(_MAKE_STACK, return_value=fake_stack):
+        with pytest.raises(ConcurrentUpdateError):
+            run_pulumi_destroy_sync(stack_name="org-pool-node", program=lambda: None, env={})
+    assert fake_stack.cancel.call_count == 1
+    assert fake_stack.destroy.call_count == 2
+
+
+def test_run_pulumi_up_sync_persistent_lock_propagates():
+    """Same as above for up(): a still-locked stack propagates the
+    ConcurrentUpdateError after exactly one cancel()+retry."""
+    fake_stack = MagicMock()
+    fake_stack.up.side_effect = [_stale_lock_error(), _stale_lock_error()]
+    fake_stack.cancel = MagicMock()
+    with patch(_MAKE_STACK, return_value=fake_stack):
+        with pytest.raises(ConcurrentUpdateError):
+            run_pulumi_up_sync(stack_name="org-pool-node", program=lambda: None, env={})
+    assert fake_stack.cancel.call_count == 1
+    assert fake_stack.up.call_count == 2
+
+
+def test_run_pulumi_destroy_sync_happy_path_no_cancel():
+    """No lock: destroy succeeds first try → cancel() is NEVER called
+    (regression guard — existing behavior must be unchanged)."""
+    fake_stack = MagicMock()
+    fake_stack.destroy.return_value = None
+    fake_stack.cancel = MagicMock()
+    with patch(_MAKE_STACK, return_value=fake_stack):
+        run_pulumi_destroy_sync(stack_name="org-pool-node", program=lambda: None, env={})
+    fake_stack.cancel.assert_not_called()
+    assert fake_stack.destroy.call_count == 1
+
+
+def test_run_pulumi_up_sync_happy_path_no_cancel():
+    """No lock: up succeeds first try → cancel() is NEVER called."""
+    fake_stack = MagicMock()
+    fake_stack.up.return_value = MagicMock(outputs={"instance_id": MagicMock(value="i-ok")})
+    fake_stack.cancel = MagicMock()
+    with patch(_MAKE_STACK, return_value=fake_stack):
+        out = run_pulumi_up_sync(stack_name="org-pool-node", program=lambda: None, env={})
+    fake_stack.cancel.assert_not_called()
+    assert fake_stack.up.call_count == 1
+    assert out.instance_id == "i-ok"
+
+
+def test_run_pulumi_destroy_sync_no_stack_named_bypasses_recovery():
+    """A generic 'no stack named' error (NOT a ConcurrentUpdateError) keeps
+    the existing idempotency: destroy returns success without ever calling
+    cancel(). Confirms the stale-lock recovery only triggers on the lock
+    exception type and never swallows the no-stack path."""
+    fake_stack = MagicMock()
+    fake_stack.destroy.side_effect = Exception("no stack named 'org-pool-node' found")
+    fake_stack.cancel = MagicMock()
+    with patch(_MAKE_STACK, return_value=fake_stack):
+        run_pulumi_destroy_sync(stack_name="org-pool-node", program=lambda: None, env={})
+    fake_stack.cancel.assert_not_called()
+    assert fake_stack.destroy.call_count == 1

@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 import pulumi.automation
+from pulumi.automation import ConcurrentUpdateError
 
 from inferia.services.api_gateway.config import ProvidersConfig
 from inferia.services.orchestration.config import settings
@@ -326,6 +327,36 @@ def _make_stack(
     )
 
 
+def _run_pulumi_op_with_lock_recovery(op, *, stack, stack_name, op_name):
+    """Run a pulumi Automation op (stack.up/stack.destroy). If it fails with a
+    STALE lock (ConcurrentUpdateError — a prior pulumi process died mid-run
+    under host memory pressure, leaving the file-backend lock), clear it with
+    stack.cancel() and retry ONCE.
+
+    Per-node stacks are never operated on concurrently (single-instance
+    reconciler via advisory lock + one job per node), so a lock encountered
+    here is always stale, making cancel() safe. Without this, every reconciler
+    retry hit the same died-process lock → infinite loop, the node never
+    purged + the pool never finalized (the EC2 was already terminated; only
+    the DB teardown stalled).
+    """
+    try:
+        return op()
+    except ConcurrentUpdateError as e:
+        logger.warning(
+            "pulumi %s: stale lock on stack %s; running cancel()+retry: %s",
+            op_name, stack_name, e,
+        )
+        try:
+            stack.cancel()
+        except Exception as ce:
+            logger.warning(
+                "pulumi cancel() failed for %s (continuing to retry): %s",
+                stack_name, ce,
+            )
+        return op()  # retry exactly once; a second ConcurrentUpdateError propagates
+
+
 def run_pulumi_up_sync(
     *,
     stack_name: str,
@@ -367,7 +398,9 @@ def run_pulumi_up_sync(
         ) from e
 
     try:
-        result = stack.up()
+        result = _run_pulumi_op_with_lock_recovery(
+            stack.up, stack=stack, stack_name=stack_name, op_name="up",
+        )
     except ProvisioningError:
         # The classifier (or upstream callers) already chose a code.
         raise
@@ -419,7 +452,9 @@ def run_pulumi_destroy_sync(
     except FileNotFoundError as e:
         raise PulumiCliMissingError(f"pulumi binary missing: {e}") from e
     try:
-        stack.destroy()
+        _run_pulumi_op_with_lock_recovery(
+            stack.destroy, stack=stack, stack_name=stack_name, op_name="destroy",
+        )
     except Exception as e:
         if "no stack named" in str(e).lower():
             return
