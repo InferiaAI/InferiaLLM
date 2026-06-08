@@ -75,6 +75,8 @@ logger = logging.getLogger(__name__)
 # (transient). Anything billable or resumable is fair game for the sweep.
 _LIVE_STATES = ["pending", "running", "stopping", "stopped"]
 
+_BUILDER_TAG = "inferia:engine-ami-builder"
+
 
 async def resolve_sweep_aws_env() -> dict[str, str] | None:
     """Resolve the AWS creds env for the sweep — on the CURRENT (main) event
@@ -290,7 +292,64 @@ def sweep_pool_instances(
     )
 
 
+def sweep_stale_builders(
+    region: str,
+    aws_env: dict[str, str] | None = None,
+    *,
+    older_than_min: int = 30,
+    now: "datetime | None" = None,
+) -> list[str]:
+    """Terminate engine-AMI builder instances (tag ``inferia:engine-ami-builder``)
+    older than ``older_than_min`` minutes — reclaims a builder leaked by a CP
+    crash mid-bake (the bake normally terminates its builder in a ``finally``).
+
+    Best-effort like the rest of this module: no creds / AWS error → ``[]``,
+    never raises. ``now`` is injectable for tests."""
+    from datetime import datetime, timedelta, timezone
+
+    if not aws_env:
+        logger.warning("sweep_stale_builders skipped in %s: no AWS credentials", region)
+        return []
+    ref = now or datetime.now(timezone.utc)
+    cutoff = ref - timedelta(minutes=older_than_min)
+    try:
+        creds = _creds_from_aws_env(aws_env)
+        client = _ec2_client(region, creds=creds)
+        resp = client.describe_instances(Filters=[
+            {"Name": f"tag:{_BUILDER_TAG}", "Values": ["true"]},
+            {"Name": "instance-state-name", "Values": list(_LIVE_STATES)},
+        ])
+        stale: list[str] = []
+        for reservation in resp.get("Reservations", []) or []:
+            for inst in reservation.get("Instances", []) or []:
+                launched = inst.get("LaunchTime")
+                iid = inst.get("InstanceId")
+                if iid and launched and launched <= cutoff:
+                    stale.append(iid)
+    except Exception as e:  # noqa: BLE001 — best-effort backstop
+        logger.warning(
+            "sweep_stale_builders best-effort failure in %s: %s: %s",
+            region, type(e).__name__, e,
+        )
+        return []
+
+    if not stale:
+        logger.info("sweep_stale_builders: no stale builders in %s", region)
+        return []
+    try:
+        client.terminate_instances(InstanceIds=stale)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sweep_stale_builders terminate failed in %s: %s", region, e)
+        return []
+    logger.info(
+        "sweep_stale_builders terminated %d in %s: %s",
+        len(stale), region, ", ".join(stale),
+    )
+    return stale
+
+
 __all__ = [
     "sweep_node_instances",
     "sweep_pool_instances",
+    "sweep_stale_builders",
 ]

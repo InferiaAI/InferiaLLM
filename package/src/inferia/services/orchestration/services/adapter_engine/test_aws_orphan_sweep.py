@@ -394,3 +394,74 @@ async def test_resolve_sweep_aws_env_returns_none_on_db_failure(caplog) -> None:
     assert out is None
     assert any("failed to resolve AWS credentials" in r.getMessage()
                for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# sweep_stale_builders — reclaim engine-AMI builder instances leaked by a
+# CP crash mid-bake (the bake normally terminates its builder in a finally).
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone
+
+from inferia.services.orchestration.services.adapter_engine import aws_orphan_sweep as sweep
+
+AWS_ENV = {"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s"}
+
+
+class _FakeEC2Builders:
+    def __init__(self, instances):
+        self._instances = instances
+        self.terminated = []
+
+    def describe_instances(self, **kw):
+        self.describe_kw = kw
+        return {"Reservations": [{"Instances": self._instances}]}
+
+    def terminate_instances(self, **kw):
+        self.terminated.extend(kw["InstanceIds"])
+
+
+def test_sweep_stale_builders_terminates_only_old(monkeypatch):
+    now = datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc)
+    insts = [
+        {"InstanceId": "i-old", "LaunchTime": now - timedelta(minutes=45)},
+        {"InstanceId": "i-fresh", "LaunchTime": now - timedelta(minutes=5)},
+    ]
+    fake = _FakeEC2Builders(insts)
+    monkeypatch.setattr(sweep, "_ec2_client", lambda region, **kw: fake)
+    out = sweep.sweep_stale_builders("us-east-1", AWS_ENV, older_than_min=30, now=now)
+    assert out == ["i-old"]
+    assert fake.terminated == ["i-old"]
+    # The sweep must filter by the builder tag — otherwise it would terminate
+    # unrelated instances.
+    filters = fake.describe_kw["Filters"]
+    assert any(f["Name"] == "tag:inferia:engine-ami-builder" and f["Values"] == ["true"] for f in filters)
+
+
+def test_sweep_stale_builders_no_creds():
+    assert sweep.sweep_stale_builders("us-east-1", None) == []
+
+
+def test_sweep_stale_builders_none_stale(monkeypatch):
+    now = datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc)
+    fake = _FakeEC2Builders([{"InstanceId": "i-fresh", "LaunchTime": now - timedelta(minutes=2)}])
+    monkeypatch.setattr(sweep, "_ec2_client", lambda region, **kw: fake)
+    out = sweep.sweep_stale_builders("us-east-1", AWS_ENV, older_than_min=30, now=now)
+    assert out == []
+    assert fake.terminated == []
+
+
+def test_sweep_stale_builders_describe_error(monkeypatch):
+    class _Boom:
+        def describe_instances(self, **kw):
+            raise RuntimeError("AccessDenied")
+    monkeypatch.setattr(sweep, "_ec2_client", lambda region, **kw: _Boom())
+    assert sweep.sweep_stale_builders("us-east-1", AWS_ENV) == []
+
+
+def test_sweep_stale_builders_naive_launchtime_does_not_raise(monkeypatch):
+    # A tz-naive LaunchTime would raise on comparison; best-effort must swallow.
+    fake = _FakeEC2Builders([{"InstanceId": "i-x", "LaunchTime": datetime(2026, 6, 9, 11, 0)}])
+    monkeypatch.setattr(sweep, "_ec2_client", lambda region, **kw: fake)
+    out = sweep.sweep_stale_builders("us-east-1", AWS_ENV, now=datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc))
+    assert out == []  # comparison TypeError swallowed → best-effort []
