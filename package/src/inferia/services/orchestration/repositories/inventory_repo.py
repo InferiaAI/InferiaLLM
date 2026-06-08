@@ -583,6 +583,99 @@ class InventoryRepository:
             should_destroy=bool(row["no_pending"]),
         )
 
+    async def purge_node(self, node_id, *, tx=None) -> None:
+        """Hard-delete a node and ALL of its DB residue in one transaction.
+
+        Today destroying an EC2 only SOFT-deletes the node (state set to
+        'terminated'); the rows logically bound to it
+        (``provisioning_jobs``, ``node_provisioning_events``,
+        ``worker_bootstrap_tokens``, and bound ``model_deployments``)
+        accumulate forever, because the inventory row is never hard-deleted.
+        This is the authoritative cleanup that removes the lot.
+
+        ``model_deployments.target_node_id`` is defined as
+        ``ON DELETE NO ACTION`` (not a cascade), so any deployment row —
+        whether active or already terminal — that still references this node
+        will cause the step-5 ``DELETE FROM compute_inventory`` to raise a
+        ``ForeignKeyViolationError``. Steps 1 and 1b clear those references
+        before the inventory row is removed.
+
+        Runs as ONE transaction (the caller's ``tx`` when supplied, else a
+        freshly acquired connection + transaction) in this order:
+
+          1. Fail+unbind any NON-terminal deployment still pointing at the
+             node so it isn't left hanging on a node about to vanish.
+          1b. Detach (NULL ``target_node_id`` only) any TERMINAL deployment
+             still pointing at the node. Because ``model_deployments
+             .target_node_id`` is ``ON DELETE NO ACTION``, even a terminal
+             deployment's dangling reference blocks the step-5 hard-delete
+             with a ForeignKeyViolationError. We deliberately do NOT touch
+             the terminal deployment's state / endpoint / error_message:
+             those record how it ended and must be preserved.
+          2. DELETE node_provisioning_events (no FK on node_id — explicit
+             delete required).
+          3. DELETE worker_bootstrap_tokens (no FK on consumed_node_id —
+             explicit delete required).
+          4. DELETE provisioning_jobs (FK CASCADE on node_id, deleted
+             explicitly so ordering is safe regardless of CASCADE).
+          5. DELETE the compute_inventory row itself; the
+             ``provisioning_jobs`` FK CASCADE has already been cleared by
+             step 4. ``model_deployments`` references were nulled in steps
+             1/1b (ON DELETE NO ACTION — no cascade fires).
+
+        Idempotent and safe on a node with no residue / a nonexistent id —
+        every statement is a no-op when nothing matches.
+
+        Pass ``tx`` to run inside a caller's transaction.
+        """
+
+        async def _run(conn):
+            await conn.execute(
+                """
+                UPDATE model_deployments
+                   SET state = 'FAILED',
+                       error_message = 'node deleted',
+                       target_node_id = NULL,
+                       endpoint = NULL
+                 WHERE target_node_id = $1
+                   AND state NOT IN ('TERMINATED', 'STOPPED', 'FAILED')
+                """,
+                node_id,
+            )
+            # Detach terminal deployments without altering their recorded
+            # outcome, so the FK no longer pins the inventory row.
+            await conn.execute(
+                """
+                UPDATE model_deployments
+                   SET target_node_id = NULL
+                 WHERE target_node_id = $1
+                """,
+                node_id,
+            )
+            await conn.execute(
+                "DELETE FROM node_provisioning_events WHERE node_id = $1",
+                node_id,
+            )
+            await conn.execute(
+                "DELETE FROM worker_bootstrap_tokens WHERE consumed_node_id = $1",
+                node_id,
+            )
+            await conn.execute(
+                "DELETE FROM provisioning_jobs WHERE node_id = $1",
+                node_id,
+            )
+            await conn.execute(
+                "DELETE FROM compute_inventory WHERE id = $1",
+                node_id,
+            )
+
+        if tx is not None:
+            await _run(tx)
+        else:
+            async with self.db.acquire() as conn:
+                async with conn.transaction():
+                    await _run(conn)
+
     async def create_placeholder(
         self,
         *,
