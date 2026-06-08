@@ -55,9 +55,14 @@ async def test_start_external_deployment_sets_running_and_skips_worker_event(
 
 
 @pytest.mark.asyncio
-async def test_start_compute_deployment_queues_worker_event_with_workload_type(
+async def test_start_compute_deployment_resets_pending_without_legacy_event(
     controller_and_mocks,
 ):
+    """Compute resume only resets the row to PENDING; it must NOT publish the
+    legacy ``model.deploy.requested`` event (that handler calls
+    adapter.provision_node -> NotImplementedError for AWS/pulumi/on-prem,
+    sending the resumed deploy to FAILED). The canonical resume is the
+    synchronous HTTP route POST /deployment/start, which owns placement."""
     controller, deployments, event_bus = controller_and_mocks
     deployment_id = uuid4()
     pool_id = uuid4()
@@ -78,11 +83,8 @@ async def test_start_compute_deployment_queues_worker_event_with_workload_type(
 
     assert next_state == "PENDING"
     deployments.update_state.assert_awaited_once_with(deployment_id, "PENDING")
-    event_bus.publish.assert_awaited_once()
-    event_name, payload = event_bus.publish.await_args.args
-    assert event_name == "model.deploy.requested"
-    assert payload["workload_type"] == "training"
-    assert payload["pool_id"] == str(pool_id)
+    # The legacy provision event must never fire for a compute resume.
+    event_bus.publish.assert_not_awaited()
 
 
 @pytest.mark.asyncio

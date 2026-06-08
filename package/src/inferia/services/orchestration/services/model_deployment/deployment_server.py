@@ -1773,37 +1773,215 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
     return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
 
 
-@router.post("/start")
-async def start_deployment(
-    req: TerminateDeploymentRequest,
-):  # Reusing same request body structure
-    async with _auth_channel() as channel:
-        stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
+def _resume_workload_type(row) -> str:
+    """Resolve a deployment row's workload_type from its persisted
+    ``configuration`` jsonb. Matches
+    ``ModelDeploymentController._extract_workload_type`` for the ``external``
+    decision so the HTTP resume path and the gRPC path agree on what counts as
+    ``external`` — but is defensively guarded against a non-dict
+    ``configuration`` (it checks ``isinstance(parsed, dict)`` and catches
+    ``ValueError``/``TypeError``), whereas the controller would ``AttributeError``
+    on a JSON config that decodes to a non-dict.
 
+    Defaults to ``inference`` for older rows that never recorded one.
+    """
+    config = _source_field(row, "configuration")
+    if isinstance(config, dict):
+        wt = config.get("workload_type")
+        return str(wt) if wt else "inference"
+    if isinstance(config, str):
         try:
-            resp = await stub.StartDeployment(
-                model_deployment_pb2.StartDeploymentRequest(
-                    deployment_id=req.deployment_id
-                )
-            )
-            await log_audit_event(
-                user_id=None,
-                action="deployment.start",
-                resource_type="deployment",
-                resource_id=req.deployment_id,
-                status="success",
-                org_id=await _lookup_org_id("deployment", req.deployment_id),
-            )
-        except grpc.RpcError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to start deployment: {e.details()}",
-            )
+            parsed = json.loads(config)
+        except (ValueError, TypeError):
+            return "inference"
+        wt = parsed.get("workload_type") if isinstance(parsed, dict) else None
+        return str(wt) if wt else "inference"
+    return "inference"
 
-    return {
-        "deployment_id": req.deployment_id,
-        "status": resp.state,
-    }
+
+async def _start_deployment_impl(
+    *,
+    deployment_id: str,
+    db_pool,
+    controller,
+    pool_repo,
+    inventory,
+    deploys,
+    placer,
+    jobs_repo,
+) -> tuple[dict, int]:
+    """Resume core: re-place a stopped/terminated/failed deployment onto a
+    freshly provisioned node via the SAME ``place_and_provision`` path as
+    ``/deploy``. For compute workloads this also clears the stale
+    ``target_node_id`` left over from the paused run (the old node is gone);
+    external workloads short-circuit to RUNNING before that point since they
+    are never node-bound.
+
+    This deliberately does NOT touch the legacy gRPC ``StartDeployment`` /
+    ``model.deploy.requested`` worker (which calls ``adapter.provision_node``
+    and raises ``NotImplementedError`` for AWS — sending every resumed AWS
+    deploy to FAILED with no new EC2 provisioned).
+
+    Extracted from the route so it can be unit-tested with mocked repos.
+    Returns ``(response_body, response_status)`` and raises the same
+    ``HTTPException`` as the inlined logic.
+    """
+    # 1. Parse + load the deployment row.
+    try:
+        deploy_uuid = UUID(deployment_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid deployment_id")
+
+    row = await deploys.get(deploy_uuid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="deployment not found")
+
+    state = _source_field(row, "state")
+    if state not in ("STOPPED", "TERMINATED", "FAILED"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"cannot start deployment in state {state}",
+        )
+
+    org_id = _source_field(row, "org_id")
+
+    # 2. External workloads need no compute — flip to RUNNING and return.
+    # External deploys are never node-bound (the controller sends them straight
+    # to RUNNING on create with no placement), so there's no stale binding to
+    # clear here; we short-circuit before the unbind/reset block below.
+    if _resume_workload_type(row) == "external":
+        await deploys.set_state(deploy_uuid, "RUNNING")
+        return {"deployment_id": str(deploy_uuid), "state": "RUNNING"}, 200
+
+    # 3. Resolve + validate the target pool.
+    pool_id = _source_field(row, "pool_id") or _source_field(row, "target_pool_id")
+    if pool_id is None:
+        raise HTTPException(status_code=404, detail="pool not found")
+    if not isinstance(pool_id, UUID):
+        try:
+            pool_id = UUID(str(pool_id))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=404, detail="pool not found")
+
+    pool_row = await pool_repo.get(pool_id)
+    if pool_row is None:
+        raise HTTPException(status_code=404, detail="pool not found")
+    lifecycle = (pool_row.get("lifecycle_state") or "running").lower()
+    if lifecycle in ("terminating", "terminated"):
+        raise HTTPException(status_code=409, detail=f"pool is {lifecycle}")
+
+    # Normalize pool metadata (jsonb may arrive as a str under asyncpg).
+    _raw_meta = pool_row.get("metadata")
+    if isinstance(_raw_meta, str):
+        try:
+            pool_meta: dict = json.loads(_raw_meta)
+        except (ValueError, TypeError):
+            pool_meta = {}
+    elif isinstance(_raw_meta, dict):
+        pool_meta = _raw_meta
+    else:
+        pool_meta = {}
+    if not isinstance(pool_meta, dict):
+        pool_meta = {}
+
+    # 4. Clear the stale binding + reset to CREATED so PoolPlacer /
+    # create_placeholder run on a clean slate (the old target_node_id points at
+    # a destroyed node).
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            await deploys.unbind(deploy_uuid, tx=conn)
+            await deploys.set_state(deploy_uuid, "CREATED", tx=conn)
+
+    # 5. Re-run the shared place+provision core.
+    deps = SimpleNamespace(
+        db_pool=db_pool,
+        controller=controller,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+    body, status = await place_and_provision(
+        deploy_id=deploy_uuid,
+        pool_id=pool_id,
+        pool_row=pool_row,
+        pool_meta=pool_meta,
+        gpu_per_replica=int(_source_field(row, "gpu_per_replica") or 0),
+        org_id=org_id,
+        engine=_source_field(row, "engine"),
+        load_spec_source=row,
+        deps=deps,
+    )
+    return body, status
+
+
+@router.post("/start")
+async def start_deployment(req: TerminateDeploymentRequest, request: Request):
+    """Resume (redeploy) a stopped/terminated/failed deployment.
+
+    Canonical resume: runs the SAME synchronous place+provision path as
+    ``/deploy`` (``place_and_provision``) so a fresh node is provisioned and
+    the model is (re)loaded. The stale ``target_node_id`` left over from the
+    paused run is cleared first. This route — NOT the legacy gRPC
+    ``StartDeployment`` / ``model.deploy.requested`` worker — is the supported
+    resume entry point.
+    """
+    from inferia.services.orchestration.services.model_deployment.pool_placer import (
+        PoolPlacer,
+    )
+    from inferia.services.orchestration.repositories.inventory_repo import (
+        InventoryRepository,
+    )
+    from inferia.services.orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+    from inferia.services.orchestration.repositories.pool_repo import (
+        ComputePoolRepository,
+    )
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+    from fastapi.responses import JSONResponse
+
+    db_pool = request.app.state.pool
+    controller = request.app.state.worker_controller
+    event_bus = getattr(request.app.state, "event_bus", None)
+
+    pool_repo = ComputePoolRepository(db_pool)
+    inventory = InventoryRepository(db_pool)
+    deploys = ModelDeploymentRepository(db_pool, event_bus=event_bus)
+    placer = PoolPlacer(db_pool)
+    jobs_repo = ProvisioningJobRepository(db_pool)
+
+    body, status = await _start_deployment_impl(
+        deployment_id=req.deployment_id,
+        db_pool=db_pool,
+        controller=controller,
+        pool_repo=pool_repo,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    # PoolAtCapacity surfaces as a 503 POOL_AT_CAPACITY body — mirror /deploy:
+    # skip the success audit and return with a Retry-After hint.
+    if status == 503 and body.get("error") == "POOL_AT_CAPACITY":
+        return JSONResponse(
+            status_code=status, content=body,
+            headers={"Retry-After": "60"},
+        )
+
+    await log_audit_event(
+        user_id=None,
+        action="deployment.start",
+        resource_type="deployment",
+        resource_id=req.deployment_id,
+        status="success",
+        org_id=await _lookup_org_id("deployment", req.deployment_id),
+    )
+
+    return JSONResponse(status_code=status, content=body)
 
 
 @router.delete("/delete/{deployment_id}")

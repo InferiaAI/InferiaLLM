@@ -262,24 +262,17 @@ class ModelDeploymentController:
             await self.deployments.update_state(deployment_id, "RUNNING")
             return "RUNNING"
 
-        # Reset to PENDING so worker picks it up
+        # Compute workloads: the canonical resume is the SYNCHRONOUS HTTP route
+        # POST /deployment/start (deployment_server._start_deployment_impl),
+        # which re-runs the pool-first place_and_provision path and provisions a
+        # fresh node. We deliberately do NOT publish the legacy
+        # "model.deploy.requested" event here: its handler calls
+        # adapter.provision_node, which raises NotImplementedError for the
+        # reconciler-managed providers (AWS/pulumi/on-prem) and would send the
+        # resumed deploy to FAILED with no new compute. We only reset state to
+        # PENDING so the row is no longer terminal; placement is owned by the
+        # HTTP route.
         await self.deployments.update_state(deployment_id, "PENDING")
-
-        # Emit deploy requested event again
-        await self.event_bus.publish(
-            "model.deploy.requested",
-            {
-                "deployment_id": str(deployment_id),
-                "model_id": str(d["model_id"]) if d["model_id"] else None,
-                "pool_id": str(d["pool_id"]),
-                "replicas": d["replicas"],
-                "gpu_per_replica": d["gpu_per_replica"],
-                "workload_type": workload_type,
-                "engine": d.get("engine"),
-                "configuration": d.get("configuration"),  # Should encompass json
-                "owner_id": d.get("owner_id"),
-            },
-        )
 
         return "PENDING"
 
