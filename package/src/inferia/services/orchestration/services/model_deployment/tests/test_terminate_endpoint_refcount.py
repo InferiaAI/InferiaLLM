@@ -552,3 +552,71 @@ async def test_terminate_failed_deploy_keeps_node_with_other_live_deploy(app_and
             )
     assert resp.status_code == 200
     mock_force_cancel.assert_not_awaited()
+
+
+async def test_terminate_running_clears_target_node_id(app_and_pool):
+    """RUNNING/DEPLOYING path: target_node_id must be NULL after terminate
+    (defense in depth — unbind called alongside release_gpu so a destroyed
+    node is never referenced by a TERMINATED deploy)."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=1)
+    deploy_id = await _seed_deploy(
+        pool, pool_id,
+        state="RUNNING",
+        gpu_per_replica=1,
+        target_node_id=node_id,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "TERMINATED"
+
+    async with pool.acquire() as c:
+        deploy_row = await c.fetchrow(
+            "SELECT state, target_node_id FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+    assert deploy_row["state"] == "TERMINATED"
+    assert deploy_row["target_node_id"] is None, (
+        f"expected target_node_id=NULL after RUNNING terminate, got {deploy_row['target_node_id']}"
+    )
+
+
+async def test_terminate_deploying_clears_target_node_id(app_and_pool):
+    """DEPLOYING state path: target_node_id must also be NULL after terminate."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=1)
+    deploy_id = await _seed_deploy(
+        pool, pool_id,
+        state="DEPLOYING",
+        gpu_per_replica=1,
+        target_node_id=node_id,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "TERMINATED"
+
+    async with pool.acquire() as c:
+        deploy_row = await c.fetchrow(
+            "SELECT state, target_node_id FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+    assert deploy_row["state"] == "TERMINATED"
+    assert deploy_row["target_node_id"] is None, (
+        f"expected target_node_id=NULL after DEPLOYING terminate, got {deploy_row['target_node_id']}"
+    )

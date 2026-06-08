@@ -1724,11 +1724,13 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
                 deploy_uuid, expected_state=state,
                 new_state="TERMINATED", tx=conn,
             )
-            if won and target_node_id is not None and gpu_per_replica > 0:
-                result = await inventory.release_gpu(
-                    target_node_id, gpu_per_replica, tx=conn,
-                )
-                should_destroy = result.should_destroy
+            if won:
+                await deploys.unbind(deploy_uuid, tx=conn)
+                if target_node_id is not None and gpu_per_replica > 0:
+                    result = await inventory.release_gpu(
+                        target_node_id, gpu_per_replica, tx=conn,
+                    )
+                    should_destroy = result.should_destroy
     if not won:
         return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
 
