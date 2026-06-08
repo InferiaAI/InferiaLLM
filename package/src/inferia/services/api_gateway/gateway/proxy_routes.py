@@ -803,3 +803,33 @@ async def proxy_admin_workers(
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
     )
+
+
+@router.api_route("/admin/aws/engine-ami", methods=["GET", "POST"])
+@router.api_route("/admin/aws/engine-ami/{path:path}", methods=["GET", "POST"])
+async def proxy_admin_engine_ami(
+    request: Request,
+    path: str = "",
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy engine-cache AMI bake/list admin operations to orchestration.
+
+    The orchestration ``/v1/admin/aws/engine-ami`` router trusts the gateway
+    boundary; RBAC is enforced here:
+
+    * ``GET``  → ``DEPLOYMENT_LIST``   — list baked AMIs / poll bake status
+    * ``POST`` → ``DEPLOYMENT_CREATE`` — trigger a bake
+    """
+    method = request.method.upper()
+    if method == "POST":
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_CREATE)
+    else:  # GET
+        authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    upstream_path = "v1/admin/aws/engine-ami" + (f"/{path}" if path else "")
+    return await proxy_request(
+        method=request.method,
+        path=upstream_path,
+        request=request,
+        target_url=ORCHESTRATION_URL,
+        user_context=user_context,
+    )
