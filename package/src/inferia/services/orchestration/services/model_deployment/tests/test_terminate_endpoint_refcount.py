@@ -469,6 +469,42 @@ async def test_terminate_invalid_uuid_returns_400(app_and_pool):
     assert r.status_code == 400
 
 
+async def test_initiate_node_destroy_strips_terminating_flag_on_enqueue_failure(
+    app_and_pool,
+):
+    """B2: when force_cancel RAISES (the destroy job did not enqueue),
+    ``_initiate_node_destroy`` returns False AND strips the ``terminating`` /
+    ``terminating_at`` flags it stamped — so the node doesn't render
+    'terminating' forever with no destroy in flight."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool, provider="aws")
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4, gpu_allocated=1)
+
+    class _RaisingJobsRepo:
+        async def force_cancel(self, *, node_id):
+            raise RuntimeError("simulated enqueue failure")
+
+    ok = await deployment_server._initiate_node_destroy(
+        db_pool=pool,
+        jobs_repo=_RaisingJobsRepo(),
+        node_id=node_id,
+        pool_id=pool_id,
+        org_id=str(uuid4()),
+        provider="aws",
+    )
+    assert ok is False
+
+    async with pool.acquire() as c:
+        meta = await c.fetchval(
+            "SELECT metadata FROM compute_inventory WHERE id=$1", node_id,
+        )
+    meta = json.loads(meta) if isinstance(meta, str) else (meta or {})
+    assert "terminating" not in meta, (
+        f"terminating flag must be stripped after enqueue failure, got {meta}"
+    )
+    assert "terminating_at" not in meta
+
+
 async def test_terminate_destroys_node_even_when_pool_soft_deleted(app_and_pool):
     """Pool is_active=FALSE between deploy and terminate — the destroy
     must still fire via the compute_inventory.provider fallback."""

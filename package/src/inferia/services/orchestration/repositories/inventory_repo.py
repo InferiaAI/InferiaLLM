@@ -1105,9 +1105,39 @@ async def _mark_terminating_node_impl(self, *, node_id):
         )
 
 
+async def _clear_terminating_node_impl(self, *, node_id):
+    """Strip the ``terminating`` / ``terminating_at`` metadata flags from a
+    node row.
+
+    The inverse of :meth:`mark_terminating_node`. Used when a destroy that
+    was *flagged* (``metadata.terminating='true'`` written ahead of the
+    teardown) never actually went in flight — e.g. ``force_cancel`` raised
+    and the destroy job was not enqueued. Without this the node would render
+    "terminating" forever in the dashboard with no destroy actually running.
+    The periodic reaper also re-arms the real teardown for such a node, but
+    clearing the flag here avoids a misleading UI in the interim.
+
+    Idempotent: a row with neither key set, or a nonexistent id, is a no-op.
+    Accepts ``node_id`` as either a str or a UUID for convenience.
+    """
+    nid = uuid.UUID(node_id) if isinstance(node_id, str) else node_id
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET metadata = (COALESCE(metadata, '{}'::jsonb)
+                            - 'terminating' - 'terminating_at'),
+                updated_at = now()
+            WHERE id = $1
+            """,
+            nid,
+        )
+
+
 InventoryRepository.list_nodes = _list_nodes_impl
 InventoryRepository.get_node = _get_node_impl
 InventoryRepository.set_labels = _set_labels_impl
 InventoryRepository.soft_delete_node = _soft_delete_node_impl
 InventoryRepository.mark_terminating_node = _mark_terminating_node_impl
+InventoryRepository.clear_terminating_node = _clear_terminating_node_impl
 InventoryRepository.set_state = _set_state_impl

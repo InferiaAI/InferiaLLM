@@ -462,6 +462,13 @@ async def _initiate_node_destroy(
 
     Returns True on success (job flipped, or already cancelling/terminated =
     destroy already in flight); False only if force_cancel raised.
+
+    When force_cancel raises (we return False), we STRIP the
+    ``terminating`` / ``terminating_at`` flags we just stamped — no destroy
+    is in flight, so leaving the node flagged 'terminating' would make it
+    render that way forever in the dashboard with nothing actually tearing
+    it down. The periodic reaper re-arms the real teardown for such a node;
+    clearing the flag here just avoids a misleading UI in the interim.
     """
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -486,6 +493,23 @@ async def _initiate_node_destroy(
             "_initiate_node_destroy: force_cancel failed for node=%s: %s",
             node_id, e,
         )
+        # The destroy did NOT enqueue. Roll back the 'terminating' stamp so
+        # the node doesn't display terminating forever with no destroy in
+        # flight (the reaper will re-arm the teardown on its next tick).
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE compute_inventory SET metadata = "
+                    "(COALESCE(metadata,'{}'::jsonb) "
+                    "- 'terminating' - 'terminating_at'), updated_at = now() "
+                    "WHERE id=$1",
+                    node_id,
+                )
+        except Exception:
+            logger.warning(
+                "_initiate_node_destroy: failed to clear terminating flag for "
+                "node=%s after enqueue failure", node_id, exc_info=True,
+            )
         return False
 
 

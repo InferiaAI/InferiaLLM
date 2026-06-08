@@ -185,6 +185,27 @@ async def start_reconciler(
     from inferia.services.orchestration.services.provisioning.reconciler.loop import (
         ProvisioningReconciler,
     )
+    from inferia.services.orchestration.services.provisioning.reconciler.reaper import (
+        TerminationReaper,
+    )
+
+    # The self-healing reaper runs alongside the reconciler under the SAME
+    # advisory lock (only the leader replica runs it). Interval + grace are
+    # env-configurable; set INFERIA_DISABLE_TERMINATION_REAPER=1 to disable
+    # it entirely (e.g. tests / operator rollback).
+    _reaper_disabled = os.getenv("INFERIA_DISABLE_TERMINATION_REAPER", "0") == "1"
+    try:
+        _reaper_interval = float(
+            os.getenv("INFERIA_TERMINATION_REAPER_INTERVAL_S", "") or 60.0
+        )
+    except (TypeError, ValueError):
+        _reaper_interval = 60.0
+    try:
+        _reaper_grace = float(
+            os.getenv("INFERIA_TERMINATION_REAPER_GRACE_S", "") or 120.0
+        )
+    except (TypeError, ValueError):
+        _reaper_grace = 120.0
 
     while not stop_event.is_set():
         async with db.acquire() as conn:
@@ -221,6 +242,18 @@ async def start_reconciler(
                     pool_repo=pool_repo,
                 )
                 run_task = asyncio.create_task(rec.run())
+                # Sibling self-healing reaper — shares this lock's lifetime.
+                reaper_task: asyncio.Task | None = None
+                if not _reaper_disabled:
+                    reaper = TerminationReaper(
+                        db=db,
+                        inventory_repo=inventory_repo,
+                        pool_repo=pool_repo,
+                        jobs_repo=repo,
+                        interval_s=_reaper_interval,
+                        grace_s=_reaper_grace,
+                    )
+                    reaper_task = asyncio.create_task(reaper.run())
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=None)
                 except asyncio.CancelledError:
@@ -232,6 +265,12 @@ async def start_reconciler(
                         await run_task
                     except asyncio.CancelledError:
                         pass
+                    if reaper_task is not None:
+                        reaper_task.cancel()
+                        try:
+                            await reaper_task
+                        except asyncio.CancelledError:
+                            pass
             finally:
                 await conn.fetchval(
                     "SELECT pg_advisory_unlock($1)", RECONCILER_LOCK_KEY,
