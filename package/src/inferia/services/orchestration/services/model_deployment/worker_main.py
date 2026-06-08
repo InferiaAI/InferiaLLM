@@ -184,6 +184,7 @@ async def main():
             "localai": localai_strategy,
             "worker": worker_strategy,
         },
+        worker_controller=worker_controller,
     )
 
     log.info("ModelDeploymentWorker started (max_concurrent=%d)", MAX_CONCURRENT_DEPLOYS)

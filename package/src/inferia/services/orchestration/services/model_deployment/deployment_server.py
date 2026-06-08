@@ -1537,15 +1537,24 @@ async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
             )
 
 
-@router.post("/terminate")
-async def terminate_deployment(req: TerminateDeploymentRequest, request: Request):
-    """Refcount-aware deploy termination.
+def _build_terminate_deps(
+    db_pool,
+    *,
+    controller=None,
+    event_bus=None,
+    inventory=None,
+    deploys=None,
+    pool_repo=None,
+    jobs_repo=None,
+) -> SimpleNamespace:
+    """Construct the ``deps`` namespace ``terminate_deployment_core`` needs.
 
-    PENDING_NODE: unbind + release_gpu; if refcount=0 -> destroy node.
-    DEPLOYING/RUNNING: unload_model + release_gpu; if refcount=0 -> destroy.
-    Terminal states: no-op.
+    Both the REST ``/terminate`` route (which has ``request.app.state``) and the
+    gRPC delete path (``worker.handle_terminate_requested``, which only holds its
+    own repos) call this so the two entrypoints share ONE refcount-aware
+    teardown. Any repo not supplied is built from ``db_pool`` — the gRPC path
+    passes the repos it already owns and lets the rest be constructed here.
     """
-    from uuid import UUID
     from inferia.services.orchestration.repositories.inventory_repo import (
         InventoryRepository,
     )
@@ -1559,19 +1568,42 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
         ProvisioningJobRepository,
     )
 
-    db_pool = request.app.state.pool
-    controller = request.app.state.worker_controller
-    event_bus = getattr(request.app.state, "event_bus", None)
+    return SimpleNamespace(
+        db_pool=db_pool,
+        controller=controller,
+        event_bus=event_bus,
+        inventory=inventory if inventory is not None else InventoryRepository(db_pool),
+        deploys=deploys
+        if deploys is not None
+        else ModelDeploymentRepository(db_pool, event_bus=event_bus),
+        pool_repo=pool_repo
+        if pool_repo is not None
+        else ComputePoolRepository(db_pool),
+        jobs_repo=jobs_repo
+        if jobs_repo is not None
+        else ProvisioningJobRepository(db_pool),
+    )
 
-    inventory = InventoryRepository(db_pool)
-    deploys = ModelDeploymentRepository(db_pool, event_bus=event_bus)
-    pool_repo = ComputePoolRepository(db_pool)
-    jobs_repo = ProvisioningJobRepository(db_pool)
 
-    try:
-        deploy_uuid = UUID(req.deployment_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="invalid deployment_id")
+async def terminate_deployment_core(deploy_uuid, *, deps) -> dict:
+    """Refcount-aware deploy termination (shared by REST + gRPC delete paths).
+
+    PENDING_NODE: unbind + release_gpu; if refcount=0 -> destroy node.
+    DEPLOYING/RUNNING: unload_model + release_gpu; if refcount=0 -> destroy.
+    Terminal states: no-op (but still force_cancel a node it orphaned, C9).
+
+    ``deps`` is a SimpleNamespace with ``db_pool, controller, inventory,
+    deploys, pool_repo, jobs_repo, event_bus``. Returns
+    ``{"deployment_id", "status"}``; raises HTTPException(404) for an unknown
+    deploy and HTTPException(502) when the destroy enqueue fails (behaviour
+    identical to the pre-extraction ``/terminate`` route).
+    """
+    db_pool = deps.db_pool
+    controller = deps.controller
+    inventory = deps.inventory
+    deploys = deps.deploys
+    pool_repo = deps.pool_repo
+    jobs_repo = deps.jobs_repo
 
     row = await deploys.get(deploy_uuid)
     if row is None:
@@ -1700,7 +1732,7 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
         return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
 
     # DEPLOYING / RUNNING / CREATED
-    if target_node_id is not None:
+    if target_node_id is not None and controller is not None:
         try:
             await controller.unload_model(
                 node_id=str(target_node_id),
@@ -1773,6 +1805,30 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
                   "destroyed_node": str(target_node_id) if should_destroy else None},
     )
     return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
+
+
+@router.post("/terminate")
+async def terminate_deployment(req: TerminateDeploymentRequest, request: Request):
+    """REST entrypoint for refcount-aware deploy termination.
+
+    Thin wrapper: parse the deployment_id, build ``deps`` from app.state, then
+    delegate to ``terminate_deployment_core`` — the SAME teardown the gRPC
+    delete path uses (via worker.handle_terminate_requested). Behaviour is
+    identical to the pre-extraction route.
+    """
+    from uuid import UUID
+
+    try:
+        deploy_uuid = UUID(req.deployment_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid deployment_id")
+
+    deps = _build_terminate_deps(
+        request.app.state.pool,
+        controller=request.app.state.worker_controller,
+        event_bus=getattr(request.app.state, "event_bus", None),
+    )
+    return await terminate_deployment_core(deploy_uuid, deps=deps)
 
 
 def _resume_workload_type(row) -> str:

@@ -573,6 +573,9 @@ async def serve():
                     "localai": localai_strategy,
                     "worker": inproc_worker_strategy,
                 },
+                # Lets the gRPC delete path (handle_terminate_requested) unload
+                # the model over the live WS channel before destroying the node.
+                worker_controller=worker_controller,
             )
             from uuid import UUID as _UUID
 

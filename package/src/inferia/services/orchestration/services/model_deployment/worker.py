@@ -22,6 +22,7 @@ class ModelDeploymentWorker:
         inventory_repo,
         runtime_resolver,
         runtime_strategies,  # dict: {"vllm": ..., "llmd": ...}
+        worker_controller=None,
     ):
         self.deployments = deployment_repo
         self.models = model_registry_repo
@@ -31,6 +32,11 @@ class ModelDeploymentWorker:
         self.inventory = inventory_repo
         self.runtime_resolver = runtime_resolver
         self.strategies = runtime_strategies
+        # Optional: the worker-side controller used to unload models over the
+        # WS channel during a reconciler-managed teardown (gRPC delete path).
+        # When absent the shared terminate core simply skips the best-effort
+        # unload_model step.
+        self.worker_controller = worker_controller
 
     # -------------------------------------------------
     # EVENT HANDLER
@@ -582,6 +588,17 @@ class ModelDeploymentWorker:
                     f"already in terminal state: {d_current['state'] if d_current else 'deleted'}"
                 )
 
+    # Providers whose nodes are owned by the pool-first reconciler. For these,
+    # teardown MUST go through the node-scoped refcount-aware path
+    # (terminate_deployment_core -> _initiate_node_destroy -> force_cancel ->
+    # CancelHandler runs `pulumi destroy inferia-<node_id>`), NOT the legacy
+    # adapter.deprovision_node below (which destroys the POOL-scoped stack and
+    # does no refcount release -> EC2 leak / wrong teardown). Matches the
+    # _RECONCILER_MANAGED_PROVIDERS fence in handle_deploy_requested (Task 1.4).
+    _RECONCILER_MANAGED_PROVIDERS = frozenset(
+        {"aws", "gcp", "azure", "on_prem", "worker"}
+    )
+
     async def handle_terminate_requested(self, deployment_id: UUID):
         d = await self.deployments.get(deployment_id)
         if not d:
@@ -601,6 +618,22 @@ class ModelDeploymentWorker:
                 cluster_id = pool.get("cluster_id")
         except Exception:
             pass
+
+        # ------------------------------------------------------------------
+        # RECONCILER-MANAGED PROVIDERS: reroute to the SHARED refcount-aware,
+        # node-scoped teardown. This unifies the gRPC delete path
+        # (DeleteDeployment -> controller.request_delete -> this handler) with
+        # the REST POST /deployment/terminate path: both now release the GPU,
+        # unbind, and (only when no other live deploy references the node)
+        # force_cancel the node's reconciler job so the reconciler destroys the
+        # correct node-scoped stack. The legacy deprovision_node loop below is
+        # fenced off for these providers — it tore down the wrong (pool-scoped)
+        # stack and leaked the EC2.
+        # ------------------------------------------------------------------
+        provider = (pool or {}).get("provider")
+        if provider in self._RECONCILER_MANAGED_PROVIDERS:
+            await self._terminate_via_reconciler(deployment_id, pool=pool)
+            return
 
         cleanup_error = None
         try:
@@ -715,3 +748,63 @@ class ModelDeploymentWorker:
                 log.error(f"Deployment {deployment_id} marked FAILED due to cleanup error: {cleanup_error}")
             else:
                 log.info(f"Deployment {deployment_id} stopped")
+
+    async def _terminate_via_reconciler(self, deployment_id: UUID, *, pool=None):
+        """Drive the SHARED refcount-aware, node-scoped teardown for a
+        reconciler-managed deploy (gRPC delete path).
+
+        Builds the ``deps`` namespace ``terminate_deployment_core`` expects from
+        this worker's own repos (``self.deployments.db`` is the asyncpg pool;
+        the deployment/inventory/pool repos are reused, the provisioning-job
+        repo is constructed from the pool, and the optional
+        ``self.worker_controller`` provides ``unload_model``). The core releases
+        the GPU, unbinds, and force_cancels the node's reconciler job when the
+        refcount hits zero — the EXACT behaviour of POST /deployment/terminate.
+
+        This runs inside an event consumer (no HTTP context), so the core's
+        HTTPException signals are caught and logged here rather than propagated.
+        """
+        from inferia.services.orchestration.services.model_deployment.deployment_server import (
+            _build_terminate_deps,
+            terminate_deployment_core,
+        )
+
+        db_pool = getattr(self.deployments, "db", None)
+        if db_pool is None:
+            log.error(
+                "Cannot route deployment %s through the reconciler teardown: "
+                "deployment repo has no db pool; falling back is unsafe, "
+                "marking FAILED",
+                deployment_id,
+            )
+            await self.deployments.update_state(
+                deployment_id,
+                "FAILED",
+                error_message="reconciler teardown unavailable (no db pool)",
+            )
+            return
+
+        deps = _build_terminate_deps(
+            db_pool,
+            controller=self.worker_controller,
+            event_bus=getattr(self.deployments, "event_bus", None),
+            inventory=self.inventory,
+            deploys=self.deployments,
+            pool_repo=self.pools,
+        )
+        try:
+            result = await terminate_deployment_core(deployment_id, deps=deps)
+            log.info(
+                "Routed deployment %s through reconciler-managed teardown: %s",
+                deployment_id, result,
+            )
+        except Exception:
+            # HTTPException (404 unknown deploy / 502 destroy-enqueue failure) or
+            # any unexpected error. The core already updated DB state + flagged
+            # the node terminating where it could; surface loudly and leave the
+            # row in whatever terminal state the core reached. We deliberately do
+            # NOT force the row to STOPPED here — the core owns the deploy state.
+            log.exception(
+                "Reconciler-managed teardown failed for deployment %s",
+                deployment_id,
+            )
