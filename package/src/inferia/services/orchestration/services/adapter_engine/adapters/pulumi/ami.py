@@ -1,4 +1,4 @@
-"""DLAMI lookup helper.
+"""AMI resolution helpers (DLAMI, plain Ubuntu, and baked engine-cache AMIs).
 
 Resolves the latest AWS Deep Learning AMI for Ubuntu 22.04 + NVIDIA driver
 via SSM Public Parameters, with a per-region in-memory cache (TTL 1 h).
@@ -29,6 +29,12 @@ _UBUNTU_PARAMETER = (
 )
 _DLAMI_TTL_S = 3600
 _DLAMI_CACHE: Dict[str, Tuple[str, float]] = {}
+
+# Tag stamped on baked engine-cache AMIs (see engine_ami_bake.py). resolve_ami
+# prefers the newest such AMI over the stock DLAMI for GPU classes.
+_ENGINE_CACHE_TAG = "inferia:engine-cache"
+_ENGINE_AMI_TTL_S = 300
+_ENGINE_AMI_CACHE: Dict[str, Tuple[Optional[str], float]] = {}
 
 
 def latest_dlami_ami(
@@ -71,6 +77,58 @@ def latest_dlami_ami(
     return value
 
 
+def _engine_ec2_client(region: str, *, aws_access_key_id=None, aws_secret_access_key=None):
+    """boto3 EC2 client for the engine-AMI lookup. Separate seam so tests can
+    monkeypatch it without importing boto3 / hitting AWS (mirrors this module's
+    credential-threading style)."""
+    import boto3
+
+    kwargs = {"region_name": region}
+    if aws_access_key_id and aws_secret_access_key:
+        kwargs["aws_access_key_id"] = aws_access_key_id
+        kwargs["aws_secret_access_key"] = aws_secret_access_key
+    return boto3.client("ec2", **kwargs)
+
+
+def find_engine_ami(
+    region: str,
+    *,
+    aws_access_key_id: Optional[str] = None,
+    aws_secret_access_key: Optional[str] = None,
+) -> Optional[str]:
+    """Return the newest available engine-cache AMI in ``region`` (tagged
+    ``inferia:engine-cache=true`` and owned by this account), or ``None`` when
+    none has been baked. Per-region TTL-cached (300 s) so repeated preflights
+    are cheap but a freshly-baked AMI is picked up within minutes."""
+    now = time.time()
+    cached = _ENGINE_AMI_CACHE.get(region)
+    if cached and (now - cached[1]) < _ENGINE_AMI_TTL_S:
+        return cached[0]
+    try:
+        client = _engine_ec2_client(
+            region,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+        )
+        resp = client.describe_images(
+            Owners=["self"],
+            Filters=[
+                {"Name": f"tag:{_ENGINE_CACHE_TAG}", "Values": ["true"]},
+                {"Name": "state", "Values": ["available"]},
+            ],
+        )
+    except Exception:  # noqa: BLE001 — best-effort; never block provisioning
+        return None
+    images = resp.get("Images") or []
+    if not images:
+        _ENGINE_AMI_CACHE[region] = (None, now)
+        return None
+    newest = max(images, key=lambda im: im.get("CreationDate", ""))
+    ami_id = newest.get("ImageId")
+    _ENGINE_AMI_CACHE[region] = (ami_id, now)
+    return ami_id
+
+
 # Re-exported so callers can switch to the plain Ubuntu image for CPU-only
 # instance types (NVIDIA driver isn't useful on a t3.micro).
 PLAIN_UBUNTU_PARAMETER = _UBUNTU_PARAMETER
@@ -101,6 +159,16 @@ def resolve_ami(
     """
     aws_access_key_id = creds.access_key_id if creds is not None else None
     aws_secret_access_key = creds.secret_access_key if creds is not None else None
+
+    if instance_class in _GPU_INSTANCE_CLASSES:
+        engine = find_engine_ami(
+            region,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+        )
+        if engine:
+            return engine
+
     parameter = (
         _DLAMI_PARAMETER if instance_class in _GPU_INSTANCE_CLASSES
         else _UBUNTU_PARAMETER
