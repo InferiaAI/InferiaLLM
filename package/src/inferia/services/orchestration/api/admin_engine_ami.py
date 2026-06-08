@@ -171,6 +171,7 @@ async def _default_list_engine_amis(region: str) -> list:
         region,
         aws_access_key_id=creds["aws_access_key_id"],
         aws_secret_access_key=creds["aws_secret_access_key"],
+        aws_session_token=creds.get("aws_session_token"),
     )
     resp = await asyncio.to_thread(
         client.describe_images,

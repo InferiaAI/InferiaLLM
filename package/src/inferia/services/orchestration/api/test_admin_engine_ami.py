@@ -86,3 +86,92 @@ def test_server_registers_engine_ami_router():
     assert "admin_engine_ami" in src, "server.py must import the engine-ami router"
     assert "admin_engine_ami_api.configure(" in src, "server.py must configure() the router"
     assert "include_router(admin_engine_ami_api.router)" in src, "server.py must include_router the engine-ami router"
+
+
+# --- Fix I2: coverage for production default helpers ---
+
+import types
+from unittest.mock import AsyncMock
+
+import inferia.services.orchestration.services.adapter_engine.adapters.aws.engine_ami_bake as _eab
+import inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep as _sweep
+import inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami as _ami
+
+
+def test_worker_image_ref(monkeypatch):
+    monkeypatch.setenv("INFERIA_WORKER_IMAGE", "ghcr.io/x/worker")
+    monkeypatch.setenv("INFERIA_WORKER_IMAGE_TAG", "0.2.5")
+    assert mod._worker_image_ref() == "ghcr.io/x/worker:0.2.5"
+
+
+def test_worker_image_ref_none_without_tag(monkeypatch):
+    monkeypatch.delenv("INFERIA_WORKER_IMAGE_TAG", raising=False)
+    assert mod._worker_image_ref() is None
+
+
+def test_ssm_instance_profile(monkeypatch):
+    monkeypatch.delenv("INFERIA_BAKE_SSM_INSTANCE_PROFILE", raising=False)
+    assert mod._ssm_instance_profile() is None
+    monkeypatch.setenv("INFERIA_BAKE_SSM_INSTANCE_PROFILE", "prof")
+    assert mod._ssm_instance_profile() == "prof"
+
+
+@pytest.mark.asyncio
+async def test_default_start_bake_records_success(monkeypatch):
+    monkeypatch.setattr(_sweep, "resolve_sweep_aws_env",
+                        AsyncMock(return_value={"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s"}))
+    monkeypatch.setattr(_eab, "bake_engine_ami",
+                        lambda **kw: types.SimpleNamespace(ami_id="ami-z", region=kw["region"]))
+    captured = {}
+    monkeypatch.setattr(mod.asyncio, "create_task", lambda coro: captured.setdefault("coro", coro))
+    bake_id = mod._default_start_bake(region="us-east-1", include_worker_image=False)
+    assert mod._BAKES[bake_id]["status"] == "running"
+    await captured["coro"]
+    assert mod._BAKES[bake_id]["status"] == "succeeded"
+    assert mod._BAKES[bake_id]["ami_id"] == "ami-z"
+
+
+@pytest.mark.asyncio
+async def test_default_start_bake_records_failure(monkeypatch):
+    monkeypatch.setattr(_sweep, "resolve_sweep_aws_env",
+                        AsyncMock(return_value={"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s"}))
+    def _boom(**kw):
+        raise RuntimeError("nope")
+    monkeypatch.setattr(_eab, "bake_engine_ami", _boom)
+    captured = {}
+    monkeypatch.setattr(mod.asyncio, "create_task", lambda coro: captured.setdefault("coro", coro))
+    bake_id = mod._default_start_bake(region="us-east-1")
+    await captured["coro"]
+    assert mod._BAKES[bake_id]["status"] == "failed"
+    assert "nope" in mod._BAKES[bake_id]["message"]
+
+
+@pytest.mark.asyncio
+async def test_default_list_engine_amis_maps(monkeypatch):
+    monkeypatch.setattr(_sweep, "resolve_sweep_aws_env",
+                        AsyncMock(return_value={"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s"}))
+    class _FakeEC2:
+        def describe_images(self, **kw):
+            self.kw = kw
+            return {"Images": [{"ImageId": "ami-1", "CreationDate": "2026-06-08",
+                                 "Tags": [{"Key": "inferia:vllm-tag", "Value": "v0.22.1"}]}]}
+    fake = _FakeEC2()
+    monkeypatch.setattr(_ami, "_engine_ec2_client", lambda region, **kw: fake)
+    out = await mod._default_list_engine_amis("us-east-1")
+    assert out[0]["ami_id"] == "ami-1" and out[0]["vllm_tag"] == "v0.22.1"
+
+
+@pytest.mark.asyncio
+async def test_default_list_engine_amis_no_creds(monkeypatch):
+    monkeypatch.setattr(_sweep, "resolve_sweep_aws_env", AsyncMock(return_value=None))
+    assert await mod._default_list_engine_amis("us-east-1") == []
+
+
+def test_list_503_when_not_configured(monkeypatch):
+    # Direct misconfiguration: lister unset -> 503.
+    from fastapi import FastAPI
+    app = FastAPI()
+    mod.configure(require_permission=lambda perm: (lambda *_a, **_k: True))
+    mod._deps.list_engine_amis = None
+    app.include_router(mod.router)
+    assert TestClient(app).get("/v1/admin/aws/engine-ami").status_code == 503

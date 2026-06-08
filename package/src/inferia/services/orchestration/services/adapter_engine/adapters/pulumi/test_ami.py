@@ -153,3 +153,14 @@ def test_find_engine_ami_missing_creation_date(monkeypatch):
     ])
     monkeypatch.setattr(ami_mod, "_engine_ec2_client", lambda region, **kw: fake)
     assert ami_mod.find_engine_ami("us-east-1", aws_access_key_id="k", aws_secret_access_key="s") == "ami-dated"
+
+
+def test_engine_ec2_client_forwards_session_token(monkeypatch):
+    import boto3
+    captured = {}
+    monkeypatch.setattr(boto3, "client", lambda svc, **kw: captured.update(kw) or "client")
+    ami_mod._engine_ec2_client("us-east-1", aws_access_key_id="k", aws_secret_access_key="s", aws_session_token="tok")
+    assert captured.get("aws_session_token") == "tok"
+    captured.clear()
+    ami_mod._engine_ec2_client("us-east-1", aws_access_key_id="k", aws_secret_access_key="s")
+    assert "aws_session_token" not in captured

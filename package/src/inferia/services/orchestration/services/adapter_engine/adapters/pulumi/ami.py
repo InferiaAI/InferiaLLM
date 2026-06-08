@@ -77,7 +77,7 @@ def latest_dlami_ami(
     return value
 
 
-def _engine_ec2_client(region: str, *, aws_access_key_id=None, aws_secret_access_key=None):
+def _engine_ec2_client(region: str, *, aws_access_key_id=None, aws_secret_access_key=None, aws_session_token=None):
     """boto3 EC2 client for the engine-AMI lookup. Separate seam so tests can
     monkeypatch it without importing boto3 / hitting AWS (mirrors this module's
     credential-threading style)."""
@@ -87,6 +87,8 @@ def _engine_ec2_client(region: str, *, aws_access_key_id=None, aws_secret_access
     if aws_access_key_id and aws_secret_access_key:
         kwargs["aws_access_key_id"] = aws_access_key_id
         kwargs["aws_secret_access_key"] = aws_secret_access_key
+        if aws_session_token:
+            kwargs["aws_session_token"] = aws_session_token
     return boto3.client("ec2", **kwargs)
 
 
