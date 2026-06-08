@@ -2088,6 +2088,57 @@ async def delete_deployment(deployment_id: str):
                     detail=f"Cannot delete deployment in state '{row['state']}'. Stop it first.",
                 )
 
+            # Node teardown BEFORE the row drop. A terminal deploy
+            # (FAILED/STOPPED) may still OWN a live EC2 node — e.g. it reached
+            # FAILED after a successful pulumi up / bootstrap timeout. Dropping
+            # the model_deployments row without tearing the node down leaks the
+            # instance. If no OTHER non-terminal deploy targets the node, route
+            # it through the SAME force_cancel -> reconciler CancelHandler ->
+            # node-scoped `pulumi destroy` path that /terminate's C9 branch
+            # uses. Best-effort: an idempotent delete must never fail on the
+            # teardown (mirrors terminate_deployment_core's C9 block).
+            _target_node_id = row["target_node_id"]
+            if _target_node_id is not None:
+                try:
+                    _others = await conn.fetchval(
+                        "SELECT count(*) FROM model_deployments "
+                        "WHERE target_node_id=$1 AND deployment_id<>$2 "
+                        "AND state IN ('PENDING_NODE','DEPLOYING','RUNNING','CREATED','PENDING')",
+                        _target_node_id, dep_uuid,
+                    )
+                    _node_provider = await conn.fetchval(
+                        "SELECT provider::text FROM compute_inventory WHERE id=$1",
+                        _target_node_id,
+                    )
+                    if not _others and _node_provider:
+                        from inferia.services.orchestration.services.provisioning.jobs.repository import (
+                            ProvisioningJobRepository,
+                        )
+                        _node_pool_id = await conn.fetchval(
+                            "SELECT pool_id FROM compute_inventory WHERE id=$1",
+                            _target_node_id,
+                        )
+                        _teardown_pool = await asyncpg.create_pool(
+                            POSTGRES_DSN, min_size=1, max_size=1,
+                        )
+                        try:
+                            await _initiate_node_destroy(
+                                db_pool=_teardown_pool,
+                                jobs_repo=ProvisioningJobRepository(_teardown_pool),
+                                node_id=_target_node_id,
+                                pool_id=_node_pool_id,
+                                org_id=audit_org_id,
+                                provider=_node_provider,
+                            )
+                        finally:
+                            await _teardown_pool.close()
+                except Exception:
+                    logger.warning(
+                        "delete: node teardown failed for node=%s (deploy=%s); "
+                        "dropping the row anyway",
+                        _target_node_id, dep_uuid, exc_info=True,
+                    )
+
             # Clean up dependent records explicitly so deletion works even when
             # DB constraints were created without ON DELETE behaviors.
             async with conn.transaction():
@@ -2101,6 +2152,13 @@ async def delete_deployment(deployment_id: str):
                 )
                 await conn.execute(
                     "DELETE FROM inference_logs WHERE deployment_id = $1",
+                    dep_uuid,
+                )
+                # Explicit so the two HTTP delete paths are internally
+                # consistent (the FK is ON DELETE CASCADE, but the /pool delete
+                # path drops it explicitly — match that here too).
+                await conn.execute(
+                    "DELETE FROM deployment_terminal_logs WHERE deployment_id = $1",
                     dep_uuid,
                 )
                 await conn.execute(
