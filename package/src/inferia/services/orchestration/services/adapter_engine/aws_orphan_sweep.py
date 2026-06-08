@@ -31,6 +31,24 @@ Design notes
   injectable-factory style of ``aws_deprovision.py`` /
   ``test_aws_deprovision.py``.
 
+* **Config-resolved creds (NOT the ambient env chain).** The control-plane
+  container has NO ambient AWS creds, so a boto3 default-chain client raises
+  ``NoCredentialsError`` and the whole backstop silently no-ops. Instead we
+  resolve creds the *same* way the Pulumi ``destroy`` path does:
+  ``resolve_aws_env(load_providers_config())`` (see
+  ``PulumiAWSAdapter.discover_resources`` / ``get_logs`` /
+  ``run_pulumi_destroy_sync`` in ``adapters/pulumi/pulumi_aws_adapter.py``,
+  which all call ``resolve_aws_env(cfg)`` against the DB-backed
+  ``ProvidersConfig``). ``load_providers_config`` is async (it opens an
+  AsyncSession), but the sweep runs synchronously inside
+  ``asyncio.to_thread(...)`` — a worker thread with no running loop — so we
+  drive it to completion with ``asyncio.run(...)``. When no creds are
+  configured (``MissingCredentialsError``) :func:`_resolve_aws_creds`
+  returns ``{}`` and the sweep logs a clear "no creds" WARNING and returns
+  ``[]`` (distinct from the "no instances" INFO line) — preserving the
+  best-effort contract without ever falling back to the empty ambient
+  chain.
+
 * **Sync.** boto3 is synchronous; async callers (e.g. the reconciler's
   CancelHandler) wrap these in ``asyncio.to_thread(...)``.
 """
@@ -49,53 +67,80 @@ _LIVE_STATES = ["pending", "running", "stopping", "stopped"]
 
 
 def _resolve_aws_creds(credential_name: str | None = None) -> dict[str, str]:
-    """Return boto3 client credential kwargs, or ``{}`` to fall back to the
-    default boto3 credential chain.
+    """Return boto3 client credential kwargs resolved from the DB-backed
+    ``ProvidersConfig`` — the SAME source the Pulumi ``destroy`` path uses —
+    or ``{}`` when no AWS creds are configured.
 
-    The orchestration container receives AWS creds the same way the Pulumi
-    adapter consumes them — via ``AWS_ACCESS_KEY_ID`` /
-    ``AWS_SECRET_ACCESS_KEY`` env vars (see ``resolve_aws_env`` in
-    ``adapters/pulumi/credentials.py``, which exports exactly these). We
-    read them lazily here so importing this module never requires boto3 or
-    a DB session, and so tests can monkeypatch this function wholesale.
+    The control-plane container has NO ambient AWS creds, so we must NOT
+    rely on boto3's default credential chain (it raises
+    ``NoCredentialsError`` and the sweep silently no-ops). Instead we mirror
+    ``PulumiAWSAdapter.discover_resources`` / ``get_logs`` /
+    ``run_pulumi_destroy_sync``, which all do
+    ``env = resolve_aws_env(await load_providers_config())`` and pass
+    ``env["AWS_ACCESS_KEY_ID"]`` / ``env["AWS_SECRET_ACCESS_KEY"]``
+    explicitly to ``boto3.client``.
+
+    ``load_providers_config`` is async (it opens an AsyncSession against the
+    gateway DB), but this function is called synchronously from
+    :func:`_sweep_by_tag`, which itself runs inside ``asyncio.to_thread`` —
+    a worker thread with no running event loop — so ``asyncio.run`` drives
+    the coroutine to completion safely. Imports are kept lazy so importing
+    this module never requires boto3 or a DB session, and so tests can
+    monkeypatch this function wholesale.
 
     ``credential_name`` is accepted for signature symmetry with the rest of
     the adapter layer (``provider_credential_name``); the current
-    single-credential model resolves the same env-backed creds regardless,
-    matching ``PulumiAWSAdapter.deprovision_node`` which also ignores it.
+    single-credential model resolves the config-level creds regardless,
+    matching ``PulumiAWSAdapter.deprovision_node`` (which uses the
+    config-level ``resolve_aws_env(cfg)``, not a per-name DB lookup).
 
-    Returning ``{}`` lets :func:`_ec2_client` fall back to the boto3
-    default chain (instance profile / shared config) — the same graceful
-    fallback ``latest_dlami_ami``/``resolve_ami`` use.
+    Returns ``{}`` when no creds are configured (``MissingCredentialsError``)
+    so the caller can log a clear "no creds" WARNING and return ``[]`` —
+    we deliberately do NOT fall back to the (empty) ambient chain.
     """
-    import os
+    import asyncio
 
-    key = os.environ.get("AWS_ACCESS_KEY_ID")
-    secret = os.environ.get("AWS_SECRET_ACCESS_KEY")
-    if not (key and secret):
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.credentials import (
+        MissingCredentialsError,
+        resolve_aws_env,
+    )
+    from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
+        load_providers_config,
+    )
+
+    cfg = asyncio.run(load_providers_config())
+    try:
+        env = resolve_aws_env(cfg)
+    except MissingCredentialsError:
         return {}
+
     creds: dict[str, str] = {
-        "aws_access_key_id": key,
-        "aws_secret_access_key": secret,
+        "aws_access_key_id": env["AWS_ACCESS_KEY_ID"],
+        "aws_secret_access_key": env["AWS_SECRET_ACCESS_KEY"],
     }
-    token = os.environ.get("AWS_SESSION_TOKEN")
+    # resolve_aws_env only exports AWS_SESSION_TOKEN when the config carried
+    # one; forward it when present so STS temporary creds keep working.
+    token = env.get("AWS_SESSION_TOKEN")
     if token:
         creds["aws_session_token"] = token
     return creds
 
 
-def _ec2_client(region: str, *, credential_name: str | None = None):
-    """Build a boto3 EC2 client for ``region``.
+def _ec2_client(region: str, *, creds: dict[str, str]):
+    """Build a boto3 EC2 client for ``region`` with explicit ``creds``.
 
     Separate function (like ``_boto3_sts_client`` in the pulumi credentials
     module) so tests can monkeypatch it and never import boto3 / hit AWS.
+    Credentials are resolved by the caller (:func:`_sweep_by_tag`) via
+    :func:`_resolve_aws_creds` and passed in explicitly — mirroring how
+    ``PulumiAWSAdapter.discover_resources`` builds its EC2 client.
     """
     import boto3
 
     return boto3.client(
         "ec2",
         region_name=region,
-        **_resolve_aws_creds(credential_name),
+        **creds,
     )
 
 
@@ -129,12 +174,35 @@ def _sweep_by_tag(
         )
         return []
 
+    # Resolve creds the same way the Pulumi destroy path does. No creds ⇒
+    # the backstop can't authenticate; log a clear (no-creds-specific)
+    # WARNING and bail, distinct from the "no instances" INFO line below.
+    # Best-effort: a failure resolving creds (DB down, etc.) is logged and
+    # also yields [] rather than raising.
+    try:
+        creds = _resolve_aws_creds(credential_name)
+    except Exception as e:  # noqa: BLE001 — best-effort backstop
+        logger.warning(
+            "aws_orphan_sweep skipped for %s=%s in %s: failed to resolve AWS "
+            "credentials: %s: %s",
+            tag_key, tag_value, region, type(e).__name__, e,
+        )
+        return []
+    if not creds:
+        logger.warning(
+            "aws_orphan_sweep skipped for %s=%s in %s: no AWS credentials "
+            "configured (ProvidersConfig has no access_key_id/secret_access_key); "
+            "orphan-EC2 backstop cannot authenticate",
+            tag_key, tag_value, region,
+        )
+        return []
+
     filters = [
         {"Name": f"tag:{tag_key}", "Values": [tag_value]},
         {"Name": "instance-state-name", "Values": list(_LIVE_STATES)},
     ]
     try:
-        client = _ec2_client(region, credential_name=credential_name)
+        client = _ec2_client(region, creds=creds)
         resp = client.describe_instances(Filters=filters)
         ids = _instance_ids_from_describe(resp)
         if not ids:
