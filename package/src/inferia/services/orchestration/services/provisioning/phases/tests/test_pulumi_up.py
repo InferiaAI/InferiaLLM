@@ -103,6 +103,7 @@ async def test_aws_bootstrap_injected_when_user_data_absent():
     def _capture_program(*, spec, stack_outputs):
         captured["user_data"] = spec.get("user_data")
         captured["bootstrap_id"] = spec.get("bootstrap_id")
+        captured["node_id"] = spec.get("node_id")
         return lambda: None
 
     # A db whose .acquire() yields an async-context conn with fetchrow/execute.
@@ -138,6 +139,36 @@ async def test_aws_bootstrap_injected_when_user_data_absent():
 
     assert captured["user_data"]  # non-empty cloud-init was injected
     assert captured["bootstrap_id"]
+    # The setdefault threading puts the placeholder node id into the spec so
+    # build_program stamps it as the per-node sweep tag (InferiaNodeId).
+    assert captured["node_id"] == str(job.node_id)
+
+
+@pytest.mark.asyncio
+async def test_node_id_threaded_into_spec_for_tag_emission():
+    """The handler setdefaults the placeholder's node_id into the spec so the
+    launch program stamps an InferiaNodeId tag (consumed by the boto3 orphan
+    sweep). Covers the threading independently of the bootstrap-injection path
+    (this job already carries user_data, so _inject_aws_bootstrap is skipped)."""
+    job = _job()
+    captured = {}
+
+    def _capture_program(*, spec, stack_outputs):
+        captured["node_id"] = spec.get("node_id")
+        return lambda: None
+
+    outputs = StackOutputs(instance_id="i", public_dns=None,
+                           region=None, ami_id=None)
+    with patch(
+        "inferia.services.orchestration.services.provisioning.phases."
+        "pulumi_up.build_program", side_effect=_capture_program,
+    ), patch(
+        "inferia.services.orchestration.services.provisioning.phases."
+        "pulumi_up.run_pulumi_up_sync", return_value=outputs,
+    ):
+        await PulumiUpHandler().run(job, _ctx())
+
+    assert captured["node_id"] == str(job.node_id)
 
 
 @pytest.mark.asyncio

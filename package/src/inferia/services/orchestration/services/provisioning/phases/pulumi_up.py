@@ -40,6 +40,12 @@ class PulumiUpHandler:
         if provider == "aws" and not spec.get("user_data"):
             spec = await self._inject_aws_bootstrap(job, ctx, spec)
 
+        # Thread the placeholder's node_id into the spec so the launch
+        # program stamps an InferiaNodeId tag on the instance. The boto3
+        # orphan sweep (aws_orphan_sweep) keys off this tag to reclaim
+        # leaked EC2 that Pulumi state never tracked.
+        spec.setdefault("node_id", str(job.node_id))
+
         program = build_program(spec=spec, stack_outputs=job.pulumi_stack_outputs or {})
 
         await ctx.emit_event(

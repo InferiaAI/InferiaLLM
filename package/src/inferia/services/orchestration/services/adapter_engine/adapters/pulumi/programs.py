@@ -21,11 +21,48 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional
 
 
+def _instance_tags(
+    *,
+    name: str,
+    pool_id: str,
+    org_id: str,
+    bootstrap_id: str,
+    node_id: str = "",
+) -> Dict[str, str]:
+    """Build the tag dict stamped onto the launched EC2 instance.
+
+    Kept as a pure helper (no pulumi imports, no lazy resources) so the
+    tag-emission contract is directly unit-testable: the boto3 orphan /
+    duplicate sweep (``aws_orphan_sweep``) keys off ``InferiaNodeId`` /
+    ``InferiaPoolId``, so both MUST be present whenever they are in scope.
+
+    ``InferiaNodeId`` is OMITTED when ``node_id`` is empty — a node id is
+    only in scope for reconciler-driven provisions, and emitting an empty
+    tag value would make the per-node sweep filter match the wrong (or no)
+    instances.
+    """
+    tags: Dict[str, str] = {
+        "Name": name,
+        "InferiaPoolId": pool_id,
+    }
+    # Per-NODE tag so the boto3 orphan/duplicate sweep
+    # (aws_orphan_sweep.sweep_node_instances) can reclaim leaked EC2 that
+    # Pulumi state never tracked — e.g. a retry double-launch. Only emitted
+    # when node_id is in scope (it always is for reconciler-driven
+    # provisions).
+    if node_id:
+        tags["InferiaNodeId"] = node_id
+    tags["InferiaOrgId"] = org_id
+    tags["InferiaBootstrapId"] = bootstrap_id
+    return tags
+
+
 def build_ec2_program(
     *,
     pool_id: str,
     org_id: str,
     bootstrap_id: str,
+    node_id: str = "",
     instance_type: str,
     region: str,
     ami_id: str,
@@ -53,12 +90,13 @@ def build_ec2_program(
             ami=ami_id,
             user_data=user_data,
             root_block_device=root_bd,
-            tags={
-                "Name": f"inferia-pool-{pool_id}",
-                "InferiaPoolId": pool_id,
-                "InferiaOrgId": org_id,
-                "InferiaBootstrapId": bootstrap_id,
-            },
+            tags=_instance_tags(
+                name=f"inferia-pool-{pool_id}",
+                pool_id=pool_id,
+                org_id=org_id,
+                bootstrap_id=bootstrap_id,
+                node_id=node_id,
+            ),
         )
         if subnet_id:
             kwargs["subnet_id"] = subnet_id
@@ -295,6 +333,7 @@ def build_program(
             pool_id=str(spec.get("pool_id") or ""),
             org_id=str(spec.get("org_id") or ""),
             bootstrap_id=str(spec.get("bootstrap_id") or ""),
+            node_id=str(spec.get("node_id") or ""),
             instance_type=str(spec.get("instance_type") or ""),
             region=str(spec.get("region") or ""),
             ami_id=str(ami_id),
