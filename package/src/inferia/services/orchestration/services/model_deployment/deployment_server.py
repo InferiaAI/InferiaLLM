@@ -2298,7 +2298,17 @@ async def create_pool(req: CreatePoolRequest, request: Request):
         except _ValidationError as e:
             raise HTTPException(status_code=422, detail={"errors": e.errors()})
 
-    # 2b. Validate AWS region(s) at the boundary. A malformed code (e.g.
+    # 2b. Require region_constraint for AWS pools. Since the account-wide AWS
+    #     region was removed (Task 3), region MUST come from the pool. Accepting
+    #     a region-less AWS pool would let it through to deploy time where it
+    #     fails with an opaque internal error instead of a clear early rejection.
+    if req.provider == "aws" and not req.region_constraint:
+        raise HTTPException(
+            status_code=422,
+            detail="region_constraint is required for AWS pools",
+        )
+
+    # Validate AWS region(s) at the boundary. A malformed code (e.g.
     #     "us-east1" missing the second hyphen) is otherwise persisted and only
     #     fails much later at preflight with an opaque
     #     "DLAMI lookup failed: EndpointConnectionError" (boto3 can't build an
