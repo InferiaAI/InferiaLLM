@@ -82,11 +82,17 @@ def _build_bake_script(*, vllm_image: str, worker_image: Optional[str]) -> str:
     if worker_image:
         _validate_image_ref(worker_image)
     lines = [
-        "set -euxo pipefail",
+        # AWS-RunShellScript executes under /bin/sh (dash on Ubuntu), which does
+        # NOT support `set -o pipefail` ("Illegal option -o pipefail"). Use the
+        # POSIX-portable `set -eu`; the critical steps (apt install, docker pull)
+        # are individual commands still guarded by `set -e`.
+        "set -eux",
         "export DEBIAN_FRONTEND=noninteractive",
         "if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sh; fi",
         "distribution=$(. /etc/os-release; echo $ID$VERSION_ID)",
-        "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
+        # gpg under SSM has no controlling TTY (--batch --no-tty) — without it
+        # it aborts with "cannot open '/dev/tty'". --yes overwrites on re-runs.
+        "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
         "curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
         "apt-get -o DPkg::Lock::Timeout=600 update",
         "apt-get -o DPkg::Lock::Timeout=600 install -y nvidia-container-toolkit",
@@ -211,7 +217,12 @@ def bake_engine_ami(
                 {"Key": "Name", "Value": f"inferia-engine-cache-{vllm_tag}"},
             ],
         )
-        ec2.get_waiter("image_available").wait(ImageIds=[ami_id])
+        # Snapshotting a ~80 GB AMI (DLAMI + extracted vLLM) routinely exceeds
+        # the waiter's 10 min default (40×15s). Allow up to 40 min so the bake
+        # reports success on the AMI rather than a spurious waiter timeout.
+        ec2.get_waiter("image_available").wait(
+            ImageIds=[ami_id], WaiterConfig={"Delay": 15, "MaxAttempts": 160},
+        )
         logger.info("engine_ami_bake: baked %s in %s", ami_id, region)
         return BakeResult(ami_id=ami_id, region=region, vllm_tag=vllm_tag, base_dlami=dlami)
     except BakeError:
