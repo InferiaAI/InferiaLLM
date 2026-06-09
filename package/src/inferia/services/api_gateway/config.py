@@ -192,6 +192,11 @@ class Settings(UnifiedBaseSettings):
         le=86400,
         description="JWKS cache lifetime in seconds (60–86400)",
     )
+    catalog_admin_token: Optional[str] = Field(
+        default=None,
+        validation_alias="CATALOG_ADMIN_TOKEN",
+        description="Short-lived bearer token authorized to declare InferiaLLM's catalog to InferiaAuth.",
+    )
 
     # Superadmin credentials - MUST be set via environment variables in production
     superadmin_email: Optional[str] = Field(default=None, validation_alias="SUPERADMIN_EMAIL")

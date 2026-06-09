@@ -56,6 +56,28 @@ logger = setup_logging(
 )
 
 
+async def _maybe_declare_catalog() -> None:
+    """Best-effort catalog declaration to InferiaAuth on startup.
+
+    Runs only when auth_provider=="external", external_auth_url, and
+    catalog_admin_token are all set.  Any failure is logged and swallowed —
+    a catalog declare failure must never crash boot.
+    """
+    if (
+        settings.auth_provider == "external"
+        and settings.external_auth_url
+        and settings.catalog_admin_token
+    ):
+        from inferia.services.api_gateway.rbac.catalog_declare import declare_catalog
+        ok = await declare_catalog(settings.external_auth_url, settings.catalog_admin_token)
+        if ok:
+            logger.info("Declared InferiaLLM catalog to InferiaAuth")
+        else:
+            logger.warning(
+                "Catalog declare to InferiaAuth failed (non-fatal; will retry next boot)"
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
@@ -81,6 +103,9 @@ async def lifespan(app: FastAPI):
 
     if settings.auth_provider == "external" and settings.external_auth_url:
         logger.info(f"External auth enabled via: {settings.external_auth_url}")
+
+    # Declare catalog to InferiaAuth (best-effort, never raises)
+    await _maybe_declare_catalog()
 
     yield
     # Shutdown
