@@ -211,6 +211,15 @@ class Settings(UnifiedBaseSettings):
         validation_alias="CATALOG_ADMIN_TOKEN",
         description="Short-lived bearer token authorized to declare InferiaLLM's catalog to InferiaAuth.",
     )
+    external_service_id: Optional[str] = Field(
+        default=None,
+        validation_alias="EXTERNAL_SERVICE_ID",
+        description=(
+            "Optional explicit UUID of this service as registered in InferiaAuth. "
+            "When set, catalog declaration skips the GET /api/v1/services slug-resolve "
+            "step and uses this value directly. Mirrors INFERIAGATE_SERVICE_ID on InferiaGate."
+        ),
+    )
     oidc_groups_claim: str = Field(
         default="groups",
         validation_alias="OIDC_GROUPS_CLAIM",
@@ -417,6 +426,25 @@ class Settings(UnifiedBaseSettings):
     def is_development(self) -> bool:
         """Check if running in development environment."""
         return self.environment == "development"
+
+
+def httpx_verify(settings: "Settings") -> object:
+    """Return an httpx ``verify=`` value: CA-bundle path if set, else the verify_ssl bool.
+
+    This is the canonical helper for building httpx clients that respect the
+    configured TLS settings. Use it whenever constructing an ``httpx.AsyncClient``
+    or ``httpx.Client`` that talks to external HTTPS endpoints (InferiaAuth, OIDC
+    IdP, JWKS endpoints, etc.).
+
+    Args:
+        settings: The application Settings instance (or any object with
+            ``ssl_ca_bundle: Optional[str]`` and ``verify_ssl: bool``).
+
+    Returns:
+        The CA-bundle path string when ``ssl_ca_bundle`` is set, otherwise the
+        ``verify_ssl`` boolean.
+    """
+    return settings.ssl_ca_bundle or settings.verify_ssl
 
 
 # Global settings instance
