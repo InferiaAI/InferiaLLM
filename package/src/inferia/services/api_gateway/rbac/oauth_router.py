@@ -63,10 +63,9 @@ def _pkce_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def _require_external_mode() -> None:
+def _require_redirect_sso_mode() -> None:
     if (
-        settings.auth_provider != "external"
-        or not settings.external_auth_url
+        not settings.is_external_mode
         or not settings.oauth_client_id
         or not settings.oauth_redirect_uri
     ):
@@ -79,7 +78,7 @@ def _require_external_mode() -> None:
 @router.get("/auth/start")
 async def auth_start():
     """Kick off the OAuth2 PKCE flow and redirect to inferia-auth."""
-    _require_external_mode()
+    _require_redirect_sso_mode()
 
     verifier = secrets.token_urlsafe(64)
     challenge = _pkce_challenge(verifier)
@@ -122,7 +121,7 @@ async def auth_start():
 @router.get("/auth/callback")
 async def auth_callback(request: Request, code: str, state: str):
     """Exchange a one-time code for tokens, then redirect to dashboard."""
-    _require_external_mode()
+    _require_redirect_sso_mode()
 
     # Cheap input gates first, before any cookie inspection or network call.
     if not code or len(code) > _MAX_CODE_LEN:
