@@ -283,3 +283,73 @@ def test_aws_config_defaults_to_none():
     aws = AWSConfig()
     assert aws.access_key_id is None
     assert aws.secret_access_key is None
+
+
+# ---------- blank-preserve guard (data-loss regression) -----------------
+# The dashboard scrubs masked secrets to "" on load and tells the user
+# "leave blank to keep existing". Saving the whole config (e.g. from an
+# UNRELATED provider's page) must NOT blank a configured provider's stored
+# secret. Regression for the AWS-cred wipe triggered by saving an HF token
+# from the old provider page.
+
+
+def test_blank_aws_access_key_preserves_stored():
+    incoming = {"cloud": {"aws": {"access_key_id": "", "region": "us-east-1"}}}
+    out = _preserve_masked_secrets(incoming, _existing())
+    assert out["cloud"]["aws"]["access_key_id"] == "REAL-ACCESS-KEY"
+
+
+def test_blank_aws_secret_preserves_stored():
+    incoming = {"cloud": {"aws": {"secret_access_key": "", "region": "us-east-1"}}}
+    out = _preserve_masked_secrets(incoming, _existing())
+    assert out["cloud"]["aws"]["secret_access_key"] == "real-secret"
+
+
+def test_whole_config_save_from_other_page_keeps_aws():
+    """The exact bug: saving a config whose AWS fields are scrubbed to ""
+    (because the user was on the HuggingFace page) must keep AWS intact."""
+    incoming = {
+        "cloud": {"aws": {"access_key_id": "", "secret_access_key": ""}},
+        "huggingface": {"token": ""},
+    }
+    out = _preserve_masked_secrets(incoming, _existing())
+    assert out["cloud"]["aws"]["access_key_id"] == "REAL-ACCESS-KEY"
+    assert out["cloud"]["aws"]["secret_access_key"] == "real-secret"
+
+
+def test_blank_with_no_stored_value_stays_blank():
+    """Blank incoming + nothing stored → left blank (no spurious value, no error)."""
+    incoming = {"cloud": {"aws": {"access_key_id": "", "secret_access_key": ""}}}
+    out = _preserve_masked_secrets(incoming, {"providers": {"cloud": {"aws": {}}}})
+    assert out["cloud"]["aws"]["access_key_id"] == ""
+    assert out["cloud"]["aws"]["secret_access_key"] == ""
+
+
+def test_absent_provider_not_injected():
+    """A config that omits AWS entirely must not get AWS injected from storage."""
+    incoming = {"huggingface": {"token": ""}}
+    out = _preserve_masked_secrets(incoming, _existing())
+    assert "cloud" not in out or "aws" not in out.get("cloud", {})
+
+
+def test_new_real_value_still_overrides_when_other_field_blank():
+    """Entering a new access key while leaving the secret blank: the new key
+    is saved and the untouched secret is preserved."""
+    incoming = {"cloud": {"aws": {"access_key_id": "AKIANEWKEY1234567890", "secret_access_key": ""}}}
+    out = _preserve_masked_secrets(incoming, _existing())
+    assert out["cloud"]["aws"]["access_key_id"] == "AKIANEWKEY1234567890"
+    assert out["cloud"]["aws"]["secret_access_key"] == "real-secret"
+
+
+def test_blank_gcp_and_nosana_preserved():
+    incoming = {
+        "cloud": {"gcp": {"service_account_json": ""}},
+        "depin": {"nosana": {"wallet_private_key": ""}},
+    }
+    existing = {"providers": {
+        "cloud": {"gcp": {"service_account_json": "{json:real}"}},
+        "depin": {"nosana": {"wallet_private_key": "real-wallet"}},
+    }}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["cloud"]["gcp"]["service_account_json"] == "{json:real}"
+    assert out["depin"]["nosana"]["wallet_private_key"] == "real-wallet"
