@@ -554,6 +554,31 @@ def _get_nosana_credentials_from_config() -> List[ProviderCredential]:
     return credentials
 
 
+class HFTokenNamesResponse(BaseModel):
+    names: List[str]
+
+
+@router.get("/config/providers/huggingface/token-names", response_model=HFTokenNamesResponse)
+async def list_hf_token_names(request: Request):
+    """
+    Return the names of active HuggingFace tokens.
+
+    Returns names only (no values) so the deploy form can populate a
+    dropdown without exposing secrets.  Requires ``deployment:list`` so
+    any deployer (not just org admins) can fetch the list.
+    """
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
+
+    hf = settings.providers.huggingface
+    names = [
+        t.name
+        for t in hf.tokens
+        if getattr(t, "is_active", True) and t.name
+    ]
+    return HFTokenNamesResponse(names=names)
+
+
 @router.get(
     "/config/providers/{provider}/credentials",
     response_model=ProviderCredentialListResponse,
