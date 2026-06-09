@@ -536,6 +536,7 @@ class DeployModelRequest(BaseModel):
 class PreflightRequest(BaseModel):
     model_id: str
     hf_token: str | None = None
+    hf_token_name: str | None = None
     engine: str | None = None
     gpu_per_replica: int = 1
     gpu_vram_gb: float = 24.0
@@ -808,6 +809,14 @@ async def deployment_preflight(req: PreflightRequest):
 
     checks = []
 
+    # Resolve HF token: prefer explicit raw token; fall back to named token from store
+    _hf_token = req.hf_token
+    if not _hf_token and req.hf_token_name:
+        from inferia.services.orchestration.services.model_deployment.hf_token_resolver import (
+            resolve_hf_token,
+        )
+        _hf_token = resolve_hf_token(req.hf_token_name)
+
     # Skip HF checks for external engines
     external_engines = {"openai", "anthropic", "gemini", "groq", "cerebras", "mistral", "deepseek", "custom"}
     is_external = req.engine and req.engine.lower() in external_engines
@@ -820,7 +829,7 @@ async def deployment_preflight(req: PreflightRequest):
 
     if not is_external and not uses_own_registry and req.model_id:
         # Check 1: Model accessibility
-        result = await check_model_accessibility(req.model_id, req.hf_token)
+        result = await check_model_accessibility(req.model_id, _hf_token)
         if result.skipped:
             checks.append(PreflightCheckResult(
                 check="model_accessible",
@@ -843,11 +852,11 @@ async def deployment_preflight(req: PreflightRequest):
 
         # Fetch full HF metadata once (used by checks 2-5)
         if result.accessible and not result.skipped:
-            hf_info = await fetch_hf_model_info(req.model_id, req.hf_token)
+            hf_info = await fetch_hf_model_info(req.model_id, _hf_token)
 
         # Check 2: Model format compatibility
         if hf_info and req.engine:
-            fmt = await check_model_format(req.model_id, req.engine, req.hf_token)
+            fmt = await check_model_format(req.model_id, req.engine, _hf_token)
             if fmt.skipped:
                 checks.append(PreflightCheckResult(
                     check="model_format",
