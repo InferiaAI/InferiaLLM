@@ -211,6 +211,23 @@ class Settings(UnifiedBaseSettings):
         validation_alias="CATALOG_ADMIN_TOKEN",
         description="Short-lived bearer token authorized to declare InferiaLLM's catalog to InferiaAuth.",
     )
+    oidc_groups_claim: str = Field(
+        default="groups",
+        validation_alias="OIDC_GROUPS_CLAIM",
+        description="JWT claim listing the user's IdP groups (oidc mode).",
+    )
+    oidc_role_map: dict[str, str] = Field(
+        default_factory=dict,
+        validation_alias="OIDC_ROLE_MAP",
+        description="Map of IdP group name -> InferiaLLM catalog role (admin|member|viewer). "
+                    "Empty = interim 'authenticated => admin'. Set via JSON, e.g. "
+                    '{"llm-admins":"admin","llm-users":"viewer"}.',
+    )
+    oidc_default_role: str = Field(
+        default="viewer",
+        validation_alias="OIDC_DEFAULT_ROLE",
+        description="Role assigned when no group matches oidc_role_map (oidc mode).",
+    )
 
     # Superadmin credentials - MUST be set via environment variables in production
     superadmin_email: Optional[str] = Field(default=None, validation_alias="SUPERADMIN_EMAIL")

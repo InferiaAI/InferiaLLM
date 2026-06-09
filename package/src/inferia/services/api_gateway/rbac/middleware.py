@@ -135,12 +135,25 @@ async def _resolve_external_token(db, token: str) -> UserContext:
     )
 
 
-async def _resolve_oidc_token(db, token: str) -> UserContext:
-    """Verify a generic enterprise OIDC token (no InferiaLLM catalog claim).
+def _catalog_role_permissions(role_name: str) -> list[str]:
+    """Return the permission keys for a catalog role, or [] for unknown roles (fail-closed)."""
+    from inferia.services.api_gateway.rbac.catalog import CATALOG
 
-    Interim: an authenticated user is treated as admin of their shadow org —
-    same posture as InferiaGate's oidc mode. A later task maps OIDC group
-    claims to roles.
+    for r in CATALOG.roles:
+        if r.name == role_name:
+            return list(r.permissions)
+    return []  # unknown role -> no permissions (fail-closed)
+
+
+async def _resolve_oidc_token(db, token: str) -> UserContext:
+    """Verify a generic enterprise OIDC token and build a UserContext.
+
+    When oidc_role_map is empty (the default), every authenticated user
+    becomes admin of their shadow org — the same interim posture as before.
+
+    When oidc_role_map is configured, the user's IdP groups (read from the
+    claim named by oidc_groups_claim) are matched against the map; the first
+    matching group wins. If no group matches, oidc_default_role is used.
     """
     try:
         claims = _get_verifier().verify_sync(token)
@@ -165,18 +178,26 @@ async def _resolve_oidc_token(db, token: str) -> UserContext:
         org_ids = claims.get("org_ids") or []
         org_id = org_ids[0] if org_ids else None
 
-    # Interim: admin gets the full inferiallm catalog permission set.
-    from inferia.services.api_gateway.rbac.catalog import CATALOG
+    role_map = settings.oidc_role_map or {}
+    if not role_map:
+        # Interim default (unchanged): authenticated => admin of the shadow org.
+        role = "admin"
+    else:
+        groups = claims.get(settings.oidc_groups_claim) or []
+        if isinstance(groups, str):
+            groups = [groups]
+        role = next(
+            (role_map[g] for g in groups if g in role_map),
+            settings.oidc_default_role,
+        )
+    perms = _catalog_role_permissions(role)
 
-    admin_perms = [
-        p for r in CATALOG.roles if r.name == "admin" for p in r.permissions
-    ]
     return UserContext(
         user_id=user.id,
         username=user.email,
         email=user.email,
-        roles=["admin"],
-        permissions=admin_perms,
+        roles=[role],
+        permissions=perms,
         org_id=org_id,
         quota_limit=10000,
         quota_used=0,
