@@ -24,6 +24,10 @@ from inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep imp
 
 logger = logging.getLogger(__name__)
 
+# MUST match the vLLM image tag the worker pulls
+# (inferia-worker internal/runtime/recipes/recipes.go → vllm-openai:v0.22.1).
+# If these diverge the baked AMI is a cache MISS and the speedup silently
+# vanishes — bump both together.
 _DEFAULT_VLLM_TAG = "v0.22.1"
 _DEFAULT_INSTANCE_TYPE = "t3.xlarge"  # CPU; standard quota; x86_64
 _DEFAULT_ROOT_GB = 100                # matches the GPU launch root_volume_gb
@@ -96,6 +100,20 @@ def _build_bake_script(*, vllm_image: str, worker_image: Optional[str]) -> str:
     return "\n".join(lines)
 
 
+def _dlami_root_device(ec2, ami_id: str) -> str:
+    """Resolve the base AMI's actual root device name so the size override in
+    BlockDeviceMappings isn't silently dropped (boto3 ignores a mapping whose
+    DeviceName != the AMI root device). Best-effort → /dev/sda1 fallback."""
+    try:
+        resp = ec2.describe_images(ImageIds=[ami_id])
+        imgs = resp.get("Images") or []
+        if imgs and imgs[0].get("RootDeviceName"):
+            return imgs[0]["RootDeviceName"]
+    except Exception:  # noqa: BLE001 — best-effort; default below
+        pass
+    return "/dev/sda1"
+
+
 def bake_engine_ami(
     *,
     region: str,
@@ -125,6 +143,7 @@ def bake_engine_ami(
     ec2 = _ec2_client(region, creds=creds)
     ssm = _ssm_client(region, creds=creds)
     instance_id: Optional[str] = None
+    root_device = _dlami_root_device(ec2, dlami)
     try:
         run = ec2.run_instances(
             ImageId=dlami,
@@ -133,7 +152,7 @@ def bake_engine_ami(
             MaxCount=1,
             IamInstanceProfile={"Name": ssm_instance_profile},
             BlockDeviceMappings=[{
-                "DeviceName": "/dev/sda1",
+                "DeviceName": root_device,
                 "Ebs": {"VolumeSize": int(root_volume_gb), "VolumeType": "gp3"},
             }],
             TagSpecifications=[{

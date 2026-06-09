@@ -60,6 +60,9 @@ class _FakeEC2:
     def terminate_instances(self, **kw):
         self.terminated.extend(kw["InstanceIds"])
 
+    def describe_images(self, **kw):
+        return {"Images": [{"RootDeviceName": "/dev/sda1"}]}
+
     def get_waiter(self, name):
         self.waiters.append(name)
         return _NoopWaiter()
@@ -176,3 +179,21 @@ def test_wait_ssm_retries_on_transient_error(monkeypatch):
             return {"Status": "Success"}
     out = bake._wait_ssm(_FlakySSM(), "cmd-1", "i-build")
     assert out["Status"] == "Success" and calls["n"] == 2
+
+
+def test_bake_uses_resolved_root_device(monkeypatch):
+    ec2, ssm = _FakeEC2(), _FakeSSM("Success")
+    # DLAMI reports a non-/dev/sda1 root device; the launch must use it.
+    ec2.describe_images = lambda **kw: {"Images": [{"RootDeviceName": "/dev/xvda"}]}
+    _patch(monkeypatch, ec2, ssm)
+    bake.bake_engine_ami(region="us-east-1", aws_env=AWS_ENV, ssm_instance_profile="p")
+    bdm = ec2.run_kwargs["BlockDeviceMappings"][0]
+    assert bdm["DeviceName"] == "/dev/xvda"
+    assert bdm["Ebs"]["VolumeSize"] == 100
+
+
+def test_dlami_root_device_falls_back(monkeypatch):
+    class _Boom:
+        def describe_images(self, **kw):
+            raise RuntimeError("denied")
+    assert bake._dlami_root_device(_Boom(), "ami-x") == "/dev/sda1"
