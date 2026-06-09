@@ -73,10 +73,17 @@ _verifier: Optional[JWKSVerifier] = None
 def _get_verifier() -> JWKSVerifier:
     global _verifier
     if _verifier is None:
+        # Generic OIDC IdPs issue tokens with aud = client_id, while
+        # InferiaAuth issues aud = app_namespace ("inferiallm").
+        audience = (
+            settings.oauth_client_id
+            if settings.auth_provider == "oidc"
+            else settings.app_namespace
+        )
         _verifier = JWKSVerifier(
             jwks_url=settings.external_auth_url.rstrip("/") + "/.well-known/jwks.json",
             issuer=settings.external_auth_issuer,
-            audience=settings.app_namespace,
+            audience=audience,
             cache_ttl=settings.oauth_jwks_cache_ttl_seconds,
         )
     return _verifier
@@ -128,14 +135,63 @@ async def _resolve_external_token(db, token: str) -> UserContext:
     )
 
 
+async def _resolve_oidc_token(db, token: str) -> UserContext:
+    """Verify a generic enterprise OIDC token (no InferiaLLM catalog claim).
+
+    Interim: an authenticated user is treated as admin of their shadow org —
+    same posture as InferiaGate's oidc mode. A later task maps OIDC group
+    claims to roles.
+    """
+    try:
+        claims = _get_verifier().verify_sync(token)
+    except JWKSVerifyError as e:
+        logger.info("OIDC token verification failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    sub = claims.get("sub", "")
+    external_user_id = sub.split(":", 1)[1] if ":" in sub else sub
+    email = claims.get("email", "")
+
+    user, _local_org_id, _local_roles = await get_or_create_shadow_user(
+        db, email=email, external_id=external_user_id
+    )
+
+    org_id = claims.get("org_id")
+    if not org_id:
+        org_ids = claims.get("org_ids") or []
+        org_id = org_ids[0] if org_ids else None
+
+    # Interim: admin gets the full inferiallm catalog permission set.
+    from inferia.services.api_gateway.rbac.catalog import CATALOG
+
+    admin_perms = [
+        p for r in CATALOG.roles if r.name == "admin" for p in r.permissions
+    ]
+    return UserContext(
+        user_id=user.id,
+        username=user.email,
+        email=user.email,
+        roles=["admin"],
+        permissions=admin_perms,
+        org_id=org_id,
+        quota_limit=10000,
+        quota_used=0,
+    )
+
+
 async def auth_middleware(request: Request, call_next):
     """
     Authentication middleware that validates JWT token and extracts user context.
     Adds user context to request.state if authenticated.
 
-    When AUTH_PROVIDER=external, tokens are validated in two steps:
-      1. Try local JWT decode (covers superadmin and locally-issued tokens).
-      2. If local decode fails, call inferia-auth introspect.
+    Auth branching per AUTH_PROVIDER:
+      - inferiaauth: try local (superadmin recovery), fall back to _resolve_external_token
+      - oidc:        try local (superadmin recovery), fall back to _resolve_oidc_token
+      - local:       _resolve_local_token only
     """
     # Skip auth for WebSocket connections - they handle auth differently (via query params)
     # Check both 'upgrade' header and the connection type
@@ -223,19 +279,22 @@ async def auth_middleware(request: Request, call_next):
     if cached is not None:
         request.state.user = cached
     else:
-        use_external = settings.auth_provider == "external" and settings.external_auth_url
+        mode = settings.auth_provider
 
         async with AsyncSessionLocal() as db:
             try:
-                if not use_external:
-                    # Pure local auth
-                    user_context = await _resolve_local_token(db, token)
-                else:
-                    # External mode: try local first (superadmin), fall back to external
+                if mode == "inferiaauth":
                     try:
-                        user_context = await _resolve_local_token(db, token)
+                        user_context = await _resolve_local_token(db, token)  # superadmin recovery
                     except HTTPException:
                         user_context = await _resolve_external_token(db, token)
+                elif mode == "oidc":
+                    try:
+                        user_context = await _resolve_local_token(db, token)  # superadmin recovery
+                    except HTTPException:
+                        user_context = await _resolve_oidc_token(db, token)
+                else:  # local
+                    user_context = await _resolve_local_token(db, token)
 
                 request.state.user = user_context
                 _auth_cache[token] = user_context
