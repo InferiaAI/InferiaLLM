@@ -224,6 +224,29 @@ def test_hf_non_dict_entry_skipped():
     assert out["huggingface"]["tokens"] == [{"name": "ok", "token": "hf_ok"}]
 
 
+# ---------- HuggingFace full round-trip regression ----------------------
+
+
+def test_hf_tokens_round_trip_masked_save_preserves():
+    """Simulate the dashboard cycle: GET masks tokens → user saves without
+    retyping → POST carries the masks back → _preserve_masked_secrets must
+    restore every real value, proving no wipe occurs.
+    """
+    existing = {"providers": {"huggingface": {
+        "token": "hf_legacy_real",
+        "tokens": [{"name": "default", "token": "hf_default_real", "is_active": True},
+                   {"name": "prod", "token": "hf_prod_real", "is_active": True}]}}}
+    # Dashboard GET masks → user saves without retyping → POST carries the masks
+    incoming = {"huggingface": {
+        "token": "********",
+        "tokens": [{"name": "default", "token": "********", "is_active": True},
+                   {"name": "prod", "token": "********", "is_active": True}]}}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["huggingface"]["token"] == "hf_legacy_real"
+    assert out["huggingface"]["tokens"][0]["token"] == "hf_default_real"
+    assert out["huggingface"]["tokens"][1]["token"] == "hf_prod_real"
+
+
 # ---------- AWSConfig credentials-only model ----------------------------
 
 

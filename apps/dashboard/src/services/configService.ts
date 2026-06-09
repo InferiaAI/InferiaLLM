@@ -48,7 +48,8 @@ export interface DePINConfig {
 }
 
 export interface HuggingFaceConfig {
-    token: string;
+    token?: string;
+    tokens?: { name: string; token: string; is_active?: boolean }[];
 }
 
 export interface ProvidersConfig {
@@ -66,7 +67,7 @@ export interface ProviderConfigResponse {
 export const initialProviderConfig: ProvidersConfig = {
     cloud: { aws: {}, gcp: {} },
     depin: { nosana: {}, akash: {} },
-    huggingface: { token: "" }
+    huggingface: { token: "", tokens: [] }
 };
 
 // Universal Provider Credential Types (works for ANY provider)

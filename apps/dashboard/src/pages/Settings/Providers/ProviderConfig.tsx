@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useReducer } from "react";
 import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
-import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle, Info } from "lucide-react";
+import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 
 // Small inline "where to find" hint rendered below a credential field
@@ -43,8 +43,6 @@ function clearMaskedSecrets(cfg: ProvidersConfig): ProvidersConfig {
     if (nosana && isMaskedSecret(nosana.wallet_private_key)) nosana.wallet_private_key = "";
     const akash = scrubbed.depin?.akash as any;
     if (akash && isMaskedSecret(akash.mnemonic)) akash.mnemonic = "";
-    const hf = scrubbed.huggingface as any;
-    if (hf && isMaskedSecret(hf.token)) hf.token = "";
     return scrubbed;
 }
 
@@ -447,31 +445,12 @@ export default function ProviderConfigPage() {
     );
 }
 
-// Validation regex shared with the backend AWSPoolMetadata gate.
-const AWS_PROV_RE = {
-    subnet: /^subnet-[0-9a-f]{8,17}$/,
-    sg: /^sg-[0-9a-f]{8,17}$/,
-    ami: /^ami-[0-9a-f]{8,17}$/,
-    iam: /^arn:aws:iam::\d{12}:instance-profile\/.+$/,
-};
-
 function AWSFields({ config, updateField, isConfigured }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void; isConfigured?: boolean }) {
     // When the panel was loaded with stored credentials, the form starts empty
     // (masked values are stripped on load). Tell the user explicitly so they
     // don't think the existing credentials were wiped.
     const accessEmpty = !config.cloud.aws.access_key_id;
     const secretEmpty = !config.cloud.aws.secret_access_key;
-    const aws = config.cloud.aws;
-    const subnetErr = aws.subnet_id && !AWS_PROV_RE.subnet.test(aws.subnet_id)
-        ? "Must match subnet-XXXXXXXX" : "";
-    const sgErr = (aws.security_group_ids || []).find(sg => !AWS_PROV_RE.sg.test(sg))
-        ? "Each must match sg-XXXXXXXX" : "";
-    const amiErr = aws.ami_id && !AWS_PROV_RE.ami.test(aws.ami_id)
-        ? "Must match ami-XXXXXXXX" : "";
-    const iamErr = aws.iam_instance_profile && !AWS_PROV_RE.iam.test(aws.iam_instance_profile)
-        ? "Must match arn:aws:iam::ACCOUNT:instance-profile/NAME" : "";
-    const rootErr = aws.root_volume_gb && (aws.root_volume_gb < 10 || aws.root_volume_gb > 16384)
-        ? "Must be 10..16384" : "";
     return (
         <>
             {isConfigured && accessEmpty && secretEmpty && (
@@ -512,141 +491,6 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                     the access key. If you lost it, generate a new key pair —
                     AWS doesn't let you retrieve the secret.
                 </CredHint>
-            </div>
-            <div className="space-y-2">
-                <label htmlFor="aws-region" className="text-sm font-medium">Region</label>
-                <input
-                    id="aws-region"
-                    value={config.cloud.aws.region || "ap-south-1"}
-                    onChange={(e) => updateField(['cloud', 'aws', 'region'], e.target.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                />
-                <CredHint>
-                    Any AWS region code: <code>us-east-1</code>, <code>eu-west-2</code>,
-                    <code> ap-south-1</code>… Shown top-right of the AWS Console (e.g. "Mumbai").
-                </CredHint>
-            </div>
-
-            {/* AWS Provisioning Configuration — account-wide defaults Pulumi
-                will use when creating EC2 clusters. All optional. */}
-            <div className="mt-6 pt-4 border-t border-border/60">
-                <h3 className="text-sm font-semibold">AWS Provisioning Configuration</h3>
-                <p className="text-xs text-muted-foreground mt-1 mb-4">
-                    Account-wide defaults applied to every AWS pool. Leave blank to
-                    let Pulumi pick a sensible default (auto VPC + default SG +
-                    latest Deep Learning AMI + 100 GB root volume).
-                </p>
-
-                <div className="space-y-2">
-                    <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
-                    <input
-                        id="aws-subnet"
-                        value={aws.subnet_id || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'subnet_id'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="subnet-0123456789abcdef0"
-                    />
-                    {subnetErr && <p className="text-xs text-red-500">{subnetErr}</p>}
-                    <CredHint>
-                        VPC Console → <strong>Subnets</strong>. Pick one in the same
-                        region as your access keys. Leave blank to let Pulumi create
-                        a fresh VPC + subnet automatically.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
-                    <input
-                        id="aws-sg"
-                        value={(aws.security_group_ids || []).join(", ")}
-                        onChange={(e) => {
-                            const parts = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
-                            updateField(['cloud', 'aws', 'security_group_ids'], parts.length ? parts : undefined);
-                        }}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="sg-abc12345, sg-def67890"
-                    />
-                    {sgErr && <p className="text-xs text-red-500">{sgErr}</p>}
-                    <CredHint>
-                        EC2 Console → <strong>Security Groups</strong>. Each ID looks like
-                        <code> sg-XXXXXXXX</code>. Must allow outbound TCP 443
-                        (to reach the control plane) and inbound 8080 from the CP.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
-                    <input
-                        id="aws-ami"
-                        value={aws.ami_id || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'ami_id'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="ami-deadbeef00000000 (auto if blank)"
-                    />
-                    {amiErr && <p className="text-xs text-red-500">{amiErr}</p>}
-                    <CredHint>
-                        EC2 Console → <strong>AMIs</strong>. Leave blank and Pulumi will
-                        auto-detect the latest AWS Deep Learning AMI (Ubuntu 22.04 +
-                        NVIDIA driver) for the selected region.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
-                    <input
-                        id="aws-iam"
-                        value={aws.iam_instance_profile || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'iam_instance_profile'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="arn:aws:iam::123456789012:instance-profile/inferia-worker"
-                    />
-                    {iamErr && <p className="text-xs text-red-500">{iamErr}</p>}
-                    <CredHint>
-                        IAM Console → <strong>Roles</strong> → your role →
-                        Trust relationships must include <code>ec2.amazonaws.com</code>.
-                        Only needed if the worker pulls from private ECR or S3.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-root" className="text-sm font-medium">Root Volume Size (GB) <span className="text-muted-foreground text-xs">(default 100)</span></label>
-                    <input
-                        id="aws-root"
-                        type="number"
-                        min={10}
-                        max={16384}
-                        value={aws.root_volume_gb ?? ""}
-                        onChange={(e) => {
-                            const v = e.target.value;
-                            updateField(['cloud', 'aws', 'root_volume_gb'], v === "" ? undefined : parseInt(v, 10));
-                        }}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="100"
-                    />
-                    {rootErr && <p className="text-xs text-red-500">{rootErr}</p>}
-                    <CredHint>
-                        Size of the EBS root volume in GB. 100 GB is enough for the
-                        worker image + a couple of model containers; bump higher if
-                        you'll pull large model artifacts at runtime.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-image-tag" className="text-sm font-medium">inferia-worker Image Tag <span className="text-muted-foreground text-xs">(default "latest")</span></label>
-                    <input
-                        id="aws-image-tag"
-                        value={aws.worker_image_tag || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'worker_image_tag'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder='v1.2.3'
-                    />
-                    <CredHint>
-                        Tag of <code>ghcr.io/inferiaai/inferia-worker</code> to pull on the
-                        EC2 instance. Pin (e.g. <code>0.1.0</code>) for reproducible
-                        deploys, or leave blank to follow the rolling default
-                        (<code>latest</code>).
-                    </CredHint>
-                </div>
             </div>
         </>
     );
@@ -907,43 +751,32 @@ function AkashFields({ config, updateField, handleAddKey }: { config: ProvidersC
     );
 }
 
-function HuggingFaceFields({
-    config,
-    updateField,
-    hfTokenFromEnv,
-}: {
-    config: ProvidersConfig;
-    updateField: (path: string[], value: any) => void;
-    hfTokenFromEnv?: boolean;
-}) {
+function HuggingFaceFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void; }) {
+    const tokens = (config.huggingface?.tokens || []) as { name: string; token: string; is_active?: boolean }[];
+    const setTokens = (next: typeof tokens) => updateField(['huggingface', 'tokens'], next);
+    const dupName = tokens.some((t, i) => t.name && tokens.findIndex(x => x.name === t.name) !== i);
     return (
         <div className="space-y-4">
-            {hfTokenFromEnv && (
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex items-start gap-2 text-xs text-blue-700">
-                    <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
-                    <span>
-                        A token is configured via the <code className="font-mono font-semibold">INFERIA_HF_TOKEN</code> environment variable.
-                        Entering one here overrides it.
-                    </span>
-                </div>
-            )}
-            <div className="space-y-2">
-                <label htmlFor="hf-token" className="text-sm font-medium">Access Token</label>
-                <input
-                    id="hf-token"
-                    type="password"
-                    value={config.huggingface?.token || ""}
-                    onChange={(e) => updateField(['huggingface', 'token'], e.target.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder={hfTokenFromEnv ? "(env token active — type to override)" : "hf_..."}
-                    autoComplete="new-password"
-                />
-                <CredHint>
-                    Hugging Face → <strong>Settings</strong> → <strong>Access Tokens</strong>.
-                    Required to download gated or private models (e.g. Llama, Gemma).
-                    Starts with <code>hf_</code>.
-                </CredHint>
+            <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">HuggingFace Tokens</h3>
+                <button type="button" onClick={() => setTokens([...tokens, { name: "", token: "", is_active: true }])}
+                    className="px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90">+ Add Token</button>
             </div>
+            <p className="text-xs text-muted-foreground">Named tokens for gated models. Pick one by name when deploying.</p>
+            {dupName && <p className="text-xs text-destructive">Token names must be unique.</p>}
+            {tokens.map((t, i) => (
+                <div key={i} className="flex gap-2 items-start">
+                    <input value={t.name} placeholder="name (e.g. default)"
+                        onChange={e => setTokens(tokens.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                        className="h-10 w-1/3 rounded-md border border-input bg-background px-3 text-sm" />
+                    <input type="password" value={t.token} placeholder="hf_..." autoComplete="new-password"
+                        onChange={e => setTokens(tokens.map((x, j) => j === i ? { ...x, token: e.target.value } : x))}
+                        className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" />
+                    <button type="button" onClick={() => setTokens(tokens.filter((_, j) => j !== i))}
+                        className="h-10 px-3 text-xs text-destructive hover:underline">Remove</button>
+                </div>
+            ))}
+            {tokens.length === 0 && <p className="text-xs text-muted-foreground">No tokens yet. Add one for gated models.</p>}
         </div>
     );
 }
@@ -988,7 +821,7 @@ function ProviderFormFields({
         case "akash":
             return <AkashFields config={config} updateField={updateField} handleAddKey={handleAddKey} />;
         case "huggingface-token":
-            return <HuggingFaceFields config={config} updateField={updateField} hfTokenFromEnv={hfTokenFromEnv} />;
+            return <HuggingFaceFields config={config} updateField={updateField} />;
         default:
             return <div>Unknown Provider</div>;
     }
