@@ -94,6 +94,14 @@ export interface NosanaApiKeyListResponse {
     api_keys: NosanaApiKeyResponse[];
 }
 
+// HuggingFace named tokens (managed via the universal credential system,
+// like Nosana API keys). Values are never returned by the API.
+export interface HfTokenResponse {
+    name: string;
+    is_active: boolean;
+    created_at?: string;
+}
+
 export const ConfigService = {
     async getProviderConfig(): Promise<ProvidersConfig> {
         const { data } = await api.get<ProviderConfigResponse>('/management/config/providers');
@@ -168,6 +176,27 @@ export const ConfigService = {
 
     async deleteNosanaApiKey(name: string): Promise<void> {
         return this.deleteProviderCredential('nosana', name);
+    },
+
+    // HuggingFace named tokens — same universal credential system as Nosana
+    // (credential_type 'token'). Values are write-only: never returned on list.
+    async listHfTokens(): Promise<HfTokenResponse[]> {
+        const credentials = await this.listProviderCredentials('huggingface');
+        return credentials
+            .filter(c => c.credential_type === 'token')
+            .map(c => ({
+                name: c.name,
+                is_active: c.is_active,
+                created_at: c.created_at,
+            }));
+    },
+
+    async addHfToken(name: string, token: string): Promise<{ name: string }> {
+        return this.addProviderCredential('huggingface', name, 'token', token);
+    },
+
+    async deleteHfToken(name: string): Promise<void> {
+        return this.deleteProviderCredential('huggingface', name);
     },
 
     // Engine-cache AMI admin endpoints (gateway proxy → /api/v1/admin/aws/engine-ami)

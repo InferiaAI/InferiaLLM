@@ -1,6 +1,6 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useReducer } from "react";
-import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
+import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, type HfTokenResponse, initialProviderConfig } from "@/services/configService";
 import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import { EngineAmiSection } from "./EngineAmiSection";
@@ -54,6 +54,7 @@ type State = {
     isEditing: boolean;
     isConfigured: boolean;
     nosanaApiKeys: NosanaApiKeyResponse[];
+    hfTokens: HfTokenResponse[];
     showAddKeyModal: boolean;
     newKeyName: string;
     newKeyValue: string;
@@ -100,6 +101,7 @@ const initialState: State = {
     isEditing: false,
     isConfigured: false,
     nosanaApiKeys: [],
+    hfTokens: [],
     showAddKeyModal: false,
     newKeyName: "",
     newKeyValue: "",
@@ -115,14 +117,18 @@ export default function ProviderConfigPage() {
     const [state, dispatch] = useReducer(reducer, initialState);
     const {
         config, loading, saving, isEditing, isConfigured,
-        nosanaApiKeys, showAddKeyModal, newKeyName, newKeyValue, loadingKeys,
+        nosanaApiKeys, hfTokens, showAddKeyModal, newKeyName, newKeyValue, loadingKeys,
         showDeleteModal, keyToDelete, hfTokenFromEnv
     } = state;
+
+    const isHf = providerId === "huggingface-token";
 
     useEffect(() => {
         loadConfig();
         if (providerId === "nosana") {
             loadNosanaApiKeys();
+        } else if (providerId === "huggingface-token") {
+            loadHfTokens();
         }
     }, [providerId]);
 
@@ -191,18 +197,40 @@ export default function ProviderConfigPage() {
         }
     };
 
+    const loadHfTokens = async () => {
+        try {
+            dispatch({ type: 'SET_FIELD', field: 'loadingKeys', value: true });
+            const tokens = await ConfigService.listHfTokens();
+            dispatch({ type: 'SET_FIELD', field: 'hfTokens', value: tokens });
+
+            // HF tokens are managed separately via addHfToken/deleteHfToken and
+            // are NOT synced into the form config state, so the page-level Save
+            // never round-trips masked/stale values back over them.
+        } catch (e) {
+            toast.error("Failed to load HuggingFace tokens");
+        } finally {
+            dispatch({ type: 'SET_FIELD', field: 'loadingKeys', value: false });
+        }
+    };
+
     const handleAddApiKey = async () => {
+        const noun = isHf ? "token" : "API key";
         if (!newKeyName.trim() || !newKeyValue.trim()) {
-            toast.error("Please provide both name and API key");
+            toast.error(`Please provide both a name and a ${noun}`);
             return;
         }
         try {
-            await ConfigService.addNosanaApiKey(newKeyName.trim(), newKeyValue.trim());
-            toast.success(`API key "${newKeyName}" added successfully`);
+            if (isHf) {
+                await ConfigService.addHfToken(newKeyName.trim(), newKeyValue.trim());
+            } else {
+                await ConfigService.addNosanaApiKey(newKeyName.trim(), newKeyValue.trim());
+            }
+            toast.success(`${isHf ? "Token" : "API key"} "${newKeyName}" added successfully`);
             dispatch({ type: 'RESET_ADD_KEY_MODAL' });
-            loadNosanaApiKeys();
+            if (isHf) loadHfTokens(); else loadNosanaApiKeys();
         } catch (e) {
-            toast.error("Failed to add API key");
+            const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            toast.error(detail || `Failed to add ${noun}`);
         }
     };
 
@@ -214,12 +242,16 @@ export default function ProviderConfigPage() {
         if (!keyToDelete) return;
         const name = keyToDelete;
         try {
-            await ConfigService.deleteNosanaApiKey(name);
-            toast.success(`API key "${name}" deleted successfully`);
+            if (isHf) {
+                await ConfigService.deleteHfToken(name);
+            } else {
+                await ConfigService.deleteNosanaApiKey(name);
+            }
+            toast.success(`${isHf ? "Token" : "API key"} "${name}" deleted successfully`);
             dispatch({ type: 'HIDE_DELETE_MODAL' });
-            loadNosanaApiKeys();
+            if (isHf) loadHfTokens(); else loadNosanaApiKeys();
         } catch (e) {
-            toast.error("Failed to delete API key");
+            toast.error(`Failed to delete ${isHf ? "token" : "API key"}`);
         }
     };
 
@@ -230,7 +262,7 @@ export default function ProviderConfigPage() {
             case "gcp": return !!data.cloud.gcp?.project_id || !!data.cloud.gcp?.service_account_json;
             case "nosana": return !!data.depin.nosana.wallet_private_key || !!data.depin.nosana.api_key || (nosanaApiKeys && nosanaApiKeys.length > 0);
             case "akash": return !!data.depin.akash.mnemonic;
-            case "huggingface-token": return !!data.huggingface?.token || !!envFlag;
+            case "huggingface-token": return !!data.huggingface?.token || !!envFlag || (hfTokens && hfTokens.length > 0);
             default: return false;
         }
     };
@@ -239,10 +271,13 @@ export default function ProviderConfigPage() {
         e.preventDefault();
         dispatch({ type: 'SET_FIELD', field: 'saving', value: true });
         try {
-            // Strip api_keys from nosana config — they are managed separately
-            // and would overwrite real keys with masked/stale values
+            // Strip separately-managed credential lists (nosana api_keys,
+            // huggingface tokens) — they are persisted via their own add/delete
+            // endpoints, and including them here would overwrite real values
+            // with masked/stale ones on the page-level Save.
             const safeConfig = structuredClone(config);
             delete (safeConfig.depin.nosana as any).api_keys;
+            delete (safeConfig.huggingface as any).tokens;
             await ConfigService.updateProviderConfig(safeConfig);
             toast.success("Configuration saved successfully");
             dispatch({ type: 'SET_FIELD', field: 'isConfigured', value: true });
@@ -317,6 +352,7 @@ export default function ProviderConfigPage() {
                             updateField={updateField}
                             isConfigured={isConfigured}
                             nosanaApiKeys={nosanaApiKeys}
+                            hfTokens={hfTokens}
                             loadingKeys={loadingKeys}
                             handleAddKey={() => dispatch({ type: 'SET_FIELD', field: 'showAddKeyModal', value: true })}
                             handleDeleteApiKey={handleDeleteApiKey}
@@ -352,30 +388,31 @@ export default function ProviderConfigPage() {
             {showAddKeyModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
                     <div className="bg-card border rounded-xl p-6 w-full max-w-md mx-4 space-y-4">
-                        <h3 className="text-lg font-semibold">Add Nosana API Key</h3>
+                        <h3 className="text-lg font-semibold">{isHf ? "Add HuggingFace Token" : "Add Nosana API Key"}</h3>
                         <div className="space-y-3">
                             <div className="space-y-2">
-                                <label htmlFor="key-name" className="text-sm font-medium">Key Name</label>
+                                <label htmlFor="key-name" className="text-sm font-medium">{isHf ? "Token Name" : "Key Name"}</label>
                                 <input
                                     id="key-name"
                                     value={newKeyName}
                                     onChange={(e) => dispatch({ type: 'SET_FIELD', field: 'newKeyName', value: e.target.value })}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    placeholder="e.g., Piyush, Jesse, Production..."
+                                    placeholder={isHf ? "e.g., default, prod, gated-models..." : "e.g., Piyush, Jesse, Production..."}
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    A friendly name to identify this key
+                                    {isHf ? "A friendly name to pick this token when deploying" : "A friendly name to identify this key"}
                                 </p>
                             </div>
                             <div className="space-y-2">
-                                <label htmlFor="key-value" className="text-sm font-medium">API Key</label>
+                                <label htmlFor="key-value" className="text-sm font-medium">{isHf ? "HuggingFace Token" : "API Key"}</label>
                                 <input
                                     id="key-value"
                                     type="password"
+                                    autoComplete="new-password"
                                     value={newKeyValue}
                                     onChange={(e) => dispatch({ type: 'SET_FIELD', field: 'newKeyValue', value: e.target.value })}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    placeholder="nos_..."
+                                    placeholder={isHf ? "hf_..." : "nos_..."}
                                 />
                             </div>
                         </div>
@@ -392,7 +429,7 @@ export default function ProviderConfigPage() {
                                 onClick={handleAddApiKey}
                                 className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
                             >
-                                Add Key
+                                {isHf ? "Add Token" : "Add Key"}
                             </button>
                         </div>
                     </div>
@@ -406,23 +443,31 @@ export default function ProviderConfigPage() {
                             <div className="p-2 bg-red-50 rounded-full">
                                 <Trash2 className="w-6 h-6" />
                             </div>
-                            <h3 className="text-lg font-semibold">Delete API Key?</h3>
+                            <h3 className="text-lg font-semibold">{isHf ? "Delete HuggingFace Token?" : "Delete API Key?"}</h3>
                         </div>
 
                         <div className="space-y-3">
                             <p className="text-sm text-foreground">
-                                Are you sure you want to delete the API key <span className="font-bold">&quot;{keyToDelete}&quot;</span>?
+                                Are you sure you want to delete the {isHf ? "token" : "API key"} <span className="font-bold">&quot;{keyToDelete}&quot;</span>?
                             </p>
 
-                            <div className="p-4 bg-red-50 border border-red-100 rounded-lg space-y-2">
-                                <p className="text-xs font-bold text-red-800 flex items-center gap-1.5">
-                                    <ShieldCheck className="w-3.5 h-3.5" />
-                                    WARNING: RECURSIVE DELETION
-                                </p>
-                                <p className="text-xs text-red-700 leading-relaxed">
-                                    Deleting this key will automatically <span className="font-bold underline">terminate all active deployments</span> and <span className="font-bold underline">delete all compute pools</span> associated with it. This action cannot be undone.
-                                </p>
-                            </div>
+                            {isHf ? (
+                                <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg space-y-2">
+                                    <p className="text-xs text-amber-800 leading-relaxed">
+                                        This token will no longer be available for new deployments. Deployments already running are unaffected. This action cannot be undone.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="p-4 bg-red-50 border border-red-100 rounded-lg space-y-2">
+                                    <p className="text-xs font-bold text-red-800 flex items-center gap-1.5">
+                                        <ShieldCheck className="w-3.5 h-3.5" />
+                                        WARNING: RECURSIVE DELETION
+                                    </p>
+                                    <p className="text-xs text-red-700 leading-relaxed">
+                                        Deleting this key will automatically <span className="font-bold underline">terminate all active deployments</span> and <span className="font-bold underline">delete all compute pools</span> associated with it. This action cannot be undone.
+                                    </p>
+                                </div>
+                            )}
                         </div>
 
                         <div className="flex justify-end gap-3 pt-2">
@@ -438,7 +483,7 @@ export default function ProviderConfigPage() {
                                 onClick={confirmDeleteApiKey}
                                 className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors shadow-sm"
                             >
-                                Delete Key & Resources
+                                {isHf ? "Delete Token" : "Delete Key & Resources"}
                             </button>
                         </div>
                     </div>
@@ -754,32 +799,88 @@ function AkashFields({ config, updateField, handleAddKey }: { config: ProvidersC
     );
 }
 
-function HuggingFaceFields({ config, updateField }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void; }) {
-    const tokens = (config.huggingface?.tokens || []) as { name: string; token: string; is_active?: boolean }[];
-    const setTokens = (next: typeof tokens) => updateField(['huggingface', 'tokens'], next);
-    const dupName = tokens.some((t, i) => t.name && tokens.findIndex(x => x.name === t.name) !== i);
+function HuggingFaceFields({
+    hfTokens,
+    loadingKeys,
+    handleAddKey,
+    handleDeleteApiKey,
+    hfTokenFromEnv,
+}: {
+    hfTokens: HfTokenResponse[];
+    loadingKeys: boolean;
+    handleAddKey: () => void;
+    handleDeleteApiKey: (name: string) => void;
+    hfTokenFromEnv?: boolean;
+}) {
     return (
         <div className="space-y-4">
             <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">HuggingFace Tokens</h3>
-                <button type="button" onClick={() => setTokens([...tokens, { name: "", token: "", is_active: true }])}
-                    className="px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90">+ Add Token</button>
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Key className="w-4 h-4" />
+                    HuggingFace Tokens
+                </h3>
+                <button
+                    type="button"
+                    onClick={handleAddKey}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Token
+                </button>
             </div>
-            <p className="text-xs text-muted-foreground">Named tokens for gated models. Pick one by name when deploying.</p>
-            {dupName && <p className="text-xs text-destructive">Token names must be unique.</p>}
-            {tokens.map((t, i) => (
-                <div key={i} className="flex gap-2 items-start">
-                    <input value={t.name} placeholder="name (e.g. default)"
-                        onChange={e => setTokens(tokens.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
-                        className="h-10 w-1/3 rounded-md border border-input bg-background px-3 text-sm" />
-                    <input type="password" value={t.token} placeholder="hf_..." autoComplete="new-password"
-                        onChange={e => setTokens(tokens.map((x, j) => j === i ? { ...x, token: e.target.value } : x))}
-                        className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" />
-                    <button type="button" onClick={() => setTokens(tokens.filter((_, j) => j !== i))}
-                        className="h-10 px-3 text-xs text-destructive hover:underline">Remove</button>
+
+            <p className="text-xs text-muted-foreground">
+                Add multiple HuggingFace tokens with friendly names.
+                Pick one by name when deploying gated models.
+            </p>
+
+            {hfTokenFromEnv && (
+                <div className="p-3 bg-ember-50 border border-ember-100 rounded-lg text-xs text-ember-700">
+                    A default token is also provided via the <code>INFERIA_HF_TOKEN</code> environment variable
+                    and will be used as a fallback when no named token is selected.
                 </div>
-            ))}
-            {tokens.length === 0 && <p className="text-xs text-muted-foreground">No tokens yet. Add one for gated models.</p>}
+            )}
+
+            {loadingKeys ? (
+                <div className="text-center py-4 text-muted-foreground text-sm">
+                    Loading tokens...
+                </div>
+            ) : hfTokens.length === 0 ? (
+                <div className="text-center py-6 bg-muted/30 rounded-lg border border-dashed">
+                    <Key className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">No tokens configured</p>
+                    <p className="text-xs text-muted-foreground mt-1">Add your first token to deploy gated models</p>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {hfTokens.map((t) => (
+                        <div
+                            key={t.name}
+                            className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border"
+                        >
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                    <Key className="w-4 h-4 text-primary" />
+                                </div>
+                                <div>
+                                    <p className="font-medium text-sm">{t.name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {t.is_active ? 'Active' : 'Inactive'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => handleDeleteApiKey(t.name)}
+                                className="p-2 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                title="Delete token"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -790,6 +891,7 @@ function ProviderFormFields({
     updateField,
     isConfigured,
     nosanaApiKeys,
+    hfTokens,
     loadingKeys,
     handleAddKey,
     handleDeleteApiKey,
@@ -800,6 +902,7 @@ function ProviderFormFields({
     updateField: (path: string[], value: any) => void;
     isConfigured?: boolean;
     nosanaApiKeys: NosanaApiKeyResponse[];
+    hfTokens: HfTokenResponse[];
     loadingKeys: boolean;
     handleAddKey: () => void;
     handleDeleteApiKey: (name: string) => void;
@@ -824,7 +927,15 @@ function ProviderFormFields({
         case "akash":
             return <AkashFields config={config} updateField={updateField} handleAddKey={handleAddKey} />;
         case "huggingface-token":
-            return <HuggingFaceFields config={config} updateField={updateField} />;
+            return (
+                <HuggingFaceFields
+                    hfTokens={hfTokens}
+                    loadingKeys={loadingKeys}
+                    handleAddKey={handleAddKey}
+                    handleDeleteApiKey={handleDeleteApiKey}
+                    hfTokenFromEnv={hfTokenFromEnv}
+                />
+            );
         default:
             return <div>Unknown Provider</div>;
     }
