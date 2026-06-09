@@ -79,9 +79,11 @@ class TerminationReaper:
 
     async def tick_once(self) -> None:
         """Run one full reaper pass: nodes first (so a node-purge that empties
-        a pool is visible to the pool sweep in the SAME tick), then pools."""
+        a pool is visible to the pool sweep in the SAME tick), then pools, then
+        reclaim any stale engine-AMI builders."""
         await self._reap_stuck_nodes()
         await self._reap_stuck_pools()
+        await self._reap_stale_builders()
 
     # ---- NODES ----------------------------------------------------------
 
@@ -223,6 +225,65 @@ class TerminationReaper:
         if self.inventory_repo is not None:
             await self.inventory_repo.purge_node(node_id)
             logger.info("reaper: purged stuck-terminating node=%s", node_id)
+
+    # ---- BUILDERS -------------------------------------------------------
+
+    async def _aws_regions_in_use(self) -> list[str]:
+        """Distinct AWS regions across pools + nodes — the regions a leaked
+        engine-AMI builder could be in. (A builder in a region with zero
+        pools/nodes relies on the bake's own finally-terminate; the reaper is
+        the crash backstop for the common case.)"""
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT region FROM (
+                    SELECT (cp.region_constraint)[1] AS region
+                      FROM compute_pools cp WHERE cp.provider::text = 'aws'
+                    UNION
+                    SELECT ci.metadata->>'region' AS region
+                      FROM compute_inventory ci WHERE ci.provider::text = 'aws'
+                ) t WHERE region IS NOT NULL AND region <> ''
+                """
+            )
+        return [r["region"] for r in rows]
+
+    async def _reap_stale_builders(self) -> None:
+        """Reclaim engine-AMI builder EC2 (tag inferia:engine-ami-builder) leaked
+        by a CP crash mid-bake. Best-effort, tag-scoped, age-gated (>30 min in
+        sweep_stale_builders) so it never races an in-flight bake."""
+        try:
+            regions = await self._aws_regions_in_use()
+        except Exception:
+            logger.exception("reaper: list AWS regions failed; skipping builder sweep")
+            return
+        if not regions:
+            return
+        from inferia.services.orchestration.services.adapter_engine.aws_orphan_sweep import (
+            resolve_sweep_aws_env,
+            sweep_stale_builders,
+        )
+        # Resolve creds on the reaper's loop (asyncpg-bound ProvidersConfig
+        # session) BEFORE the to_thread sweep — resolving inside the worker
+        # thread crashes cross-loop. Best-effort: None ⇒ no-creds WARNING + [].
+        try:
+            aws_env = await resolve_sweep_aws_env()
+        except Exception:
+            logger.exception("reaper: resolve creds for builder sweep failed; skipping")
+            return
+        for region in regions:
+            try:
+                terminated = await asyncio.to_thread(
+                    sweep_stale_builders, str(region), aws_env,
+                )
+                if terminated:
+                    logger.info(
+                        "reaper: reclaimed %d stale engine-AMI builder(s) in %s: %s",
+                        len(terminated), region, ", ".join(terminated),
+                    )
+            except Exception:
+                logger.exception(
+                    "reaper: stale-builder sweep failed in %s; continuing", region,
+                )
 
     # ---- POOLS ----------------------------------------------------------
 

@@ -9,7 +9,21 @@ both routers expose the expected paths.
 from __future__ import annotations
 
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+# Repo-wide version skew: starlette 0.35.1 still passes ``app=`` to
+# ``httpx.Client``, which httpx 0.28+ removed. Patch the httpx Client
+# constructor to drop the ``app`` kwarg so TestClient-based tests keep working.
+import httpx as _httpx
+_orig_client_init = _httpx.Client.__init__
+
+
+def _patched_client_init(self, *args, **kwargs):
+    kwargs.pop("app", None)
+    return _orig_client_init(self, *args, **kwargs)
+
+
+_httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
+from fastapi.testclient import TestClient  # noqa: E402
 
 from inferia.services.orchestration.api import admin_workers, workers
 from inferia.services.orchestration.services.worker_controller.auth import (
