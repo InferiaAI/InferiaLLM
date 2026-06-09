@@ -67,7 +67,8 @@ def test_external_mode_with_all_fields_present(monkeypatch):
         OAUTH_REDIRECT_URI="https://app.example.test/auth/callback",
     )
     s = Settings(_env_file=None)
-    assert s.auth_provider == "external"
+    # `external` is a deprecated alias that coerces to the canonical `inferiaauth`.
+    assert s.auth_provider == "inferiaauth"
     assert s.external_auth_url == "https://auth.example.test"
     assert s.external_auth_issuer == "https://auth.example.test"
     assert s.oauth_client_id == "inferiallm-dashboard"
@@ -97,7 +98,8 @@ def test_external_mode_rejects_missing_required_field(monkeypatch, missing_var):
         Settings(_env_file=None)
     msg = str(exc_info.value)
     assert missing_var in msg
-    assert "AUTH_PROVIDER=external" in msg
+    # `external` coerces to `inferiaauth`, so the error references the canonical mode.
+    assert "AUTH_PROVIDER=inferiaauth" in msg
 
 
 def test_external_mode_rejects_multiple_missing_fields_lists_all(monkeypatch):
