@@ -15,8 +15,9 @@ from inferia.services.api_gateway.models import (
 from .middleware import get_current_user_from_request
 from .authorization import authz_service
 from .permissions import normalize_permissions
+from .local_identity_guard import require_local_identity
 
-router = APIRouter(prefix="/admin/roles", tags=["RBAC Management"])
+router = APIRouter(prefix="/admin/roles", tags=["RBAC Management"], dependencies=[Depends(require_local_identity)])
 
 
 def _validate_permissions(permissions: list[str]) -> list[str]:

@@ -12,8 +12,9 @@ from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.rbac.authorization import authz_service
 from inferia.services.api_gateway.audit.service import audit_service
 from inferia.services.api_gateway.models import AuditLogCreate
+from inferia.services.api_gateway.rbac.local_identity_guard import require_local_identity
 
-router = APIRouter(tags=["Users"])
+router = APIRouter(tags=["Users"], dependencies=[Depends(require_local_identity)])
 
 
 @router.post("/users", response_model=UserResponse, status_code=201)
