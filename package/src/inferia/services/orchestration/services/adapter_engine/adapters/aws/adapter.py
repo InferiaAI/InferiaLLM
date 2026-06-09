@@ -3,13 +3,17 @@ import grpc
 import asyncio
 import functools
 import datetime as dt
+import os
 from adapters.base.adapter import ProviderAdapter
 from inferia.services.orchestration.v1 import (
     compute_node_pb2_grpc,
     compute_node_pb2,
 )
 
-GRPC_ADDR = "localhost:50051"
+# Same env knob as services/model_deployment/deployment_server.py — must follow
+# GRPC_PORT when the orchestration gRPC server is remapped, or this dials
+# whatever else holds 50051.
+GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "localhost:50051")
 
 
 async def _run_sync(func, *args, **kwargs):

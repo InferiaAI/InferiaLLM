@@ -138,6 +138,10 @@ services:
       # Orchestration plane listen ports (host-networking remaps).
       HTTP_PORT: "8082"
       GRPC_PORT: "50052"
+      # Orchestration's HTTP handlers reach their own gRPC server through this
+      # loopback address — it MUST track GRPC_PORT, or they dial whatever else
+      # holds 50051 (here: inferia-auth's gRPC → "unknown service ...").
+      ORCHESTRATION_GRPC_ADDR: "127.0.0.1:50052"
       # Gateway -> plane proxy targets.
       ORCHESTRATION_URL: "http://localhost:8082"
       INFERENCE_URL: "http://localhost:8001"
