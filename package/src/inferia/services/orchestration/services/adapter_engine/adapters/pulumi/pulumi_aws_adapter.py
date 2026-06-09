@@ -639,13 +639,18 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
         *,
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
+        region: Optional[str] = None,
     ) -> Dict[str, Any]:
         import boto3
         cfg = await load_providers_config()
         env_vars = resolve_aws_env(cfg)
+        # Use the node's actual region when provided; fall back to the
+        # account-wide default (us-east-1) so the endpoint never crashes
+        # for legacy / region-less rows.
+        effective_region = region or env_vars["AWS_DEFAULT_REGION"]
         ec2 = boto3.client(
             "ec2",
-            region_name=env_vars["AWS_DEFAULT_REGION"],
+            region_name=effective_region,
             aws_access_key_id=env_vars["AWS_ACCESS_KEY_ID"],
             aws_secret_access_key=env_vars["AWS_SECRET_ACCESS_KEY"],
         )

@@ -337,8 +337,7 @@ async def _build_provisioning_spec(
         provider_pool_id, or pool_meta.instance_type)
       - instance_class: derived from the AWS instance catalog (single source
         of truth — never trust a separately-stored value)
-      - region: pool.region_constraint[0] -> pool_meta.region -> account-wide
-        ProvidersConfig.cloud.aws.region
+      - region: pool.region_constraint[0] -> pool_meta.region (required; 422 if absent)
       - optional per-pool overrides (subnet/SG/IAM/AMI/root volume/image tag)
 
     Raises HTTPException(422) when instance_type / instance_class / region
@@ -388,23 +387,15 @@ async def _build_provisioning_spec(
         )
     instance_class = it.cls
 
+    region = None
     rc = pool_row.get("region_constraint")
-    region = (rc[0] if rc else None) or pool_meta.get("region")
-    if not region:
-        # Fall back to the account-wide AWS region (Settings -> Providers).
-        try:
-            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
-                load_providers_config,
-            )
-            cfg = await load_providers_config()
-            region = cfg.cloud.aws.region
-        except Exception:
-            region = None
+    if rc:
+        region = (rc[0] if isinstance(rc, (list, tuple)) else rc) or None
+    region = region or pool_meta.get("region")
     if not region:
         raise HTTPException(
             status_code=422,
-            detail=(f"AWS pool for {instance_type} has no region configured; "
-                    f"set a region on the pool or in Settings -> Providers -> AWS"),
+            detail="AWS pool has no region (set region_constraint at pool creation)",
         )
 
     spec = {

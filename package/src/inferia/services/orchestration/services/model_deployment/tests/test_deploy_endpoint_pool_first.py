@@ -408,3 +408,63 @@ async def test_build_provisioning_spec_includes_pool_metadata_overrides():
     assert spec["security_group_ids"] == ["sg-123"]
     assert spec["iam_instance_profile"].endswith("/x")
     assert spec["root_volume_gb"] == 200  # explicit override wins over GPU default
+
+
+async def test_build_spec_aws_requires_region():
+    """_build_provisioning_spec raises 422 when pool has no region at all.
+
+    region_constraint=None + empty pool_meta means no account-wide fallback
+    is available (that fallback was removed); must surface a clear 422 so
+    the operator knows to set region_constraint at pool creation.
+    """
+    from fastapi import HTTPException
+
+    decision = _Decision(provider="aws", gpu_total_per_node=1)
+
+    # No region_constraint, no pool_meta.region — no fallback remains.
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["g6.xlarge"],
+        "provider_pool_id": "aws/g6.xlarge",
+        "region_constraint": None,
+    }
+    with pytest.raises(HTTPException) as ei:
+        await deployment_server._build_provisioning_spec(
+            pool_row=pool_row, pool_meta={}, decision=decision, org_id=None
+        )
+    assert ei.value.status_code == 422
+    assert "region" in str(ei.value.detail).lower()
+
+
+async def test_build_spec_aws_requires_region_empty_list():
+    """region_constraint=[] (empty list) is treated the same as None."""
+    from fastapi import HTTPException
+
+    decision = _Decision(provider="aws", gpu_total_per_node=1)
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["g6.xlarge"],
+        "provider_pool_id": "aws/g6.xlarge",
+        "region_constraint": [],
+    }
+    with pytest.raises(HTTPException) as ei:
+        await deployment_server._build_provisioning_spec(
+            pool_row=pool_row, pool_meta={}, decision=decision, org_id=None
+        )
+    assert ei.value.status_code == 422
+    assert "region" in str(ei.value.detail).lower()
+
+
+async def test_build_spec_aws_falls_back_to_pool_meta_region():
+    """pool_meta.region is used when region_constraint is absent."""
+    decision = _Decision(provider="aws", gpu_total_per_node=1)
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["g6.xlarge"],
+        "provider_pool_id": "aws/g6.xlarge",
+        "region_constraint": None,
+    }
+    spec = await deployment_server._build_provisioning_spec(
+        pool_row=pool_row, pool_meta={"region": "eu-west-1"}, decision=decision, org_id="o"
+    )
+    assert spec["region"] == "eu-west-1"

@@ -10,6 +10,7 @@ from inferia.services.api_gateway.management.configuration import (
     _preserve_masked_secrets,
 )
 from inferia.services.api_gateway.config import (
+    AWSConfig,
     HuggingFaceConfig,
     HFTokenEntry,
     ProvidersConfig,
@@ -221,3 +222,41 @@ def test_hf_non_dict_entry_skipped():
     incoming = {"huggingface": {"tokens": ["garbage", {"name": "ok", "token": "hf_ok"}]}}
     out = _preserve_masked_secrets(incoming, existing)
     assert out["huggingface"]["tokens"] == [{"name": "ok", "token": "hf_ok"}]
+
+
+# ---------- AWSConfig credentials-only model ----------------------------
+
+
+def test_aws_config_creds_only():
+    """AWSConfig must contain only access_key_id and secret_access_key.
+
+    region + provisioning-default fields (subnet_id, security_group_ids,
+    ami_id, iam_instance_profile, root_volume_gb, worker_image_tag) were
+    removed; provisioning reads region exclusively from the pool's
+    region_constraint.
+    """
+    aws = AWSConfig(access_key_id="AKIA", secret_access_key="s")
+    for gone in (
+        "region",
+        "subnet_id",
+        "security_group_ids",
+        "ami_id",
+        "iam_instance_profile",
+        "root_volume_gb",
+        "worker_image_tag",
+    ):
+        assert not hasattr(aws, gone), f"{gone} should be removed from AWSConfig"
+
+
+def test_aws_config_accepts_only_creds():
+    """AWSConfig with just credentials is valid; extra fields are rejected."""
+    aws = AWSConfig(access_key_id="AKIAIOSFODNN7EXAMPLE", secret_access_key="wJalrXUtnFEMI")
+    assert aws.access_key_id == "AKIAIOSFODNN7EXAMPLE"
+    assert aws.secret_access_key == "wJalrXUtnFEMI"
+
+
+def test_aws_config_defaults_to_none():
+    """Both credential fields default to None when not provided."""
+    aws = AWSConfig()
+    assert aws.access_key_id is None
+    assert aws.secret_access_key is None

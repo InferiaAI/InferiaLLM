@@ -48,16 +48,19 @@ def _require(value: str | None, field_name: str) -> str:
 
 
 def resolve_aws_env(cfg: ProvidersConfig) -> dict[str, str]:
-    """Return env vars Pulumi-AWS will inherit. AWS_DEFAULT_REGION
-    falls back to us-east-1 when the config has no region."""
+    """Return env vars Pulumi-AWS will inherit.
+
+    AWS_DEFAULT_REGION is fixed to us-east-1 — the STS endpoint is global
+    and us-east-1 always resolves. Pool-specific regions come from
+    region_constraint at pool creation, not from the account-wide config.
+    """
     aws = cfg.cloud.aws
     key = _require(aws.access_key_id, "access_key_id")
     secret = _require(aws.secret_access_key, "secret_access_key")
-    region = aws.region or "us-east-1"
     return {
         "AWS_ACCESS_KEY_ID": key,
         "AWS_SECRET_ACCESS_KEY": secret,
-        "AWS_DEFAULT_REGION": region,
+        "AWS_DEFAULT_REGION": "us-east-1",
     }
 
 
