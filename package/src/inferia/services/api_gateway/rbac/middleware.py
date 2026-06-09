@@ -9,6 +9,7 @@ from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.config import httpx_verify, settings
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
+from inferia.services.api_gateway.rbac.external_org import ensure_external_org
 from inferia.services.api_gateway.rbac.permissions import (
     expand_catalog_permissions,
     normalize_permissions,
@@ -127,6 +128,12 @@ async def _resolve_external_token(db, token: str) -> UserContext:
         org_ids = claims.get("org_ids") or []
         org_id = org_ids[0] if org_ids else None
 
+    # The IdP org has no local row by default; provision a shadow org (and
+    # membership) so org-keyed local features (org info, audit FKs, API keys)
+    # work. Best-effort — never blocks auth.
+    if org_id:
+        await ensure_external_org(db, org_id, user_id=user.id, bearer_token=token)
+
     return UserContext(
         user_id=user.id,
         username=user.email,
@@ -183,6 +190,10 @@ async def _resolve_oidc_token(db, token: str) -> UserContext:
     if not org_id:
         org_ids = claims.get("org_ids") or []
         org_id = org_ids[0] if org_ids else None
+
+    # Same shadow-org provisioning as the inferiaauth path.
+    if org_id:
+        await ensure_external_org(db, org_id, user_id=user.id, bearer_token=token)
 
     role_map = settings.oidc_role_map or {}
     if not role_map:

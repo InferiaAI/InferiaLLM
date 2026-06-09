@@ -175,6 +175,35 @@ async def test_catalog_org_read_grants_local_organization_view(httpserver, keypa
 
 
 @pytest.mark.asyncio
+async def test_external_token_provisions_shadow_org(httpserver, keypair):
+    """The IdP org has no local row; resolution must call ensure_external_org
+    with the org id, the shadow user's id, and the caller's bearer token."""
+    from inferia.services.api_gateway.rbac import middleware as mw
+
+    priv, jwks = keypair
+    httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
+
+    token = _sign(priv, _default_claims())
+
+    fake_user = _make_user()
+    ensure_mock = AsyncMock()
+    with patch(
+        "inferia.services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        AsyncMock(return_value=(fake_user, "org-local", ["member"])),
+    ), patch(
+        "inferia.services.api_gateway.rbac.middleware.ensure_external_org",
+        ensure_mock,
+    ):
+        db = AsyncMock()
+        ctx = await mw._resolve_external_token(db, token)
+
+    ensure_mock.assert_awaited_once_with(
+        db, "org-from-claims", user_id=fake_user.id, bearer_token=token
+    )
+    assert ctx.org_id == "org-from-claims"
+
+
+@pytest.mark.asyncio
 async def test_expired_token_raises_401(httpserver, keypair):
     from fastapi import HTTPException
     from inferia.services.api_gateway.rbac import middleware as mw

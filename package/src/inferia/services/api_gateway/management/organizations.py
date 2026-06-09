@@ -36,10 +36,23 @@ def build_invite_link_path(token: str) -> str:
     return f"/auth/accept-invite?token={token}"
 
 
-router = APIRouter(tags=["Organizations"], dependencies=[Depends(require_local_identity)])
+# Identity MANAGEMENT (create/update orgs, invitations) is owned by the IdP in
+# external modes and stays 409-gated per-endpoint. Reads of the active org
+# context (GET /organizations/me) work in every mode — in external modes the
+# row is the shadow org provisioned at token resolution (rbac/external_org.py),
+# named from the IdP. Do NOT re-add a router-level guard: it locks the
+# dashboard's main screen out of its own org context.
+router = APIRouter(tags=["Organizations"])
+
+_local_identity_only = [Depends(require_local_identity)]
 
 
-@router.post("/organizations", response_model=OrganizationResponse, status_code=201)
+@router.post(
+    "/organizations",
+    response_model=OrganizationResponse,
+    status_code=201,
+    dependencies=_local_identity_only,
+)
 async def create_organization(
     org_data: OrganizationCreate,
     request: Request,
@@ -110,7 +123,11 @@ async def get_my_organization(request: Request, db: AsyncSession = Depends(get_d
     return org
 
 
-@router.patch("/organizations/me", response_model=OrganizationResponse)
+@router.patch(
+    "/organizations/me",
+    response_model=OrganizationResponse,
+    dependencies=_local_identity_only,
+)
 async def update_my_organization(
     org_data: OrganizationUpdate, request: Request, db: AsyncSession = Depends(get_db)
 ):
@@ -155,7 +172,12 @@ async def update_my_organization(
 # --- Invitations (Grouped with Org Management) ---
 
 
-@router.post("/invitations", response_model=InviteResponse, status_code=201)
+@router.post(
+    "/invitations",
+    response_model=InviteResponse,
+    status_code=201,
+    dependencies=_local_identity_only,
+)
 async def create_invitation(
     invite_data: InviteRequest, request: Request, db: AsyncSession = Depends(get_db)
 ):
@@ -244,7 +266,11 @@ async def create_invitation(
     )
 
 
-@router.get("/invitations", response_model=InvitationListResponse)
+@router.get(
+    "/invitations",
+    response_model=InvitationListResponse,
+    dependencies=_local_identity_only,
+)
 async def list_invitations(request: Request, db: AsyncSession = Depends(get_db)):
     user_ctx = get_current_user_context(request)
     authz_service.require_permission(user_ctx, PermissionEnum.MEMBER_LIST)
@@ -278,7 +304,11 @@ async def list_invitations(request: Request, db: AsyncSession = Depends(get_db))
     return InvitationListResponse(invitations=response_list)
 
 
-@router.delete("/invitations/{invite_id}", status_code=204)
+@router.delete(
+    "/invitations/{invite_id}",
+    status_code=204,
+    dependencies=_local_identity_only,
+)
 async def revoke_invitation(
     invite_id: str, request: Request, db: AsyncSession = Depends(get_db)
 ):
