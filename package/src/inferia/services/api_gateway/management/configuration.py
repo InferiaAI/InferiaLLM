@@ -47,6 +47,7 @@ from inferia.services.api_gateway.config import (
     DePINConfig,
     VectorDBConfig,
     HuggingFaceConfig,
+    HFTokenEntry,
 )
 
 router = APIRouter(tags=["Configuration"])
@@ -182,6 +183,24 @@ def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
             hf_in["token"] = hf_ex["token"]
         else:
             hf_in.pop("token", None)
+
+    # HuggingFace named tokens list.
+    in_tokens = hf_in.get("tokens")
+    if isinstance(in_tokens, list):
+        ex_by_name = {e.get("name"): e for e in (hf_ex.get("tokens") or []) if isinstance(e, dict)}
+        kept = []
+        for ent in in_tokens:
+            if not isinstance(ent, dict):
+                continue
+            if _is_masked(ent.get("token")):
+                prior = ex_by_name.get(ent.get("name"))
+                if prior and prior.get("token"):
+                    ent = {**ent, "token": prior["token"]}
+                else:
+                    continue
+            kept.append(ent)
+        hf_in["tokens"] = kept
+
     if hf_in:
         out["huggingface"] = hf_in
 
@@ -225,6 +244,9 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     # HuggingFace — nested under .huggingface
     if masked.huggingface.token:
         masked.huggingface.token = "********"
+    for entry in masked.huggingface.tokens:
+        if entry.token:
+            entry.token = "********"
 
     return masked
 

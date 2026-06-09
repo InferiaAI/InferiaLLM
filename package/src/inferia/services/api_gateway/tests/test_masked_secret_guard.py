@@ -6,7 +6,13 @@ real credential in the DB with the literal mask string.
 """
 from inferia.services.api_gateway.management.configuration import (
     _is_masked,
+    _mask_config,
     _preserve_masked_secrets,
+)
+from inferia.services.api_gateway.config import (
+    HuggingFaceConfig,
+    HFTokenEntry,
+    ProvidersConfig,
 )
 
 
@@ -141,3 +147,77 @@ def test_empty_existing_handled_gracefully():
     out = _preserve_masked_secrets(incoming, {})
     # No masked fields → no transformation.
     assert out == {"cloud": {"aws": {"region": "us-east-1"}}}
+
+
+# ---------- HuggingFace multi-token model & masking ---------------------
+
+
+def test_hf_tokens_list_model():
+    hf = HuggingFaceConfig(
+        tokens=[
+            HFTokenEntry(name="default", token="hf_abc"),
+            HFTokenEntry(name="prod", token="hf_xyz", is_active=False),
+        ]
+    )
+    assert hf.tokens[0].name == "default" and hf.tokens[0].is_active is True
+    assert hf.tokens[1].is_active is False
+
+
+def test_mask_config_masks_hf_tokens_list():
+    cfg = ProvidersConfig(
+        huggingface=HuggingFaceConfig(
+            token="hf_legacy",
+            tokens=[HFTokenEntry(name="default", token="hf_secret")],
+        )
+    )
+    masked = _mask_config(cfg)
+    assert masked.huggingface.token == "********"
+    assert masked.huggingface.tokens[0].token == "********"
+    assert masked.huggingface.tokens[0].name == "default"
+
+
+def test_preserve_masked_hf_token_by_name():
+    existing = {"providers": {"huggingface": {"tokens": [{"name": "default", "token": "hf_real", "is_active": True}]}}}
+    incoming = {"huggingface": {"tokens": [{"name": "default", "token": "********", "is_active": True}]}}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["huggingface"]["tokens"][0]["token"] == "hf_real"
+
+
+def test_preserve_drops_masked_hf_token_with_no_prior():
+    existing = {"providers": {"huggingface": {"tokens": []}}}
+    incoming = {"huggingface": {"tokens": [{"name": "new", "token": "********"}]}}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["huggingface"]["tokens"] == []
+
+
+# ---------- HuggingFace coverage tests ----------------------------------
+
+
+def test_hf_token_unmasked_passthrough():
+    # A freshly-typed (unmasked) list token must survive preserve unchanged.
+    existing = {"providers": {"huggingface": {"tokens": []}}}
+    incoming = {"huggingface": {"tokens": [{"name": "new", "token": "hf_brandnew", "is_active": True}]}}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["huggingface"]["tokens"][0]["token"] == "hf_brandnew"
+
+
+def test_hf_no_tokens_key_preserves_legacy():
+    # tokens absent → the tokens-list block must not run / crash; legacy token preserve still works.
+    existing = {"providers": {"huggingface": {"token": "hf_old"}}}
+    incoming = {"huggingface": {"token": "********"}}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["huggingface"]["token"] == "hf_old"
+
+
+def test_hf_empty_tokens_list_passthrough():
+    existing = {"providers": {"huggingface": {"tokens": [{"name": "a", "token": "hf_a"}]}}}
+    incoming = {"huggingface": {"tokens": []}}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["huggingface"]["tokens"] == []
+
+
+def test_hf_non_dict_entry_skipped():
+    existing = {"providers": {"huggingface": {"tokens": []}}}
+    incoming = {"huggingface": {"tokens": ["garbage", {"name": "ok", "token": "hf_ok"}]}}
+    out = _preserve_masked_secrets(incoming, existing)
+    assert out["huggingface"]["tokens"] == [{"name": "ok", "token": "hf_ok"}]

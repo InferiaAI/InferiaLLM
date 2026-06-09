@@ -86,8 +86,15 @@ class DePINConfig(BaseModel):
     nosana: NosanaConfig = Field(default_factory=NosanaConfig)
 
 
+class HFTokenEntry(BaseModel):
+    name: str
+    token: str
+    is_active: bool = True
+
+
 class HuggingFaceConfig(BaseModel):
-    token: str = ""
+    token: str = ""  # legacy single token (kept as fallback "default")
+    tokens: list[HFTokenEntry] = Field(default_factory=list)
 
 
 class ProvidersConfig(BaseModel):
