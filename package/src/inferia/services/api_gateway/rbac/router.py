@@ -25,6 +25,7 @@ from inferia.services.api_gateway.db.models import (
 )
 from inferia.services.api_gateway.models import OrganizationBasicInfo, SwitchOrgRequest, AuditLogCreate
 from inferia.services.api_gateway.audit.service import audit_service
+from inferia.services.api_gateway.rbac.local_identity_guard import require_local_identity
 from sqlalchemy.future import select
 from sqlalchemy import func
 import uuid
@@ -151,7 +152,7 @@ async def login(
     )
 
 
-@router.post("/register", response_model=AuthToken)
+@router.post("/register", response_model=AuthToken, dependencies=[Depends(require_local_identity)])
 async def register(reg_data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """
     Public registration is DISABLED.
@@ -163,7 +164,7 @@ async def register(reg_data: RegisterRequest, db: AsyncSession = Depends(get_db)
     )
 
 
-@router.post("/register-invite", response_model=AuthToken)
+@router.post("/register-invite", response_model=AuthToken, dependencies=[Depends(require_local_identity)])
 async def register_invite(
     reg_data: RegisterInviteRequest,
     http_request: Request,

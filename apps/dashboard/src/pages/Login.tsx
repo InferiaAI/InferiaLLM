@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { LockKeyhole, Radar, ShieldCheck, Sparkles } from "lucide-react";
 
 import { startExternalLogin } from "@/services/authService";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 /**
  * The legacy email/password form. Always available locally; surfaced as an
@@ -143,10 +144,10 @@ function LocalCredentialForm() {
 }
 
 export default function Login() {
-  // VITE_AUTH_PROVIDER is baked in at build time. Only the exact literal
-  // "external" enables the redirect flow; anything else (unset, "local",
-  // typos, garbage) falls back to the legacy email/password form.
-  const isExternal = import.meta.env.VITE_AUTH_PROVIDER === "external";
+  // VITE_AUTH_PROVIDER is baked in at build time. "oidc", "inferiaauth", and
+  // the legacy "external" all enable the redirect flow; anything else (unset,
+  // "local", typos, garbage) falls back to the legacy email/password form.
+  const isExternal = isExternalAuthMode();
 
   return (
     <div className="relative w-full max-w-5xl px-4 py-6 sm:px-8">

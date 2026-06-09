@@ -21,7 +21,7 @@ export default defineConfig({
     css: false,
     coverage: {
       provider: "v8",
-      include: ["src/services/authService.ts", "src/lib/tokenStore.ts", "src/App.tsx", "src/pages/Login.tsx"],
+      include: ["src/lib/authMode.ts", "src/services/authService.ts", "src/lib/tokenStore.ts", "src/App.tsx", "src/pages/Login.tsx"],
       exclude: ["src/main.tsx", "src/setupTests.ts", "**/*.test.{ts,tsx}", "**/__tests__/**"],
       reporter: ["text", "html"],
     },

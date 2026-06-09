@@ -1,5 +1,6 @@
 import api from "@/lib/api";
 import * as tokenStore from "@/lib/tokenStore";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 const { setToken } = tokenStore;
 
@@ -71,7 +72,7 @@ export async function logout(): Promise<void> {
     // Network failure on the audit POST must not block the redirect.
   }
 
-  const isExternal = import.meta.env.VITE_AUTH_PROVIDER === "external";
+  const isExternal = isExternalAuthMode();
   const externalUrl = import.meta.env.VITE_EXTERNAL_AUTH_URL as
     | string
     | undefined;

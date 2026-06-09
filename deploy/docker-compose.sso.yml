@@ -116,9 +116,12 @@ services:
       JWT_REFRESH_TTL: "168h"
       ENCRYPTION_KEY: "x9tZfrL6OCoGDLg26VKE3F4djdjoPQK989p9lmCt8UY="
       # The in-process OAuth seed (cmd/server/seed.go) inserts the
-      # inferiallm-dashboard oauth_clients row and seeds the FGA permission
-      # tree. OAUTH_SEED_REDIRECT_URI overrides the default so the registered
-      # redirect_uri matches what the Caddy-fronted dashboard advertises.
+      # inferiallm-dashboard oauth_clients row. The inferiallm FGA permission
+      # tree is NO LONGER seeded here — InferiaLLM self-declares its catalog at
+      # boot via PUT /api/v1/services/inferiallm/catalog (see inferia-app's
+      # CATALOG_ADMIN_TOKEN below). OAUTH_SEED_REDIRECT_URI overrides the default
+      # so the registered redirect_uri matches what the Caddy-fronted dashboard
+      # advertises.
       OAUTH_SEED_REDIRECT_URI: "https://inferia.local/auth/callback"
       COOKIE_SECURE: "true"
       RATE_LIMIT_MAX: "60"
@@ -156,20 +159,26 @@ services:
       ENVIRONMENT: "development"
       LOG_LEVEL: "INFO"
 
-      # --- Auth provider — external mode, pointed at inferia-auth via Caddy.
-      AUTH_PROVIDER: "external"
+      # --- Auth provider — inferiaauth (SaaS) mode, pointed at inferia-auth via Caddy.
+      AUTH_PROVIDER: "inferiaauth"
       EXTERNAL_AUTH_URL: "https://auth.inferia.local"
       EXTERNAL_AUTH_ISSUER: "https://auth.inferia.local"
       APP_NAMESPACE: "inferiallm"
       OAUTH_CLIENT_ID: "inferiallm-dashboard"
       OAUTH_REDIRECT_URI: "https://inferia.local/auth/callback"
       OAUTH_JWKS_CACHE_TTL_SECONDS: "3600"
+      # Catalog self-declaration: InferiaLLM PUTs its permission/role catalog to
+      # inferia-auth at boot. The token must be a USER JWT carrying the
+      # `services_manage` permission (e.g. minted for the superuser). Empty =
+      # declare is skipped (non-fatal) — provision a real token for a full
+      # end-to-end FGA-backed run (see docs/operations/auth.md).
+      CATALOG_ADMIN_TOKEN: "${CATALOG_ADMIN_TOKEN:-}"
 
       # --- Vite build-time vars. The unified Dockerfile builds the dashboard
       # in stage 2 of the multi-stage build, so these must be set as build
       # args, not runtime env vars, in production. For local dev we set them
       # here so a rebuild picks them up via `make docker-up-sso` (--build).
-      VITE_AUTH_PROVIDER: "external"
+      VITE_AUTH_PROVIDER: "inferiaauth"
       VITE_EXTERNAL_AUTH_URL: "https://auth.inferia.local"
 
       # --- Local superadmin (recovery path). Always works even in external

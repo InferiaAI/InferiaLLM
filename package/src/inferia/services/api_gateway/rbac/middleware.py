@@ -73,10 +73,17 @@ _verifier: Optional[JWKSVerifier] = None
 def _get_verifier() -> JWKSVerifier:
     global _verifier
     if _verifier is None:
+        # Generic OIDC IdPs issue tokens with aud = client_id, while
+        # InferiaAuth issues aud = app_namespace ("inferiallm").
+        audience = (
+            settings.oauth_client_id
+            if settings.auth_provider == "oidc"
+            else settings.app_namespace
+        )
         _verifier = JWKSVerifier(
             jwks_url=settings.external_auth_url.rstrip("/") + "/.well-known/jwks.json",
             issuer=settings.external_auth_issuer,
-            audience=settings.app_namespace,
+            audience=audience,
             cache_ttl=settings.oauth_jwks_cache_ttl_seconds,
         )
     return _verifier
@@ -128,14 +135,84 @@ async def _resolve_external_token(db, token: str) -> UserContext:
     )
 
 
+def _catalog_role_permissions(role_name: str) -> list[str]:
+    """Return the permission keys for a catalog role, or [] for unknown roles (fail-closed)."""
+    from inferia.services.api_gateway.rbac.catalog import CATALOG
+
+    for r in CATALOG.roles:
+        if r.name == role_name:
+            return list(r.permissions)
+    return []  # unknown role -> no permissions (fail-closed)
+
+
+async def _resolve_oidc_token(db, token: str) -> UserContext:
+    """Verify a generic enterprise OIDC token and build a UserContext.
+
+    When oidc_role_map is empty (the default), every authenticated user
+    becomes admin of their shadow org — the same interim posture as before.
+
+    When oidc_role_map is configured, the user's IdP groups (read from the
+    claim named by oidc_groups_claim) are matched against the map; the first
+    matching group wins. If no group matches, oidc_default_role is used.
+    """
+    try:
+        claims = _get_verifier().verify_sync(token)
+    except JWKSVerifyError as e:
+        logger.info("OIDC token verification failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    sub = claims.get("sub", "")
+    external_user_id = sub.split(":", 1)[1] if ":" in sub else sub
+    email = claims.get("email", "")
+
+    user, _local_org_id, _local_roles = await get_or_create_shadow_user(
+        db, email=email, external_id=external_user_id
+    )
+
+    org_id = claims.get("org_id")
+    if not org_id:
+        org_ids = claims.get("org_ids") or []
+        org_id = org_ids[0] if org_ids else None
+
+    role_map = settings.oidc_role_map or {}
+    if not role_map:
+        # Interim default (unchanged): authenticated => admin of the shadow org.
+        role = "admin"
+    else:
+        groups = claims.get(settings.oidc_groups_claim) or []
+        if isinstance(groups, str):
+            groups = [groups]
+        role = next(
+            (role_map[g] for g in groups if g in role_map),
+            settings.oidc_default_role,
+        )
+    perms = _catalog_role_permissions(role)
+
+    return UserContext(
+        user_id=user.id,
+        username=user.email,
+        email=user.email,
+        roles=[role],
+        permissions=perms,
+        org_id=org_id,
+        quota_limit=10000,
+        quota_used=0,
+    )
+
+
 async def auth_middleware(request: Request, call_next):
     """
     Authentication middleware that validates JWT token and extracts user context.
     Adds user context to request.state if authenticated.
 
-    When AUTH_PROVIDER=external, tokens are validated in two steps:
-      1. Try local JWT decode (covers superadmin and locally-issued tokens).
-      2. If local decode fails, call inferia-auth introspect.
+    Auth branching per AUTH_PROVIDER:
+      - inferiaauth: try local (superadmin recovery), fall back to _resolve_external_token
+      - oidc:        try local (superadmin recovery), fall back to _resolve_oidc_token
+      - local:       _resolve_local_token only
     """
     # Skip auth for WebSocket connections - they handle auth differently (via query params)
     # Check both 'upgrade' header and the connection type
@@ -223,19 +300,22 @@ async def auth_middleware(request: Request, call_next):
     if cached is not None:
         request.state.user = cached
     else:
-        use_external = settings.auth_provider == "external" and settings.external_auth_url
+        mode = settings.auth_provider
 
         async with AsyncSessionLocal() as db:
             try:
-                if not use_external:
-                    # Pure local auth
-                    user_context = await _resolve_local_token(db, token)
-                else:
-                    # External mode: try local first (superadmin), fall back to external
+                if mode == "inferiaauth":
                     try:
-                        user_context = await _resolve_local_token(db, token)
+                        user_context = await _resolve_local_token(db, token)  # superadmin recovery
                     except HTTPException:
                         user_context = await _resolve_external_token(db, token)
+                elif mode == "oidc":
+                    try:
+                        user_context = await _resolve_local_token(db, token)  # superadmin recovery
+                    except HTTPException:
+                        user_context = await _resolve_oidc_token(db, token)
+                else:  # local
+                    user_context = await _resolve_local_token(db, token)
 
                 request.state.user = user_context
                 _auth_cache[token] = user_context

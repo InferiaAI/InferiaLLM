@@ -12,10 +12,11 @@ from inferia.services.api_gateway.models import (
 )  # existing in models.py
 from .middleware import get_current_user_from_request
 from .authorization import authz_service
+from .local_identity_guard import require_local_identity
 
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/admin/users", tags=["User Management"])
+router = APIRouter(prefix="/admin/users", tags=["User Management"], dependencies=[Depends(require_local_identity)])
 
 
 class UserRoleUpdate(BaseModel):

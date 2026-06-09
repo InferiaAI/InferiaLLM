@@ -26,6 +26,7 @@ from inferia.services.api_gateway.rbac.authorization import authz_service
 from datetime import datetime, timedelta, timezone
 from inferia.services.api_gateway.audit.service import audit_service
 from inferia.services.api_gateway.models import AuditLogCreate
+from inferia.services.api_gateway.rbac.local_identity_guard import require_local_identity
 
 
 def utcnow_naive():
@@ -35,7 +36,7 @@ def build_invite_link_path(token: str) -> str:
     return f"/auth/accept-invite?token={token}"
 
 
-router = APIRouter(tags=["Organizations"])
+router = APIRouter(tags=["Organizations"], dependencies=[Depends(require_local_identity)])
 
 
 @router.post("/organizations", response_model=OrganizationResponse, status_code=201)

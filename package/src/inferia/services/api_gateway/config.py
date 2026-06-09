@@ -5,6 +5,7 @@ Uses Pydantic Settings for environment-based configuration.
 
 from typing import ClassVar, Literal, Optional, Any, Dict, List
 import logging
+import warnings
 from pydantic import Field, BaseModel, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 from inferia.common.unified_config import UnifiedBaseSettings
@@ -155,11 +156,24 @@ class Settings(UnifiedBaseSettings):
     default_org_name: str = "Default Organization"
 
     # External Auth Provider (inferia-auth)
-    # Set to "external" to delegate authentication to inferia-auth service.
+    # Set to "inferiaauth" (SaaS) or "oidc" (enterprise self-hosted OIDC) to
+    # delegate authentication to an external IdP.
+    # "external" is accepted as a deprecated alias for "inferiaauth".
     # Superadmin login always works locally regardless of this setting.
-    auth_provider: Literal["local", "external"] = Field(
+    auth_provider: Literal["local", "oidc", "inferiaauth"] = Field(
         default="local", validation_alias="AUTH_PROVIDER"
     )
+
+    @field_validator("auth_provider", mode="before")
+    @classmethod
+    def _coerce_external_alias(cls, v: Any) -> Any:
+        """Map legacy AUTH_PROVIDER=external to inferiaauth with a deprecation warning."""
+        if v == "external":
+            msg = "AUTH_PROVIDER=external is deprecated; use 'inferiaauth'"
+            warnings.warn(msg, DeprecationWarning, stacklevel=2)
+            logger.warning(msg)
+            return "inferiaauth"
+        return v
     external_auth_url: Optional[str] = Field(
         default=None,
         validation_alias="EXTERNAL_AUTH_URL",
@@ -191,6 +205,28 @@ class Settings(UnifiedBaseSettings):
         ge=60,
         le=86400,
         description="JWKS cache lifetime in seconds (60–86400)",
+    )
+    catalog_admin_token: Optional[str] = Field(
+        default=None,
+        validation_alias="CATALOG_ADMIN_TOKEN",
+        description="Short-lived bearer token authorized to declare InferiaLLM's catalog to InferiaAuth.",
+    )
+    oidc_groups_claim: str = Field(
+        default="groups",
+        validation_alias="OIDC_GROUPS_CLAIM",
+        description="JWT claim listing the user's IdP groups (oidc mode).",
+    )
+    oidc_role_map: dict[str, str] = Field(
+        default_factory=dict,
+        validation_alias="OIDC_ROLE_MAP",
+        description="Map of IdP group name -> InferiaLLM catalog role (admin|member|viewer). "
+                    "Empty = interim 'authenticated => admin'. Set via JSON, e.g. "
+                    '{"llm-admins":"admin","llm-users":"viewer"}.',
+    )
+    oidc_default_role: str = Field(
+        default="viewer",
+        validation_alias="OIDC_DEFAULT_ROLE",
+        description="Role assigned when no group matches oidc_role_map (oidc mode).",
     )
 
     # Superadmin credentials - MUST be set via environment variables in production
@@ -294,19 +330,28 @@ class Settings(UnifiedBaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        populate_by_name=True,
     )
 
     _PLACEHOLDER_JWT_SECRET = "placeholder-secret-key-at-least-32-chars-long"
 
+    @property
+    def is_external_mode(self) -> bool:
+        """True when auth is delegated to an external IdP (oidc or inferiaauth)."""
+        return self.auth_provider in ("oidc", "inferiaauth")
+
     @model_validator(mode="after")
     def _validate_external_auth_complete(self):
-        """When AUTH_PROVIDER=external, the four external auth fields are mandatory.
+        """When AUTH_PROVIDER is oidc or inferiaauth, the four external auth fields are mandatory.
 
         Raises a single ValueError that lists every missing env var so operators
         can fix the config in one pass instead of guess-and-restart.
         """
-        if self.auth_provider == "external":
+        if self.is_external_mode:
             required = {
                 "EXTERNAL_AUTH_URL": self.external_auth_url,
                 "EXTERNAL_AUTH_ISSUER": self.external_auth_issuer,
@@ -316,7 +361,7 @@ class Settings(UnifiedBaseSettings):
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError(
-                    f"AUTH_PROVIDER=external requires: {', '.join(missing)}"
+                    f"AUTH_PROVIDER={self.auth_provider} requires: {', '.join(missing)}"
                 )
         return self
 

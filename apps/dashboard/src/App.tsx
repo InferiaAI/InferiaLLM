@@ -38,6 +38,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
 import { PermissionGuard } from "@/components/PermissionGuard";
+import { ExternalIdentityGuard } from "@/components/ExternalIdentityGuard";
 import { useTokenFragmentConsumer } from "@/hooks/useTokenFragmentConsumer";
 
 function RequireAuth() {
@@ -180,17 +181,17 @@ const router = createBrowserRouter([
           {
             path: "settings/roles",
             element: <PermissionGuard permission="role:list" />,
-            children: [{ index: true, element: <Roles /> }]
+            children: [{ index: true, element: <ExternalIdentityGuard><Roles /></ExternalIdentityGuard> }]
           },
           {
             path: "settings/users",
             element: <PermissionGuard permission="member:list" />,
-            children: [{ index: true, element: <Users /> }]
+            children: [{ index: true, element: <ExternalIdentityGuard><Users /></ExternalIdentityGuard> }]
           },
           {
             path: "settings/organization",
             element: <PermissionGuard permission="organization:view" />,
-            children: [{ index: true, element: <Organization /> }]
+            children: [{ index: true, element: <ExternalIdentityGuard><Organization /></ExternalIdentityGuard> }]
           },
           {
             path: "settings/audit-logs",
