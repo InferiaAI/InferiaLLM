@@ -429,3 +429,172 @@ async def test_clear_terminating_node_strips_flags(pool):
         await repo.clear_terminating_node(node_id=node_id)
     finally:
         await _cleanup(pool, org_id=org_id, pool_id=pool_id, node_id=node_id)
+
+
+# ---------------------------------------------------------------------------
+# BUILDER reaping
+# ---------------------------------------------------------------------------
+
+_RESOLVE_CREDS_PATH = (
+    "inferia.services.orchestration.services.adapter_engine."
+    "aws_orphan_sweep.resolve_sweep_aws_env"
+)
+_SWEEP_BUILDERS_PATH = (
+    "inferia.services.orchestration.services.adapter_engine."
+    "aws_orphan_sweep.sweep_stale_builders"
+)
+
+_DUMMY_AWS_ENV = {
+    "AWS_ACCESS_KEY_ID": "test-key-id",
+    "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+}
+
+
+async def test_reaper_sweeps_stale_builders(pool):
+    """A tick with an active AWS pool having region_constraint={us-east-1}
+    causes sweep_stale_builders to be called for us-east-1."""
+    from unittest.mock import MagicMock, AsyncMock
+
+    org_id = await _seed_org(pool)
+    # _seed_pool already seeds region_constraint=ARRAY['us-east-1'] by default.
+    pool_id = await _seed_pool(pool, org_id, lifecycle="running", is_active=True)
+    try:
+        reaper = _reaper(pool)
+        sweep_mock = MagicMock(return_value=[])
+        with patch(_SWEEP_BUILDERS_PATH, sweep_mock), \
+             patch(_RESOLVE_CREDS_PATH, new=AsyncMock(return_value=_DUMMY_AWS_ENV)):
+            await reaper._reap_stale_builders()
+        assert sweep_mock.called, "sweep_stale_builders was not called"
+        regions = {call.args[0] for call in sweep_mock.call_args_list}
+        assert "us-east-1" in regions, (
+            f"us-east-1 not in swept regions: {regions}"
+        )
+    finally:
+        await _cleanup(pool, org_id=org_id, pool_id=pool_id)
+
+
+async def test_reaper_sweeps_stale_builders_from_node_region(pool):
+    """A tick where a node's metadata carries a region also drives the builder
+    sweep for that region — so a pool-less node scenario is covered."""
+    from unittest.mock import MagicMock, AsyncMock
+
+    org_id = await _seed_org(pool)
+    # Use a pool with no region_constraint (pass a different lifecycle so the
+    # pool sweep doesn't accidentally interact), and plant the region in the
+    # node's metadata instead.
+    pool_id = await _seed_pool(pool, org_id, lifecycle="running", is_active=True)
+    node_id = await _seed_node(pool, pool_id, terminating=False, state="ready")
+    # Stamp metadata.region on the node.
+    async with pool.acquire() as c:
+        await c.execute(
+            "UPDATE compute_inventory SET metadata = metadata || $1::jsonb "
+            "WHERE id = $2",
+            '{"region": "eu-west-1"}', node_id,
+        )
+    try:
+        reaper = _reaper(pool)
+        sweep_mock = MagicMock(return_value=[])
+        with patch(_SWEEP_BUILDERS_PATH, sweep_mock), \
+             patch(_RESOLVE_CREDS_PATH, new=AsyncMock(return_value=_DUMMY_AWS_ENV)):
+            await reaper._reap_stale_builders()
+        assert sweep_mock.called, "sweep_stale_builders was not called"
+        regions = {call.args[0] for call in sweep_mock.call_args_list}
+        assert "eu-west-1" in regions, (
+            f"eu-west-1 not in swept regions: {regions}"
+        )
+    finally:
+        await _cleanup(pool, org_id=org_id, pool_id=pool_id, node_id=node_id)
+
+
+async def test_reaper_skips_builder_sweep_when_no_regions(pool):
+    """When there are no AWS pools or nodes at all the builder sweep does not
+    call sweep_stale_builders (nothing to reclaim)."""
+    from unittest.mock import MagicMock, AsyncMock
+
+    reaper = _reaper(pool)
+    sweep_mock = MagicMock(return_value=[])
+    # Ensure _aws_regions_in_use returns [] by NOT seeding any rows, and
+    # shortcircuiting resolve_sweep_aws_env so creds are irrelevant.
+    with patch(_SWEEP_BUILDERS_PATH, sweep_mock), \
+         patch(_RESOLVE_CREDS_PATH, new=AsyncMock(return_value=_DUMMY_AWS_ENV)):
+        # Patch regions helper to guarantee empty regardless of DB state.
+        from unittest.mock import patch as _patch, AsyncMock as _AsyncMock
+        with _patch.object(reaper, "_aws_regions_in_use", new=_AsyncMock(return_value=[])):
+            await reaper._reap_stale_builders()
+    sweep_mock.assert_not_called()
+
+
+async def test_reaper_builder_sweep_survives_cred_resolution_failure(pool):
+    """If resolve_sweep_aws_env raises, _reap_stale_builders logs and returns
+    without calling sweep_stale_builders (best-effort contract)."""
+    from unittest.mock import MagicMock, AsyncMock
+
+    org_id = await _seed_org(pool)
+    pool_id = await _seed_pool(pool, org_id, lifecycle="running", is_active=True)
+    try:
+        reaper = _reaper(pool)
+        sweep_mock = MagicMock(return_value=[])
+        failing_creds = AsyncMock(side_effect=RuntimeError("DB down"))
+        with patch(_SWEEP_BUILDERS_PATH, sweep_mock), \
+             patch(_RESOLVE_CREDS_PATH, new=failing_creds):
+            # Must not raise.
+            await reaper._reap_stale_builders()
+        sweep_mock.assert_not_called()
+    finally:
+        await _cleanup(pool, org_id=org_id, pool_id=pool_id)
+
+
+async def test_reaper_builder_sweep_continues_after_per_region_failure(pool):
+    """If sweep_stale_builders raises for one region, _reap_stale_builders
+    continues to the next region without propagating the error."""
+    from unittest.mock import MagicMock, AsyncMock, call
+
+    org_id = await _seed_org(pool)
+    # Seed a pool with us-east-1 (from _seed_pool default).
+    pool_id = await _seed_pool(pool, org_id, lifecycle="running", is_active=True)
+    # Add a node with a second region so we have two distinct regions to sweep.
+    node_id = await _seed_node(pool, pool_id, terminating=False, state="ready")
+    async with pool.acquire() as c:
+        await c.execute(
+            "UPDATE compute_inventory SET metadata = metadata || $1::jsonb "
+            "WHERE id = $2",
+            '{"region": "ap-southeast-1"}', node_id,
+        )
+    try:
+        reaper = _reaper(pool)
+        call_count = 0
+
+        def _sweep_side_effect(region, aws_env):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("transient AWS error")
+            return []
+
+        sweep_mock = MagicMock(side_effect=_sweep_side_effect)
+        with patch(_SWEEP_BUILDERS_PATH, sweep_mock), \
+             patch(_RESOLVE_CREDS_PATH, new=AsyncMock(return_value=_DUMMY_AWS_ENV)):
+            # Must not raise; second region still attempted.
+            await reaper._reap_stale_builders()
+        # Both regions were attempted despite the first raising.
+        assert sweep_mock.call_count == 2
+    finally:
+        await _cleanup(pool, org_id=org_id, pool_id=pool_id, node_id=node_id)
+
+
+async def test_reaper_tick_once_calls_builder_sweep(pool):
+    """tick_once drives all three sweeps including the builder sweep."""
+    from unittest.mock import MagicMock, AsyncMock
+
+    org_id = await _seed_org(pool)
+    pool_id = await _seed_pool(pool, org_id, lifecycle="running", is_active=True)
+    try:
+        reaper = _reaper(pool)
+        sweep_mock = MagicMock(return_value=[])
+        with patch(_SWEEP_PATH, return_value=[]), \
+             patch(_SWEEP_BUILDERS_PATH, sweep_mock), \
+             patch(_RESOLVE_CREDS_PATH, new=AsyncMock(return_value=_DUMMY_AWS_ENV)):
+            await reaper.tick_once()
+        assert sweep_mock.called, "sweep_stale_builders not reached via tick_once"
+    finally:
+        await _cleanup(pool, org_id=org_id, pool_id=pool_id)
