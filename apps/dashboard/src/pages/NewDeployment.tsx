@@ -24,6 +24,7 @@ import {
 import { calculateCompatibility, fetchExternalRegistry, GPU_SPECS, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
+import { ConfigService } from "@/services/configService"
 
 // --- Constants ---
 
@@ -203,21 +204,14 @@ type State = {
   maxModelLen: string;
   gpuUtil: string;
   hfToken: string;
-  vllmImage: string;
-  cudaVersions: string[];
   selectedProvider: string;
   customProviderName: string;
   externalModelName: string;
   endpointUrl: string;
   apiKey: string;
-  // Advanced VLLM config
+  // vLLM runtime hints (used by compatibility widget "Apply Settings")
   dtype: string;
   enforceEager: boolean;
-  maxNumSeqs: string;
-  kvCacheDtype: string;
-  trustRemoteCode: boolean;
-  cudaModuleLoading: string;
-  nvidiaDisableCudaCompat: string;
   quantization: string;
   isAdvancedOpen: boolean;
   // Advanced Embedding config
@@ -230,6 +224,9 @@ type State = {
   trustRemoteCode: boolean;
   modelOffload: boolean;
   groupOffload: boolean;
+  // vLLM AMI + HF token dropdowns
+  selectedAmiId: string;
+  selectedHfTokenName: string;
 
   preflightStatus: 'idle' | 'checking' | 'passed' | 'failed';
   preflightErrors: Array<{ check: string; message: string; needs_hf_token: boolean }>;
@@ -292,21 +289,14 @@ const initialState: State = {
   maxModelLen: "4192",
   gpuUtil: "0.80",
   hfToken: "",
-  vllmImage: "docker.io/vllm/vllm-openai:v0.22.1",
-  cudaVersions: ["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"],
   selectedProvider: "",
   customProviderName: "",
   externalModelName: "",
   endpointUrl: "",
   apiKey: "",
-  // Advanced VLLM defaults
+  // vLLM runtime hints (used by compatibility widget "Apply Settings")
   dtype: "auto",
   enforceEager: true,
-  maxNumSeqs: "128",
-  kvCacheDtype: "auto",
-  trustRemoteCode: true,
-  cudaModuleLoading: "LAZY",
-  nvidiaDisableCudaCompat: "",
   quantization: "",
   isAdvancedOpen: false,
   // Advanced Embedding defaults
@@ -316,7 +306,12 @@ const initialState: State = {
   requiredRam: "4096",
   gpuEnabled: false,
   // InferaDiffusion defaults
+  trustRemoteCode: true,
   modelOffload: false,
+  groupOffload: false,
+  // vLLM AMI + HF token dropdowns
+  selectedAmiId: "",
+  selectedHfTokenName: "",
 
   preflightStatus: 'idle',
   preflightErrors: [],
@@ -614,12 +609,14 @@ export default function NewDeployment() {
     mode, step, deploymentType, modelType, instanceName, selectedEngine,
     selectedPool, userPools, selectedHFModel, jobDescription, modelId,
     gitRepo, trainingScript, datasetUrl, baseModel, batchSize,
-    maxSequenceLength, maxModelLen, gpuUtil, hfToken, vllmImage,
+    maxSequenceLength, maxModelLen, gpuUtil, hfToken,
     selectedProvider, customProviderName, externalModelName, endpointUrl, apiKey,
-    // Advanced VLLM config
-    dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions,
+    // vLLM runtime hints
+    dtype, enforceEager, quantization,
     // Advanced Embedding config
-    maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled
+    maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
+    // vLLM AMI + HF token dropdowns
+    selectedAmiId, selectedHfTokenName,
   } = state;
 
   const externalModelType = modelType === "embedding" ? "embedding" : modelType === "image_generation" ? "image_generation" : "inference"
@@ -690,59 +687,14 @@ export default function NewDeployment() {
   // Split vLLM Logic into dedicated function to avoid multiple setState calls in one effect
   const buildJobSpec = useCallback(() => {
     if (selectedEngine === "vllm" && modelType === "inference") {
-      const finalMaxNumSeqs = maxNumSeqs || "128";
-      const finalMaxModelLen = maxModelLen || "4192";
-      const finalGpuUtil = gpuUtil || "0.80";
       const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
-
-      const cmd = [
-        finalModelId,
-        "--served-model-name", finalModelId,
-        "--port", "9000",
-        "--max-model-len", finalMaxModelLen,
-        "--gpu-memory-utilization", finalGpuUtil,
-        "--max-num-seqs", finalMaxNumSeqs,
-        "--dtype", dtype,
-      ]
-
-      if (trustRemoteCode) {
-        cmd.push("--trust-remote-code")
-      }
-
-      cmd.push("--kv-cache-dtype", kvCacheDtype || "auto")
-
-      if (enforceEager) {
-        cmd.push("--enforce-eager")
-      }
-
-      if (quantization) {
-        cmd.push("--quantization", quantization)
-      }
-
-      const env: Record<string, string> = {}
-      if (hfToken) env["HF_TOKEN"] = hfToken
-      if (cudaModuleLoading) env["CUDA_MODULE_LOADING"] = cudaModuleLoading
-      if (nvidiaDisableCudaCompat) env["NVIDIA_DISABLE_CUDA_COMPAT"] = nvidiaDisableCudaCompat
-
+      // Image, CUDA requirements, HF_TOKEN, and advanced flags are supplied by
+      // the baked engine AMI and the backend (hf_token_name resolution).
       const spec = {
         model_id: finalModelId,
         engine: "vllm",
-        image: vllmImage,
-        required_cuda: cudaVersions.length > 0 ? cudaVersions : undefined,
-        cmd,
-        env,
         expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
         gpu: true,
-        gpu_util: parseFloat(finalGpuUtil) || 0.80,
-        max_model_len: parseInt(finalMaxModelLen) || 4192,
-        dtype: dtype,
-        enforce_eager: enforceEager,
-        max_num_seqs: parseInt(finalMaxNumSeqs) || 128,
-        kv_cache_dtype: kvCacheDtype,
-        trust_remote_code: trustRemoteCode,
-        cuda_module_loading: cudaModuleLoading,
-        nvidia_disable_cuda_compat: nvidiaDisableCudaCompat,
-        quantization: quantization || null,
       }
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "ollama") {
@@ -816,7 +768,7 @@ export default function NewDeployment() {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, maxModelLen, gpuUtil, hfToken, vllmImage, modelType, dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload])
+  }, [selectedEngine, modelId, modelType, hfToken, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -845,18 +797,17 @@ export default function NewDeployment() {
     }
   })
 
-  const runPreflight = async (modelId: string, engine: string, token?: string): Promise<boolean> => {
+  const runPreflight = async (modelId: string, engine: string, token?: string, tokenName?: string): Promise<boolean> => {
     dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'checking' });
     dispatch({ type: 'SET_FIELD', field: 'preflightErrors', value: [] });
     try {
-      const parsedConfig = (() => { try { return JSON.parse(jobDescription) } catch { return {} } })();
       const { data } = await computeApi.post("/deployment/preflight", {
-        model_id: modelId, engine, hf_token: token || undefined,
+        model_id: modelId, engine,
+        hf_token: token || undefined,
+        hf_token_name: tokenName || undefined,
         gpu_per_replica: 1,
         pool_id: selectedPool?.pool_id || undefined,
         model_type: modelType,
-        max_model_len: parseInt(maxModelLen) || undefined,
-        image: (parsedConfig as any)?.image || undefined,
       });
       if (data.ready) {
         dispatch({ type: 'SET_FIELD', field: 'preflightStatus', value: 'passed' });
@@ -876,24 +827,28 @@ export default function NewDeployment() {
   const handleManagedLaunch = async () => {
     if (!instanceName) return toast.error("Please name your deployment")
     if (!selectedPool) return toast.error("Select a compute node")
+    if (selectedEngine === "vllm" && !selectedAmiId) return toast.error("Select an engine AMI")
     const targetOrgId = user?.org_id || organizations?.[0]?.id;
     if (!targetOrgId) return toast.error("Organization context missing. Please reload.")
 
     let config = {}
     try { config = JSON.parse(jobDescription) } catch (e) { return toast.error("Invalid Job JSON specification") }
 
-    // Run preflight checks
+    // Run preflight checks — forward named HF token for vLLM; raw hfToken for other engines
     const preflightOk = await runPreflight(
       modelId || (config as any).model_id || "",
       selectedEngine,
-      hfToken || undefined,
+      selectedEngine === "vllm" ? undefined : (hfToken || undefined),
+      selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
     );
     if (!preflightOk) return;
 
     const payload = {
       model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
-      owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config
+      owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
+      ami_id: selectedEngine === "vllm" ? selectedAmiId : undefined,
+      hf_token_name: selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
     }
     createMutation.mutate(payload)
   }
@@ -959,7 +914,7 @@ export default function NewDeployment() {
 // --- Sub-Components ---
 
 function ManagedFlow({ state, dispatch, onLaunch, isPending, externalRegistry }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean; externalRegistry?: ExternalModel[] }) {
-  const { step, deploymentType, modelType, instanceName, selectedEngine, selectedPool, userPools, selectedHFModel, jobDescription, modelId, gitRepo, trainingScript, datasetUrl, baseModel, batchSize, maxSequenceLength, maxModelLen, gpuUtil, hfToken, vllmImage } = state;
+  const { step, deploymentType, modelType, instanceName, selectedEngine, selectedPool, userPools, selectedHFModel, jobDescription, modelId, gitRepo, trainingScript, datasetUrl, baseModel, batchSize, maxSequenceLength, maxModelLen, gpuUtil, hfToken } = state;
 
   return (
     <>
@@ -1087,12 +1042,12 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
 function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean; externalRegistry?: ExternalModel[] }) {
   const {
     deploymentType, modelType, instanceName, selectedEngine, selectedHFModel, modelId,
-    vllmImage, maxModelLen, gpuUtil, hfToken, batchSize, maxSequenceLength, gitRepo,
-    trainingScript, datasetUrl, baseModel, dtype, enforceEager, maxNumSeqs,
-    kvCacheDtype, trustRemoteCode, cudaModuleLoading,
-    nvidiaDisableCudaCompat, quantization, isAdvancedOpen, cudaVersions,
+    maxModelLen, gpuUtil, hfToken, batchSize, maxSequenceLength, gitRepo,
+    trainingScript, datasetUrl, baseModel, dtype, enforceEager, quantization,
+    isAdvancedOpen,
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
-    selectedPool, preflightStatus, preflightErrors
+    selectedPool, preflightStatus, preflightErrors,
+    selectedAmiId, selectedHfTokenName,
   } = state;
 
   const { data: hfConfig } = useQuery({
@@ -1100,6 +1055,27 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     queryFn: () => getModelConfig(modelId),
     enabled: !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
     staleTime: 1000 * 60 * 60 // 1 hour
+  });
+
+  // Engine AMI list — region derived from pool's region_constraint or metadata
+  const amiRegion: string =
+    selectedPool?.region_constraint?.[0] ||
+    selectedPool?.metadata?.region ||
+    "us-east-1";
+
+  const { data: engineAmis = [], isLoading: amisLoading } = useQuery({
+    queryKey: ['engine-amis', amiRegion],
+    queryFn: () => ConfigService.listEngineAmis(amiRegion),
+    enabled: selectedEngine === "vllm",
+    staleTime: 1000 * 60 * 5,
+  });
+
+  // HF token names list
+  const { data: hfTokenNames = [] } = useQuery({
+    queryKey: ['hf-token-names'],
+    queryFn: () => ConfigService.listHfTokenNames(),
+    enabled: selectedEngine === "vllm",
+    staleTime: 1000 * 60 * 5,
   });
 
   // Extract full architecture details from HF config
@@ -1281,133 +1257,58 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
       {selectedEngine === "vllm" && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">vLLM Configuration</h4></div>
-          <div><label htmlFor="vllmImage" className="block text-xs font-medium text-muted-foreground mb-1.5">vLLM Image</label><input id="vllmImage" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
+
+          {/* Engine AMI dropdown (required) */}
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Required CUDA Versions</label>
-            <div className="flex flex-wrap gap-2">
-              {["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"].map(v => (
-                <label key={v} className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium cursor-pointer transition-colors", cudaVersions.includes(v) ? "bg-ember-50 border-ember-300 text-ember-700 dark:bg-ember-900/20 dark:border-ember-700 dark:text-ember-400" : "bg-card border-border text-muted-foreground dark:bg-card dark:border-border dark:text-muted-foreground hover:border-border dark:hover:border-border")}>
-                  <input
-                    type="checkbox"
-                    checked={cudaVersions.includes(v)}
-                    onChange={e => {
-                      const updated = e.target.checked
-                        ? [...cudaVersions, v].sort()
-                        : cudaVersions.filter(c => c !== v);
-                      dispatch({ type: 'SET_FIELD', field: 'cudaVersions', value: updated });
-                    }}
-                    className="sr-only"
-                  />
-                  {v}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label htmlFor="maxModelLen" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Model Length</label><input id="maxModelLen" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
-            <div><label htmlFor="gpuUtil" className="block text-xs font-medium text-muted-foreground mb-1.5">GPU Memory Util</label><input id="gpuUtil" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" /></div>
-          </div>
-          <div><label htmlFor="hfTokenVllm" className="block text-xs font-medium text-muted-foreground mb-1.5">HF Token</label><input id="hfTokenVllm" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="hf_..." /></div>
-
-
-
-          {/* Advanced Configuration */}
-          <div className="border-t border-border pt-4 mt-4">
-            <button
-              type="button"
-              onClick={() => dispatch({ type: 'SET_FIELD', field: 'isAdvancedOpen', value: !isAdvancedOpen })}
-              className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-ember-600 dark:hover:text-ember-400 transition-colors"
-            >
-              {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              Advanced Configuration
-            </button>
-
-            {isAdvancedOpen && (
-              <div className="mt-4 grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="dtype" className="block text-xs font-medium text-muted-foreground mb-1.5">Data Type (dtype)</label>
-                  <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
-                    <option value="auto">auto</option>
-                    <option value="float16">float16</option>
-                    <option value="bfloat16">bfloat16</option>
-                    <option value="float32">float32</option>
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="kvCacheDtype" className="block text-xs font-medium text-muted-foreground mb-1.5">KV Cache dtype</label>
-                  <select id="kvCacheDtype" value={kvCacheDtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'kvCacheDtype', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
-                    <option value="auto">auto</option>
-                    <option value="fp8">fp8</option>
-                    <option value="fp8_e4m3">fp8_e4m3</option>
-                    <option value="fp8_e5m2">fp8_e5m2</option>
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="maxNumSeqs" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Num Sequences</label>
-                  <input id="maxNumSeqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
-                </div>
-                <div>
-                  <label htmlFor="quantization" className="block text-xs font-medium text-muted-foreground mb-1.5">Quantization</label>
-                  <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
-                    <option value="">None</option>
-                    <option value="awq">AWQ</option>
-                    <option value="awq_marlin">AWQ Marlin</option>
-                    <option value="gptq">GPTQ</option>
-                    <option value="gptq_marlin">GPTQ Marlin</option>
-                    <option value="gptq_marlin_24">GPTQ Marlin 24</option>
-                    <option value="marlin">Marlin</option>
-                    <option value="fp8">FP8</option>
-                    <option value="bitsandbytes">BitsAndBytes</option>
-                    <option value="gguf">GGUF</option>
-                    <option value="deepspeedfp">DeepSpeedFP</option>
-                    <option value="eetq">EETQ</option>
-                    <option value="hqq">HQQ</option>
-                    <option value="compressed-tensors">Compressed Tensors</option>
-                    <option value="experts_int8">Experts INT8</option>
-                    <option value="squeezellm">SqueezeLLM</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="trustRemoteCode"
-                    type="checkbox"
-                    checked={trustRemoteCode}
-                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })}
-                    className="w-4 h-4 rounded border-border"
-                  />
-                  <label htmlFor="trustRemoteCode" className="text-xs font-medium text-muted-foreground">Trust Remote Code</label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="enforceEager"
-                    type="checkbox"
-                    checked={enforceEager}
-                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: e.target.checked })}
-                    className="w-4 h-4 rounded border-border"
-                  />
-                  <label htmlFor="enforceEager" className="text-xs font-medium text-muted-foreground">Enforce Eager Mode</label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="cudaModuleLoading"
-                    type="checkbox"
-                    checked={!!cudaModuleLoading}
-                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'cudaModuleLoading', value: e.target.checked ? "LAZY" : "" })}
-                    className="w-4 h-4 rounded border-border"
-                  />
-                  <label htmlFor="cudaModuleLoading" className="text-xs font-medium text-muted-foreground">CUDA Module Loading: LAZY</label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="nvidiaDisableCudaCompat"
-                    type="checkbox"
-                    checked={!!nvidiaDisableCudaCompat}
-                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'nvidiaDisableCudaCompat', value: e.target.checked ? "1" : "" })}
-                    className="w-4 h-4 rounded border-border"
-                  />
-                  <label htmlFor="nvidiaDisableCudaCompat" className="text-xs font-medium text-muted-foreground">NVIDIA Disable CUDA Compat</label>
-                </div>
+            <label htmlFor="engineAmi" className="block text-xs font-medium text-muted-foreground mb-1.5">
+              Engine AMI <span className="text-rose-500">*</span>
+            </label>
+            {amisLoading ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                <Loader2 className="w-3 h-3 animate-spin" /> Loading AMIs for {amiRegion}…
               </div>
+            ) : engineAmis.length === 0 ? (
+              <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                No engine AMIs in {amiRegion} — bake one first (Settings → Providers → AWS).
+              </div>
+            ) : (
+              <select
+                id="engineAmi"
+                value={selectedAmiId}
+                onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedAmiId', value: e.target.value })}
+                className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
+              >
+                <option value="">— select an AMI —</option>
+                {engineAmis.map(ami => (
+                  <option key={ami.ami_id} value={ami.ami_id}>
+                    {ami.ami_id}{ami.vllm_tag ? ` — vLLM ${ami.vllm_tag}` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* HF token name dropdown (optional) */}
+          <div>
+            <label htmlFor="hfTokenName" className="block text-xs font-medium text-muted-foreground mb-1.5">
+              HuggingFace Token <span className="text-muted-foreground/60">(optional — required for gated models)</span>
+            </label>
+            <select
+              id="hfTokenName"
+              value={selectedHfTokenName}
+              onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedHfTokenName', value: e.target.value })}
+              className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
+            >
+              <option value="">None</option>
+              {hfTokenNames.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+            {hfTokenNames.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                No saved tokens — add one at Settings → Providers → HuggingFace.
+              </p>
             )}
           </div>
         </div>

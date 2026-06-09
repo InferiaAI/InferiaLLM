@@ -133,7 +133,7 @@ async def test_coldstart_non_worker_pool_creates_placeholder_and_enqueues_one_jo
     # instance catalog. We only care that exactly one job is enqueued.
     fake_spec = {"provider": "aws", "instance_type": "g6.xlarge"}
 
-    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id):
+    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
         return fake_spec
 
     monkeypatch.setattr(

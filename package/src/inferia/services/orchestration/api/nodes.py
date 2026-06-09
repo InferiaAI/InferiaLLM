@@ -582,7 +582,56 @@ async def get_ec2_console(
         return EC2ConsoleResponse(
             logs=[], fetched_at=datetime.now(timezone.utc).isoformat(),
         )
-    result = await adapter.get_logs(provider_instance_id=instance_id)
+
+    # Resolve the node's actual AWS region so get_logs scopes the boto3
+    # EC2 client correctly (get_console_output is region-scoped).
+    # Priority: job spec → job pulumi_stack_outputs → node metadata → pool
+    # region_constraint[0].  Any failure in the chain is silently skipped;
+    # get_logs falls back to us-east-1 when region=None is passed.
+    node_region: str | None = None
+    try:
+        job = None
+        if _deps.provisioning_repo is not None and hasattr(
+            _deps.provisioning_repo, "get_by_node"
+        ):
+            try:
+                node_uuid = uuid.UUID(str(node_id))
+            except (ValueError, TypeError):
+                node_uuid = None
+            if node_uuid is not None:
+                job = await _deps.provisioning_repo.get_by_node(node_id=node_uuid)
+        if job is not None:
+            spec = getattr(job, "spec", None) or {}
+            outs = getattr(job, "pulumi_stack_outputs", None) or {}
+            node_region = spec.get("region") or outs.get("region") or None
+        if not node_region:
+            metadata = row.get("metadata") or {}
+            if isinstance(metadata, str):
+                import json as _json
+                try:
+                    metadata = _json.loads(metadata)
+                except Exception:
+                    metadata = {}
+            node_region = (metadata or {}).get("region") or None
+        if not node_region:
+            pool_id = row.get("pool_id")
+            if pool_id and _deps.pool_repo is not None and hasattr(
+                _deps.pool_repo, "get"
+            ):
+                try:
+                    pool = await _deps.pool_repo.get(pool_id)
+                    if pool:
+                        rc = pool.get("region_constraint") if hasattr(pool, "get") else (
+                            getattr(pool, "region_constraint", None)
+                        )
+                        if rc:
+                            node_region = rc[0] if isinstance(rc, (list, tuple)) and rc else None
+                except Exception:
+                    pass
+    except Exception:
+        node_region = None
+
+    result = await adapter.get_logs(provider_instance_id=instance_id, region=node_region)
     return EC2ConsoleResponse(
         logs=result.get("logs", []),
         fetched_at=datetime.now(timezone.utc).isoformat(),

@@ -520,6 +520,111 @@ async def test_get_logs_error_returns_empty(fake_db, aws_config, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Region-aware get_logs: the EC2 client must be built with the node's actual
+# region, not the hardcoded us-east-1 fallback from resolve_aws_env.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_logs_uses_explicit_region_for_ec2_client(fake_db, aws_config, tmp_path):
+    """When a node region is passed, boto3.client is called with that region,
+    NOT the hardcoded us-east-1 default from resolve_aws_env."""
+    mock_ec2 = MagicMock()
+    mock_ec2.get_console_output.return_value = {"Output": "boot log"}
+    captured: dict = {}
+
+    def fake_boto3_client(service, **kw):
+        captured["region"] = kw.get("region_name")
+        return mock_ec2
+
+    with patch("boto3.client", side_effect=fake_boto3_client), patch(
+        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
+        "load_providers_config",
+        return_value=aws_config,
+    ):
+        adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
+        logs = await adapter.get_logs(provider_instance_id="i-eu", region="eu-west-1")
+
+    assert captured["region"] == "eu-west-1", (
+        f"Expected eu-west-1, got {captured['region']!r} — region not passed to EC2 client"
+    )
+    assert logs == {"logs": ["boot log"]}
+
+
+@pytest.mark.asyncio
+async def test_get_logs_falls_back_to_us_east_1_when_region_not_passed(
+    fake_db, aws_config, tmp_path
+):
+    """When no region is passed (node region unresolvable), the EC2 client
+    falls back to us-east-1 — the hardcoded default from resolve_aws_env."""
+    mock_ec2 = MagicMock()
+    mock_ec2.get_console_output.return_value = {"Output": ""}
+    captured: dict = {}
+
+    def fake_boto3_client(service, **kw):
+        captured["region"] = kw.get("region_name")
+        return mock_ec2
+
+    with patch("boto3.client", side_effect=fake_boto3_client), patch(
+        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
+        "load_providers_config",
+        return_value=aws_config,
+    ):
+        adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
+        await adapter.get_logs(provider_instance_id="i-no-region")
+
+    assert captured["region"] == "us-east-1", (
+        f"Expected us-east-1 fallback, got {captured['region']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_logs_region_none_falls_back_to_us_east_1(fake_db, aws_config, tmp_path):
+    """Explicitly passing region=None falls back to us-east-1, identical to
+    not passing the argument (regression guard for the optional parameter)."""
+    mock_ec2 = MagicMock()
+    mock_ec2.get_console_output.return_value = {"Output": ""}
+    captured: dict = {}
+
+    def fake_boto3_client(service, **kw):
+        captured["region"] = kw.get("region_name")
+        return mock_ec2
+
+    with patch("boto3.client", side_effect=fake_boto3_client), patch(
+        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
+        "load_providers_config",
+        return_value=aws_config,
+    ):
+        adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
+        await adapter.get_logs(provider_instance_id="i-none", region=None)
+
+    assert captured["region"] == "us-east-1"
+
+
+@pytest.mark.asyncio
+async def test_get_logs_non_us_east_region_is_not_overridden(fake_db, aws_config, tmp_path):
+    """A node in ap-southeast-1 gets ap-southeast-1, NOT us-east-1."""
+    mock_ec2 = MagicMock()
+    mock_ec2.get_console_output.return_value = {"Output": "ap-log"}
+    captured: dict = {}
+
+    def fake_boto3_client(service, **kw):
+        captured["region"] = kw.get("region_name")
+        return mock_ec2
+
+    with patch("boto3.client", side_effect=fake_boto3_client), patch(
+        "inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter."
+        "load_providers_config",
+        return_value=aws_config,
+    ):
+        adapter = PulumiAWSAdapter(db=fake_db, state_dir=str(tmp_path))
+        logs = await adapter.get_logs(provider_instance_id="i-ap", region="ap-southeast-1")
+
+    assert captured["region"] == "ap-southeast-1"
+    assert logs == {"logs": ["ap-log"]}
+
+
+# ---------------------------------------------------------------------------
 # Stale pulumi-lock recovery: a prior pulumi process dying mid-run under host
 # memory pressure leaves a file-backend lock. The next reconciler retry hits a
 # ConcurrentUpdateError. Both run_pulumi_up_sync and run_pulumi_destroy_sync

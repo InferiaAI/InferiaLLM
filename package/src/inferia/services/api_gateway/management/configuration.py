@@ -47,6 +47,7 @@ from inferia.services.api_gateway.config import (
     DePINConfig,
     VectorDBConfig,
     HuggingFaceConfig,
+    HFTokenEntry,
 )
 
 router = APIRouter(tags=["Configuration"])
@@ -182,6 +183,24 @@ def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
             hf_in["token"] = hf_ex["token"]
         else:
             hf_in.pop("token", None)
+
+    # HuggingFace named tokens list.
+    in_tokens = hf_in.get("tokens")
+    if isinstance(in_tokens, list):
+        ex_by_name = {e.get("name"): e for e in (hf_ex.get("tokens") or []) if isinstance(e, dict)}
+        kept = []
+        for ent in in_tokens:
+            if not isinstance(ent, dict):
+                continue
+            if _is_masked(ent.get("token")):
+                prior = ex_by_name.get(ent.get("name"))
+                if prior and prior.get("token"):
+                    ent = {**ent, "token": prior["token"]}
+                else:
+                    continue
+            kept.append(ent)
+        hf_in["tokens"] = kept
+
     if hf_in:
         out["huggingface"] = hf_in
 
@@ -225,6 +244,9 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     # HuggingFace — nested under .huggingface
     if masked.huggingface.token:
         masked.huggingface.token = "********"
+    for entry in masked.huggingface.tokens:
+        if entry.token:
+            entry.token = "********"
 
     return masked
 
@@ -530,6 +552,31 @@ def _get_nosana_credentials_from_config() -> List[ProviderCredential]:
             )
 
     return credentials
+
+
+class HFTokenNamesResponse(BaseModel):
+    names: List[str]
+
+
+@router.get("/config/providers/huggingface/token-names", response_model=HFTokenNamesResponse)
+async def list_hf_token_names(request: Request):
+    """
+    Return the names of active HuggingFace tokens.
+
+    Returns names only (no values) so the deploy form can populate a
+    dropdown without exposing secrets.  Requires ``deployment:list`` so
+    any deployer (not just org admins) can fetch the list.
+    """
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
+
+    hf = settings.providers.huggingface
+    names = [
+        t.name
+        for t in hf.tokens
+        if getattr(t, "is_active", True) and t.name
+    ]
+    return HFTokenNamesResponse(names=names)
 
 
 @router.get(

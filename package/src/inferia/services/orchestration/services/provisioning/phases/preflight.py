@@ -156,13 +156,17 @@ class PreflightHandler:
         if sg := spec.get("security_group_id"):
             verify_security_group_exists(region=region, sg_id=sg, creds=creds)
 
-        # 8. AMI resolves.
-        try:
-            ami = resolve_ami(region=region, instance_class=instance_class, creds=creds)
-        except Exception as e:
-            raise AMINotFoundError(
-                f"no AMI available for {instance_class} in {region}: {e}"
-            ) from e
+        # 8. AMI resolves (explicit spec.ami_id wins; fallback to SSM lookup).
+        explicit_ami = spec.get("ami_id")
+        if explicit_ami:
+            ami = explicit_ami
+        else:
+            try:
+                ami = resolve_ami(region=region, instance_class=instance_class, creds=creds)
+            except Exception as e:
+                raise AMINotFoundError(
+                    f"no AMI available for {instance_class} in {region}: {e}"
+                ) from e
         await ctx.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
             status="log", message=f"AMI resolved: {ami}",

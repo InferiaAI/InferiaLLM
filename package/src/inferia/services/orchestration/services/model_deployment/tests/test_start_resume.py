@@ -461,7 +461,7 @@ async def test_resume_impl_unbinds_and_places(monkeypatch):
     node_id = uuid4()
     org_id = str(uuid4())
 
-    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id):
+    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
         return {"provider": "aws", "instance_type": "g6.xlarge"}
 
     monkeypatch.setattr(
@@ -549,3 +549,341 @@ async def test_resume_impl_unbinds_and_places(monkeypatch):
 
     # Legacy worker event never fired.
     assert "model.deploy.requested" not in event_bus.topics()
+
+
+async def test_resume_reads_ami_id_from_configuration(monkeypatch):
+    """_start_deployment_impl reads the persisted ami_id from the deployment
+    row's configuration and passes it to place_and_provision (via
+    _build_provisioning_spec's ami_id kwarg).
+
+    Guards against AsyncMock-blindness: we capture the ami_id kwarg passed to
+    _build_provisioning_spec (which place_and_provision calls internally) and
+    assert it equals the value stored in configuration, not None.
+    """
+    from inferia.services.orchestration.services.model_deployment.pool_placer import (
+        PoolPlacer, ColdStart,
+    )
+    from inferia.services.orchestration.repositories.inventory_repo import (
+        InventoryRepository,
+    )
+    from inferia.services.orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+    from inferia.services.orchestration.repositories.pool_repo import (
+        ComputePoolRepository,
+    )
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+    org_id = str(uuid4())
+
+    # Track ami_id values that reach _build_provisioning_spec
+    captured_ami_ids: list[str | None] = []
+
+    async def _spy_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
+        captured_ami_ids.append(ami_id)
+        return {"provider": "aws", "instance_type": "g6.xlarge"}
+
+    monkeypatch.setattr(
+        deployment_server, "_build_provisioning_spec", _spy_build_spec
+    )
+
+    # --- transaction-capable conn / db_pool (mirrors test_resume_impl_unbinds_and_places)
+    class _TxCtx:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _AcquireCtx:
+        def __init__(self, conn):
+            self._conn = conn
+
+        async def __aenter__(self):
+            return self._conn
+
+        async def __aexit__(self, *exc):
+            return False
+
+    conn = MagicMock(name="conn")
+    conn.transaction = MagicMock(return_value=_TxCtx())
+    db_pool = MagicMock(name="db_pool")
+    db_pool.acquire = MagicMock(return_value=_AcquireCtx(conn))
+
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = ColdStart(gpu_total_per_node=1, provider="aws")
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.create_placeholder.return_value = node_id
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+
+    # Deployment row carries ami_id in configuration (persisted by /deploy)
+    persisted_ami = "ami-resume-y"
+    deploys.get.return_value = {
+        "deployment_id": deploy_id,
+        "state": "TERMINATED",
+        "configuration": {"model": {"artifact_uri": "hf://m"}, "ami_id": persisted_ami},
+        "pool_id": pool_id,
+        "target_pool_id": pool_id,
+        "target_node_id": uuid4(),  # stale
+        "gpu_per_replica": 1,
+        "org_id": org_id,
+        "engine": "vllm",
+        "model_name": "m",
+        "inference_model": None,
+    }
+    pool_repo = AsyncMock(spec=ComputePoolRepository)
+    pool_repo.get.return_value = {
+        "id": pool_id,
+        "lifecycle_state": "running",
+        "metadata": {},
+        "allowed_gpu_types": ["g6.xlarge"],
+        "region_constraint": ["us-east-1"],
+        "provider_pool_id": "aws/g6.xlarge",
+    }
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    controller = AsyncMock(spec=WorkerController)
+
+    body, status = await deployment_server._start_deployment_impl(
+        deployment_id=str(deploy_id),
+        db_pool=db_pool,
+        controller=controller,
+        pool_repo=pool_repo,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    assert status in (200, 202)
+    assert body["state"] in ("PENDING_NODE", "DEPLOYING")
+
+    # The persisted ami_id must have been forwarded to _build_provisioning_spec
+    assert len(captured_ami_ids) >= 1, "_build_provisioning_spec was never called"
+    assert captured_ami_ids[0] == persisted_ami, (
+        f"Expected ami_id={persisted_ami!r} forwarded on resume, "
+        f"got {captured_ami_ids[0]!r}"
+    )
+
+
+async def test_resume_ami_id_from_configuration_json_string(monkeypatch):
+    """configuration stored as a JSON string (asyncpg jsonb->str) is decoded
+    and ami_id extracted correctly on resume."""
+    from inferia.services.orchestration.services.model_deployment.pool_placer import (
+        PoolPlacer, ColdStart,
+    )
+    from inferia.services.orchestration.repositories.inventory_repo import (
+        InventoryRepository,
+    )
+    from inferia.services.orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+    from inferia.services.orchestration.repositories.pool_repo import (
+        ComputePoolRepository,
+    )
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+    org_id = str(uuid4())
+
+    captured_ami_ids: list[str | None] = []
+
+    async def _spy_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
+        captured_ami_ids.append(ami_id)
+        return {"provider": "aws", "instance_type": "g6.xlarge"}
+
+    monkeypatch.setattr(
+        deployment_server, "_build_provisioning_spec", _spy_build_spec
+    )
+
+    class _TxCtx:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _AcquireCtx:
+        def __init__(self, conn):
+            self._conn = conn
+
+        async def __aenter__(self):
+            return self._conn
+
+        async def __aexit__(self, *exc):
+            return False
+
+    conn = MagicMock(name="conn")
+    conn.transaction = MagicMock(return_value=_TxCtx())
+    db_pool = MagicMock(name="db_pool")
+    db_pool.acquire = MagicMock(return_value=_AcquireCtx(conn))
+
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = ColdStart(gpu_total_per_node=1, provider="aws")
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.create_placeholder.return_value = node_id
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+
+    # configuration arrives as a JSON string (asyncpg jsonb->str scenario)
+    persisted_ami = "ami-str-encoded-z"
+    deploys.get.return_value = {
+        "deployment_id": deploy_id,
+        "state": "FAILED",
+        "configuration": json.dumps({
+            "model": {"artifact_uri": "hf://m"},
+            "ami_id": persisted_ami,
+        }),
+        "pool_id": pool_id,
+        "target_pool_id": pool_id,
+        "target_node_id": None,
+        "gpu_per_replica": 1,
+        "org_id": org_id,
+        "engine": "vllm",
+        "model_name": "m",
+        "inference_model": None,
+    }
+    pool_repo = AsyncMock(spec=ComputePoolRepository)
+    pool_repo.get.return_value = {
+        "id": pool_id,
+        "lifecycle_state": "running",
+        "metadata": {},
+        "allowed_gpu_types": ["g6.xlarge"],
+        "region_constraint": ["us-east-1"],
+        "provider_pool_id": "aws/g6.xlarge",
+    }
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    controller = AsyncMock(spec=WorkerController)
+
+    body, status = await deployment_server._start_deployment_impl(
+        deployment_id=str(deploy_id),
+        db_pool=db_pool,
+        controller=controller,
+        pool_repo=pool_repo,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    assert status in (200, 202)
+    assert len(captured_ami_ids) >= 1
+    assert captured_ami_ids[0] == persisted_ami, (
+        f"Expected ami_id={persisted_ami!r} from JSON-string configuration, "
+        f"got {captured_ami_ids[0]!r}"
+    )
+
+
+async def test_resume_no_ami_id_in_configuration_passes_none(monkeypatch):
+    """When configuration has no ami_id (older rows, non-vLLM engines),
+    place_and_provision is called with ami_id=None so resolve_ami's auto-pick
+    still applies — no regression."""
+    from inferia.services.orchestration.services.model_deployment.pool_placer import (
+        PoolPlacer, ColdStart,
+    )
+    from inferia.services.orchestration.repositories.inventory_repo import (
+        InventoryRepository,
+    )
+    from inferia.services.orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+    from inferia.services.orchestration.repositories.pool_repo import (
+        ComputePoolRepository,
+    )
+    from inferia.services.orchestration.services.provisioning.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+    org_id = str(uuid4())
+
+    captured_ami_ids: list[str | None] = []
+
+    async def _spy_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
+        captured_ami_ids.append(ami_id)
+        return {"provider": "aws", "instance_type": "g6.xlarge"}
+
+    monkeypatch.setattr(
+        deployment_server, "_build_provisioning_spec", _spy_build_spec
+    )
+
+    class _TxCtx:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _AcquireCtx:
+        def __init__(self, conn):
+            self._conn = conn
+
+        async def __aenter__(self):
+            return self._conn
+
+        async def __aexit__(self, *exc):
+            return False
+
+    conn = MagicMock(name="conn")
+    conn.transaction = MagicMock(return_value=_TxCtx())
+    db_pool = MagicMock(name="db_pool")
+    db_pool.acquire = MagicMock(return_value=_AcquireCtx(conn))
+
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = ColdStart(gpu_total_per_node=1, provider="aws")
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.create_placeholder.return_value = node_id
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+
+    # configuration has no ami_id key (older row / ollama / non-vLLM)
+    deploys.get.return_value = {
+        "deployment_id": deploy_id,
+        "state": "STOPPED",
+        "configuration": {"model": {"artifact_uri": "hf://m"}},
+        "pool_id": pool_id,
+        "target_pool_id": pool_id,
+        "target_node_id": None,
+        "gpu_per_replica": 1,
+        "org_id": org_id,
+        "engine": "ollama",
+        "model_name": "m",
+        "inference_model": None,
+    }
+    pool_repo = AsyncMock(spec=ComputePoolRepository)
+    pool_repo.get.return_value = {
+        "id": pool_id,
+        "lifecycle_state": "running",
+        "metadata": {},
+        "allowed_gpu_types": ["g6.xlarge"],
+        "region_constraint": ["us-east-1"],
+        "provider_pool_id": "aws/g6.xlarge",
+    }
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    controller = AsyncMock(spec=WorkerController)
+
+    body, status = await deployment_server._start_deployment_impl(
+        deployment_id=str(deploy_id),
+        db_pool=db_pool,
+        controller=controller,
+        pool_repo=pool_repo,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    assert status in (200, 202)
+    # ami_id=None must be passed — no regression for non-vLLM or older rows
+    assert len(captured_ami_ids) >= 1
+    assert captured_ami_ids[0] is None, (
+        f"Expected ami_id=None for row without ami_id, got {captured_ami_ids[0]!r}"
+    )
