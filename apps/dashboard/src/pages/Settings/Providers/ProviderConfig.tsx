@@ -3,6 +3,7 @@ import { useEffect, useReducer } from "react";
 import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
 import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
+import { EngineAmiSection } from "./EngineAmiSection";
 
 // Small inline "where to find" hint rendered below a credential field
 // label. The HelpCircle icon plus a one-line writeup tells the user
@@ -345,6 +346,8 @@ export default function ProviderConfigPage() {
                     </form>
                 )}
             </div>
+
+            {providerId === "aws" && <EngineAmiSection />}
 
             {showAddKeyModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
