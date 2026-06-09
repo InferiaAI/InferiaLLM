@@ -3,7 +3,12 @@ import { authProvider, isExternalAuthMode } from "@/lib/authMode";
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  delete (window as unknown as { __RUNTIME_CONFIG__?: unknown }).__RUNTIME_CONFIG__;
 });
+
+function setRuntimeConfig(cfg: Record<string, unknown>): void {
+  (window as unknown as { __RUNTIME_CONFIG__?: unknown }).__RUNTIME_CONFIG__ = cfg;
+}
 
 describe("authProvider", () => {
   it("returns the VITE_AUTH_PROVIDER value when set", () => {
@@ -15,6 +20,40 @@ describe("authProvider", () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "");
     // Empty string is falsy so the || "local" fallback fires.
     expect(authProvider()).toBe("local");
+  });
+
+  it("prefers window.__RUNTIME_CONFIG__.AUTH_PROVIDER over the baked env", () => {
+    // Build baked 'local' but the runtime config (write-dashboard-config) says
+    // inferiaauth — the runtime value must win so one image serves any mode.
+    vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    setRuntimeConfig({ AUTH_PROVIDER: "inferiaauth" });
+    expect(authProvider()).toBe("inferiaauth");
+  });
+
+  it("falls back to the baked env when runtime AUTH_PROVIDER is empty", () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "oidc");
+    setRuntimeConfig({ AUTH_PROVIDER: "" });
+    expect(authProvider()).toBe("oidc");
+  });
+
+  it("ignores a non-string runtime AUTH_PROVIDER", () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    setRuntimeConfig({ AUTH_PROVIDER: 123 as unknown as string });
+    expect(authProvider()).toBe("local");
+  });
+
+  it("trims a padded runtime AUTH_PROVIDER", () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    setRuntimeConfig({ AUTH_PROVIDER: "  inferiaauth  " });
+    expect(authProvider()).toBe("inferiaauth");
+  });
+});
+
+describe("isExternalAuthMode with runtime config", () => {
+  it("is true when runtime config selects inferiaauth over baked local", () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    setRuntimeConfig({ AUTH_PROVIDER: "inferiaauth" });
+    expect(isExternalAuthMode()).toBe(true);
   });
 });
 

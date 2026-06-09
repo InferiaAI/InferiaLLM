@@ -99,6 +99,43 @@ class TestWriteDashboardConfig:
         assert obj["WEB_SOCKET_URL"] == ""
         assert obj["SIDECAR_URL"] == ""
 
+    def test_auth_provider_from_vite_env(self, tmp_path, monkeypatch):
+        """VITE_AUTH_PROVIDER → AUTH_PROVIDER in the runtime config (so the SPA
+        can enter SSO mode without rebaking the build)."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("VITE_AUTH_PROVIDER", "inferiaauth")
+        monkeypatch.delenv("AUTH_PROVIDER", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        assert _read_config_js(dashboard_dir)["AUTH_PROVIDER"] == "inferiaauth"
+
+    def test_auth_provider_falls_back_to_auth_provider_env(self, tmp_path, monkeypatch):
+        """When VITE_AUTH_PROVIDER is unset, AUTH_PROVIDER env is used."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.delenv("VITE_AUTH_PROVIDER", raising=False)
+        monkeypatch.setenv("AUTH_PROVIDER", "oidc")
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        assert _read_config_js(dashboard_dir)["AUTH_PROVIDER"] == "oidc"
+
+    def test_auth_provider_empty_when_unset(self, tmp_path, monkeypatch):
+        """Neither env set → AUTH_PROVIDER is empty (SPA defaults to 'local')."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.delenv("VITE_AUTH_PROVIDER", raising=False)
+        monkeypatch.delenv("AUTH_PROVIDER", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        assert _read_config_js(dashboard_dir)["AUTH_PROVIDER"] == ""
+
     def test_partial_env_vars(self, tmp_path, monkeypatch):
         """Only some DASHBOARD_* vars set → set ones appear, rest are empty string."""
         monkeypatch.delenv("INFERIA_CONFIG", raising=False)
