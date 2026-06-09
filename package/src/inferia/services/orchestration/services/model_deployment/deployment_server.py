@@ -1466,7 +1466,14 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             detail="ami_id is required for vLLM deployments",
         )
 
-    # 1c. Resolve a named HF token server-side and inject HF_TOKEN into the
+    # 1c. Persist ami_id into configuration so the /start resume path can
+    # reuse the operator's selected AMI instead of falling back to resolve_ami.
+    if req.ami_id:
+        cfg = dict(req.configuration or {})
+        cfg["ami_id"] = req.ami_id
+        req.configuration = cfg
+
+    # 1d. Resolve a named HF token server-side and inject HF_TOKEN into the
     # worker config.  The client sends only the *name*, never the raw value.
     if req.hf_token_name:
         from inferia.services.orchestration.services.model_deployment.hf_token_resolver import (
@@ -2071,6 +2078,17 @@ async def _start_deployment_impl(
             await deploys.set_state(deploy_uuid, "CREATED", tx=conn)
 
     # 5. Re-run the shared place+provision core.
+    # Read back the persisted ami_id from the deployment row's configuration so
+    # the operator's AMI selection is honoured on resume instead of falling back
+    # to resolve_ami's auto-pick.
+    _resume_cfg = _source_field(row, "configuration")
+    if isinstance(_resume_cfg, str):
+        try:
+            _resume_cfg = json.loads(_resume_cfg)
+        except (ValueError, TypeError):
+            _resume_cfg = {}
+    _resume_ami = _resume_cfg.get("ami_id") if isinstance(_resume_cfg, dict) else None
+
     deps = SimpleNamespace(
         db_pool=db_pool,
         controller=controller,
@@ -2089,7 +2107,7 @@ async def _start_deployment_impl(
         engine=_source_field(row, "engine"),
         load_spec_source=row,
         deps=deps,
-        ami_id=None,  # resume path: ami_id not stored on the row; use pool default
+        ami_id=_resume_ami,
     )
     return body, status
 

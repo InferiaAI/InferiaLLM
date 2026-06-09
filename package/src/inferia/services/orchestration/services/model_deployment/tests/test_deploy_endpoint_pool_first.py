@@ -752,3 +752,113 @@ async def test_deploy_hf_token_name_not_found_no_injection(app_and_pool):
     call_kwargs = app.state.worker_controller.load_model.await_args.kwargs
     spec_env = call_kwargs["spec"].get("env", {})
     assert "HF_TOKEN" not in spec_env
+
+
+# ---------------------------------------------------------------------------
+# Tests for ami_id persistence in configuration (completeness fix)
+# ---------------------------------------------------------------------------
+
+
+async def test_deploy_vllm_ami_id_persisted_in_configuration(app_and_pool):
+    """ami_id is stashed in configuration at deploy time so /start resume can
+    reuse the operator-selected AMI instead of falling back to resolve_ami.
+
+    Verify: after a successful /deploy with ami_id='ami-x', the DB row's
+    configuration jsonb contains ``ami_id == 'ami-x'``.
+    """
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+
+    body_payload = {
+        "model_name": "ami-persist-test",
+        "model_version": "v1",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "pool_id": str(pool_id),
+        "engine": "vllm",
+        "org_id": org_id,
+        "ami_id": "ami-persist123",
+        "configuration": {"artifact_uri": "hf://ami-persist-model"},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=body_payload)
+
+    # ColdStart => 202 PENDING_NODE
+    assert r.status_code == 202, r.text
+    deploy_id = UUID(r.json()["deployment_id"])
+
+    async with pool.acquire() as c:
+        raw_cfg = await c.fetchval(
+            "SELECT configuration FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+
+    import json as _json
+    cfg = _json.loads(raw_cfg) if isinstance(raw_cfg, str) else raw_cfg
+    assert isinstance(cfg, dict), f"configuration is not a dict: {cfg!r}"
+    assert cfg.get("ami_id") == "ami-persist123", (
+        f"ami_id not persisted in configuration; got: {cfg}"
+    )
+
+
+async def test_deploy_vllm_ami_id_in_configuration_alongside_hf_token(app_and_pool):
+    """When both ami_id and hf_token_name are provided, both land in
+    configuration: configuration['ami_id'] == req.ami_id and
+    configuration['env']['HF_TOKEN'] == resolved token."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+    await _seed_ready_node(pool, pool_id, gpu_total=4)
+
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        CommandResultBody,
+    )
+    app.state.worker_controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9010",
+    )
+
+    from unittest.mock import patch
+
+    with patch(
+        "inferia.services.orchestration.services.model_deployment"
+        ".hf_token_resolver.resolve_hf_token",
+        return_value="hf_combined_tok",
+    ):
+        body_payload = {
+            "model_name": "ami-hf-combined",
+            "model_version": "v1",
+            "replicas": 1,
+            "gpu_per_replica": 1,
+            "pool_id": str(pool_id),
+            "engine": "vllm",
+            "org_id": org_id,
+            "ami_id": "ami-combined456",
+            "hf_token_name": "prod-token",
+            "configuration": {"artifact_uri": "hf://gated-combined"},
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post("/deployment/deploy", json=body_payload)
+
+    assert r.status_code == 200, r.text
+    deploy_id = UUID(r.json()["deployment_id"])
+
+    import json as _json
+    async with pool.acquire() as c:
+        raw_cfg = await c.fetchval(
+            "SELECT configuration FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+    cfg = _json.loads(raw_cfg) if isinstance(raw_cfg, str) else raw_cfg
+    assert isinstance(cfg, dict)
+    assert cfg.get("ami_id") == "ami-combined456", (
+        f"ami_id not persisted; configuration={cfg}"
+    )
+    assert cfg.get("env", {}).get("HF_TOKEN") == "hf_combined_tok", (
+        f"HF_TOKEN not persisted alongside ami_id; configuration={cfg}"
+    )
