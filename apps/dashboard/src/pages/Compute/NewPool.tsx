@@ -537,7 +537,13 @@ export default function NewPool() {
             return
         }
 
-        // For cluster providers, validate region selection
+        // For AWS pools a region is mandatory — the backend 422s without it.
+        if (selectedProvider === "aws" && !selectedRegion) {
+            toast.error("Select a region for the AWS pool")
+            return
+        }
+
+        // For other cluster providers, validate region selection
         if (isClusterProvider && !selectedRegion) {
             toast.error("Please select a region")
             return
