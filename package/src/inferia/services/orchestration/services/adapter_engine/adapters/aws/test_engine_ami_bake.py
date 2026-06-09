@@ -20,6 +20,18 @@ def test_build_bake_script_installs_toolkit_unconditionally():
     assert "ghcr.io/inferiaai/inferia-worker:0.2.5" in script
 
 
+def test_build_bake_script_is_posix_sh_safe_no_pipefail():
+    # AWS-RunShellScript runs under /bin/sh (dash on Ubuntu); `set -o pipefail`
+    # is a bashism that aborts with "Illegal option -o pipefail". Caught live on
+    # the first bake. The set line must be POSIX-portable.
+    script = bake._build_bake_script(vllm_image="img:tag", worker_image=None)
+    assert "pipefail" not in script
+    assert "set -eux" in script
+    # gpg under SSM has no controlling TTY — must be --batch --no-tty or it
+    # aborts with "cannot open '/dev/tty'" (also caught live).
+    assert "--no-tty" in script and "--batch" in script
+
+
 def test_build_bake_script_omits_worker_pull_when_none():
     script = bake._build_bake_script(vllm_image="img:tag", worker_image=None)
     assert "docker pull img:tag" in script
