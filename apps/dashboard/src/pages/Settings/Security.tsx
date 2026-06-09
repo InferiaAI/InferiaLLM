@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Shield, ShieldCheck, KeyRound } from "lucide-react";
 import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import type { AxiosError } from "axios";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 interface UserInfo {
   totp_enabled: boolean;
@@ -139,32 +140,41 @@ export default function Security() {
           <Shield className="w-4 h-4" /> Two-Factor Authentication (2FA)
         </h2>
 
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-medium inline-flex items-center gap-2 mb-1">
-              {userInfo?.totp_enabled ? <ShieldCheck className="w-4 h-4 text-ember-500" /> : <KeyRound className="w-4 h-4 text-amber-500" />}
-              Status: {userInfo?.totp_enabled ? "Enabled" : "Disabled"}
-            </p>
-            <p className="text-sm text-muted-foreground max-w-xl">
-              Protect your account with TOTP using apps like Google Authenticator, Authy, or 1Password.
-            </p>
-          </div>
-
-          {userInfo?.totp_enabled ? (
-            <div className="flex items-center gap-2 px-4 py-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-md text-sm font-medium border border-green-200 dark:border-green-900">
-              <ShieldCheck className="w-4 h-4" />
-              2FA is enabled
+        {/* S7: In external-auth mode, MFA is owned by the IdP. */}
+        {isExternalAuthMode() ? (
+          <p className="text-sm text-muted-foreground max-w-xl">
+            Authentication and multi-factor authentication (MFA) are managed by your
+            identity provider in this deployment. Configure MFA settings in your
+            identity provider&apos;s admin console.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-sm font-medium inline-flex items-center gap-2 mb-1">
+                {userInfo?.totp_enabled ? <ShieldCheck className="w-4 h-4 text-ember-500" /> : <KeyRound className="w-4 h-4 text-amber-500" />}
+                Status: {userInfo?.totp_enabled ? "Enabled" : "Disabled"}
+              </p>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                Protect your account with TOTP using apps like Google Authenticator, Authy, or 1Password.
+              </p>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={startSetup}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium transition-colors"
-            >
-              Enable 2FA
-            </button>
-          )}
-        </div>
+
+            {userInfo?.totp_enabled ? (
+              <div className="flex items-center gap-2 px-4 py-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-md text-sm font-medium border border-green-200 dark:border-green-900">
+                <ShieldCheck className="w-4 h-4" />
+                2FA is enabled
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={startSetup}
+                className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium transition-colors"
+              >
+                Enable 2FA
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {isSetupOpen && (

@@ -2,6 +2,28 @@ import api from "@/lib/api";
 import * as tokenStore from "@/lib/tokenStore";
 import { isExternalAuthMode } from "@/lib/authMode";
 
+/**
+ * Pure helper: builds the IdP SSO-logout URL.
+ * Exported separately so it can be unit-tested without DOM side-effects.
+ *
+ * InferiaAuth's logout endpoint is:
+ *   GET {externalUrl}/api/v1/auth/sso-logout?redirect_uri=<url>
+ * The `redirect_uri` param (not `post_logout_redirect_uri`) must match a
+ * registered client origin; `{origin}/login` is always allowed.
+ *
+ * Returns `null` when externalUrl is falsy or not a valid URL.
+ */
+export function buildIdpLogoutUrl(externalUrl: string, origin: string): string | null {
+  if (!externalUrl) return null;
+  try {
+    const dest = new URL("/api/v1/auth/sso-logout", externalUrl);
+    dest.searchParams.set("redirect_uri", origin + "/login");
+    return dest.toString();
+  } catch {
+    return null;
+  }
+}
+
 const { setToken } = tokenStore;
 
 /** Maximum allowed length for an access token returned via URL fragment.
@@ -61,8 +83,10 @@ export function consumeAccessTokenFragment(): string | null {
  *    session state now that refresh lives in an httpOnly cookie, but the
  *    endpoint still writes an audit log entry). A network failure here
  *    must NOT block the user-facing redirect.
- * 3. In external mode, navigate to the IdP's `/logout?post_logout_redirect_uri=`
- *    so the SSO cookie at auth.* clears too. Otherwise drop the user on /login.
+ * 3. In external mode, navigate to the IdP's SSO-logout endpoint so the
+ *    SSO cookie at auth.* clears too. The external URL is resolved
+ *    runtime-config-first so a single image build serves any deployment.
+ *    On URL-construction failure, fall through to /login.
  */
 export async function logout(): Promise<void> {
   tokenStore.clearToken();
@@ -73,23 +97,22 @@ export async function logout(): Promise<void> {
   }
 
   const isExternal = isExternalAuthMode();
-  const externalUrl = import.meta.env.VITE_EXTERNAL_AUTH_URL as
-    | string
-    | undefined;
+  // Runtime config (written by `inferiallm write-dashboard-config`) takes
+  // precedence over the build-baked env so a single image serves any deployment.
+  const rc = (window as unknown as { __RUNTIME_CONFIG__?: { EXTERNAL_AUTH_URL?: string } })
+    .__RUNTIME_CONFIG__;
+  const externalUrl =
+    (rc?.EXTERNAL_AUTH_URL?.trim() || "") ||
+    ((import.meta.env.VITE_EXTERNAL_AUTH_URL as string | undefined) ?? "");
 
-  if (isExternal && externalUrl) {
-    try {
-      const dest = new URL("/logout", externalUrl);
-      dest.searchParams.set(
-        "post_logout_redirect_uri",
-        window.location.origin + "/login",
-      );
-      window.location.assign(dest.toString());
+  if (isExternal) {
+    const idpLogoutUrl = buildIdpLogoutUrl(externalUrl, window.location.origin);
+    if (idpLogoutUrl) {
+      window.location.assign(idpLogoutUrl);
       return;
-    } catch {
-      // VITE_EXTERNAL_AUTH_URL is malformed; fall through to the local
-      // redirect rather than crashing the page during sign-out.
     }
+    // externalUrl is absent or malformed — fall through to the local redirect
+    // rather than crashing the page during sign-out.
   }
 
   window.location.assign("/login");
@@ -150,6 +173,15 @@ export const authService = {
         return data;
     },
     switchOrg: async (orgId: string) => {
+        // In external-auth mode org tokens are issued by the IdP (InferiaAuth),
+        // not by the local gateway — minting a local token here would be wrong.
+        // This is a tripwire: if a future code path calls switchOrg in external
+        // mode it will fail fast rather than silently issuing an invalid token.
+        if (isExternalAuthMode()) {
+            throw new Error(
+                "Org switching is managed by the identity provider in this deployment",
+            );
+        }
         const { data } = await api.post<AuthResponse>("/auth/switch-org", { org_id: orgId });
         return data;
     },

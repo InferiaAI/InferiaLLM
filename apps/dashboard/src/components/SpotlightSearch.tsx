@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Search, LayoutDashboard, Rocket, Box, Key, Building2, Users, Shield, Clock, Activity, X, Cloud, BarChart3 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/context/AuthContext"
+import { isExternalAuthMode } from "@/lib/authMode"
 
 interface SearchItem {
     title: string
@@ -11,6 +12,8 @@ interface SearchItem {
     category: "Navigation" | "Settings" | "Actions"
     keywords?: string[]
     permission?: string
+    /** S6: When true, this entry is hidden in external-auth mode (IdP owns the page). */
+    externalHidden?: boolean
 }
 
 const SEARCH_ITEMS: SearchItem[] = [
@@ -23,9 +26,9 @@ const SEARCH_ITEMS: SearchItem[] = [
     { title: "New Pool", path: "/dashboard/compute/pools/new", icon: Box, category: "Actions", keywords: ["create", "add", "pool"], permission: "deployment:create" },
     { title: "API Keys", path: "/dashboard/api-keys", icon: Key, category: "Navigation", keywords: ["keys", "tokens", "auth"], permission: "api_key:list" },
     // Settings
-    { title: "Organization", path: "/dashboard/settings/organization", icon: Building2, category: "Settings", keywords: ["org", "company"], permission: "organization:view" },
-    { title: "Users", path: "/dashboard/settings/users", icon: Users, category: "Settings", keywords: ["team", "members", "invite"], permission: "member:list" },
-    { title: "Roles", path: "/dashboard/settings/roles", icon: Shield, category: "Settings", keywords: ["permissions", "access"], permission: "role:list" },
+    { title: "Organization", path: "/dashboard/settings/organization", icon: Building2, category: "Settings", keywords: ["org", "company"], permission: "organization:view", externalHidden: true },
+    { title: "Users", path: "/dashboard/settings/users", icon: Users, category: "Settings", keywords: ["team", "members", "invite"], permission: "member:list", externalHidden: true },
+    { title: "Roles", path: "/dashboard/settings/roles", icon: Shield, category: "Settings", keywords: ["permissions", "access"], permission: "role:list", externalHidden: true },
     { title: "Audit Logs", path: "/dashboard/settings/audit-logs", icon: Clock, category: "Settings", keywords: ["logs", "history", "activity"], permission: "audit_log:list" },
     { title: "Infrastructure & Compute", path: "/dashboard/settings/providers/cloud", icon: Cloud, category: "Settings", keywords: ["infrastructure", "aws", "nosana", "akash", "depin", "cloud"], permission: "organization:update" },
     { title: "AWS Configuration", path: "/dashboard/settings/providers/cloud/aws", icon: Cloud, category: "Settings", keywords: ["amazon", "s3", "iam", "cloud"], permission: "organization:update" },
@@ -44,7 +47,12 @@ export function SpotlightSearch({ isOpen, onClose }: SpotlightSearchProps) {
     const [query, setQuery] = useState("")
     const [selectedIndex, setSelectedIndex] = useState(0)
 
-    const accessibleItems = SEARCH_ITEMS.filter(item => !item.permission || hasPermission(item.permission))
+    const externalAuth = isExternalAuthMode()
+    const accessibleItems = SEARCH_ITEMS.filter(item => {
+        // S6: Hide IdP-owned pages (Organization, Users, Roles) in external mode.
+        if (externalAuth && item.externalHidden) return false
+        return !item.permission || hasPermission(item.permission)
+    })
 
     const filteredItems = query
         ? accessibleItems.filter(item => {

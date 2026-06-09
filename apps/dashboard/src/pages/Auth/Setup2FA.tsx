@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { logout as authServiceLogout } from "@/services/authService";
 
 interface TOTPSetupResponse {
   secret: string;
@@ -218,7 +219,10 @@ export default function Setup2FA() {
 
               <div className="border-t border-border/70 pt-4 text-center">
                 <button
-                  onClick={logout}
+                  onClick={() => {
+                    logout(); // clear local React state
+                    void authServiceLogout(); // navigate to IdP logout or /login
+                  }}
                   className="text-sm text-muted-foreground transition hover:text-foreground"
                 >
                   Log out and return to sign in

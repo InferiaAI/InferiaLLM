@@ -255,3 +255,70 @@ class TestWriteDashboardConfig:
         # Value comes purely from env, not from yaml
         assert obj["API_GATEWAY_URL"] == "http://env-only:8000"
         assert obj["INFERENCE_URL"] == ""
+
+    # ─── EXTERNAL_AUTH_URL tests ──────────────────────────────────────────────
+
+    def test_external_auth_url_from_vite_env(self, tmp_path, monkeypatch):
+        """VITE_EXTERNAL_AUTH_URL → EXTERNAL_AUTH_URL in the runtime config."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("VITE_EXTERNAL_AUTH_URL", "https://auth.inferia.local:3005")
+        monkeypatch.delenv("EXTERNAL_AUTH_URL", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        assert _read_config_js(dashboard_dir)["EXTERNAL_AUTH_URL"] == "https://auth.inferia.local:3005"
+
+    def test_external_auth_url_falls_back_to_plain_env(self, tmp_path, monkeypatch):
+        """When VITE_EXTERNAL_AUTH_URL is unset, EXTERNAL_AUTH_URL env is used."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.delenv("VITE_EXTERNAL_AUTH_URL", raising=False)
+        monkeypatch.setenv("EXTERNAL_AUTH_URL", "https://plain-auth.inferia.local")
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        assert _read_config_js(dashboard_dir)["EXTERNAL_AUTH_URL"] == "https://plain-auth.inferia.local"
+
+    def test_external_auth_url_empty_when_unset(self, tmp_path, monkeypatch):
+        """Neither env set → EXTERNAL_AUTH_URL is empty string."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.delenv("VITE_EXTERNAL_AUTH_URL", raising=False)
+        monkeypatch.delenv("EXTERNAL_AUTH_URL", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        assert _read_config_js(dashboard_dir)["EXTERNAL_AUTH_URL"] == ""
+
+    def test_vite_external_auth_url_takes_precedence(self, tmp_path, monkeypatch):
+        """VITE_EXTERNAL_AUTH_URL wins over EXTERNAL_AUTH_URL when both are set."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("VITE_EXTERNAL_AUTH_URL", "https://vite-auth.inferia.local")
+        monkeypatch.setenv("EXTERNAL_AUTH_URL", "https://plain-auth.inferia.local")
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        # VITE_ variant must win
+        assert _read_config_js(dashboard_dir)["EXTERNAL_AUTH_URL"] == "https://vite-auth.inferia.local"
+
+    def test_external_auth_url_coexists_with_auth_provider(self, tmp_path, monkeypatch):
+        """Both AUTH_PROVIDER and EXTERNAL_AUTH_URL are written to the same config."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("VITE_AUTH_PROVIDER", "inferiaauth")
+        monkeypatch.setenv("VITE_EXTERNAL_AUTH_URL", "https://auth.inferia.local")
+        monkeypatch.delenv("AUTH_PROVIDER", raising=False)
+        monkeypatch.delenv("EXTERNAL_AUTH_URL", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        obj = _read_config_js(dashboard_dir)
+        assert obj["AUTH_PROVIDER"] == "inferiaauth"
+        assert obj["EXTERNAL_AUTH_URL"] == "https://auth.inferia.local"

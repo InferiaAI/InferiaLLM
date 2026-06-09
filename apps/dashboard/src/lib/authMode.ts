@@ -12,6 +12,7 @@ export type AuthMode = "local" | "oidc" | "inferiaauth";
 
 interface RuntimeConfig {
   AUTH_PROVIDER?: string;
+  EXTERNAL_AUTH_URL?: string;
 }
 
 function runtimeAuthProvider(): string {

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import api, { computeApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { auditService } from "@/services/auditService";
+import { isExternalAuthMode } from "@/lib/authMode";
 import {
   Activity,
   AlertCircle,
@@ -432,7 +433,8 @@ export default function Overview() {
               bgClass="bg-amber-500/10"
             />
           )}
-          {hasPermission("organization:view") && (
+          {/* S8: Hide IdP-owned org management card in external mode. */}
+          {hasPermission("organization:view") && !isExternalAuthMode() && (
             <QuickAction
               title="Manage Organization"
               description="Update quota, privacy, and organization controls."

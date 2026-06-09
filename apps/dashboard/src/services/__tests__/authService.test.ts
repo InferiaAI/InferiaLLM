@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  buildIdpLogoutUrl,
   consumeAccessTokenFragment,
   logout,
   startExternalLogin,
@@ -166,7 +167,7 @@ describe("logout", () => {
     expect(assignMock).toHaveBeenCalledWith("/login");
   });
 
-  it("external mode: redirects to the IdP /logout with post_logout_redirect_uri", async () => {
+  it("external mode: redirects to the IdP /api/v1/auth/sso-logout with redirect_uri", async () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "external");
     vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "https://auth.inferia.local");
     await logout();
@@ -177,9 +178,9 @@ describe("logout", () => {
     });
     expect(assignMock).toHaveBeenCalledTimes(1);
     const dest = assignMock.mock.calls[0][0] as string;
-    expect(dest).toMatch(/^https:\/\/auth\.inferia\.local\/logout\?/);
+    expect(dest).toMatch(/^https:\/\/auth\.inferia\.local\/api\/v1\/auth\/sso-logout\?/);
     const url = new URL(dest);
-    expect(url.searchParams.get("post_logout_redirect_uri")).toBe(
+    expect(url.searchParams.get("redirect_uri")).toBe(
       "https://inferia.local/login",
     );
   });
@@ -208,5 +209,69 @@ describe("logout", () => {
     await logout();
     expect(assignMock).toHaveBeenCalledWith("/login");
     expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("external mode: runtime config EXTERNAL_AUTH_URL takes precedence over VITE env", async () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "inferiaauth");
+    // Build-baked env is empty but runtime config provides the URL.
+    vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "");
+    (window as unknown as { __RUNTIME_CONFIG__?: unknown }).__RUNTIME_CONFIG__ = {
+      AUTH_PROVIDER: "inferiaauth",
+      EXTERNAL_AUTH_URL: "https://runtime-auth.inferia.local",
+    };
+    await logout();
+    expect(assignMock).toHaveBeenCalledTimes(1);
+    const dest = assignMock.mock.calls[0][0] as string;
+    expect(dest).toMatch(/^https:\/\/runtime-auth\.inferia\.local\/api\/v1\/auth\/sso-logout\?/);
+    const url = new URL(dest);
+    expect(url.searchParams.get("redirect_uri")).toBe("https://inferia.local/login");
+    delete (window as unknown as { __RUNTIME_CONFIG__?: unknown }).__RUNTIME_CONFIG__;
+  });
+});
+
+// ─── buildIdpLogoutUrl (pure helper) ──────────────────────────────────────────
+
+describe("buildIdpLogoutUrl", () => {
+  it("builds the correct IdP SSO logout URL with redirect_uri", () => {
+    const url = buildIdpLogoutUrl("https://auth.inferia.local", "https://app.inferia.local");
+    expect(url).toBe(
+      "https://auth.inferia.local/api/v1/auth/sso-logout?redirect_uri=https%3A%2F%2Fapp.inferia.local%2Flogin",
+    );
+  });
+
+  it("returns null for an empty externalUrl", () => {
+    expect(buildIdpLogoutUrl("", "https://app.inferia.local")).toBeNull();
+  });
+
+  it("returns null for a malformed externalUrl", () => {
+    expect(buildIdpLogoutUrl("not a url", "https://app.inferia.local")).toBeNull();
+  });
+
+  it("appends /login to the provided origin in redirect_uri", () => {
+    const url = buildIdpLogoutUrl("https://auth.example.com", "https://dash.example.com");
+    expect(url).not.toBeNull();
+    const parsed = new URL(url!);
+    expect(parsed.searchParams.get("redirect_uri")).toBe("https://dash.example.com/login");
+  });
+
+  it("uses /api/v1/auth/sso-logout as the path (not /logout)", () => {
+    const url = buildIdpLogoutUrl("https://auth.example.com", "https://dash.example.com");
+    expect(url).not.toBeNull();
+    const parsed = new URL(url!);
+    expect(parsed.pathname).toBe("/api/v1/auth/sso-logout");
+  });
+
+  it("uses the param name redirect_uri (not post_logout_redirect_uri)", () => {
+    const url = buildIdpLogoutUrl("https://auth.example.com", "https://dash.example.com");
+    expect(url).not.toBeNull();
+    const parsed = new URL(url!);
+    expect(parsed.searchParams.has("redirect_uri")).toBe(true);
+    expect(parsed.searchParams.has("post_logout_redirect_uri")).toBe(false);
+  });
+
+  it("handles externalUrl with a trailing slash", () => {
+    const url = buildIdpLogoutUrl("https://auth.example.com/", "https://dash.example.com");
+    expect(url).not.toBeNull();
+    expect(url).toContain("/api/v1/auth/sso-logout");
   });
 });
