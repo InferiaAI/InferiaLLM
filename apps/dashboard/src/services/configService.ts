@@ -1,4 +1,4 @@
-import api from "@/lib/api";
+import api, { computeApi } from "@/lib/api";
 
 export interface AWSConfig {
     access_key_id?: string;
@@ -167,5 +167,26 @@ export const ConfigService = {
 
     async deleteNosanaApiKey(name: string): Promise<void> {
         return this.deleteProviderCredential('nosana', name);
-    }
+    },
+
+    // Engine-cache AMI admin endpoints (gateway proxy → /api/v1/admin/aws/engine-ami)
+    async listEngineAmis(region: string): Promise<{ ami_id: string; vllm_tag?: string; region: string; created: string }[]> {
+        const { data } = await computeApi.get<{ amis: { ami_id: string; vllm_tag?: string; region: string; created: string }[] }>('/admin/aws/engine-ami', { params: { region } });
+        return data.amis;
+    },
+
+    async startEngineBake(body: { region: string; vllm_tag?: string }): Promise<{ bake_id: string; status: string }> {
+        const { data } = await computeApi.post<{ bake_id: string; status: string }>('/admin/aws/engine-ami/bake', body);
+        return data;
+    },
+
+    async pollBakeStatus(bakeId: string): Promise<{ status: string; message: string; ami_id?: string; region: string }> {
+        const { data } = await computeApi.get<{ status: string; message: string; ami_id?: string; region: string }>(`/admin/aws/engine-ami/bake/${bakeId}`);
+        return data;
+    },
+
+    async listHfTokenNames(): Promise<string[]> {
+        const { data } = await api.get<{ names: string[] }>('/management/config/providers/huggingface/token-names');
+        return data.names;
+    },
 };
