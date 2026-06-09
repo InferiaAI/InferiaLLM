@@ -83,6 +83,7 @@ async def test_preflight_named_token_resolved_and_passed_to_checks(app):
     with (
         patch(
             "inferia.services.orchestration.services.model_deployment.hf_token_resolver.resolve_hf_token",
+            new_callable=AsyncMock,
             return_value=resolved,
         ) as mock_resolve,
         patch(
@@ -212,6 +213,7 @@ async def test_preflight_named_token_not_found_runs_without_token(app):
     with (
         patch(
             "inferia.services.orchestration.services.model_deployment.hf_token_resolver.resolve_hf_token",
+            new_callable=AsyncMock,
             return_value=None,
         ) as mock_resolve,
         patch(

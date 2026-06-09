@@ -625,9 +625,11 @@ async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
     import inferia.services.orchestration.services.model_deployment.deployment_server as ds
     from unittest.mock import patch
 
+    from unittest.mock import AsyncMock as _AsyncMock
     with patch(
         "inferia.services.orchestration.services.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
+        new_callable=_AsyncMock,
         return_value="hf_secret_tok",
     ):
         body_payload = {
@@ -674,9 +676,11 @@ async def test_deploy_hf_token_name_does_not_clobber_explicit_hf_token(app_and_p
 
     from unittest.mock import patch
 
+    from unittest.mock import AsyncMock as _AsyncMock
     with patch(
         "inferia.services.orchestration.services.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
+        new_callable=_AsyncMock,
         return_value="hf_from_name",
     ):
         body_payload = {
@@ -726,9 +730,11 @@ async def test_deploy_hf_token_name_not_found_no_injection(app_and_pool):
 
     from unittest.mock import patch
 
+    from unittest.mock import AsyncMock as _AsyncMock
     with patch(
         "inferia.services.orchestration.services.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
+        new_callable=_AsyncMock,
         return_value=None,
     ):
         body_payload = {
@@ -823,9 +829,11 @@ async def test_deploy_vllm_ami_id_in_configuration_alongside_hf_token(app_and_po
 
     from unittest.mock import patch
 
+    from unittest.mock import AsyncMock as _AsyncMock
     with patch(
         "inferia.services.orchestration.services.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
+        new_callable=_AsyncMock,
         return_value="hf_combined_tok",
     ):
         body_payload = {

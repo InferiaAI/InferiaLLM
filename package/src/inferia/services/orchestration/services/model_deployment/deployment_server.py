@@ -815,7 +815,7 @@ async def deployment_preflight(req: PreflightRequest):
         from inferia.services.orchestration.services.model_deployment.hf_token_resolver import (
             resolve_hf_token,
         )
-        _hf_token = resolve_hf_token(req.hf_token_name)
+        _hf_token = await resolve_hf_token(req.hf_token_name)
 
     # Skip HF checks for external engines
     external_engines = {"openai", "anthropic", "gemini", "groq", "cerebras", "mistral", "deepseek", "custom"}
@@ -1479,7 +1479,7 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         from inferia.services.orchestration.services.model_deployment.hf_token_resolver import (
             resolve_hf_token,
         )
-        _tok = resolve_hf_token(req.hf_token_name)
+        _tok = await resolve_hf_token(req.hf_token_name)
         if _tok:
             cfg = dict(req.configuration or {})
             env = dict(cfg.get("env") or {})
