@@ -23,6 +23,7 @@ from inferia.services.orchestration.services.worker_controller.auth import (
 from inferia.services.orchestration.services.worker_controller.protocol import (
     CommandResultBody,
     Envelope,
+    HeartbeatBody,
     LogsEndBody,
     LogsLineBody,
     RegisterRequest,
@@ -171,25 +172,25 @@ async def register_worker(
     # stateless JWT path whenever an Authorization header is present.
     header_token = _strip_bearer(authorization)
 
-    # Auth priority: prefer the body bootstrap_token DB-consume path when
-    # present (canonical, single-use, scope-checked). The legacy JWT path
-    # via Authorization header is the fallback for clients that don't
-    # populate the body field. The inferia-worker Go client sets BOTH
-    # fields with the same DB token, so trying JWT verify on a non-JWT
-    # bootstrap token would (and did, pre-fix) 401 the entire register
-    # flow.
+    # Auth: try DB-backed single-use consume first (token in body). If the
+    # token wasn't persisted in the DB fall back to stateless JWT verify
+    # (Authorization header). The CLI `inferiallm worker token` and the
+    # dashboard both mint stateless JWTs via the admin API, while Pulumi-
+    # provisioned workers get DB-backed tokens; this fallback handles both.
+    authed = False
     if body.bootstrap_token is not None:
         try:
             db_claim = await _consume_bootstrap_token(None, token=body.bootstrap_token)
         except InvalidBootstrapToken:
-            raise HTTPException(401, "invalid_bootstrap_token")
+            pass  # fall through to JWT verify below
+        else:
+            if str(db_claim.pool_id) != str(body.pool_id):
+                raise HTTPException(401, "pool_scope_violation")
+            authed = True
 
-        if str(db_claim.pool_id) != str(body.pool_id):
-            raise HTTPException(401, "pool_scope_violation")
-
-    else:
+    if not authed:
         if not header_token:
-            raise HTTPException(401, "missing bootstrap token")
+            raise HTTPException(401, "invalid_bootstrap_token")
         try:
             claims = auth.verify_bootstrap_token(header_token)
         except InvalidTokenError as e:
@@ -310,12 +311,12 @@ async def worker_channel(
             env_type = data.get("type")
             body = data.get("body") or {}
             if env_type == "Heartbeat":
-                used = body.get("used", {})
-                loaded = body.get("loaded_models", [])
+                hb = HeartbeatBody.model_validate(body)
                 await inventory.update_heartbeat_with_telemetry(
                     node_id=claims.sub,
-                    used=used,
-                    loaded_models=loaded,
+                    used=hb.used,
+                    loaded_models=hb.loaded_models,
+                    deploy_metrics=[m.model_dump() for m in hb.deploy_metrics],
                 )
             elif env_type == "CommandResult":
                 registry.deliver_command_result(

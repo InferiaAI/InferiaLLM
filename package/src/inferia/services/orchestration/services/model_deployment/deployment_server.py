@@ -1566,6 +1566,26 @@ async def get_deployment_status(deployment_id: str):
                 detail=f"Deployment not found: {e.details()}",
             )
 
+    # Fetch node_ids directly from the DB (not in proto response).
+    node_ids: list[str] = []
+    target_node_id: str | None = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        try:
+            row = await conn.fetchrow(
+                "SELECT node_ids, target_node_id FROM model_deployments WHERE deployment_id = $1",
+                deployment_id,
+            )
+            if row:
+                if row["node_ids"]:
+                    node_ids = [str(n) for n in row["node_ids"]]
+                if row["target_node_id"]:
+                    target_node_id = str(row["target_node_id"])
+        finally:
+            await conn.close()
+    except Exception:
+        logger.warning("failed to fetch node_ids for deployment %s", deployment_id, exc_info=True)
+
     return {
         "deployment_id": resp.deployment_id,
         "state": resp.state,
@@ -1581,6 +1601,8 @@ async def get_deployment_status(deployment_id: str):
         "engine": resp.engine,
         "inference_model": resp.inference_model,
         "error_message": resp.error_message or None,
+        "node_ids": node_ids,
+        "target_node_id": node_ids[0] if node_ids else target_node_id,
     }
 
 

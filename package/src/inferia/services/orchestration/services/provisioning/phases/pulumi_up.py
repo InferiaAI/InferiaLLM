@@ -72,6 +72,12 @@ class PulumiUpHandler:
         env = dict(ctx.pulumi_env or {})
         env.setdefault("PULUMI_BACKEND_URL", f"file://{state_dir}")
         env.setdefault("PULUMI_CONFIG_PASSPHRASE", settings.pulumi_passphrase or "")
+        # Override region to match the pool spec — otherwise Pulumi creates the
+        # instance in the credentials' default region (e.g. eu-north-1) and the
+        # terraform provider can't find the AMI there, surfacing as the cryptic
+        # "collecting instance settings: couldn't find resource" error.
+        if spec.get("region"):
+            env["AWS_DEFAULT_REGION"] = spec["region"]
 
         # Run in a thread — see feedback_pulumi_python_sdk_sync.
         outputs = await asyncio.to_thread(

@@ -859,9 +859,24 @@ async def _list_workers_impl(self, *, pool_id):
         return [dict(r) for r in rows]
 
 
-async def _update_heartbeat_with_telemetry_impl(self, *, node_id, used, loaded_models):
+async def _update_heartbeat_with_telemetry_impl(
+    self, *, node_id, used, loaded_models, deploy_metrics=None,
+):
     """Persist heartbeat fields specific to the worker protocol."""
-    payload = __import__("json").dumps({"used": used, "loaded_models": loaded_models})
+    payload = __import__("json").dumps({
+        "used": used,
+        "loaded_models": loaded_models,
+    })
+    # Per-deployment metrics stored separately under "deploy_metrics" key,
+    # indexed by deployment_id so the getter can extract one deployment's data.
+    dm_payload = None
+    if deploy_metrics:
+        dm_index: dict[str, dict] = {}
+        for m in deploy_metrics:
+            did = m.get("deployment_id")
+            if did:
+                dm_index[did] = m
+        dm_payload = __import__("json").dumps({"deploy_metrics": dm_index})
     async with self.db.acquire() as conn:
         await conn.execute(
             """
@@ -874,6 +889,31 @@ async def _update_heartbeat_with_telemetry_impl(self, *, node_id, used, loaded_m
             """,
             node_id, payload,
         )
+        if dm_payload:
+            await conn.execute(
+                """
+                UPDATE compute_inventory
+                SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+                WHERE id = $2
+                """,
+                dm_payload, node_id,
+            )
+
+
+async def _get_deploy_metrics_impl(self, *, node_id, deployment_id):
+    """Return the most recent deploy_metric for a specific deployment on a node."""
+    async with self.db.acquire() as conn:
+        row = await conn.fetchval(
+            """
+            SELECT metadata -> 'deploy_metrics' -> $1
+            FROM compute_inventory
+            WHERE id = $2
+            """,
+            deployment_id, node_id,
+        )
+    if row:
+        return json.loads(row) if isinstance(row, str) else row
+    return None
 
 
 async def _mark_ready_worker_impl(self, *, node_id):
@@ -910,6 +950,7 @@ InventoryRepository.list_workers = _list_workers_impl
 InventoryRepository.update_heartbeat_with_telemetry = (
     _update_heartbeat_with_telemetry_impl
 )
+InventoryRepository.get_deploy_metrics = _get_deploy_metrics_impl
 InventoryRepository.mark_ready_worker = _mark_ready_worker_impl
 InventoryRepository.mark_terminated_worker = _mark_terminated_worker_impl
 
