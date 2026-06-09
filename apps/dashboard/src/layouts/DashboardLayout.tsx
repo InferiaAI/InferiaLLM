@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { SpotlightSearch, useSpotlight } from "@/components/SpotlightSearch";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 const navItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true, permission: "organization:view" },
@@ -173,9 +174,21 @@ export default function DashboardLayout() {
     [hasPermission]
   );
 
+  const externalAuth = isExternalAuthMode();
+
   const filteredSettingsItems = useMemo(
-    () => settingsItems.filter((item) => !item.permission || hasPermission(item.permission)),
-    [hasPermission]
+    () =>
+      settingsItems.filter((item) => {
+        if (externalAuth && [
+          "/dashboard/settings/organization",
+          "/dashboard/settings/users",
+          "/dashboard/settings/roles",
+        ].includes(item.href)) {
+          return false;
+        }
+        return !item.permission || hasPermission(item.permission);
+      }),
+    [hasPermission, externalAuth]
   );
 
   const breadcrumbItems = useMemo(() => {
