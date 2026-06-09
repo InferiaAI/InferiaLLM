@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
-from inferia.services.api_gateway.config import settings
+from inferia.services.api_gateway.config import httpx_verify, settings
 from inferia.services.api_gateway.rbac.oauth_client import (
     OAuthClient,
     OAuthClientError,
@@ -54,6 +54,7 @@ def _get_oauth_client() -> OAuthClient:
         _oauth_client = OAuthClient(
             base_url=settings.external_auth_url,
             client_id=settings.oauth_client_id,
+            verify=httpx_verify(settings),
         )
     return _oauth_client
 

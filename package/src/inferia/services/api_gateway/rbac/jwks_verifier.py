@@ -79,14 +79,16 @@ class JWKSVerifier:
         audience: str,
         cache_ttl: int = 3600,
         http_client: Optional[httpx.Client] = None,
+        verify: object = True,
     ) -> None:
         self._url = jwks_url
         self._issuer = issuer
         self._audience = audience
         self._cache_ttl = cache_ttl
+        self._verify = verify
         self._jwks: Optional[dict] = None
         self._cached_at: float = 0.0
-        self._client = http_client or httpx.Client(timeout=5.0)
+        self._client = http_client or httpx.Client(timeout=5.0, verify=self._verify)
 
     # --- cache plumbing -----------------------------------------------------
 

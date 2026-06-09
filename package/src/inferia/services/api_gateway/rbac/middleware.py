@@ -7,7 +7,7 @@ import logging
 
 from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.auth import auth_service
-from inferia.services.api_gateway.config import settings
+from inferia.services.api_gateway.config import httpx_verify, settings
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
 from inferia.services.api_gateway.rbac.permissions import normalize_permissions
 from inferia.services.api_gateway.rbac.jwks_verifier import (
@@ -85,6 +85,7 @@ def _get_verifier() -> JWKSVerifier:
             issuer=settings.external_auth_issuer,
             audience=audience,
             cache_ttl=settings.oauth_jwks_cache_ttl_seconds,
+            verify=httpx_verify(settings),
         )
     return _verifier
 

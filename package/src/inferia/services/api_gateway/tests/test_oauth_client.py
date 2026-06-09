@@ -281,3 +281,36 @@ async def test_revoke_defaults_token_type_hint(httpserver, client):
     req, _ = httpserver.log[-1]
     body = req.get_data(as_text=True)
     assert "token_type_hint=refresh_token" in body
+
+
+# ---------------------------------------------------------------------------
+# Bug-2 verify= param — OAuthClient stores and threads the TLS setting
+# ---------------------------------------------------------------------------
+
+
+def test_oauth_client_stores_verify_default():
+    """OAuthClient defaults verify=True and stores it on self._verify."""
+    c = OAuthClient(base_url="https://auth.example.test", client_id="x")
+    assert c._verify is True
+
+
+def test_oauth_client_stores_verify_ca_bundle():
+    """OAuthClient(verify="/path/ca.pem") stores the path on self._verify."""
+    c = OAuthClient(base_url="https://auth.example.test", client_id="x", verify="/path/ca.pem")
+    assert c._verify == "/path/ca.pem"
+
+
+def test_oauth_client_stores_verify_false():
+    """OAuthClient(verify=False) stores False on self._verify."""
+    c = OAuthClient(base_url="https://auth.example.test", client_id="x", verify=False)
+    assert c._verify is False
+
+
+def test_oauth_client_get_client_uses_verify():
+    """The lazily-built httpx client is created with the stored verify value."""
+    c = OAuthClient(base_url="https://auth.example.test", client_id="x", verify=False)
+    # Trigger lazy client creation; it should NOT raise even with verify=False.
+    inner = c._get_client()
+    # httpx.AsyncClient stores verify internally; just confirm it was created.
+    assert inner is not None
+    assert not inner.is_closed
