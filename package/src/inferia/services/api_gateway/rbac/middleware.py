@@ -9,7 +9,10 @@ from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.auth import auth_service
 from inferia.services.api_gateway.config import httpx_verify, settings
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
-from inferia.services.api_gateway.rbac.permissions import normalize_permissions
+from inferia.services.api_gateway.rbac.permissions import (
+    expand_catalog_permissions,
+    normalize_permissions,
+)
 from inferia.services.api_gateway.rbac.jwks_verifier import (
     JWKSVerifier,
     JWKSVerifyError,
@@ -129,7 +132,9 @@ async def _resolve_external_token(db, token: str) -> UserContext:
         username=user.email,
         email=user.email,
         roles=list(claims.get("roles") or []),
-        permissions=list(claims.get("permissions") or []),
+        # Catalog keys (inferiallm:*) expand to their local PermissionEnum
+        # equivalents so route guards and the dashboard recognise them.
+        permissions=expand_catalog_permissions(claims.get("permissions") or []),
         org_id=org_id,
         quota_limit=10000,
         quota_used=0,
@@ -191,7 +196,9 @@ async def _resolve_oidc_token(db, token: str) -> UserContext:
             (role_map[g] for g in groups if g in role_map),
             settings.oidc_default_role,
         )
-    perms = _catalog_role_permissions(role)
+    # Catalog-role keys expand to their local equivalents, same as the
+    # inferiaauth path.
+    perms = expand_catalog_permissions(_catalog_role_permissions(role))
 
     return UserContext(
         user_id=user.id,

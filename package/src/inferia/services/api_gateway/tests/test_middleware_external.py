@@ -133,12 +133,45 @@ async def test_valid_token_uses_claim_roles_not_db(httpserver, keypair):
     assert ctx.email == "ext@example.test"
     # Claims win, not the DB-derived 'member' role.
     assert ctx.roles == ["admin", "auditor"]
+    # Catalog keys are kept AND expanded to their local equivalents.
     assert set(ctx.permissions) == {
         "inferiallm:deployment:read",
+        "deployment:list",
         "inferiallm:audit:read",
+        "audit_log:list",
     }
     # org_id comes from claims.
     assert ctx.org_id == "org-from-claims"
+
+
+@pytest.mark.asyncio
+async def test_catalog_org_read_grants_local_organization_view(httpserver, keypair):
+    """The dashboard gates /dashboard on the LOCAL 'organization:view' — a token
+    carrying only catalog keys (inferiallm:org:read) must expand to include it,
+    or every SaaS user is locked out of the dashboard."""
+    from inferia.services.api_gateway.rbac import middleware as mw
+
+    priv, jwks = keypair
+    httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
+
+    token = _sign(
+        priv,
+        _default_claims(permissions=["inferiallm:org:read", "inferiallm:org:write"]),
+    )
+
+    fake_user = _make_user()
+    with patch(
+        "inferia.services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        AsyncMock(return_value=(fake_user, "org-local", ["member"])),
+    ):
+        db = AsyncMock()
+        ctx = await mw._resolve_external_token(db, token)
+
+    assert "organization:view" in ctx.permissions
+    assert "organization:update" in ctx.permissions
+    # Originals are preserved.
+    assert "inferiallm:org:read" in ctx.permissions
+    assert "inferiallm:org:write" in ctx.permissions
 
 
 @pytest.mark.asyncio
