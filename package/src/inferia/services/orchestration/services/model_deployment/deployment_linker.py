@@ -87,7 +87,7 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         "config": cfg.get("config") or {},
         "gpu_indices": gpu_indices,
         "port": 0,
-        "env": {},
+        "env": dict(cfg.get("env") or {}),
     }
 
     return spec

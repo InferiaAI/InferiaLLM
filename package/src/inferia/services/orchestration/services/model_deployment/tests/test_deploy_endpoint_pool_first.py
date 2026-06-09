@@ -154,6 +154,8 @@ def _deploy_payload(pool_id: UUID, *, gpu_per_replica: int = 1) -> dict:
         "gpu_per_replica": gpu_per_replica,
         "pool_id": str(pool_id),
         "engine": "vllm",
+        # ami_id is required for vLLM deployments.
+        "ami_id": "ami-0123456789abcdef0",
         # model_name doubles as artifact_uri fallback; provide explicit
         # configuration.artifact_uri so the spec helper can resolve it.
         "configuration": {"artifact_uri": "hf://test-model"},
@@ -322,6 +324,7 @@ async def test_deploy_duplicate_model_name_in_org_returns_409(app_and_pool):
             "pool_id": str(pool_id),
             "engine": "vllm",
             "org_id": org_id,
+            "ami_id": "ami-0123456789abcdef0",
             "configuration": {"artifact_uri": "hf://qwen3"},
         })
         assert r1.status_code == 200, r1.text
@@ -335,6 +338,7 @@ async def test_deploy_duplicate_model_name_in_org_returns_409(app_and_pool):
             "pool_id": str(pool_id),
             "engine": "vllm",
             "org_id": org_id,
+            "ami_id": "ami-0123456789abcdef0",
             "configuration": {"artifact_uri": "hf://qwen3"},
         })
         assert r2.status_code == 409, r2.text
@@ -468,3 +472,283 @@ async def test_build_spec_aws_falls_back_to_pool_meta_region():
         pool_row=pool_row, pool_meta={"region": "eu-west-1"}, decision=decision, org_id="o"
     )
     assert spec["region"] == "eu-west-1"
+
+
+# ---------------------------------------------------------------------------
+# Tests for ami_id + hf_token_name (T5 provider-config-ux)
+# ---------------------------------------------------------------------------
+
+
+async def test_deploy_vllm_requires_ami_id(app_and_pool):
+    """vLLM deploy without ami_id → 422 with 'ami_id' in the message."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+
+    body = {
+        "model_name": "vllm-model",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "pool_id": str(pool_id),
+        "engine": "vllm",
+        "org_id": org_id,
+        # ami_id intentionally absent
+        "configuration": {"artifact_uri": "hf://vllm-model"},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=body)
+
+    assert r.status_code == 422, r.text
+    assert "ami_id" in r.text.lower()
+
+
+async def test_deploy_vllm_with_ami_id_succeeds(app_and_pool):
+    """vLLM deploy WITH ami_id proceeds past validation (PENDING_NODE on empty pool)."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+
+    body = {
+        "model_name": "vllm-model-ami",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "pool_id": str(pool_id),
+        "engine": "vllm",
+        "org_id": org_id,
+        "ami_id": "ami-0123456789abcdef0",
+        "configuration": {"artifact_uri": "hf://vllm-model-ami"},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=body)
+
+    # ColdStart path → 202 PENDING_NODE (ami_id validation passed)
+    assert r.status_code == 202, r.text
+    assert r.json()["state"] == "PENDING_NODE"
+
+
+async def test_deploy_non_vllm_engine_no_ami_id_allowed(app_and_pool):
+    """Non-vLLM engines (ollama) do not require ami_id."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+
+    body = {
+        "model_name": "ollama-model",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "pool_id": str(pool_id),
+        "engine": "ollama",
+        "org_id": org_id,
+        # no ami_id — must be accepted for non-vLLM
+        "configuration": {"artifact_uri": "ollama://llama3"},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=body)
+
+    # Any non-422 means we passed ami_id validation (real result may vary)
+    assert r.status_code != 422, r.text
+
+
+async def test_build_provisioning_spec_ami_id_override():
+    """ami_id kwarg takes precedence over pool_meta.ami_id in the spec."""
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["g6.xlarge"],
+        "provider_pool_id": "aws/g6.xlarge",
+        "region_constraint": ["us-east-1"],
+    }
+    # pool_meta has a stale pool-level ami_id
+    meta = {"ami_id": "ami-pool-level"}
+    spec = await deployment_server._build_provisioning_spec(
+        pool_row=pool_row,
+        pool_meta=meta,
+        decision=_Decision(),
+        org_id="o",
+        ami_id="ami-deploy-level",
+    )
+    # deploy-level ami_id wins
+    assert spec["ami_id"] == "ami-deploy-level"
+
+
+async def test_build_provisioning_spec_ami_id_absent_when_none():
+    """When ami_id is None and pool_meta has no ami_id, the key is absent
+    from the spec so resolve_ami's auto-pick still applies."""
+    pool_row = {
+        "id": uuid4(),
+        "allowed_gpu_types": ["g6.xlarge"],
+        "provider_pool_id": "aws/g6.xlarge",
+        "region_constraint": ["us-east-1"],
+    }
+    spec = await deployment_server._build_provisioning_spec(
+        pool_row=pool_row,
+        pool_meta={},
+        decision=_Decision(),
+        org_id="o",
+        ami_id=None,
+    )
+    assert "ami_id" not in spec
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for HF token injection in deploy_model
+# ---------------------------------------------------------------------------
+
+async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
+    """hf_token_name resolves server-side and injects HF_TOKEN into
+    configuration.env for the worker. The raw token never leaves the server."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+
+    # Seed a ready node so we get a warm-path DEPLOYING and can introspect
+    # the load_model call's spec.env for HF_TOKEN.
+    node_id = await _seed_ready_node(pool, pool_id, gpu_total=4)
+
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        CommandResultBody,
+    )
+    app.state.worker_controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9001",
+    )
+
+    # Patch resolve_hf_token so no real provider config is needed.
+    import inferia.services.orchestration.services.model_deployment.deployment_server as ds
+    from unittest.mock import patch
+
+    with patch(
+        "inferia.services.orchestration.services.model_deployment"
+        ".hf_token_resolver.resolve_hf_token",
+        return_value="hf_secret_tok",
+    ):
+        body_payload = {
+            "model_name": "hf-model-inject",
+            "model_version": "v1",
+            "replicas": 1,
+            "gpu_per_replica": 1,
+            "pool_id": str(pool_id),
+            "engine": "vllm",
+            "org_id": org_id,
+            "ami_id": "ami-0abc",
+            "hf_token_name": "prod-token",
+            "configuration": {"artifact_uri": "hf://gated-model"},
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post("/deployment/deploy", json=body_payload)
+
+    assert r.status_code == 200, r.text
+    # Confirm load_model was called with HF_TOKEN in spec.env
+    call_kwargs = app.state.worker_controller.load_model.await_args.kwargs
+    spec_env = call_kwargs["spec"].get("env", {})
+    assert spec_env.get("HF_TOKEN") == "hf_secret_tok", (
+        f"HF_TOKEN not injected; env was: {spec_env}"
+    )
+
+
+async def test_deploy_hf_token_name_does_not_clobber_explicit_hf_token(app_and_pool):
+    """If configuration.env already carries HF_TOKEN, hf_token_name must not
+    overwrite it (setdefault semantics)."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+    await _seed_ready_node(pool, pool_id, gpu_total=4)
+
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        CommandResultBody,
+    )
+    app.state.worker_controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9002",
+    )
+
+    from unittest.mock import patch
+
+    with patch(
+        "inferia.services.orchestration.services.model_deployment"
+        ".hf_token_resolver.resolve_hf_token",
+        return_value="hf_from_name",
+    ):
+        body_payload = {
+            "model_name": "hf-model-noclobber",
+            "model_version": "v1",
+            "replicas": 1,
+            "gpu_per_replica": 1,
+            "pool_id": str(pool_id),
+            "engine": "vllm",
+            "org_id": org_id,
+            "ami_id": "ami-0abc",
+            "hf_token_name": "prod-token",
+            # Explicit HF_TOKEN in env — must NOT be replaced by the resolver
+            "configuration": {
+                "artifact_uri": "hf://gated-model",
+                "env": {"HF_TOKEN": "hf_explicit"},
+            },
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post("/deployment/deploy", json=body_payload)
+
+    assert r.status_code == 200, r.text
+    call_kwargs = app.state.worker_controller.load_model.await_args.kwargs
+    spec_env = call_kwargs["spec"].get("env", {})
+    assert spec_env.get("HF_TOKEN") == "hf_explicit", (
+        f"Explicit HF_TOKEN was clobbered; env: {spec_env}"
+    )
+
+
+async def test_deploy_hf_token_name_not_found_no_injection(app_and_pool):
+    """If resolve_hf_token returns None (token not found), no HF_TOKEN is
+    injected — the deploy proceeds normally without it."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    org_id = str(uuid4())
+    await _seed_ready_node(pool, pool_id, gpu_total=4)
+
+    from inferia.services.orchestration.services.worker_controller.protocol import (
+        CommandResultBody,
+    )
+    app.state.worker_controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="",
+        endpoint_url="http://127.0.0.1:9003",
+    )
+
+    from unittest.mock import patch
+
+    with patch(
+        "inferia.services.orchestration.services.model_deployment"
+        ".hf_token_resolver.resolve_hf_token",
+        return_value=None,
+    ):
+        body_payload = {
+            "model_name": "hf-model-notfound",
+            "model_version": "v1",
+            "replicas": 1,
+            "gpu_per_replica": 1,
+            "pool_id": str(pool_id),
+            "engine": "vllm",
+            "org_id": org_id,
+            "ami_id": "ami-0abc",
+            "hf_token_name": "nonexistent-token",
+            "configuration": {"artifact_uri": "hf://public-model"},
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post("/deployment/deploy", json=body_payload)
+
+    assert r.status_code == 200, r.text
+    call_kwargs = app.state.worker_controller.load_model.await_args.kwargs
+    spec_env = call_kwargs["spec"].get("env", {})
+    assert "HF_TOKEN" not in spec_env

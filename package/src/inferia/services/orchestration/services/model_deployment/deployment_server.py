@@ -327,7 +327,7 @@ def _model_spec_from_request(req: "DeployModelRequest") -> dict:
 
 
 async def _build_provisioning_spec(
-    *, pool_row, pool_meta: dict, decision, org_id,
+    *, pool_row, pool_meta: dict, decision, org_id, ami_id: str | None = None,
 ) -> dict:
     """Build the provisioning-job spec for a ColdStart enqueue.
 
@@ -415,6 +415,10 @@ async def _build_provisioning_spec(
         val = pool_meta.get(key)
         if val not in (None, "", []):
             spec[key] = val
+    # Per-deploy ami_id override (from DeployModelRequest.ami_id, required for
+    # vLLM). Takes priority over pool_meta.ami_id set above (deploy-level wins).
+    if ami_id:
+        spec["ami_id"] = ami_id
     # Root volume: GPU classes boot a Deep Learning AMI whose backing
     # snapshot is ~75GB+, so the build_program default of 50GB fails with
     # InvalidBlockDeviceMapping ("Volume ... smaller than snapshot, expect
@@ -525,6 +529,8 @@ class DeployModelRequest(BaseModel):
     policies: dict | None = None
     inference_model: str | None = None
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
+    ami_id: str | None = None
+    hf_token_name: str | None = None
 
 
 class PreflightRequest(BaseModel):
@@ -1002,6 +1008,7 @@ async def place_and_provision(
     engine,
     load_spec_source,
     deps,
+    ami_id: str | None = None,
 ) -> tuple[dict, int]:
     """Place a deployment on a pool and provision compute for it.
 
@@ -1132,6 +1139,7 @@ async def place_and_provision(
                                     "spec": await _build_provisioning_spec(
                                         pool_row=pool_row, pool_meta=pool_meta,
                                         decision=decision, org_id=org_id,
+                                        ami_id=ami_id,
                                     ),
                                 }
                     else:
@@ -1189,6 +1197,7 @@ async def place_and_provision(
                             "spec": await _build_provisioning_spec(
                                 pool_row=pool_row, pool_meta=pool_meta,
                                 decision=decision, org_id=org_id,
+                                ami_id=ami_id,
                             ),
                         }
 
@@ -1254,7 +1263,9 @@ async def place_and_provision(
                 "config": _cfg.get("config") or {},
                 "gpu_indices": list(range(gpu_per_replica or 0)),
                 "port": 0,
-                "env": {},
+                # Propagate configuration.env (e.g. HF_TOKEN injected by the
+                # deploy handler for hf_token_name) to the warm-path load spec.
+                "env": dict(_cfg.get("env") or {}),
             }
             try:
                 from inferia.services.orchestration.config import settings as _s
@@ -1438,6 +1449,28 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                 ),
             )
 
+    # 1b. vLLM requires an explicit ami_id (the DLAMI to boot); reject early
+    # so the operator sees an actionable 422 instead of a provisioning failure.
+    if (req.engine or "").lower() == "vllm" and not req.ami_id:
+        raise HTTPException(
+            status_code=422,
+            detail="ami_id is required for vLLM deployments",
+        )
+
+    # 1c. Resolve a named HF token server-side and inject HF_TOKEN into the
+    # worker config.  The client sends only the *name*, never the raw value.
+    if req.hf_token_name:
+        from inferia.services.orchestration.services.model_deployment.hf_token_resolver import (
+            resolve_hf_token,
+        )
+        _tok = resolve_hf_token(req.hf_token_name)
+        if _tok:
+            cfg = dict(req.configuration or {})
+            env = dict(cfg.get("env") or {})
+            env.setdefault("HF_TOKEN", _tok)  # don't clobber an explicit one
+            cfg["env"] = env
+            req.configuration = cfg
+
     # 2. Create deployment row (CREATED state, target_pool_id=pool_id)
     deploy_id = uuid4()
     policies_val = req.policies
@@ -1511,6 +1544,7 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         engine=req.engine,
         load_spec_source=req,
         deps=deps,
+        ami_id=req.ami_id,
     )
 
     from fastapi.responses import JSONResponse
@@ -2046,6 +2080,7 @@ async def _start_deployment_impl(
         engine=_source_field(row, "engine"),
         load_spec_source=row,
         deps=deps,
+        ami_id=None,  # resume path: ami_id not stored on the row; use pool default
     )
     return body, status
 

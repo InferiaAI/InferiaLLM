@@ -461,7 +461,7 @@ async def test_resume_impl_unbinds_and_places(monkeypatch):
     node_id = uuid4()
     org_id = str(uuid4())
 
-    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id):
+    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
         return {"provider": "aws", "instance_type": "g6.xlarge"}
 
     monkeypatch.setattr(

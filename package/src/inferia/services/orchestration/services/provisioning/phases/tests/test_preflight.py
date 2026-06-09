@@ -245,3 +245,62 @@ async def test_ami_check_failure_raises():
         ):
         with pytest.raises(AMINotFoundError):
             await PreflightHandler().run(_job(), _ctx())
+
+
+# ---------------------------------------------------------------------------
+# T5 provider-config-ux: explicit spec.ami_id skips resolve_ami
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_preflight_prefers_spec_ami_id(monkeypatch):
+    """When spec carries an explicit ami_id, resolve_ami must NOT be called.
+
+    This ensures that a deploy-time ami_id (required for vLLM) is used
+    verbatim by the preflight phase instead of triggering an SSM lookup
+    that may look up a different AMI or fail in non-standard regions.
+    """
+    import inferia.services.orchestration.services.provisioning.phases.preflight as pf
+
+    def _must_not_call(**_k):
+        raise AssertionError("resolve_ami must NOT be called when spec has ami_id")
+
+    monkeypatch.setattr(pf, "resolve_ami", _must_not_call)
+
+    job = _job(spec={
+        "instance_class": "normal_gpu",
+        "instance_type": "g6.xlarge",
+        "region": "us-east-1",
+        "ami_id": "ami-explicit0123",
+    })
+
+    with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
+         patch(
+            "inferia.services.orchestration.services.provisioning.phases."
+            "preflight.verify_credentials",
+            return_value={"Account": "123"},
+        ):
+        ctx = _ctx()
+        result = await PreflightHandler().run(job, ctx)
+
+    assert result.outputs["ami_id"] == "ami-explicit0123"
+    assert result.next_phase == Phase.PROVISIONING
+
+
+@pytest.mark.asyncio
+async def test_preflight_falls_back_to_resolve_ami_when_spec_has_no_ami_id():
+    """When spec.ami_id is absent, resolve_ami is still called (existing behaviour)."""
+    with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
+         patch(
+            "inferia.services.orchestration.services.provisioning.phases."
+            "preflight.verify_credentials",
+            return_value={"Account": "123"},
+        ), \
+         patch(
+            "inferia.services.orchestration.services.provisioning.phases."
+            "preflight.resolve_ami",
+            return_value="ami-auto-pick",
+        ) as mock_resolve:
+        result = await PreflightHandler().run(_job(), _ctx())
+
+    mock_resolve.assert_called_once()
+    assert result.outputs["ami_id"] == "ami-auto-pick"
