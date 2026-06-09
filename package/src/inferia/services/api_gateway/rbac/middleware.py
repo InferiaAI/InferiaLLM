@@ -355,6 +355,31 @@ async def auth_middleware(request: Request, call_next):
     return response
 
 
+async def resolve_token_to_user_context(db, token: str) -> UserContext:
+    """Provider-aware token resolution shared by HTTP middleware and WS auth.
+
+    Branching mirrors auth_middleware:
+      - inferiaauth: try local (superadmin recovery), fall back to _resolve_external_token
+      - oidc:        try local (superadmin recovery), fall back to _resolve_oidc_token
+      - local:       _resolve_local_token only
+
+    Raises HTTPException(401) on any failure.
+    """
+    mode = settings.auth_provider
+    if mode == "inferiaauth":
+        try:
+            return await _resolve_local_token(db, token)
+        except HTTPException:
+            return await _resolve_external_token(db, token)
+    elif mode == "oidc":
+        try:
+            return await _resolve_local_token(db, token)
+        except HTTPException:
+            return await _resolve_oidc_token(db, token)
+    else:  # local
+        return await _resolve_local_token(db, token)
+
+
 def get_current_user_from_request(request: Request) -> UserContext:
     """Extract current user from request state."""
     if not hasattr(request.state, "user"):
