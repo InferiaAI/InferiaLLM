@@ -129,6 +129,7 @@ async def test_default_start_bake_records_success(monkeypatch):
     await captured["coro"]
     assert mod._BAKES[bake_id]["status"] == "succeeded"
     assert mod._BAKES[bake_id]["ami_id"] == "ami-z"
+    assert "log" in mod._BAKES[bake_id]  # accumulated log must survive completion
 
 
 @pytest.mark.asyncio
@@ -144,6 +145,7 @@ async def test_default_start_bake_records_failure(monkeypatch):
     await captured["coro"]
     assert mod._BAKES[bake_id]["status"] == "failed"
     assert "nope" in mod._BAKES[bake_id]["message"]
+    assert "log" in mod._BAKES[bake_id]  # accumulated log must survive completion
 
 
 @pytest.mark.asyncio
@@ -175,3 +177,44 @@ def test_list_503_when_not_configured(monkeypatch):
     mod._deps.list_engine_amis = None
     app.include_router(mod.router)
     assert TestClient(app).get("/v1/admin/aws/engine-ami").status_code == 503
+
+
+# --- Task 5: _BAKES phase + log; _make_progress factory ---
+
+def test_bake_record_accumulates_phase_and_log():
+    from inferia.services.orchestration.api import admin_engine_ami as m
+    bake_id = "b1"
+    m._BAKES[bake_id] = {"status": "running", "phase": "", "ami_id": None, "region": "us-east-1", "log": []}
+    cb = m._make_progress(bake_id)
+    cb("launching-builder", "launching builder")
+    cb("installing-and-pulling", "Pulling fs layer 50%")
+    rec = m._BAKES[bake_id]
+    assert rec["phase"] == "installing-and-pulling"
+    assert rec["log"][-1] == "Pulling fs layer 50%"
+    assert rec["log"][0] == "launching builder"
+
+
+def test_bake_log_caps_at_2000_lines():
+    from inferia.services.orchestration.api import admin_engine_ami as m
+    bake_id = "b2"
+    m._BAKES[bake_id] = {"status": "running", "phase": "", "ami_id": None, "region": "r", "log": []}
+    cb = m._make_progress(bake_id)
+    for i in range(2100):
+        cb("installing-and-pulling", f"line {i}")
+    assert len(m._BAKES[bake_id]["log"]) == 2000
+    assert m._BAKES[bake_id]["log"][-1] == "line 2099"
+
+
+def test_make_progress_unknown_bake_id_noop():
+    from inferia.services.orchestration.api import admin_engine_ami as m
+    cb = m._make_progress("does-not-exist")
+    cb("phase", "line")  # must not raise
+
+
+def test_make_progress_empty_phase_keeps_prior_phase():
+    from inferia.services.orchestration.api import admin_engine_ami as m
+    m._BAKES["b3"] = {"status": "running", "phase": "creating-ami", "log": [], "region": "r", "ami_id": None}
+    cb = m._make_progress("b3")
+    cb("", "a log line with no phase")
+    assert m._BAKES["b3"]["phase"] == "creating-ami"  # empty phase doesn't overwrite
+    assert m._BAKES["b3"]["log"] == ["a log line with no phase"]
