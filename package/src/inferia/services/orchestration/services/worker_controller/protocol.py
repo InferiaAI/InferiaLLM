@@ -76,10 +76,33 @@ class HeartbeatEvent(BaseModel):
     reason: str = ""
 
 
+class EngineMetrics(BaseModel):
+    """Arbitrary key-value pairs scraped from the inference engine (e.g. vLLM)."""
+    model_config = {"extra": "allow"}
+    # Known keys are typed; anything else comes through as int via extra.
+    vllm_num_requests_running: int | None = Field(default=None, alias="vllm:num_requests_running")
+    vllm_request_success_total: int | None = Field(default=None, alias="vllm:request_success_total")
+
+
+class DeployMetric(BaseModel):
+    deployment_id: str
+    recipe: str
+    model: str = ""
+    requests_total: int = 0
+    active_requests: int = 0
+    request_latency_p50_ms: float = 0.0
+    request_latency_p95_ms: float = 0.0
+    pull_duration_ms: int = 0
+    start_duration_ms: int = 0
+    phase: str = ""
+    engine_metrics: EngineMetrics = Field(default_factory=EngineMetrics)
+
+
 class HeartbeatBody(BaseModel):
     used: dict[str, str] = Field(default_factory=dict)
     loaded_models: list[str] = Field(default_factory=list)
     events: list[HeartbeatEvent] = Field(default_factory=list)
+    deploy_metrics: list[DeployMetric] = Field(default_factory=list)
 
 
 class ModelRef(BaseModel):
@@ -234,6 +257,8 @@ __all__ = [
     "HelloBody",
     "HeartbeatBody",
     "HeartbeatEvent",
+    "DeployMetric",
+    "EngineMetrics",
     "LoadModelBody",
     "UnloadModelBody",
     "CommandResultBody",

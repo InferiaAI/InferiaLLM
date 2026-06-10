@@ -9,12 +9,13 @@ import DeploymentOverview from "@/components/deployment/DeploymentOverview"
 import DeploymentRateLimit from "@/components/deployment/DeploymentRateLimit"
 import TerminalLogs from "@/components/deployment/TerminalLogs"
 import DeploymentConfig from "@/components/deployment/DeploymentConfig"
+import DeploymentMetrics from "@/components/deployment/DeploymentMetrics"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { LoadingScreen } from "@/components/ui/LoadingScreen"
 import { useAuth } from "@/context/AuthContext"
 
-type TabType = "overview" | "logs" | "terminal" | "rate_limit" | "config"
+type TabType = "overview" | "logs" | "terminal" | "rate_limit" | "config" | "metrics"
 type ActionModalType = "start" | "stop" | "delete" | null
 
 type DeploymentData = {
@@ -105,7 +106,24 @@ export default function DeploymentDetail() {
       try {
         const { data } = await computeApi.get(`/deployment/status/${id}`)
         if (data && data.deployment_id) {
-          dispatch({ type: 'SET_DEPLOYMENT', payload: { ...data, id: data.deployment_id, name: data.model_name || `Compute-${data.deployment_id.slice(0, 8)}`, provider: data.engine === "vllm" ? "vLLM (Compute)" : "Compute", endpoint_url: data.endpoint, model_name: data.model_name, workload_type: data.configuration?.workload_type || (data.configuration?.git_repo ? "training" : "inference"), git_repo: data.configuration?.git_repo, training_script: data.configuration?.training_script, dataset_url: data.configuration?.dataset_url, error_message: data.error_message || null } });
+          dispatch({
+            type: 'SET_DEPLOYMENT',
+            payload: {
+              ...data,
+              id: data.deployment_id,
+              name: data.model_name || `Compute-${data.deployment_id.slice(0, 8)}`,
+              provider: data.engine === "vllm" ? "vLLM (Compute)" : "Compute",
+              endpoint_url: data.endpoint,
+              model_name: data.model_name,
+              workload_type: data.configuration?.workload_type || (data.configuration?.git_repo ? "training" : "inference"),
+              git_repo: data.configuration?.git_repo,
+              training_script: data.configuration?.training_script,
+              dataset_url: data.configuration?.dataset_url,
+              error_message: data.error_message || null,
+              target_node_id: data.target_node_id,
+              node_ids: data.node_ids
+            }
+          });
           return
         }
       } catch { /* ignore */ }
@@ -145,7 +163,7 @@ export default function DeploymentDetail() {
 
   const tabs = useMemo(() => {
     const logLabel = isTraining ? "Training Logs" : isEmbedding ? "Embedding Logs" : isImageGen ? "Image Gen Logs" : isVideoGen ? "Video Gen Logs" : "Inference Logs"
-    const list: { id: TabType; label: string }[] = [{ id: "overview", label: "Overview" }, { id: "logs", label: logLabel }, { id: "terminal", label: "Terminal Logs" }, { id: "rate_limit", label: "Rate Limits" }, { id: "config", label: "Configuration" }];
+    const list: { id: TabType; label: string }[] = [{ id: "overview", label: "Overview" }, { id: "logs", label: logLabel }, { id: "metrics", label: "Metrics" }, { id: "terminal", label: "Terminal Logs" }, { id: "rate_limit", label: "Rate Limits" }, { id: "config", label: "Configuration" }];
     return list.filter((t) => !(t.id === "terminal" && !isCompute))
   }, [isEmbedding, isTraining, isImageGen, isVideoGen, isCompute])
 
@@ -316,6 +334,7 @@ function TabContent({ activeTab, deployment, fetchDeployment }: { activeTab: Tab
         {isTraining ? <TrainingLogs deploymentId={id} /> : <InferenceLogs deploymentId={id} />}
       </div>
     );
+    case "metrics": return <DeploymentMetrics deploymentId={id} deployment={deployment} />;
     case "terminal": return <TerminalLogs deploymentId={id} />;
     case "config": return <DeploymentConfig deployment={deployment} onUpdate={() => fetchDeployment(false)} />;
     case "rate_limit": return <DeploymentRateLimit deploymentId={id} />;

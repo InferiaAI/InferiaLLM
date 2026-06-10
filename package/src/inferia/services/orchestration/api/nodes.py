@@ -162,6 +162,9 @@ class NodeView(BaseModel):
     vcpu_allocated: int | None = None
     ram_gb_total: int | None = None
     ram_gb_allocated: int | None = None
+    cpu_usage_pct: float | None = None
+    mem_usage_gb: float | None = None
+    health_score: int | None = None
     last_heartbeat: str | None = None
     provider_instance_id: str | None = None
 
@@ -269,6 +272,21 @@ async def get_node(
     if not row:
         raise HTTPException(404, "node not found")
     return _to_view(row)
+
+
+@router.get("/{node_id}/deploy-metrics/{deployment_id}")
+async def get_node_deploy_metrics(
+    node_id: str = Path(...),
+    deployment_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    """Return the most recent per-deployment metrics from the worker heartbeat."""
+    metrics = await _deps.inventory_repo.get_deploy_metrics(
+        node_id=node_id, deployment_id=deployment_id,
+    )
+    if not metrics:
+        raise HTTPException(404, "no metrics found for this deployment on this node")
+    return metrics
 
 
 @router.patch("/{node_id}/labels", response_model=NodeView)
@@ -663,6 +681,15 @@ def _to_view(row: dict) -> NodeView:
             metadata = json.loads(metadata)
         except Exception:
             metadata = {}
+    
+    used = metadata.get("used") or {}
+    if isinstance(used, str):
+        import json
+        try:
+            used = json.loads(used)
+        except Exception:
+            used = {}
+
     terminating = str((metadata or {}).get("terminating", "")).lower() == "true"
     state = row.get("state") or "unknown"
     # Present the in-flight destroy as "terminating" so the existing
@@ -687,6 +714,9 @@ def _to_view(row: dict) -> NodeView:
         vcpu_allocated=row.get("vcpu_allocated"),
         ram_gb_total=row.get("ram_gb_total"),
         ram_gb_allocated=row.get("ram_gb_allocated"),
+        cpu_usage_pct=float(used.get("cpu_pct", 0)) if used.get("cpu_pct") else None,
+        mem_usage_gb=float(used.get("mem_used", 0)) / (1024**3) if used.get("mem_used") else None,
+        health_score=row.get("health_score"),
         last_heartbeat=last_hb,
         provider_instance_id=row.get("provider_instance_id"),
     )
