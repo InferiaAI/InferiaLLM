@@ -41,7 +41,8 @@ export type InstanceType = {
   gpu_ram_gb: number;
   // Backend dataclass field is `approx_usd_per_hour`; the HTTP endpoint
   // renames it at serialization. See providers.py::_to_dict.
-  price_per_hour: number;
+  // null when the backend has no pricing data (live discovery path).
+  price_per_hour: number | null;
 };
 
 export type InstanceCatalog = Record<InstanceClass, InstanceType[]>;
@@ -58,8 +59,8 @@ function groupLiveTypes(types: AwsInstanceType[]): InstanceCatalog {
       ram_gb: t.memory_gb,
       gpu_count: t.gpu_count,
       gpu_model: t.gpu_model,
-      gpu_ram_gb: 0,       // live discovery doesn't expose per-GPU VRAM
-      price_per_hour: 0,   // live discovery has no pricing
+      gpu_ram_gb: t.gpu_ram_gb,
+      price_per_hour: t.price_per_hour,
     });
   }
   return out;

@@ -1,3 +1,4 @@
+import json
 import time
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -86,7 +87,8 @@ async def test_list_instance_types_enriches_and_flags_gpu():
          "MemoryInfo": {"SizeInMiB": 8192}},
     ]}
     with patch.object(d, "_ec2", return_value=ec2), \
-         patch.object(d, "_resolve_creds", AsyncMock(return_value={"aws_access_key_id": "k", "aws_secret_access_key": "s"})):
+         patch.object(d, "_resolve_creds", AsyncMock(return_value={"aws_access_key_id": "k", "aws_secret_access_key": "s"})), \
+         patch.object(d, "_region_price_map", return_value={}):
         out = await d.list_instance_types("us-east-1")
     by = {i["instance_type"]: i for i in (x.to_dict() for x in out)}
     assert by["g6.xlarge"]["is_gpu"] is True
@@ -114,7 +116,117 @@ async def test_list_instance_types_batches_over_100():
     ec2.get_paginator.return_value = paginator
     ec2.describe_instance_types.return_value = {"InstanceTypes": []}
     with patch.object(d, "_ec2", return_value=ec2), \
-         patch.object(d, "_resolve_creds", AsyncMock(return_value={"aws_access_key_id": "k", "aws_secret_access_key": "s"})):
+         patch.object(d, "_resolve_creds", AsyncMock(return_value={"aws_access_key_id": "k", "aws_secret_access_key": "s"})), \
+         patch.object(d, "_region_price_map", return_value={}):
         await d.list_instance_types("us-east-1")
     # 150 names → 2 describe_instance_types calls (100 + 50)
     assert ec2.describe_instance_types.call_count == 2
+
+
+def test_region_price_map_parses_ondemand(monkeypatch):
+    from inferia.services.orchestration.services.adapter_engine.adapters.aws import aws_discovery as d
+    d._CACHE.clear()
+    pl = lambda itype, usd: json.dumps({
+        "product": {"attributes": {"instanceType": itype}},
+        "terms": {"OnDemand": {"X": {"priceDimensions": {"Y": {"pricePerUnit": {"USD": usd}}}}}},
+    })
+    client = MagicMock()
+    paginator = MagicMock()
+    paginator.paginate.return_value = [
+        {"PriceList": [pl("g5.2xlarge", "1.2120000000"), pl("m5.large", "0.0960000000")]},
+        {"PriceList": [pl("g5.2xlarge", "9.9990000000")]},  # dup → keep min
+    ]
+    client.get_paginator.return_value = paginator
+    monkeypatch.setattr(d, "_pricing_client", lambda creds: client)
+    out = d._region_price_map({"aws_access_key_id": "k", "aws_secret_access_key": "s"}, "us-east-1")
+    assert out["g5.2xlarge"] == 1.212  # min of the two
+    assert out["m5.large"] == 0.096
+
+
+def test_region_price_map_failure_returns_empty(monkeypatch):
+    from inferia.services.orchestration.services.adapter_engine.adapters.aws import aws_discovery as d
+    from botocore.exceptions import ClientError
+    d._CACHE.clear()
+    client = MagicMock()
+    client.get_paginator.side_effect = ClientError({"Error": {"Code": "AccessDenied"}}, "GetProducts")
+    monkeypatch.setattr(d, "_pricing_client", lambda creds: client)
+    out = d._region_price_map({"aws_access_key_id": "k", "aws_secret_access_key": "s"}, "us-east-1")
+    assert out == {}  # best-effort, no raise
+
+
+def test_region_price_map_failure_is_negative_cached(monkeypatch):
+    """A pricing API failure must be negative-cached so the slow/failing call
+    is not repeated on every list_instance_types invocation."""
+    from botocore.exceptions import ClientError
+    d._CACHE.clear()
+    client = MagicMock()
+    client.get_paginator.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied"}}, "GetProducts"
+    )
+    monkeypatch.setattr(d, "_pricing_client", lambda creds: client)
+    creds = {"aws_access_key_id": "k", "aws_secret_access_key": "s"}
+
+    out1 = d._region_price_map(creds, "us-east-1")
+    out2 = d._region_price_map(creds, "us-east-1")
+
+    assert out1 == {}
+    assert out2 == {}
+    # The API must have been called only once; the second call hits the negative cache
+    assert client.get_paginator.call_count == 1
+
+
+def test_describe_types_non_numeric_sizeInMiB_yields_zero_not_exception():
+    """A malformed AWS record with a non-numeric SizeInMiB must produce 0.0,
+    not raise — and valid instances in the same batch must still come through."""
+    ec2 = MagicMock()
+    ec2.describe_instance_types.return_value = {"InstanceTypes": [
+        # malformed: string SizeInMiB on system RAM AND GPU VRAM
+        {
+            "InstanceType": "bad.medium",
+            "VCpuInfo": {"DefaultVCpus": 2},
+            "MemoryInfo": {"SizeInMiB": "not-a-number"},
+            "GpuInfo": {"Gpus": [{"Name": "BadGPU", "Count": 1,
+                                   "MemoryInfo": {"SizeInMiB": "also-bad"}}]},
+        },
+        # valid record must still be returned
+        {
+            "InstanceType": "m5.large",
+            "VCpuInfo": {"DefaultVCpus": 2},
+            "MemoryInfo": {"SizeInMiB": 8192},
+        },
+    ]}
+    result = d._describe_types(ec2, ["bad.medium", "m5.large"])
+    by = {r.instance_type: r for r in result}
+
+    assert "bad.medium" in by
+    assert by["bad.medium"].memory_gb == 0.0
+    assert by["bad.medium"].gpu_ram_gb == 0.0
+
+    assert "m5.large" in by
+    assert by["m5.large"].memory_gb == 8.0
+
+
+@pytest.mark.asyncio
+async def test_list_instance_types_sets_vram_and_price(monkeypatch):
+    from unittest.mock import AsyncMock
+    from inferia.services.orchestration.services.adapter_engine.adapters.aws import aws_discovery as d
+    ec2 = MagicMock()
+    paginator = MagicMock()
+    paginator.paginate.return_value = [{"InstanceTypeOfferings": [{"InstanceType": "g5.2xlarge"}, {"InstanceType": "m5.large"}]}]
+    ec2.get_paginator.return_value = paginator
+    ec2.describe_instance_types.return_value = {"InstanceTypes": [
+        {"InstanceType": "g5.2xlarge", "VCpuInfo": {"DefaultVCpus": 8}, "MemoryInfo": {"SizeInMiB": 32768},
+         "GpuInfo": {"Gpus": [{"Name": "A10G", "Count": 1, "MemoryInfo": {"SizeInMiB": 24576}}]}},
+        {"InstanceType": "m5.large", "VCpuInfo": {"DefaultVCpus": 2}, "MemoryInfo": {"SizeInMiB": 8192}},
+    ]}
+    with patch.object(d, "_ec2", return_value=ec2), \
+         patch.object(d, "_resolve_creds", AsyncMock(return_value={"aws_access_key_id": "k", "aws_secret_access_key": "s"})), \
+         patch.object(d, "_region_price_map", lambda creds, region: {"g5.2xlarge": 1.212}):
+        out = await d.list_instance_types("us-east-1")
+    by = {i.instance_type: i for i in out}
+    assert by["g5.2xlarge"].gpu_ram_gb == 24.0
+    assert by["g5.2xlarge"].price_per_hour == 1.212
+    assert by["m5.large"].gpu_ram_gb == 0.0
+    assert by["m5.large"].price_per_hour is None  # unknown → None
+    # to_dict carries both
+    assert "gpu_ram_gb" in by["g5.2xlarge"].to_dict() and "price_per_hour" in by["g5.2xlarge"].to_dict()
