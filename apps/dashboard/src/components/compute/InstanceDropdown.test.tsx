@@ -204,6 +204,7 @@ describe("InstanceDropdown — selection callback", () => {
         render(<InstanceDropdown instances={ALL_INSTANCES} value={null} onSelect={onSelect} />);
 
         await user.click(screen.getByTestId("instance-dropdown-trigger"));
+        await user.click(screen.getByTestId("gpu-only-toggle")); // reveal CPU instances (GPU-only is on by default)
         await user.click(screen.getByTestId("inst-option-c6i.xlarge"));
 
         expect(onSelect).toHaveBeenCalledOnce();
@@ -238,21 +239,48 @@ describe("InstanceDropdown — priceLabel (price vs null)", () => {
     });
 });
 
-describe("InstanceDropdown — GPU-first ordering in options list", () => {
-    it("renders instances in the provided order (GPU-first order is caller's responsibility)", async () => {
+describe("InstanceDropdown — GPU-only toggle + smallest-first ordering", () => {
+    it("defaults to GPU only: CPU instances hidden until the toggle is turned off", async () => {
         const user = userEvent.setup();
-        renderDropdown(); // uses ALL_INSTANCES which is heavy → gpu → null_price_gpu → cpu
+        renderDropdown(); // ALL_INSTANCES includes c6i (cpu)
         await user.click(screen.getByTestId("instance-dropdown-trigger"));
+        // GPU instances shown, CPU hidden by default
+        expect(screen.getByTestId("inst-option-g6.xlarge")).toBeInTheDocument();
+        expect(screen.queryByTestId("inst-option-c6i.xlarge")).not.toBeInTheDocument();
+        // Toggle GPU-only OFF (toggle is inside the container, so the list stays open)
+        await user.click(screen.getByTestId("gpu-only-toggle"));
+        expect(screen.getByTestId("inst-option-c6i.xlarge")).toBeInTheDocument();
+    });
 
+    it("GPU-only toggle defaults to checked (on)", () => {
+        renderDropdown();
+        expect(screen.getByTestId("gpu-only-toggle")).toBeChecked();
+    });
+
+    it("orders smallest instance first: ascending vCPU → RAM → GPU (GPU-only view)", async () => {
+        const user = userEvent.setup();
+        renderDropdown(); // p4d(96 vcpu), g6(4), g5(4), c6i(4,cpu→hidden)
+        await user.click(screen.getByTestId("instance-dropdown-trigger"));
         const list = screen.getByTestId("instance-dropdown-list");
-        const buttons = within(list).getAllByRole("button");
-        const names = buttons.map(b => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "");
+        const names = within(list)
+            .getAllByRole("button")
+            .map((b) => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "");
+        // GPU-only: g6(4) & g5(4) tie (same vcpu/ram/gpu) → stable input order; p4d(96) last.
+        expect(names).toEqual(["g6.xlarge", "g5.xlarge", "p4d.24xlarge"]);
+    });
 
-        // The order in ALL_INSTANCES is: HEAVY_GPU, GPU, NULL_PRICE_GPU, CPU
-        expect(names[0]).toBe("p4d.24xlarge");
-        expect(names[1]).toBe("g6.xlarge");
-        expect(names[2]).toBe("g5.xlarge");
-        expect(names[3]).toBe("c6i.xlarge");
+    it("with GPU-only off, sorts smallest-first across GPU and CPU together", async () => {
+        const user = userEvent.setup();
+        renderDropdown();
+        await user.click(screen.getByTestId("instance-dropdown-trigger"));
+        await user.click(screen.getByTestId("gpu-only-toggle"));
+        const list = screen.getByTestId("instance-dropdown-list");
+        const names = within(list)
+            .getAllByRole("button")
+            .map((b) => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "");
+        // vCPU asc: c6i(4 vcpu, 8GB) smallest of the vcpu=4 group; p4d(96) last.
+        expect(names[0]).toBe("c6i.xlarge");
+        expect(names[names.length - 1]).toBe("p4d.24xlarge");
     });
 
     it("GPU instance shows gpu_model, gpu_ram_gb, gpu_count details in option", async () => {
@@ -266,15 +294,14 @@ describe("InstanceDropdown — GPU-first ordering in options list", () => {
         expect(within(option).getByText(/1 GPU/)).toBeInTheDocument();
     });
 
-    it("CPU instance does NOT show GPU details row in option", async () => {
+    it("CPU instance (GPU-only off) does NOT show a GPU details row in option", async () => {
         const user = userEvent.setup();
         renderDropdown({ instances: [CPU_INSTANCE], value: null });
         await user.click(screen.getByTestId("instance-dropdown-trigger"));
+        await user.click(screen.getByTestId("gpu-only-toggle")); // reveal the CPU instance
 
         const option = screen.getByTestId("inst-option-c6i.xlarge");
-        // No GPU model / VRAM row
         expect(within(option).queryByText(/VRAM/)).not.toBeInTheDocument();
-        // vCPU and RAM shown
         expect(within(option).getByText(/4 vCPU/)).toBeInTheDocument();
         expect(within(option).getByText(/8GB RAM/)).toBeInTheDocument();
     });
@@ -286,7 +313,8 @@ describe("InstanceDropdown — empty state", () => {
         renderDropdown({ instances: [] });
         await user.click(screen.getByTestId("instance-dropdown-trigger"));
         expect(screen.getByTestId("instance-dropdown-list")).toBeInTheDocument();
-        expect(screen.getByText(/No instance types available/)).toBeInTheDocument();
+        // GPU-only is on by default → "No GPU instance types available"; either empty message is acceptable.
+        expect(screen.getByText(/No (GPU )?instance types available/)).toBeInTheDocument();
     });
 });
 
@@ -295,6 +323,7 @@ describe("InstanceDropdown — selected item highlight", () => {
         const user = userEvent.setup();
         renderDropdown({ instances: [GPU_INSTANCE, CPU_INSTANCE], value: "g6.xlarge" });
         await user.click(screen.getByTestId("instance-dropdown-trigger"));
+        await user.click(screen.getByTestId("gpu-only-toggle")); // reveal the CPU instance too
 
         const selected = screen.getByTestId("inst-option-g6.xlarge");
         const unselected = screen.getByTestId("inst-option-c6i.xlarge");

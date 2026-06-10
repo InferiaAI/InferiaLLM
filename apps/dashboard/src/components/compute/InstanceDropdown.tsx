@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { InstanceType } from "@/hooks/useInstanceCatalog";
 
 function priceLabel(p: number | null): string {
@@ -9,6 +9,11 @@ function summary(it: InstanceType): string {
   return it.gpu_count > 0
     ? `${it.name} — ${it.gpu_model ?? "GPU"} ${it.gpu_ram_gb}GB · ${it.gpu_count} GPU · ${priceLabel(it.price_per_hour)}`
     : `${it.name} — ${it.vcpu} vCPU · ${it.ram_gb}GB · ${priceLabel(it.price_per_hour)}`;
+}
+
+// Smallest instance first: ascending by vCPU, then RAM, then GPU count.
+function bySize(a: InstanceType, b: InstanceType): number {
+  return a.vcpu - b.vcpu || a.ram_gb - b.ram_gb || a.gpu_count - b.gpu_count;
 }
 
 export function InstanceDropdown({
@@ -23,6 +28,9 @@ export function InstanceDropdown({
   loading?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // GPU instances are the common case for this platform — default to showing
+  // only them; the toggle reveals CPU instances too.
+  const [gpuOnly, setGpuOnly] = useState(true);
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -41,10 +49,28 @@ export function InstanceDropdown({
     };
   }, [open]);
 
+  // Filter by the GPU-only toggle, then order smallest-first. The selected
+  // summary is looked up from the FULL list so a selection the filter hides
+  // still renders in the trigger.
+  const shown = useMemo(
+    () => instances.filter((i) => !gpuOnly || i.gpu_count > 0).slice().sort(bySize),
+    [instances, gpuOnly],
+  );
   const selected = instances.find((i) => i.name === value) ?? null;
 
   return (
     <div ref={ref} className="relative" data-testid="instance-dropdown">
+      <label className="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground select-none">
+        <input
+          type="checkbox"
+          checked={gpuOnly}
+          onChange={(e) => setGpuOnly(e.target.checked)}
+          data-testid="gpu-only-toggle"
+          className="h-3.5 w-3.5 rounded border-input accent-primary"
+        />
+        GPU only
+      </label>
+
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -67,12 +93,12 @@ export function InstanceDropdown({
           className="absolute z-50 mt-1 w-full max-h-80 overflow-y-auto rounded-md border border-border bg-card shadow-lg"
           data-testid="instance-dropdown-list"
         >
-          {instances.length === 0 ? (
+          {shown.length === 0 ? (
             <div className="px-3 py-4 text-xs text-muted-foreground">
-              No instance types available
+              {gpuOnly ? "No GPU instance types available" : "No instance types available"}
             </div>
           ) : (
-            instances.map((it) => (
+            shown.map((it) => (
               <button
                 key={it.name}
                 type="button"

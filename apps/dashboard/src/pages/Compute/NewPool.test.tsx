@@ -191,8 +191,13 @@ async function selectInstanceFromDropdown(user: ReturnType<typeof userEvent.setu
     // Open the dropdown
     const trigger = screen.getByTestId("instance-dropdown-trigger");
     await user.click(trigger);
-    // Click the instance option
-    const option = await screen.findByTestId(`inst-option-${instanceName}`);
+    // CPU instances are hidden behind the default-on "GPU only" toggle; if the
+    // target option isn't visible, turn the toggle off to reveal all instances.
+    let option = screen.queryByTestId(`inst-option-${instanceName}`);
+    if (!option) {
+        await user.click(screen.getByTestId("gpu-only-toggle"));
+        option = await screen.findByTestId(`inst-option-${instanceName}`);
+    }
     await user.click(option);
 }
 
@@ -251,37 +256,40 @@ describe("AWS InstanceDropdown (GPU-first flat list, no tier tabs)", () => {
         expect(screen.queryByTestId("aws-inst-c6i.xlarge")).not.toBeInTheDocument();
     });
 
-    it("dropdown lists GPU instances (heavy first, then normal) before CPU instances", async () => {
+    it("defaults to GPU-only (CPU hidden), orders smallest-first, and the toggle reveals CPU", async () => {
         const user = await gotoStep2("aws");
 
-        // Open the dropdown
         await waitFor(() => screen.getByTestId("instance-dropdown-trigger"));
         await user.click(screen.getByTestId("instance-dropdown-trigger"));
 
-        // All instances (GPU + CPU) should be in the dropdown list
+        // GPU instances present by default
         await waitFor(() =>
-            expect(screen.getByTestId("inst-option-p4d.24xlarge")).toBeInTheDocument(),
+            expect(screen.getByTestId("inst-option-p5.48xlarge")).toBeInTheDocument(),
         );
-        // GPU instances present
-        expect(screen.getByTestId("inst-option-p5.48xlarge")).toBeInTheDocument();
-        expect(screen.getByTestId("inst-option-g5.12xlarge")).toBeInTheDocument();
         expect(screen.getByTestId("inst-option-g5.xlarge")).toBeInTheDocument();
-        expect(screen.getByTestId("inst-option-g5.2xlarge")).toBeInTheDocument();
-        expect(screen.getByTestId("inst-option-g6.xlarge")).toBeInTheDocument();
-        // CPU instances present
-        expect(screen.getByTestId("inst-option-c6i.xlarge")).toBeInTheDocument();
-        expect(screen.getByTestId("inst-option-c6i.2xlarge")).toBeInTheDocument();
-        expect(screen.getByTestId("inst-option-m6i.xlarge")).toBeInTheDocument();
+        expect(screen.getByTestId("inst-option-p4d.24xlarge")).toBeInTheDocument();
+        // CPU instances hidden by default (GPU-only on)
+        expect(screen.queryByTestId("inst-option-c6i.xlarge")).not.toBeInTheDocument();
+        expect(screen.queryByTestId("inst-option-m6i.xlarge")).not.toBeInTheDocument();
 
-        // Verify GPU-first ordering: p4d (heavy_gpu first) appears before c6i (cpu)
-        const list = screen.getByTestId("instance-dropdown-list");
-        const buttons = within(list).getAllByRole("button");
-        const names = buttons.map(b => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "");
-        const p4dIdx = names.indexOf("p4d.24xlarge");
-        const c6iIdx = names.indexOf("c6i.xlarge");
-        expect(p4dIdx).toBeGreaterThanOrEqual(0);
-        expect(c6iIdx).toBeGreaterThanOrEqual(0);
-        expect(p4dIdx).toBeLessThan(c6iIdx);
+        // Smallest-first: a 4-vCPU GPU instance first, the 192-vCPU p5.48xlarge last.
+        const namesGpuOnly = within(screen.getByTestId("instance-dropdown-list"))
+            .getAllByRole("button")
+            .map(b => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "")
+            .filter(Boolean);
+        expect(["g5.xlarge", "g6.xlarge"]).toContain(namesGpuOnly[0]);
+        expect(namesGpuOnly[namesGpuOnly.length - 1]).toBe("p5.48xlarge");
+
+        // Turn the GPU-only toggle off → CPU instances appear
+        await user.click(screen.getByTestId("gpu-only-toggle"));
+        expect(screen.getByTestId("inst-option-c6i.xlarge")).toBeInTheDocument();
+        expect(screen.getByTestId("inst-option-m6i.xlarge")).toBeInTheDocument();
+        const namesAll = within(screen.getByTestId("instance-dropdown-list"))
+            .getAllByRole("button")
+            .map(b => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "")
+            .filter(Boolean);
+        // Still smallest-first: p5.48xlarge (192 vCPU) remains last.
+        expect(namesAll[namesAll.length - 1]).toBe("p5.48xlarge");
     });
 
     it("selecting a GPU instance shows it in the trigger and shows the GPU Count selector", async () => {
@@ -406,24 +414,23 @@ describe("AWS InstanceDropdown (GPU-first flat list, no tier tabs)", () => {
         expect(trigger.textContent).toMatch(/g5\.xlarge/);
     });
 
-    it("GPU-first order: heavy instances come before normal_gpu, which come before cpu", async () => {
+    it("orders instances smallest-first (ascending vCPU), independent of heavy/normal class", async () => {
         const user = await gotoStep2("aws");
         await waitFor(() => screen.getByTestId("instance-dropdown-trigger"));
         await user.click(screen.getByTestId("instance-dropdown-trigger"));
 
         const list = await screen.findByTestId("instance-dropdown-list");
-        const buttons = within(list).getAllByRole("button");
-        const names = buttons.map(b => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "");
+        const names = within(list).getAllByRole("button")
+            .map(b => b.getAttribute("data-testid")?.replace("inst-option-", "") ?? "")
+            .filter(Boolean);
 
-        // heavy_gpu instances from fixture: p4d.24xlarge, p5.48xlarge, g5.12xlarge
-        // normal_gpu: g5.xlarge, g5.2xlarge, g6.xlarge
-        // cpu: c6i.xlarge, c6i.2xlarge, m6i.xlarge
-        const heavyIdx = names.indexOf("p4d.24xlarge");
-        const normalIdx = names.indexOf("g5.xlarge");
-        const cpuIdx = names.indexOf("c6i.xlarge");
-
-        expect(heavyIdx).toBeLessThan(normalIdx);
-        expect(normalIdx).toBeLessThan(cpuIdx);
+        // GPU-only (default). Fixture vCPUs: g5.xlarge/g6.xlarge=4, g5.2xlarge=8,
+        // g5.12xlarge=48 (heavy), p4d.24xlarge=96 (heavy), p5.48xlarge=192 (heavy).
+        // Smallest-first ignores the heavy/normal class:
+        expect(["g5.xlarge", "g6.xlarge"]).toContain(names[0]);          // 4 vCPU first
+        expect(names[names.length - 1]).toBe("p5.48xlarge");             // 192 vCPU last
+        expect(names.indexOf("g5.2xlarge")).toBeLessThan(names.indexOf("g5.12xlarge")); // 8 < 48
+        expect(names.indexOf("g5.12xlarge")).toBeLessThan(names.indexOf("p4d.24xlarge")); // 48 < 96
     });
 
     it("renders the tier selector ONLY for AWS — GCP shows the legacy gcpGpuTypes grid, no dropdown", async () => {
