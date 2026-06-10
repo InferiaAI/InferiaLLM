@@ -105,9 +105,15 @@ const CURATED_FIXTURE_ALT = {
 };
 
 const LIVE_TYPES = [
-  { instance_type: "g6.xlarge", vcpus: 4, memory_gb: 16, gpu_count: 1, gpu_model: "NVIDIA L4", is_gpu: true },
-  { instance_type: "p4d.24xlarge", vcpus: 96, memory_gb: 1152, gpu_count: 8, gpu_model: "NVIDIA A100", is_gpu: true },
-  { instance_type: "c6i.xlarge", vcpus: 4, memory_gb: 8, gpu_count: 0, gpu_model: null, is_gpu: false },
+  { instance_type: "g6.xlarge", vcpus: 4, memory_gb: 16, gpu_count: 1, gpu_model: "NVIDIA L4", is_gpu: true, gpu_ram_gb: 0, price_per_hour: null },
+  { instance_type: "p4d.24xlarge", vcpus: 96, memory_gb: 1152, gpu_count: 8, gpu_model: "NVIDIA A100", is_gpu: true, gpu_ram_gb: 0, price_per_hour: null },
+  { instance_type: "c6i.xlarge", vcpus: 4, memory_gb: 8, gpu_count: 0, gpu_model: null, is_gpu: false, gpu_ram_gb: 0, price_per_hour: null },
+];
+
+// Live types fixture with VRAM + price data returned by the enriched backend.
+const LIVE_TYPES_WITH_PRICING = [
+  { instance_type: "g6.xlarge", vcpus: 4, memory_gb: 16, gpu_count: 1, gpu_model: "NVIDIA L4", is_gpu: true, gpu_ram_gb: 24, price_per_hour: 1.212 },
+  { instance_type: "c6i.xlarge", vcpus: 4, memory_gb: 8, gpu_count: 0, gpu_model: null, is_gpu: false, gpu_ram_gb: 0, price_per_hour: null },
 ];
 
 afterEach(() => {
@@ -194,9 +200,9 @@ describe("useInstanceCatalog (region-aware live path)", () => {
     expect(result.current.data?.normal_gpu[0].name).toBe("g6.xlarge");
     expect(result.current.data?.normal_gpu[0].gpu_count).toBe(1);
     expect(result.current.data?.normal_gpu[0].gpu_model).toBe("NVIDIA L4");
-    // live discovery has no pricing/VRAM
+    // LIVE_TYPES has no pricing/VRAM enrichment (gpu_ram_gb:0, price_per_hour:null)
     expect(result.current.data?.normal_gpu[0].gpu_ram_gb).toBe(0);
-    expect(result.current.data?.normal_gpu[0].price_per_hour).toBe(0);
+    expect(result.current.data?.normal_gpu[0].price_per_hour).toBeNull();
 
     // multi-GPU → heavy_gpu
     expect(result.current.data?.heavy_gpu).toHaveLength(1);
@@ -264,6 +270,33 @@ describe("useInstanceCatalog (region-aware live path)", () => {
     expect(result.current.data?.normal_gpu[0].price_per_hour).toBe(0.8);
   });
 
+  it("passes through gpu_ram_gb and price_per_hour verbatim — non-zero VRAM, real price, and null price", async () => {
+    vi.spyOn(configServiceModule.ConfigService, "listAwsInstanceTypes").mockResolvedValue({
+      instance_types: LIVE_TYPES_WITH_PRICING,
+      fallback: false,
+    });
+
+    const { result } = renderHook(() => useInstanceCatalog("us-east-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    // GPU instance: VRAM and price must be passed through verbatim (not coerced to 0).
+    const gpuEntry = result.current.data?.normal_gpu[0];
+    expect(gpuEntry?.name).toBe("g6.xlarge");
+    expect(gpuEntry?.gpu_ram_gb).toBe(24);         // NOT 0
+    expect(gpuEntry?.price_per_hour).toBe(1.212);  // NOT 0
+
+    // CPU instance: price_per_hour null must be preserved (not coerced to 0).
+    const cpuEntry = result.current.data?.cpu[0];
+    expect(cpuEntry?.name).toBe("c6i.xlarge");
+    expect(cpuEntry?.price_per_hour).toBeNull();   // NOT 0
+
+    // curated endpoint must NOT have been called
+    expect(computeApi.get).not.toHaveBeenCalled();
+  });
+
   it("falls back to curated when live call throws (network/5xx/auth error)", async () => {
     vi.spyOn(configServiceModule.ConfigService, "listAwsInstanceTypes").mockRejectedValue(
       new Error("boom"),
@@ -293,7 +326,7 @@ describe("useInstanceCatalog (region-aware live path)", () => {
         if (region === "us-east-1") {
           return {
             instance_types: [
-              { instance_type: "g6.xlarge", vcpus: 4, memory_gb: 16, gpu_count: 1, gpu_model: "NVIDIA L4", is_gpu: true },
+              { instance_type: "g6.xlarge", vcpus: 4, memory_gb: 16, gpu_count: 1, gpu_model: "NVIDIA L4", is_gpu: true, gpu_ram_gb: 0, price_per_hour: null },
             ],
             fallback: false,
           };
@@ -320,9 +353,9 @@ describe("useInstanceCatalog (region-aware live path)", () => {
       expect(r2.current.data).toBeDefined();
     });
 
-    // us-east-1 → live path → price_per_hour is 0 (live discovery has no pricing)
+    // us-east-1 → live path → price_per_hour is null (live discovery has no pricing)
     expect(r1.current.data?.normal_gpu[0].name).toBe("g6.xlarge");
-    expect(r1.current.data?.normal_gpu[0].price_per_hour).toBe(0);
+    expect(r1.current.data?.normal_gpu[0].price_per_hour).toBeNull();
 
     // us-west-2 → curated fallback → alt fixture → g5.xlarge with price 1.006
     expect(r2.current.data?.normal_gpu[0].name).toBe("g5.xlarge");

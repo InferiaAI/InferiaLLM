@@ -106,6 +106,7 @@ export interface AwsRegionsResponse { regions: string[]; fallback: boolean; }
 export interface AwsInstanceType {
     instance_type: string; vcpus: number; memory_gb: number;
     gpu_count: number; gpu_model: string | null; is_gpu: boolean;
+    gpu_ram_gb: number; price_per_hour: number | null;
 }
 export interface AwsInstanceTypesResponse { instance_types: AwsInstanceType[]; fallback: boolean; }
 
