@@ -816,3 +816,30 @@ async def proxy_admin_engine_ami(
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
     )
+
+
+@router.api_route("/admin/aws/regions", methods=["GET"])
+@router.api_route("/admin/aws/instance-types", methods=["GET"])
+async def proxy_admin_aws_discovery(
+    request: Request,
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy live AWS discovery (regions + instance types) to orchestration.
+    GET only → DEPLOYMENT_LIST (any deployer populates the pool form).
+
+    The gateway router prefix is /api/v1, so request.url.path is e.g.
+    /api/v1/admin/aws/regions. Strip the leading /api/ to get the orchestration
+    path: v1/admin/aws/regions.
+    """
+    authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
+    # request.url.path = /api/v1/admin/aws/... → strip "/api/" prefix
+    upstream_path = request.url.path.lstrip("/")  # api/v1/admin/aws/...
+    if upstream_path.startswith("api/"):
+        upstream_path = upstream_path[len("api/"):]  # v1/admin/aws/...
+    return await proxy_request(
+        method=request.method,
+        path=upstream_path,
+        request=request,
+        target_url=ORCHESTRATION_URL,
+        user_context=user_context,
+    )

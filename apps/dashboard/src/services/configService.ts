@@ -102,6 +102,13 @@ export interface HfTokenResponse {
     created_at?: string;
 }
 
+export interface AwsRegionsResponse { regions: string[]; fallback: boolean; }
+export interface AwsInstanceType {
+    instance_type: string; vcpus: number; memory_gb: number;
+    gpu_count: number; gpu_model: string | null; is_gpu: boolean;
+}
+export interface AwsInstanceTypesResponse { instance_types: AwsInstanceType[]; fallback: boolean; }
+
 export const ConfigService = {
     async getProviderConfig(): Promise<ProvidersConfig> {
         const { data } = await api.get<ProviderConfigResponse>('/management/config/providers');
@@ -210,8 +217,17 @@ export const ConfigService = {
         return data;
     },
 
-    async pollBakeStatus(bakeId: string): Promise<{ status: string; message: string; ami_id?: string; region: string }> {
-        const { data } = await computeApi.get<{ status: string; message: string; ami_id?: string; region: string }>(`/admin/aws/engine-ami/bake/${bakeId}`);
+    async pollBakeStatus(bakeId: string): Promise<{ status: string; phase?: string; message?: string; ami_id?: string; region: string; log?: string[]; started_at?: string }> {
+        const { data } = await computeApi.get(`/admin/aws/engine-ami/bake/${bakeId}`);
+        return data;
+    },
+
+    async listAwsRegions(): Promise<AwsRegionsResponse> {
+        const { data } = await computeApi.get<AwsRegionsResponse>('/admin/aws/regions');
+        return data;
+    },
+    async listAwsInstanceTypes(region: string): Promise<AwsInstanceTypesResponse> {
+        const { data } = await computeApi.get<AwsInstanceTypesResponse>('/admin/aws/instance-types', { params: { region } });
         return data;
     },
 

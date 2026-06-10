@@ -117,6 +117,10 @@ vi.mock("@/services/configService", () => ({
             depin: {},
         }),
         listProviderCredentials: vi.fn().mockResolvedValue([]),
+        // Return fallback:true so the static awsRegions list is used,
+        // keeping every existing region-selector assertion unchanged.
+        listAwsRegions: vi.fn().mockResolvedValue({ regions: [], fallback: true }),
+        listAwsInstanceTypes: vi.fn().mockResolvedValue({ instance_types: [], fallback: true }),
     },
 }));
 
@@ -190,22 +194,15 @@ beforeEach(() => {
                 },
             });
         }
+        // The curated instance catalog is consumed via computeApi.get (axios),
+        // not global.fetch. Return the fixture so the instance buttons render.
+        if (url.includes("/providers/aws/instance-catalog")) {
+            return Promise.resolve({ data: CATALOG_FIXTURE });
+        }
         // /deployment/provider/resources is only consumed by the non-cluster
         // path, but the effect calls it for AWS too; return an empty list so
         // the loading spinner can resolve.
         return Promise.resolve({ data: { resources: [] } });
-    });
-
-    // Stub global fetch — the catalog hook uses native fetch, not the
-    // axios-backed computeApi. Any non-catalog fetch returns an empty JSON
-    // body so unrelated calls (if any are added later) won't break the
-    // tests silently.
-    vi.spyOn(global, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url.includes("/api/v1/providers/aws/instance-catalog")) {
-            return new Response(JSON.stringify(CATALOG_FIXTURE), { status: 200 });
-        }
-        return new Response("{}", { status: 200 });
     });
 });
 
@@ -302,8 +299,9 @@ describe("AWS Instance Tier selector (useInstanceCatalog)", () => {
         await user.click(screen.getByTestId("tier-btn-cpu"));
         // Pick the cheapest CPU instance (c6i.xlarge, 0.170)
         await user.click(screen.getByTestId("aws-inst-c6i.xlarge"));
-        // Pick a region (any will do — the summary needs both)
-        await user.click(screen.getByRole("button", { name: /Iowa/i }));
+        // Pick a region (any will do — the summary needs both).
+        // "N. Virginia" is the first entry in the static awsRegions list.
+        await user.click(screen.getByRole("button", { name: /N\. Virginia/i }));
 
         // Summary block uses the instance type (not the gpu_type "(none)")
         const summary = await screen.findByText(/Summary: 1x c6i\.xlarge/i);
@@ -323,7 +321,8 @@ describe("AWS Instance Tier selector (useInstanceCatalog)", () => {
         await screen.findByTestId("aws-inst-g5.xlarge");
 
         // Select region + a Normal-tier instance first.
-        await user.click(screen.getByRole("button", { name: /Iowa/i }));
+        // "N. Virginia" is the first entry in the static awsRegions list.
+        await user.click(screen.getByRole("button", { name: /N\. Virginia/i }));
         await user.click(screen.getByTestId("aws-inst-g5.xlarge"));
 
         // Continue should now be enabled.
@@ -407,7 +406,8 @@ describe("AWS Instance Tier selector (useInstanceCatalog)", () => {
         const user = await gotoStep2("aws");
         await screen.findByTestId("aws-inst-g6.xlarge");
 
-        await user.click(screen.getByRole("button", { name: /Iowa/i }));
+        // "N. Virginia" is the first entry in the static awsRegions list.
+        await user.click(screen.getByRole("button", { name: /N\. Virginia/i }));
         await user.click(screen.getByTestId("aws-inst-g6.xlarge"));
 
         // Pre-spot: 0.805 * 1 → "$0.81/hr" when rounded to two decimals
@@ -443,20 +443,33 @@ describe("AWS Instance Tier selector (useInstanceCatalog)", () => {
         // If the rendering really comes from the API, this name will be
         // visible; if it falls back to a stale local constant, the test
         // will fail.
-        (global.fetch as ReturnType<typeof vi.spyOn>).mockImplementation(async (input: RequestInfo | URL) => {
-            const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/v1/providers/aws/instance-catalog")) {
-                return new Response(JSON.stringify({
-                    normal_gpu: [{
-                        name: "totally-made-up.xl", cls: "normal_gpu",
-                        vcpu: 4, ram_gb: 16, gpu_count: 1,
-                        gpu_model: "FAKE GPU", gpu_ram_gb: 24,
-                        price_per_hour: 0.42,
-                    }],
-                    heavy_gpu: [], cpu: [],
-                }), { status: 200 });
+        // Override computeApiGet for this test only — the catalog hook uses
+        // computeApi.get (axios), not global.fetch.
+        computeApiGet.mockImplementation((url: string) => {
+            if (url.includes("/inventory/providers")) {
+                return Promise.resolve({
+                    data: {
+                        providers: {
+                            aws: { adapter_type: "cloud", capabilities: { supports_cluster_mode: true, pricing_model: "fixed" } },
+                            gcp: { adapter_type: "cloud", capabilities: { supports_cluster_mode: true, pricing_model: "fixed" } },
+                        },
+                    },
+                });
             }
-            return new Response("{}", { status: 200 });
+            if (url.includes("/providers/aws/instance-catalog")) {
+                return Promise.resolve({
+                    data: {
+                        normal_gpu: [{
+                            name: "totally-made-up.xl", cls: "normal_gpu",
+                            vcpu: 4, ram_gb: 16, gpu_count: 1,
+                            gpu_model: "FAKE GPU", gpu_ram_gb: 24,
+                            price_per_hour: 0.42,
+                        }],
+                        heavy_gpu: [], cpu: [],
+                    },
+                });
+            }
+            return Promise.resolve({ data: { resources: [] } });
         });
 
         await gotoStep2("aws");

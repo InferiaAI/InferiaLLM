@@ -302,8 +302,35 @@ export default function NewPool() {
     // catalog change with no frontend edit. The fetch is cheap and the
     // hook caches for 5 minutes, so this is safe to call unconditionally
     // (the catalog block is only rendered when selectedProvider === 'aws'
-    // anyway).
-    const { data: awsCatalog, isLoading: loadingAwsCatalog } = useInstanceCatalog()
+    // anyway). Region-aware: when a region is selected the hook tries the
+    // live discover endpoint for that region (with curated fallback).
+    const { data: awsCatalog, isLoading: loadingAwsCatalog } = useInstanceCatalog(
+        selectedProvider === "aws" ? selectedRegion : undefined,
+    )
+
+    // Fetch live AWS regions from the orchestration service. Falls back to
+    // the static awsRegions list when the endpoint is unavailable or returns
+    // fallback:true. Enabled only when the user is on the AWS path to avoid
+    // unnecessary requests on GCP / worker pools.
+    const { data: liveRegions } = useQuery({
+        queryKey: ["aws-regions"],
+        queryFn: () => ConfigService.listAwsRegions(),
+        staleTime: 60 * 60 * 1000,
+        enabled: selectedProvider === "aws",
+    })
+
+    // Compute the region option list: prefer live regions when available and
+    // not a fallback response, else fall back to the static awsRegions array.
+    // For known region IDs we preserve the human-readable name from the static
+    // list; unknown IDs (returned only by live discovery) use the raw id as
+    // the display name.
+    const awsRegionOptions =
+        liveRegions && !liveRegions.fallback && liveRegions.regions.length
+            ? liveRegions.regions.map((id) => {
+                const known = awsRegions.find((r) => r.id === id);
+                return { id, name: known ? known.name : id, available: true };
+              })
+            : awsRegions;
 
     // NEW: Fetch registered providers dynamically from API
     const { data: providersData, isLoading: loadingProviders } = useQuery({
@@ -875,7 +902,7 @@ export default function NewPool() {
                         <div className="mb-6">
                             <label className="text-sm font-medium mb-2 block">Select Region</label>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                {(selectedProvider === "aws" ? awsRegions : gcpRegions).map((region) => (
+                                {(selectedProvider === "aws" ? awsRegionOptions : gcpRegions).map((region) => (
                                     <button
                                         key={region.id}
                                         onClick={() => dispatch({ type: "SET_REGION", payload: region.id })}

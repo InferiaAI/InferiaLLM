@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/admin/aws/engine-ami")
 
+_LOG_CAP = 2000
+
+
+def _make_progress(bake_id: str):
+    def _cb(phase: str, line: str = "") -> None:
+        rec = _BAKES.get(bake_id)
+        if rec is None:
+            return
+        if phase:
+            rec["phase"] = phase
+        if line:
+            log = rec.setdefault("log", [])
+            log.append(line)
+            if len(log) > _LOG_CAP:
+                del log[: len(log) - _LOG_CAP]
+    return _cb
+
 
 class _Deps:
     require_permission: Optional[Callable[[str], Any]] = None
@@ -125,7 +142,8 @@ def _default_start_bake(
     )
 
     bake_id = str(uuid.uuid4())
-    _BAKES[bake_id] = {"status": "running", "message": "", "ami_id": None, "region": region}
+    _BAKES[bake_id] = {"status": "running", "phase": "starting", "message": "",
+                       "ami_id": None, "region": region, "log": []}
     worker_ref = _worker_image_ref() if include_worker_image else None
 
     async def _run():
@@ -142,12 +160,16 @@ def _default_start_bake(
                 aws_env=aws_env,
                 worker_image_ref=worker_ref,
                 ssm_instance_profile=_ssm_instance_profile(),
+                progress=_make_progress(bake_id),
                 **kw,
             )
-            _BAKES[bake_id] = {"status": "succeeded", "message": "", "ami_id": res.ami_id, "region": res.region}
+            rec = _BAKES[bake_id]
+            rec.update({"status": "succeeded", "phase": "done", "ami_id": res.ami_id, "region": res.region})
         except Exception as e:  # noqa: BLE001 — surface as best-effort status
             logger.warning("engine-ami bake %s failed: %s", bake_id, e)
-            _BAKES[bake_id] = {"status": "failed", "message": str(e), "ami_id": None, "region": region}
+            rec = _BAKES.get(bake_id, {})
+            rec.update({"status": "failed", "phase": "failed", "message": str(e), "ami_id": None, "region": region})
+            _BAKES[bake_id] = rec
 
     asyncio.create_task(_run())
     return bake_id
