@@ -7,6 +7,7 @@ import {
     getRefreshToken,
     setRefreshToken,
 } from "@/lib/tokenStore";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 // Runtime config injected via /config.js at container startup.
 // Falls back to VITE_ build-time env vars, then to localhost defaults.
@@ -41,6 +42,16 @@ function addRefreshSubscriber(cb: (token: string) => void) {
 
 function forceLogout() {
     clearToken();
+    // In external-auth mode there is no local refresh token — a 401 means the
+    // short-lived IdP access token expired. Send the browser to /auth/start so
+    // the IdP's SSO cookie silently re-issues a new token without showing a
+    // login page. Guard against redirect loops on any /auth/* route.
+    if (isExternalAuthMode()) {
+        if (!window.location.pathname.startsWith("/auth/")) {
+            window.location.href = "/auth/start";
+        }
+        return;
+    }
     if (window.location.pathname !== "/auth/login") {
         window.location.href = "/auth/login";
     }

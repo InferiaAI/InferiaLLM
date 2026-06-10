@@ -1,6 +1,26 @@
 import { Link } from "react-router-dom";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 export default function Register() {
+
+    if (isExternalAuthMode()) {
+        return (
+            <div className="w-full max-w-md p-8 space-y-4 bg-card rounded-lg border shadow-sm mx-auto text-center">
+                <h1 className="text-2xl font-bold tracking-tight">
+                    Identity Provider Managed
+                </h1>
+                <p className="text-muted-foreground">
+                    Accounts are managed by your identity provider.<br />
+                    Please contact your administrator to request access.
+                </p>
+                <div className="pt-4">
+                    <Link to="/auth/login" className="text-primary hover:underline">
+                        Back to Login
+                    </Link>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="w-full max-w-md p-8 space-y-4 bg-card rounded-lg border shadow-sm mx-auto text-center">

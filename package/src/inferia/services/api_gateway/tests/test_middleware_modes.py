@@ -89,8 +89,13 @@ async def test_oidc_token_admin_has_all_catalog_perms(monkeypatch):
 
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
+    # Catalog admin perms, expanded with their local-vocabulary equivalents.
+    from inferia.services.api_gateway.rbac.permissions import expand_catalog_permissions
+
     expected = [p for r in CATALOG.roles if r.name == "admin" for p in r.permissions]
-    assert set(ctx.permissions) == set(expected)
+    assert set(ctx.permissions) == set(expand_catalog_permissions(expected))
+    # The full catalog set is still present.
+    assert set(expected) <= set(ctx.permissions)
 
 
 @pytest.mark.asyncio
@@ -222,7 +227,12 @@ async def test_inferiaauth_token_uses_claims(monkeypatch):
 
     ctx = await mw._resolve_external_token(MagicMock(), "tok")
 
-    assert ctx.permissions == ["inferiallm:model:read"]
+    # Claim permissions are kept and expanded to local equivalents.
+    assert set(ctx.permissions) == {
+        "inferiallm:model:read",
+        "model:list",
+        "model:access",
+    }
     assert ctx.roles == ["viewer"]
     assert ctx.org_id == "o1"
 

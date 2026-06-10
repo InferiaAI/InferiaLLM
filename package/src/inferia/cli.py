@@ -463,6 +463,24 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
         "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "",
         "WEB_SOCKET_URL": os.environ.get("DASHBOARD_WEB_SOCKET_URL", "") or "",
         "SIDECAR_URL": os.environ.get("DASHBOARD_SIDECAR_URL", "") or "",
+        # Auth mode is runtime-configurable (not baked into the SPA build): the
+        # dashboard reads AUTH_PROVIDER from this runtime config so a single image
+        # serves local / oidc / inferiaauth. Falls back to VITE_AUTH_PROVIDER, then
+        # AUTH_PROVIDER. Empty => the SPA's built-in default ("local").
+        "AUTH_PROVIDER": (
+            os.environ.get("VITE_AUTH_PROVIDER")
+            or os.environ.get("AUTH_PROVIDER", "")
+            or ""
+        ),
+        # External IdP base URL for SSO logout (inferiaauth / oidc modes). The
+        # dashboard uses this to build the sso-logout redirect URL at sign-out.
+        # Prefers VITE_EXTERNAL_AUTH_URL (Vite convention), falls back to
+        # EXTERNAL_AUTH_URL (plain env). Empty => no IdP-level logout attempt.
+        "EXTERNAL_AUTH_URL": (
+            os.environ.get("VITE_EXTERNAL_AUTH_URL")
+            or os.environ.get("EXTERNAL_AUTH_URL", "")
+            or ""
+        ),
     }
 
     config_js_path = os.path.join(dashboard_dir, "config.js")

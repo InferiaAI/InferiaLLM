@@ -5,6 +5,7 @@ import { authService, type InviteInfo } from "@/services/authService";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Loader2, CheckCircle2, AlertCircle, Mail, ShieldCheck, Sparkles, KeyRound } from "lucide-react";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams();
@@ -89,6 +90,20 @@ export default function AcceptInvite() {
       setProcessing(false);
     }
   };
+
+  // S4: In external-auth mode, membership/invitations are managed by the IdP.
+  // Render the same notice card as ExternalIdentityGuard for visual consistency.
+  if (isExternalAuthMode()) {
+    return (
+      <div className="p-8 max-w-xl">
+        <h2 className="text-lg font-semibold">Managed by your identity provider</h2>
+        <p className="text-sm text-muted-foreground mt-2">
+          Invitations and membership are managed centrally by your identity provider
+          in this deployment. There&apos;s nothing to configure here.
+        </p>
+      </div>
+    );
+  }
 
   const formattedExpiry = inviteInfo?.expires_at
     ? new Date(inviteInfo.expires_at).toLocaleString()

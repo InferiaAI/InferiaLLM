@@ -20,7 +20,7 @@ import sys
 
 from inferia.common.logger import setup_logging
 from inferia.common.app_setup import setup_cors, add_standard_health_routes
-from inferia.services.api_gateway.config import settings
+from inferia.services.api_gateway.config import httpx_verify, settings
 from inferia.services.api_gateway.models import HealthCheckResponse, ErrorResponse
 from inferia.services.api_gateway.gateway.middleware import (
     RequestIDMiddleware,
@@ -69,7 +69,12 @@ async def _maybe_declare_catalog() -> None:
         and settings.catalog_admin_token
     ):
         from inferia.services.api_gateway.rbac.catalog_declare import declare_catalog
-        ok = await declare_catalog(settings.external_auth_url, settings.catalog_admin_token)
+        ok = await declare_catalog(
+            settings.external_auth_url,
+            settings.catalog_admin_token,
+            service_id=settings.external_service_id,
+            verify=httpx_verify(settings),
+        )
         if ok:
             logger.info("Declared InferiaLLM catalog to InferiaAuth")
         else:

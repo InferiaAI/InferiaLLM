@@ -10,6 +10,7 @@ import {
     getRefreshToken,
     setRefreshToken,
 } from "@/lib/tokenStore";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 interface User {
     user_id: string;
@@ -84,7 +85,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 }
             }
 
-            // 3. No usable tokens
+            // 3. No usable tokens.
+            // In external-auth mode there is no local refresh token — send the
+            // browser back through /auth/start so the IdP's SSO cookie silently
+            // re-issues a new access token. Only do this when we are on a
+            // protected route; /auth/* and /login routes must not be redirected
+            // to avoid an infinite loop.
+            if (
+                isExternalAuthMode() &&
+                !window.location.pathname.startsWith("/auth/") &&
+                window.location.pathname !== "/login"
+            ) {
+                window.location.assign("/auth/start");
+                return;
+            }
             setIsLoading(false);
         };
 

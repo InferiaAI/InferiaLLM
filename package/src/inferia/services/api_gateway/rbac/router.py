@@ -26,6 +26,7 @@ from inferia.services.api_gateway.db.models import (
 from inferia.services.api_gateway.models import OrganizationBasicInfo, SwitchOrgRequest, AuditLogCreate
 from inferia.services.api_gateway.audit.service import audit_service
 from inferia.services.api_gateway.rbac.local_identity_guard import require_local_identity
+from inferia.services.api_gateway.config import settings
 from sqlalchemy.future import select
 from sqlalchemy import func
 import uuid
@@ -264,7 +265,7 @@ async def register_invite(
     )
 
 
-@router.post("/accept-invite", response_model=AuthToken)
+@router.post("/accept-invite", response_model=AuthToken, dependencies=[Depends(require_local_identity)])
 async def accept_invitation(
     request: Request,
     token: str,  # passed as query param or body? Let's assume query for simplicity or body wrapper
@@ -466,7 +467,7 @@ async def list_organizations(
     return org_list
 
 
-@router.post("/switch-org", response_model=AuthToken)
+@router.post("/switch-org", response_model=AuthToken, dependencies=[Depends(require_local_identity)])
 async def switch_organization(
     data: SwitchOrgRequest, request: Request, db: AsyncSession = Depends(get_db)
 ):
@@ -551,6 +552,11 @@ async def get_current_user_info(request: Request, db: AsyncSession = Depends(get
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # In external modes (oidc / inferiaauth) MFA is owned by the IdP;
+    # the shadow row's totp_enabled value is meaningless and must not be
+    # surfaced — it could mislead the UI into showing a 2FA prompt.
+    effective_totp_enabled = False if settings.is_external_mode else user.totp_enabled
+
     # Map UserContext pydantic model to UserInfoResponse
     return UserInfoResponse(
         user_id=user_context.user_id,
@@ -561,7 +567,7 @@ async def get_current_user_info(request: Request, db: AsyncSession = Depends(get
         org_id=user_context.org_id,
         created_at=user.created_at,
         is_active=user_context.is_active,
-        totp_enabled=user.totp_enabled,
+        totp_enabled=effective_totp_enabled,
     )
 
 
@@ -577,7 +583,7 @@ async def get_user_permissions(request: Request):
     }
 
 
-@router.post("/totp/setup", response_model=TOTPSetupResponse)
+@router.post("/totp/setup", response_model=TOTPSetupResponse, dependencies=[Depends(require_local_identity)])
 async def totp_setup(request: Request, db: AsyncSession = Depends(get_db)):
     """
     Generate secret and QR code for TOTP setup.
@@ -614,7 +620,7 @@ async def totp_setup(request: Request, db: AsyncSession = Depends(get_db)):
     return TOTPSetupResponse(secret=secret, qr_code=f"data:image/png;base64,{qr_b64}")
 
 
-@router.post("/totp/verify")
+@router.post("/totp/verify", dependencies=[Depends(require_local_identity)])
 async def totp_verify(
     payload: TOTPVerifyRequest, request: Request, db: AsyncSession = Depends(get_db)
 ):
@@ -654,7 +660,7 @@ async def totp_verify(
     return {"status": "enabled"}
 
 
-@router.post("/totp/disable")
+@router.post("/totp/disable", dependencies=[Depends(require_local_identity)])
 async def totp_disable(request: Request, db: AsyncSession = Depends(get_db)):
     """Disable TOTP."""
     user_context = get_current_user_from_request(request)

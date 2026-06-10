@@ -21,17 +21,16 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from inferia.services.api_gateway.rbac.middleware import get_current_user_from_request
+from inferia.services.api_gateway.rbac.middleware import (
+    get_current_user_from_request,
+    resolve_token_to_user_context,
+)
 from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.authorization import authz_service
 from inferia.services.api_gateway.config import settings
 from inferia.services.api_gateway.gateway.http_client import gateway_http_client
 from inferia.services.api_gateway.gateway.rate_limiter import rate_limiter
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
-from inferia.services.api_gateway.rbac.auth import auth_service
-from inferia.services.api_gateway.db.models import Role
-from inferia.services.api_gateway.rbac.permissions import normalize_permissions
-from sqlalchemy.future import select
 
 logger = logging.getLogger(__name__)
 
@@ -93,30 +92,14 @@ def _require_proxy_permission(
 
 
 async def _get_ws_user_context(token: str) -> UserContext:
+    """Authenticate a WebSocket token using the active auth provider.
+
+    Delegates to resolve_token_to_user_context which mirrors the HTTP
+    middleware branching (local-only, inferiaauth, or oidc).  Raises
+    HTTPException(401) on failure; callers should close the WS with 1008.
+    """
     async with AsyncSessionLocal() as db:
-        user, org_id, roles = await auth_service.get_current_user(db, token)
-
-        permissions_set = set()
-        if roles:
-            stmt = select(Role).where(Role.name.in_(roles))
-            result = await db.execute(stmt)
-            role_records = result.scalars().all()
-            for role_record in role_records:
-                if role_record.permissions:
-                    permissions_set.update(role_record.permissions)
-
-        permissions, _, _ = normalize_permissions(permissions_set)
-
-        return UserContext(
-            user_id=user.id,
-            username=user.email,
-            email=user.email,
-            roles=roles,
-            permissions=permissions,
-            org_id=org_id,
-            quota_limit=10000,
-            quota_used=0,
-        )
+        return await resolve_token_to_user_context(db, token)
 
 
 async def proxy_request(

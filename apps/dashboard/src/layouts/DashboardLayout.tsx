@@ -1,5 +1,6 @@
 import { Outlet, NavLink, useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { logout as authServiceLogout } from "@/services/authService";
 import {
   LayoutDashboard,
   Rocket,
@@ -165,16 +166,19 @@ export default function DashboardLayout() {
     return stored === "true";
   });
 
-  const primaryRole = (user?.roles?.[0] || "member")
-    .replace(/[_-]/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const externalAuth = isExternalAuthMode();
+
+  // S5: In external mode roles are opaque UUIDs — derive label from permissions.
+  const primaryRole = externalAuth
+    ? (user?.permissions?.includes("organization:update") ? "Admin" : "Member")
+    : (user?.roles?.[0] || "member")
+        .replace(/[_-]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
 
   const filteredNavItems = useMemo(
     () => navItems.filter((item) => !item.permission || hasPermission(item.permission)),
     [hasPermission]
   );
-
-  const externalAuth = isExternalAuthMode();
 
   const filteredSettingsItems = useMemo(
     () =>
@@ -207,7 +211,8 @@ export default function DashboardLayout() {
     }));
   }, [location.pathname]);
 
-  if (!isLoading && user && !user.totp_enabled) {
+  // S3: Skip TOTP wall in external mode — the IdP owns MFA.
+  if (!isLoading && user && !user.totp_enabled && !externalAuth) {
     return <Navigate to="/auth/setup-2fa" replace />;
   }
 
@@ -219,9 +224,11 @@ export default function DashboardLayout() {
 
   const closeMobile = () => setMobileMenuOpen(false);
 
+  // S1: Clear local auth state then delegate to authService.logout() which
+  // handles both local (/login) and external (IdP SSO-logout) redirect paths.
   const handleLogout = () => {
-    logout();
-    navigate("/auth/login");
+    logout(); // clears in-memory token and React state
+    void authServiceLogout(); // redirects the browser (window.location.assign)
   };
 
   return (

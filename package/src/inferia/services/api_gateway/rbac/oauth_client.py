@@ -46,15 +46,17 @@ class OAuthClient:
         client_id: str,
         timeout: float = 5.0,
         http_client: Optional[httpx.AsyncClient] = None,
+        verify: object = True,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._client_id = client_id
         self._timeout = timeout
+        self._verify = verify
         self._client = http_client
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=self._timeout)
+            self._client = httpx.AsyncClient(timeout=self._timeout, verify=self._verify)
         return self._client
 
     async def close(self) -> None:

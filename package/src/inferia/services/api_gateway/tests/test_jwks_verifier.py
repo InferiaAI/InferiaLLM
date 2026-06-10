@@ -480,3 +480,68 @@ def test_verify_token_exactly_at_max_length_attempted(httpserver, keypair):
     # If the length gate triggered we'd see "length"; otherwise we get a
     # downstream header decode error.
     assert "length" not in str(exc.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Bug-2 verify= param — JWKSVerifier stores and threads the TLS setting
+# ---------------------------------------------------------------------------
+
+
+def test_jwks_verifier_stores_verify_default(httpserver, keypair):
+    """JWKSVerifier defaults verify=True and stores it on self._verify."""
+    v = JWKSVerifier(
+        jwks_url=httpserver.url_for("/.well-known/jwks.json"),
+        issuer="https://auth.local",
+        audience="inferiallm",
+    )
+    assert v._verify is True
+
+
+def test_jwks_verifier_stores_verify_ca_bundle(httpserver):
+    """JWKSVerifier(verify=<ca_path>) stores the path string on self._verify.
+
+    We inject an http_client so the constructor does not try to load the CA
+    file on disk (httpx validates it at construction time).  The _verify
+    attribute must still reflect the supplied value.
+    """
+    injected = httpx.Client(timeout=5.0)
+    v = JWKSVerifier(
+        jwks_url=httpserver.url_for("/.well-known/jwks.json"),
+        issuer="https://auth.local",
+        audience="inferiallm",
+        http_client=injected,
+        verify="/path/to/ca.pem",
+    )
+    assert v._verify == "/path/to/ca.pem"
+    assert v._client is injected  # injected client wins over fallback build
+
+
+def test_jwks_verifier_stores_verify_false(httpserver):
+    """JWKSVerifier(verify=False) stores False on self._verify."""
+    v = JWKSVerifier(
+        jwks_url=httpserver.url_for("/.well-known/jwks.json"),
+        issuer="https://auth.local",
+        audience="inferiallm",
+        verify=False,
+    )
+    assert v._verify is False
+
+
+def test_jwks_verifier_injected_client_wins(httpserver, keypair):
+    """When http_client= is injected, it is used regardless of verify=."""
+    priv, jwks = keypair
+    httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
+    injected = httpx.Client(timeout=5.0)
+    v = JWKSVerifier(
+        jwks_url=httpserver.url_for("/.well-known/jwks.json"),
+        issuer="https://auth.local",
+        audience="inferiallm",
+        http_client=injected,
+        verify="/should/not/matter",
+    )
+    # The injected client is what's stored (not a freshly-built one).
+    assert v._client is injected
+    # And it works end-to-end.
+    token = _sign_eddsa(priv, _default_claims())
+    claims = v.verify_sync(token)
+    assert claims["email"] == "a@b.c"

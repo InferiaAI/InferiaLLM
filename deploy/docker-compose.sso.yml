@@ -128,6 +128,12 @@ services:
       # so the registered redirect_uri matches what the Caddy-fronted dashboard
       # advertises.
       OAUTH_SEED_REDIRECT_URI: "https://inferia.local/auth/callback"
+      # Break-glass superuser: seeds a `users` row (no org_members), holds the
+      # is_superuser claim + services_manage. Used both to mint the short-lived
+      # CATALOG_ADMIN_TOKEN below and as the SSO login for end-to-end checks.
+      # Non-default password so the secret-guard does not refuse to boot.
+      SUPERUSER_EMAIL: "admin@inferia.local"
+      SUPERUSER_PASSWORD: "sso-dev-superuser-pass-2026"
       COOKIE_SECURE: "true"
       RATE_LIMIT_MAX: "60"
       RATE_LIMIT_WINDOW: "1m"
@@ -178,6 +184,15 @@ services:
       # declare is skipped (non-fatal) — provision a real token for a full
       # end-to-end FGA-backed run (see docs/operations/auth.md).
       CATALOG_ADMIN_TOKEN: "${CATALOG_ADMIN_TOKEN:-}"
+      # Optional explicit service UUID. Left unset so InferiaLLM auto-resolves
+      # its UUID by slug via GET /api/v1/services at boot (the service UUID is
+      # assigned randomly by inferia-auth per DB, so it cannot be hardcoded).
+      EXTERNAL_SERVICE_ID: "${EXTERNAL_SERVICE_ID:-}"
+      # Trust Caddy's internal CA so server-side HTTPS calls to inferia-auth
+      # (OAuth token exchange, JWKS fetch, catalog declare) verify instead of
+      # failing CERTIFICATE_VERIFY_FAILED. The CA lives in the shared caddy-data
+      # volume, mounted read-only below.
+      SSL_CA_BUNDLE: "/caddy-data/caddy/pki/authorities/local/root.crt"
 
       # --- Vite build-time vars. The unified Dockerfile builds the dashboard
       # in stage 2 of the multi-stage build, so these must be set as build
@@ -228,6 +243,8 @@ services:
     volumes:
       - sso-appdata:/data
       - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+      # Read-only access to Caddy's persisted internal CA (see SSL_CA_BUNDLE).
+      - sso-caddy-data:/caddy-data:ro
     depends_on:
       postgres:
         condition: service_healthy

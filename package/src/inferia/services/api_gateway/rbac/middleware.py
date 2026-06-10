@@ -7,9 +7,13 @@ import logging
 
 from inferia.services.api_gateway.models import UserContext, PermissionEnum
 from inferia.services.api_gateway.rbac.auth import auth_service
-from inferia.services.api_gateway.config import settings
+from inferia.services.api_gateway.config import httpx_verify, settings
 from inferia.services.api_gateway.db.database import AsyncSessionLocal
-from inferia.services.api_gateway.rbac.permissions import normalize_permissions
+from inferia.services.api_gateway.rbac.external_org import ensure_external_org
+from inferia.services.api_gateway.rbac.permissions import (
+    expand_catalog_permissions,
+    normalize_permissions,
+)
 from inferia.services.api_gateway.rbac.jwks_verifier import (
     JWKSVerifier,
     JWKSVerifyError,
@@ -85,6 +89,7 @@ def _get_verifier() -> JWKSVerifier:
             issuer=settings.external_auth_issuer,
             audience=audience,
             cache_ttl=settings.oauth_jwks_cache_ttl_seconds,
+            verify=httpx_verify(settings),
         )
     return _verifier
 
@@ -123,12 +128,20 @@ async def _resolve_external_token(db, token: str) -> UserContext:
         org_ids = claims.get("org_ids") or []
         org_id = org_ids[0] if org_ids else None
 
+    # The IdP org has no local row by default; provision a shadow org (and
+    # membership) so org-keyed local features (org info, audit FKs, API keys)
+    # work. Best-effort — never blocks auth.
+    if org_id:
+        await ensure_external_org(db, org_id, user_id=user.id, bearer_token=token)
+
     return UserContext(
         user_id=user.id,
         username=user.email,
         email=user.email,
         roles=list(claims.get("roles") or []),
-        permissions=list(claims.get("permissions") or []),
+        # Catalog keys (inferiallm:*) expand to their local PermissionEnum
+        # equivalents so route guards and the dashboard recognise them.
+        permissions=expand_catalog_permissions(claims.get("permissions") or []),
         org_id=org_id,
         quota_limit=10000,
         quota_used=0,
@@ -178,6 +191,10 @@ async def _resolve_oidc_token(db, token: str) -> UserContext:
         org_ids = claims.get("org_ids") or []
         org_id = org_ids[0] if org_ids else None
 
+    # Same shadow-org provisioning as the inferiaauth path.
+    if org_id:
+        await ensure_external_org(db, org_id, user_id=user.id, bearer_token=token)
+
     role_map = settings.oidc_role_map or {}
     if not role_map:
         # Interim default (unchanged): authenticated => admin of the shadow org.
@@ -190,7 +207,9 @@ async def _resolve_oidc_token(db, token: str) -> UserContext:
             (role_map[g] for g in groups if g in role_map),
             settings.oidc_default_role,
         )
-    perms = _catalog_role_permissions(role)
+    # Catalog-role keys expand to their local equivalents, same as the
+    # inferiaauth path.
+    perms = expand_catalog_permissions(_catalog_role_permissions(role))
 
     return UserContext(
         user_id=user.id,
@@ -334,6 +353,31 @@ async def auth_middleware(request: Request, call_next):
 
     response = await call_next(request)
     return response
+
+
+async def resolve_token_to_user_context(db, token: str) -> UserContext:
+    """Provider-aware token resolution shared by HTTP middleware and WS auth.
+
+    Branching mirrors auth_middleware:
+      - inferiaauth: try local (superadmin recovery), fall back to _resolve_external_token
+      - oidc:        try local (superadmin recovery), fall back to _resolve_oidc_token
+      - local:       _resolve_local_token only
+
+    Raises HTTPException(401) on any failure.
+    """
+    mode = settings.auth_provider
+    if mode == "inferiaauth":
+        try:
+            return await _resolve_local_token(db, token)
+        except HTTPException:
+            return await _resolve_external_token(db, token)
+    elif mode == "oidc":
+        try:
+            return await _resolve_local_token(db, token)
+        except HTTPException:
+            return await _resolve_oidc_token(db, token)
+    else:  # local
+        return await _resolve_local_token(db, token)
 
 
 def get_current_user_from_request(request: Request) -> UserContext:

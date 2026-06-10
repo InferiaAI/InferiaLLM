@@ -1,0 +1,25 @@
+# Plain-HTTP localhost front for InferiaLLM. Unifies the dashboard SPA and the
+# API gateway on a single origin (http://localhost:8081) so the SPA's relative
+# /api, /auth, /oauth calls are same-origin — no TLS, no hostnames.
+{
+	admin off
+	auto_https off
+}
+
+:8081 {
+	encode gzip
+
+	# Backend (API gateway, gateway-only on :8000) owns these path prefixes.
+	@backend path /api/* /auth/* /oauth/* /health /internal/* /docs /docs/* /openapi.json /redoc /redoc/* /ws /ws/* /metrics
+	handle @backend {
+		reverse_proxy localhost:8000
+	}
+
+	# Everything else is the SPA. try_files falls back to index.html so the
+	# dashboard's client-side routes (/login, /deployments, …) resolve.
+	handle {
+		root * /srv/dashboard
+		try_files {path} /index.html
+		file_server
+	}
+}
