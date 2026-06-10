@@ -209,3 +209,93 @@ def test_dlami_root_device_falls_back(monkeypatch):
         def describe_images(self, **kw):
             raise RuntimeError("denied")
     assert bake._dlami_root_device(_Boom(), "ami-x") == "/dev/sda1"
+
+
+# ---------------------------------------------------------------------------
+# New tests: _emit_new_output + progress callback + SSM stdout streaming
+# ---------------------------------------------------------------------------
+
+def test_emit_new_output_growth_and_truncation():
+    from inferia.services.orchestration.services.adapter_engine.adapters.aws import engine_ami_bake as b
+    new, cur = b._emit_new_output("line1\n", "line1\nline2\n")
+    assert new == "line2\n" and cur == "line1\nline2\n"
+    new, cur = b._emit_new_output("aabbcc", "bbccdd")
+    assert new == "dd"
+    new, cur = b._emit_new_output("xxxx", "yyyy")
+    assert new == "yyyy"
+    new, cur = b._emit_new_output("same", "same")
+    assert new == ""
+
+
+def test_emit_new_output_empty_prev():
+    from inferia.services.orchestration.services.adapter_engine.adapters.aws import engine_ami_bake as b
+    new, cur = b._emit_new_output("", "hello")
+    assert new == "hello"
+
+
+def test_bake_emits_phases(monkeypatch):
+    ec2, ssm = _FakeEC2(), _FakeSSM("Success")
+    _patch(monkeypatch, ec2, ssm)
+    phases = []
+    bake.bake_engine_ami(region="us-east-1", aws_env=AWS_ENV,
+                         ssm_instance_profile="p", progress=lambda ph, ln="": phases.append(ph))
+    assert "launching-builder" in phases
+    assert "creating-ami" in phases
+    assert phases[-1] == "done"
+
+
+def test_bake_emits_ssm_stdout_lines(monkeypatch):
+    """_wait_ssm should stream non-empty SSM stdout lines via the emit callback."""
+    ec2 = _FakeEC2()
+
+    class _SSMWithOutput:
+        def __init__(self):
+            self.online = True
+
+        def describe_instance_information(self, **kw):
+            return {"InstanceInformationList": [{"InstanceId": "i-build"}]}
+
+        def send_command(self, **kw):
+            self.command = kw
+            return {"Command": {"CommandId": "cmd-1"}}
+
+        def get_command_invocation(self, **kw):
+            return {
+                "Status": "Success",
+                "StandardOutputContent": "pulling vllm\ndocker image ls\n",
+                "StandardErrorContent": "",
+            }
+
+    ssm = _SSMWithOutput()
+    _patch(monkeypatch, ec2, ssm)
+    lines = []
+    bake.bake_engine_ami(
+        region="us-east-1", aws_env=AWS_ENV, ssm_instance_profile="p",
+        progress=lambda ph, ln="": lines.append((ph, ln)),
+    )
+    ssm_lines = [ln for ph, ln in lines if ph == "installing-and-pulling"]
+    assert "pulling vllm" in ssm_lines
+    assert "docker image ls" in ssm_lines
+
+
+def test_bake_progress_error_does_not_break_bake(monkeypatch):
+    """A progress callback that raises must not abort the bake."""
+    ec2, ssm = _FakeEC2(), _FakeSSM("Success")
+    _patch(monkeypatch, ec2, ssm)
+
+    def _boom(phase, line=""):
+        raise RuntimeError("progress error")
+
+    res = bake.bake_engine_ami(
+        region="us-east-1", aws_env=AWS_ENV, ssm_instance_profile="p",
+        progress=_boom,
+    )
+    assert res.ami_id == "ami-baked"
+
+
+def test_bake_no_progress_default_still_works(monkeypatch):
+    """Calling without progress= (default None) must behave identically to before."""
+    ec2, ssm = _FakeEC2(), _FakeSSM("Success")
+    _patch(monkeypatch, ec2, ssm)
+    res = bake.bake_engine_ami(region="us-east-1", aws_env=AWS_ENV, ssm_instance_profile="p")
+    assert res.ami_id == "ami-baked"

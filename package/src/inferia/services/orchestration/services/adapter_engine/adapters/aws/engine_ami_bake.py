@@ -13,7 +13,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.ami import (
     latest_dlami_ami,
@@ -106,6 +106,21 @@ def _build_bake_script(*, vllm_image: str, worker_image: Optional[str]) -> str:
     return "\n".join(lines)
 
 
+def _emit_new_output(prev: str, cur: str) -> tuple[str, str]:
+    """Return the suffix of `cur` not already covered by `prev`, handling both
+    growth (cur extends prev) and SSM's 24KB tail truncation (cur's head
+    overlaps prev's tail). Returns (new_text, cur)."""
+    if not prev:
+        return cur, cur
+    if cur.startswith(prev):
+        return cur[len(prev):], cur
+    max_k = min(len(prev), len(cur))
+    for k in range(max_k, 0, -1):
+        if prev[-k:] == cur[:k]:
+            return cur[k:], cur
+    return cur, cur
+
+
 def _dlami_root_device(ec2, ami_id: str) -> str:
     """Resolve the base AMI's actual root device name so the size override in
     BlockDeviceMappings isn't silently dropped (boto3 ignores a mapping whose
@@ -129,7 +144,15 @@ def bake_engine_ami(
     instance_type: str = _DEFAULT_INSTANCE_TYPE,
     root_volume_gb: int = _DEFAULT_ROOT_GB,
     ssm_instance_profile: Optional[str] = None,
+    progress: Optional[Callable[[str, str], None]] = None,
 ) -> BakeResult:
+    def _p(phase: str, line: str = "") -> None:
+        if progress:
+            try:
+                progress(phase, line)
+            except Exception:  # noqa: BLE001 — progress must never break the bake
+                pass
+
     if not aws_env:
         raise BakeError("no AWS credentials resolved for the bake")
     if not ssm_instance_profile:
@@ -151,6 +174,7 @@ def bake_engine_ami(
     instance_id: Optional[str] = None
     root_device = _dlami_root_device(ec2, dlami)
     try:
+        _p("launching-builder", f"launching {instance_type} builder in {region}")
         run = ec2.run_instances(
             ImageId=dlami,
             InstanceType=instance_type,
@@ -185,6 +209,8 @@ def bake_engine_ami(
         else:
             raise BakeError(f"builder {instance_id} never became SSM-managed")
 
+        _p("waiting-for-ssm", "builder is SSM-managed")
+        _p("installing-and-pulling", "running install + docker pull on builder")
         cmd = ssm.send_command(
             InstanceIds=[instance_id],
             DocumentName="AWS-RunShellScript",
@@ -192,16 +218,18 @@ def bake_engine_ami(
             TimeoutSeconds=_SSM_CMD_TIMEOUT_S,
         )
         command_id = cmd["Command"]["CommandId"]
-        status = _wait_ssm(ssm, command_id, instance_id)
+        status = _wait_ssm(ssm, command_id, instance_id, emit=_p)
         if status["Status"] != "Success":
             raise BakeError(
                 f"bake command status={status['Status']}: "
                 f"{(status.get('StandardErrorContent') or '')[-500:]}"
             )
 
+        _p("stopping-builder", "")
         ec2.stop_instances(InstanceIds=[instance_id])
         ec2.get_waiter("instance_stopped").wait(InstanceIds=[instance_id])
 
+        _p("creating-ami", "")
         img = ec2.create_image(
             InstanceId=instance_id,
             Name=f"inferia-engine-cache-{vllm_tag}-{instance_id}",
@@ -220,10 +248,12 @@ def bake_engine_ami(
         # Snapshotting a ~80 GB AMI (DLAMI + extracted vLLM) routinely exceeds
         # the waiter's 10 min default (40×15s). Allow up to 40 min so the bake
         # reports success on the AMI rather than a spurious waiter timeout.
+        _p("waiting-for-ami", f"waiting for {ami_id} to become available")
         ec2.get_waiter("image_available").wait(
             ImageIds=[ami_id], WaiterConfig={"Delay": 15, "MaxAttempts": 160},
         )
         logger.info("engine_ami_bake: baked %s in %s", ami_id, region)
+        _p("done", f"baked {ami_id}")
         return BakeResult(ami_id=ami_id, region=region, vllm_tag=vllm_tag, base_dlami=dlami)
     except BakeError:
         raise
@@ -238,16 +268,23 @@ def bake_engine_ami(
                 logger.warning("engine_ami_bake: failed to terminate builder %s: %s", instance_id, e)
 
 
-def _wait_ssm(ssm, command_id: str, instance_id: str) -> dict:
+def _wait_ssm(ssm, command_id: str, instance_id: str, emit=None) -> dict:
     deadline = time.time() + _SSM_CMD_TIMEOUT_S + 60
     terminal = {"Success", "Failed", "Cancelled", "TimedOut"}
     last = {"Status": "Pending"}
+    seen = ""
     while time.time() < deadline:
         try:
             last = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
         except Exception:  # noqa: BLE001 — invocation not registered yet
             time.sleep(5)
             continue
+        if emit:
+            cur = last.get("StandardOutputContent") or ""
+            new, seen = _emit_new_output(seen, cur)
+            for ln in new.splitlines():
+                if ln.strip():
+                    emit("installing-and-pulling", ln)
         if last.get("Status") in terminal:
             return last
         time.sleep(10)
