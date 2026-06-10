@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 _REGIONS_TTL_S = 3600
 _ITYPES_TTL_S = 24 * 3600
 _PRICES_TTL_S = 24 * 3600
+_PRICES_NEG_TTL_S = 600  # negative-cache pricing failures briefly (avoid hammering a missing perm)
 _CACHE: dict[str, tuple[float, object]] = {}
 
 
@@ -121,6 +122,13 @@ async def list_instance_types(region: str) -> list[InstanceTypeInfo]:
     return infos
 
 
+def _to_float(v) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _offered_type_names(ec2, region: str) -> list[str]:
     names: list[str] = []
     paginator = ec2.get_paginator("describe_instance_type_offerings")
@@ -142,12 +150,12 @@ def _describe_types(ec2, names: list[str]) -> list[InstanceTypeInfo]:
             gpu_count = sum(g.get("Count", 0) for g in gpus)
             gpu_model = gpus[0].get("Name") if gpus else None
             gpu_ram_gb = round(
-                (gpus[0].get("MemoryInfo") or {}).get("SizeInMiB", 0) / 1024, 1
+                _to_float((gpus[0].get("MemoryInfo") or {}).get("SizeInMiB", 0)) / 1024, 1
             ) if gpus else 0.0
             out.append(InstanceTypeInfo(
                 instance_type=it["InstanceType"],
                 vcpus=(it.get("VCpuInfo") or {}).get("DefaultVCpus", 0),
-                memory_gb=round((it.get("MemoryInfo") or {}).get("SizeInMiB", 0) / 1024, 1),
+                memory_gb=round(_to_float((it.get("MemoryInfo") or {}).get("SizeInMiB", 0)) / 1024, 1),
                 gpu_count=gpu_count,
                 gpu_model=gpu_model,
                 is_gpu=gpu_count > 0,
@@ -199,6 +207,7 @@ def _region_price_map(creds: dict, region: str) -> dict[str, float]:
                     continue
     except Exception as e:  # noqa: BLE001 — pricing is best-effort; never break the list
         logger.info("aws_discovery: pricing lookup failed for %s: %s", region, e)
+        _cache_put(f"prices:{region}", {}, _PRICES_NEG_TTL_S)
         return {}
     _cache_put(f"prices:{region}", prices, _PRICES_TTL_S)
     return prices

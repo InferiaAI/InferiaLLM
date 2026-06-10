@@ -154,6 +154,58 @@ def test_region_price_map_failure_returns_empty(monkeypatch):
     assert out == {}  # best-effort, no raise
 
 
+def test_region_price_map_failure_is_negative_cached(monkeypatch):
+    """A pricing API failure must be negative-cached so the slow/failing call
+    is not repeated on every list_instance_types invocation."""
+    from botocore.exceptions import ClientError
+    d._CACHE.clear()
+    client = MagicMock()
+    client.get_paginator.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied"}}, "GetProducts"
+    )
+    monkeypatch.setattr(d, "_pricing_client", lambda creds: client)
+    creds = {"aws_access_key_id": "k", "aws_secret_access_key": "s"}
+
+    out1 = d._region_price_map(creds, "us-east-1")
+    out2 = d._region_price_map(creds, "us-east-1")
+
+    assert out1 == {}
+    assert out2 == {}
+    # The API must have been called only once; the second call hits the negative cache
+    assert client.get_paginator.call_count == 1
+
+
+def test_describe_types_non_numeric_sizeInMiB_yields_zero_not_exception():
+    """A malformed AWS record with a non-numeric SizeInMiB must produce 0.0,
+    not raise — and valid instances in the same batch must still come through."""
+    ec2 = MagicMock()
+    ec2.describe_instance_types.return_value = {"InstanceTypes": [
+        # malformed: string SizeInMiB on system RAM AND GPU VRAM
+        {
+            "InstanceType": "bad.medium",
+            "VCpuInfo": {"DefaultVCpus": 2},
+            "MemoryInfo": {"SizeInMiB": "not-a-number"},
+            "GpuInfo": {"Gpus": [{"Name": "BadGPU", "Count": 1,
+                                   "MemoryInfo": {"SizeInMiB": "also-bad"}}]},
+        },
+        # valid record must still be returned
+        {
+            "InstanceType": "m5.large",
+            "VCpuInfo": {"DefaultVCpus": 2},
+            "MemoryInfo": {"SizeInMiB": 8192},
+        },
+    ]}
+    result = d._describe_types(ec2, ["bad.medium", "m5.large"])
+    by = {r.instance_type: r for r in result}
+
+    assert "bad.medium" in by
+    assert by["bad.medium"].memory_gb == 0.0
+    assert by["bad.medium"].gpu_ram_gb == 0.0
+
+    assert "m5.large" in by
+    assert by["m5.large"].memory_gb == 8.0
+
+
 @pytest.mark.asyncio
 async def test_list_instance_types_sets_vram_and_price(monkeypatch):
     from unittest.mock import AsyncMock

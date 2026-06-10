@@ -1116,8 +1116,16 @@ export default function NewPool() {
                                     return matchesSearch && matchesVram && matchesVendor;
                                 })
                                 .sort((a, b) => {
-                                    if (sortBy === "price_asc") return a.price_per_hour - b.price_per_hour;
-                                    if (sortBy === "price_desc") return b.price_per_hour - a.price_per_hour;
+                                    if (sortBy === "price_asc") {
+                                        const pa = a.price_per_hour ?? Infinity;
+                                        const pb = b.price_per_hour ?? Infinity;
+                                        return pa - pb;
+                                    }
+                                    if (sortBy === "price_desc") {
+                                        const pa = a.price_per_hour ?? Infinity;
+                                        const pb = b.price_per_hour ?? Infinity;
+                                        return pb - pa;
+                                    }
                                     if (sortBy === "memory") return b.gpu_memory_gb - a.gpu_memory_gb;
                                     return 0;
                                 })
@@ -1415,7 +1423,11 @@ function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, 
         >
             <div className="flex justify-between items-start mb-2">
                 <div className="p-2 bg-muted dark:bg-card rounded-md"><Cpu className="w-5 h-5 text-fg-secondary dark:text-cream/85" /></div>
-                <span className="font-bold text-green-600 dark:text-green-400">${res.price_per_hour}/hr</span>
+                <span className="font-bold text-green-600 dark:text-green-400">
+                    {res.price_per_hour != null && res.price_per_hour > 0
+                        ? `$${res.price_per_hour.toFixed(2)}/hr`
+                        : "price N/A"}
+                </span>
             </div>
             <h4 className="font-bold">{res.provider_resource_id}</h4>
             <p className="text-sm text-muted-foreground">{res.gpu_type} ({res.gpu_memory_gb}GB VRAM)</p>
