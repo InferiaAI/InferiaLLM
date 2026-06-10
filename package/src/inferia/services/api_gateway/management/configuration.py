@@ -47,6 +47,7 @@ from inferia.services.api_gateway.config import (
     DePINConfig,
     VectorDBConfig,
     HuggingFaceConfig,
+    HFTokenEntry,
 )
 
 router = APIRouter(tags=["Configuration"])
@@ -91,13 +92,41 @@ def _is_masked(value: Optional[str]) -> bool:
     return False
 
 
-def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
-    """For each known sensitive field in ``incoming`` that arrives as a
-    masked value, substitute the corresponding value from ``existing``.
+def _preserve_secret(in_dict: dict, ex_dict: dict, field: str) -> None:
+    """Protect one stored secret field from being clobbered on a config save.
 
-    This is the server-side guard against the round-trip bug where a
-    dashboard form pre-populated with masked values is submitted as-is,
-    replacing the real key in the DB with the literal mask string.
+    The dashboard pre-populates forms with masked values and scrubs them to an
+    empty string on load, so an *unchanged* secret is submitted as either the
+    mask or ``""`` — never its real value (the AWS form even tells the user
+    "leave blank to keep existing"). In both the masked and blank cases we
+    restore the stored secret. Only a genuinely new, non-empty, non-masked
+    value is allowed to overwrite. A mask with no stored value to back it is
+    dropped so the literal mask is never persisted. Fields absent from
+    ``in_dict`` are left untouched (the DB merge preserves them).
+    """
+    if field not in in_dict:
+        return
+    val = in_dict.get(field)
+    if isinstance(val, str) and val and not _is_masked(val):
+        return  # genuine new value — let it through
+    stored = ex_dict.get(field)
+    if stored:
+        in_dict[field] = stored
+    elif _is_masked(val):
+        in_dict.pop(field, None)
+
+
+def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
+    """For each known sensitive field in ``incoming`` that arrives masked OR
+    blank, substitute the corresponding value from ``existing``.
+
+    Server-side guard against two round-trip data-loss bugs:
+    1. A dashboard form pre-populated with masked values is submitted as-is,
+       which would replace the real key in the DB with the literal mask.
+    2. The dashboard scrubs masked values to "" on load; saving the config
+       from an *unrelated* provider's page would otherwise blank a configured
+       provider's stored secret. Treating blank-with-stored as "unchanged"
+       keeps untouched credentials intact.
     """
     # Operate on a copy so we don't mutate the caller's dict in place.
     import copy as _copy
@@ -105,51 +134,32 @@ def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
     cloud_in = out.get("cloud") or {}
     cloud_ex = (existing.get("providers") or {}).get("cloud") or {}
 
-    # AWS — both access_key_id and secret_access_key may arrive masked.
+    # AWS — both access_key_id and secret_access_key may arrive masked/blank.
     aws_in = cloud_in.get("aws") or {}
     aws_ex = cloud_ex.get("aws") or {}
     for fld in ("access_key_id", "secret_access_key"):
-        if _is_masked(aws_in.get(fld)):
-            preserved = aws_ex.get(fld)
-            if preserved is not None:
-                aws_in[fld] = preserved
-            else:
-                # No prior value to fall back to; drop the masked field
-                # entirely so we don't persist the literal mask string.
-                aws_in.pop(fld, None)
+        _preserve_secret(aws_in, aws_ex, fld)
     if aws_in:
         cloud_in["aws"] = aws_in
 
-    # GCP service_account_json is masked with "********".
+    # GCP service_account_json.
     gcp_in = cloud_in.get("gcp") or {}
     gcp_ex = cloud_ex.get("gcp") or {}
-    if _is_masked(gcp_in.get("service_account_json")):
-        if gcp_ex.get("service_account_json"):
-            gcp_in["service_account_json"] = gcp_ex["service_account_json"]
-        else:
-            gcp_in.pop("service_account_json", None)
+    _preserve_secret(gcp_in, gcp_ex, "service_account_json")
     if gcp_in:
         cloud_in["gcp"] = gcp_in
 
     # Azure client_secret.
     azure_in = cloud_in.get("azure") or {}
     azure_ex = cloud_ex.get("azure") or {}
-    if _is_masked(azure_in.get("client_secret")):
-        if azure_ex.get("client_secret"):
-            azure_in["client_secret"] = azure_ex["client_secret"]
-        else:
-            azure_in.pop("client_secret", None)
+    _preserve_secret(azure_in, azure_ex, "client_secret")
     if azure_in:
         cloud_in["azure"] = azure_in
 
     # IBM api_key.
     ibm_in = cloud_in.get("ibm") or {}
     ibm_ex = cloud_ex.get("ibm") or {}
-    if _is_masked(ibm_in.get("api_key")):
-        if ibm_ex.get("api_key"):
-            ibm_in["api_key"] = ibm_ex["api_key"]
-        else:
-            ibm_in.pop("api_key", None)
+    _preserve_secret(ibm_in, ibm_ex, "api_key")
     if ibm_in:
         cloud_in["ibm"] = ibm_in
 
@@ -159,29 +169,35 @@ def _preserve_masked_secrets(incoming: dict, existing: dict) -> dict:
     # VectorDB chroma api_key.
     vec_in = (out.get("vectordb") or {}).get("chroma") or {}
     vec_ex = ((existing.get("providers") or {}).get("vectordb") or {}).get("chroma") or {}
-    if _is_masked(vec_in.get("api_key")):
-        if vec_ex.get("api_key"):
-            vec_in["api_key"] = vec_ex["api_key"]
-        else:
-            vec_in.pop("api_key", None)
+    _preserve_secret(vec_in, vec_ex, "api_key")
 
     # DePIN nosana wallet_private_key.
     nos_in = (out.get("depin") or {}).get("nosana") or {}
     nos_ex = ((existing.get("providers") or {}).get("depin") or {}).get("nosana") or {}
-    if _is_masked(nos_in.get("wallet_private_key")):
-        if nos_ex.get("wallet_private_key"):
-            nos_in["wallet_private_key"] = nos_ex["wallet_private_key"]
-        else:
-            nos_in.pop("wallet_private_key", None)
+    _preserve_secret(nos_in, nos_ex, "wallet_private_key")
 
-    # HuggingFace token.
+    # HuggingFace legacy scalar token.
     hf_in = out.get("huggingface") or {}
     hf_ex = (existing.get("providers") or {}).get("huggingface") or {}
-    if _is_masked(hf_in.get("token")):
-        if hf_ex.get("token"):
-            hf_in["token"] = hf_ex["token"]
-        else:
-            hf_in.pop("token", None)
+    _preserve_secret(hf_in, hf_ex, "token")
+
+    # HuggingFace named tokens list.
+    in_tokens = hf_in.get("tokens")
+    if isinstance(in_tokens, list):
+        ex_by_name = {e.get("name"): e for e in (hf_ex.get("tokens") or []) if isinstance(e, dict)}
+        kept = []
+        for ent in in_tokens:
+            if not isinstance(ent, dict):
+                continue
+            if _is_masked(ent.get("token")):
+                prior = ex_by_name.get(ent.get("name"))
+                if prior and prior.get("token"):
+                    ent = {**ent, "token": prior["token"]}
+                else:
+                    continue
+            kept.append(ent)
+        hf_in["tokens"] = kept
+
     if hf_in:
         out["huggingface"] = hf_in
 
@@ -225,6 +241,9 @@ def _mask_config(config: ProvidersConfig) -> ProvidersConfig:
     # HuggingFace — nested under .huggingface
     if masked.huggingface.token:
         masked.huggingface.token = "********"
+    for entry in masked.huggingface.tokens:
+        if entry.token:
+            entry.token = "********"
 
     return masked
 
@@ -532,6 +551,31 @@ def _get_nosana_credentials_from_config() -> List[ProviderCredential]:
     return credentials
 
 
+class HFTokenNamesResponse(BaseModel):
+    names: List[str]
+
+
+@router.get("/config/providers/huggingface/token-names", response_model=HFTokenNamesResponse)
+async def list_hf_token_names(request: Request):
+    """
+    Return the names of active HuggingFace tokens.
+
+    Returns names only (no values) so the deploy form can populate a
+    dropdown without exposing secrets.  Requires ``deployment:list`` so
+    any deployer (not just org admins) can fetch the list.
+    """
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.DEPLOYMENT_LIST)
+
+    hf = settings.providers.huggingface
+    names = [
+        t.name
+        for t in hf.tokens
+        if getattr(t, "is_active", True) and t.name
+    ]
+    return HFTokenNamesResponse(names=names)
+
+
 @router.get(
     "/config/providers/{provider}/credentials",
     response_model=ProviderCredentialListResponse,
@@ -555,6 +599,17 @@ async def list_provider_credentials(
 
     if provider == "nosana":
         credentials = _get_nosana_credentials_from_config()
+    elif provider == "huggingface":
+        hf = settings.providers.huggingface
+        for t in hf.tokens:
+            if t.name:
+                credentials.append(ProviderCredential(
+                    provider="huggingface",
+                    name=t.name,
+                    credential_type="token",
+                    value=t.token,
+                    is_active=getattr(t, "is_active", True),
+                ))
     elif provider == "aws":
         aws = settings.providers.cloud.aws
         if aws.access_key_id:
@@ -683,6 +738,25 @@ async def add_provider_credential(
                 "is_active": new_credential.is_active,
             }
         )
+    elif provider == "huggingface":
+        hf = current_config.setdefault("huggingface", {})
+        hf.setdefault("tokens", [])
+
+        # Check for duplicate names
+        existing_names = {t.get("name") for t in hf["tokens"]}
+        if credential_data.name in existing_names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Credential with name '{credential_data.name}' already exists for {provider}",
+            )
+
+        hf["tokens"].append(
+            {
+                "name": new_credential.name,
+                "token": new_credential.value,
+                "is_active": new_credential.is_active,
+            }
+        )
     elif provider in ("aws", "gcp", "azure", "ibm"):
         cloud = current_config.setdefault("cloud", {})
         prov_cfg = cloud.setdefault(provider, {})
@@ -690,7 +764,7 @@ async def add_provider_credential(
     else:
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{provider}' not supported. Valid: aws, gcp, azure, ibm, nosana",
+            detail=f"Provider '{provider}' not supported. Valid: aws, gcp, azure, ibm, nosana, huggingface",
         )
 
     db_config = {"providers": current_config}
@@ -751,6 +825,16 @@ async def update_provider_credential(
                     key_config["key"] = credential_data.value
                 if credential_data.is_active is not None:
                     key_config["is_active"] = credential_data.is_active
+                updated = True
+                break
+    elif provider == "huggingface":
+        tokens = current_config.get("huggingface", {}).get("tokens", [])
+        for token_config in tokens:
+            if token_config.get("name") == credential_name:
+                if credential_data.value is not None:
+                    token_config["token"] = credential_data.value
+                if credential_data.is_active is not None:
+                    token_config["is_active"] = credential_data.is_active
                 updated = True
                 break
     elif provider in ("aws", "gcp", "azure", "ibm"):
@@ -826,6 +910,13 @@ async def delete_provider_credential(
         for i, key_config in enumerate(api_keys):
             if key_config["name"] == credential_name:
                 api_keys.pop(i)
+                deleted = True
+                break
+    elif provider == "huggingface":
+        tokens = current_config.get("huggingface", {}).get("tokens", [])
+        for i, token_config in enumerate(tokens):
+            if token_config.get("name") == credential_name:
+                tokens.pop(i)
                 deleted = True
                 break
     elif provider in ("aws", "gcp", "azure", "ibm"):

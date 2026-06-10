@@ -28,24 +28,23 @@ def test_resolve_aws_env_happy():
     cfg = _aws_cfg(
         access_key_id="AKIAREALKEY1234XYZ8",
         secret_access_key="real-secret-not-mask",
-        region="us-west-2",
     )
     env = resolve_aws_env(cfg)
     assert env == {
         "AWS_ACCESS_KEY_ID": "AKIAREALKEY1234XYZ8",
         "AWS_SECRET_ACCESS_KEY": "real-secret-not-mask",
-        "AWS_DEFAULT_REGION": "us-west-2",
+        "AWS_DEFAULT_REGION": "us-east-1",
     }
 
 
 def test_resolve_aws_env_missing_key_raises():
-    cfg = _aws_cfg(secret_access_key="x", region="us-east-1")
+    cfg = _aws_cfg(secret_access_key="x")
     with pytest.raises(MissingCredentialsError):
         resolve_aws_env(cfg)
 
 
 def test_resolve_aws_env_missing_secret_raises():
-    cfg = _aws_cfg(access_key_id="AKIA", region="us-east-1")
+    cfg = _aws_cfg(access_key_id="AKIA")
     with pytest.raises(MissingCredentialsError):
         resolve_aws_env(cfg)
 
@@ -54,7 +53,6 @@ def test_resolve_aws_env_masked_key_rejected():
     cfg = _aws_cfg(
         access_key_id="AKIA...XYZ8",  # masked
         secret_access_key="real",
-        region="us-east-1",
     )
     with pytest.raises(MissingCredentialsError):
         resolve_aws_env(cfg)
@@ -64,17 +62,16 @@ def test_resolve_aws_env_masked_secret_rejected():
     cfg = _aws_cfg(
         access_key_id="AKIAREALKEY1234XYZ8",
         secret_access_key="********",  # masked
-        region="us-east-1",
     )
     with pytest.raises(MissingCredentialsError):
         resolve_aws_env(cfg)
 
 
-def test_resolve_aws_env_default_region_when_blank():
+def test_resolve_aws_env_region_always_us_east_1():
+    """AWS_DEFAULT_REGION is always us-east-1; region was removed from AWSConfig."""
     cfg = _aws_cfg(
         access_key_id="AKIAREALKEY1234XYZ8",
         secret_access_key="real-secret-not-mask",
-        region="",
     )
     env = resolve_aws_env(cfg)
     assert env["AWS_DEFAULT_REGION"] == "us-east-1"

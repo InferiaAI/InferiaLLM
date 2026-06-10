@@ -1,8 +1,9 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useReducer } from "react";
-import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, initialProviderConfig } from "@/services/configService";
-import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle, Info } from "lucide-react";
+import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, type HfTokenResponse, initialProviderConfig } from "@/services/configService";
+import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
+import { EngineAmiSection } from "./EngineAmiSection";
 
 // Small inline "where to find" hint rendered below a credential field
 // label. The HelpCircle icon plus a one-line writeup tells the user
@@ -43,8 +44,6 @@ function clearMaskedSecrets(cfg: ProvidersConfig): ProvidersConfig {
     if (nosana && isMaskedSecret(nosana.wallet_private_key)) nosana.wallet_private_key = "";
     const akash = scrubbed.depin?.akash as any;
     if (akash && isMaskedSecret(akash.mnemonic)) akash.mnemonic = "";
-    const hf = scrubbed.huggingface as any;
-    if (hf && isMaskedSecret(hf.token)) hf.token = "";
     return scrubbed;
 }
 
@@ -55,6 +54,7 @@ type State = {
     isEditing: boolean;
     isConfigured: boolean;
     nosanaApiKeys: NosanaApiKeyResponse[];
+    hfTokens: HfTokenResponse[];
     showAddKeyModal: boolean;
     newKeyName: string;
     newKeyValue: string;
@@ -101,6 +101,7 @@ const initialState: State = {
     isEditing: false,
     isConfigured: false,
     nosanaApiKeys: [],
+    hfTokens: [],
     showAddKeyModal: false,
     newKeyName: "",
     newKeyValue: "",
@@ -116,14 +117,18 @@ export default function ProviderConfigPage() {
     const [state, dispatch] = useReducer(reducer, initialState);
     const {
         config, loading, saving, isEditing, isConfigured,
-        nosanaApiKeys, showAddKeyModal, newKeyName, newKeyValue, loadingKeys,
+        nosanaApiKeys, hfTokens, showAddKeyModal, newKeyName, newKeyValue, loadingKeys,
         showDeleteModal, keyToDelete, hfTokenFromEnv
     } = state;
+
+    const isHf = providerId === "huggingface-token";
 
     useEffect(() => {
         loadConfig();
         if (providerId === "nosana") {
             loadNosanaApiKeys();
+        } else if (providerId === "huggingface-token") {
+            loadHfTokens();
         }
     }, [providerId]);
 
@@ -192,18 +197,40 @@ export default function ProviderConfigPage() {
         }
     };
 
+    const loadHfTokens = async () => {
+        try {
+            dispatch({ type: 'SET_FIELD', field: 'loadingKeys', value: true });
+            const tokens = await ConfigService.listHfTokens();
+            dispatch({ type: 'SET_FIELD', field: 'hfTokens', value: tokens });
+
+            // HF tokens are managed separately via addHfToken/deleteHfToken and
+            // are NOT synced into the form config state, so the page-level Save
+            // never round-trips masked/stale values back over them.
+        } catch (e) {
+            toast.error("Failed to load HuggingFace tokens");
+        } finally {
+            dispatch({ type: 'SET_FIELD', field: 'loadingKeys', value: false });
+        }
+    };
+
     const handleAddApiKey = async () => {
+        const noun = isHf ? "token" : "API key";
         if (!newKeyName.trim() || !newKeyValue.trim()) {
-            toast.error("Please provide both name and API key");
+            toast.error(`Please provide both a name and a ${noun}`);
             return;
         }
         try {
-            await ConfigService.addNosanaApiKey(newKeyName.trim(), newKeyValue.trim());
-            toast.success(`API key "${newKeyName}" added successfully`);
+            if (isHf) {
+                await ConfigService.addHfToken(newKeyName.trim(), newKeyValue.trim());
+            } else {
+                await ConfigService.addNosanaApiKey(newKeyName.trim(), newKeyValue.trim());
+            }
+            toast.success(`${isHf ? "Token" : "API key"} "${newKeyName}" added successfully`);
             dispatch({ type: 'RESET_ADD_KEY_MODAL' });
-            loadNosanaApiKeys();
+            if (isHf) loadHfTokens(); else loadNosanaApiKeys();
         } catch (e) {
-            toast.error("Failed to add API key");
+            const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            toast.error(detail || `Failed to add ${noun}`);
         }
     };
 
@@ -215,12 +242,16 @@ export default function ProviderConfigPage() {
         if (!keyToDelete) return;
         const name = keyToDelete;
         try {
-            await ConfigService.deleteNosanaApiKey(name);
-            toast.success(`API key "${name}" deleted successfully`);
+            if (isHf) {
+                await ConfigService.deleteHfToken(name);
+            } else {
+                await ConfigService.deleteNosanaApiKey(name);
+            }
+            toast.success(`${isHf ? "Token" : "API key"} "${name}" deleted successfully`);
             dispatch({ type: 'HIDE_DELETE_MODAL' });
-            loadNosanaApiKeys();
+            if (isHf) loadHfTokens(); else loadNosanaApiKeys();
         } catch (e) {
-            toast.error("Failed to delete API key");
+            toast.error(`Failed to delete ${isHf ? "token" : "API key"}`);
         }
     };
 
@@ -231,7 +262,7 @@ export default function ProviderConfigPage() {
             case "gcp": return !!data.cloud.gcp?.project_id || !!data.cloud.gcp?.service_account_json;
             case "nosana": return !!data.depin.nosana.wallet_private_key || !!data.depin.nosana.api_key || (nosanaApiKeys && nosanaApiKeys.length > 0);
             case "akash": return !!data.depin.akash.mnemonic;
-            case "huggingface-token": return !!data.huggingface?.token || !!envFlag;
+            case "huggingface-token": return !!data.huggingface?.token || !!envFlag || (hfTokens && hfTokens.length > 0);
             default: return false;
         }
     };
@@ -240,10 +271,13 @@ export default function ProviderConfigPage() {
         e.preventDefault();
         dispatch({ type: 'SET_FIELD', field: 'saving', value: true });
         try {
-            // Strip api_keys from nosana config — they are managed separately
-            // and would overwrite real keys with masked/stale values
+            // Strip separately-managed credential lists (nosana api_keys,
+            // huggingface tokens) — they are persisted via their own add/delete
+            // endpoints, and including them here would overwrite real values
+            // with masked/stale ones on the page-level Save.
             const safeConfig = structuredClone(config);
             delete (safeConfig.depin.nosana as any).api_keys;
+            delete (safeConfig.huggingface as any).tokens;
             await ConfigService.updateProviderConfig(safeConfig);
             toast.success("Configuration saved successfully");
             dispatch({ type: 'SET_FIELD', field: 'isConfigured', value: true });
@@ -318,6 +352,7 @@ export default function ProviderConfigPage() {
                             updateField={updateField}
                             isConfigured={isConfigured}
                             nosanaApiKeys={nosanaApiKeys}
+                            hfTokens={hfTokens}
                             loadingKeys={loadingKeys}
                             handleAddKey={() => dispatch({ type: 'SET_FIELD', field: 'showAddKeyModal', value: true })}
                             handleDeleteApiKey={handleDeleteApiKey}
@@ -348,33 +383,36 @@ export default function ProviderConfigPage() {
                 )}
             </div>
 
+            {providerId === "aws" && <EngineAmiSection />}
+
             {showAddKeyModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
                     <div className="bg-card border rounded-xl p-6 w-full max-w-md mx-4 space-y-4">
-                        <h3 className="text-lg font-semibold">Add Nosana API Key</h3>
+                        <h3 className="text-lg font-semibold">{isHf ? "Add HuggingFace Token" : "Add Nosana API Key"}</h3>
                         <div className="space-y-3">
                             <div className="space-y-2">
-                                <label htmlFor="key-name" className="text-sm font-medium">Key Name</label>
+                                <label htmlFor="key-name" className="text-sm font-medium">{isHf ? "Token Name" : "Key Name"}</label>
                                 <input
                                     id="key-name"
                                     value={newKeyName}
                                     onChange={(e) => dispatch({ type: 'SET_FIELD', field: 'newKeyName', value: e.target.value })}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    placeholder="e.g., Piyush, Jesse, Production..."
+                                    placeholder={isHf ? "e.g., default, prod, gated-models..." : "e.g., Piyush, Jesse, Production..."}
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    A friendly name to identify this key
+                                    {isHf ? "A friendly name to pick this token when deploying" : "A friendly name to identify this key"}
                                 </p>
                             </div>
                             <div className="space-y-2">
-                                <label htmlFor="key-value" className="text-sm font-medium">API Key</label>
+                                <label htmlFor="key-value" className="text-sm font-medium">{isHf ? "HuggingFace Token" : "API Key"}</label>
                                 <input
                                     id="key-value"
                                     type="password"
+                                    autoComplete="new-password"
                                     value={newKeyValue}
                                     onChange={(e) => dispatch({ type: 'SET_FIELD', field: 'newKeyValue', value: e.target.value })}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    placeholder="nos_..."
+                                    placeholder={isHf ? "hf_..." : "nos_..."}
                                 />
                             </div>
                         </div>
@@ -391,7 +429,7 @@ export default function ProviderConfigPage() {
                                 onClick={handleAddApiKey}
                                 className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
                             >
-                                Add Key
+                                {isHf ? "Add Token" : "Add Key"}
                             </button>
                         </div>
                     </div>
@@ -405,23 +443,31 @@ export default function ProviderConfigPage() {
                             <div className="p-2 bg-red-50 rounded-full">
                                 <Trash2 className="w-6 h-6" />
                             </div>
-                            <h3 className="text-lg font-semibold">Delete API Key?</h3>
+                            <h3 className="text-lg font-semibold">{isHf ? "Delete HuggingFace Token?" : "Delete API Key?"}</h3>
                         </div>
 
                         <div className="space-y-3">
                             <p className="text-sm text-foreground">
-                                Are you sure you want to delete the API key <span className="font-bold">&quot;{keyToDelete}&quot;</span>?
+                                Are you sure you want to delete the {isHf ? "token" : "API key"} <span className="font-bold">&quot;{keyToDelete}&quot;</span>?
                             </p>
 
-                            <div className="p-4 bg-red-50 border border-red-100 rounded-lg space-y-2">
-                                <p className="text-xs font-bold text-red-800 flex items-center gap-1.5">
-                                    <ShieldCheck className="w-3.5 h-3.5" />
-                                    WARNING: RECURSIVE DELETION
-                                </p>
-                                <p className="text-xs text-red-700 leading-relaxed">
-                                    Deleting this key will automatically <span className="font-bold underline">terminate all active deployments</span> and <span className="font-bold underline">delete all compute pools</span> associated with it. This action cannot be undone.
-                                </p>
-                            </div>
+                            {isHf ? (
+                                <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg space-y-2">
+                                    <p className="text-xs text-amber-800 leading-relaxed">
+                                        This token will no longer be available for new deployments. Deployments already running are unaffected. This action cannot be undone.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="p-4 bg-red-50 border border-red-100 rounded-lg space-y-2">
+                                    <p className="text-xs font-bold text-red-800 flex items-center gap-1.5">
+                                        <ShieldCheck className="w-3.5 h-3.5" />
+                                        WARNING: RECURSIVE DELETION
+                                    </p>
+                                    <p className="text-xs text-red-700 leading-relaxed">
+                                        Deleting this key will automatically <span className="font-bold underline">terminate all active deployments</span> and <span className="font-bold underline">delete all compute pools</span> associated with it. This action cannot be undone.
+                                    </p>
+                                </div>
+                            )}
                         </div>
 
                         <div className="flex justify-end gap-3 pt-2">
@@ -437,7 +483,7 @@ export default function ProviderConfigPage() {
                                 onClick={confirmDeleteApiKey}
                                 className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors shadow-sm"
                             >
-                                Delete Key & Resources
+                                {isHf ? "Delete Token" : "Delete Key & Resources"}
                             </button>
                         </div>
                     </div>
@@ -447,31 +493,12 @@ export default function ProviderConfigPage() {
     );
 }
 
-// Validation regex shared with the backend AWSPoolMetadata gate.
-const AWS_PROV_RE = {
-    subnet: /^subnet-[0-9a-f]{8,17}$/,
-    sg: /^sg-[0-9a-f]{8,17}$/,
-    ami: /^ami-[0-9a-f]{8,17}$/,
-    iam: /^arn:aws:iam::\d{12}:instance-profile\/.+$/,
-};
-
 function AWSFields({ config, updateField, isConfigured }: { config: ProvidersConfig; updateField: (path: string[], value: any) => void; isConfigured?: boolean }) {
     // When the panel was loaded with stored credentials, the form starts empty
     // (masked values are stripped on load). Tell the user explicitly so they
     // don't think the existing credentials were wiped.
     const accessEmpty = !config.cloud.aws.access_key_id;
     const secretEmpty = !config.cloud.aws.secret_access_key;
-    const aws = config.cloud.aws;
-    const subnetErr = aws.subnet_id && !AWS_PROV_RE.subnet.test(aws.subnet_id)
-        ? "Must match subnet-XXXXXXXX" : "";
-    const sgErr = (aws.security_group_ids || []).find(sg => !AWS_PROV_RE.sg.test(sg))
-        ? "Each must match sg-XXXXXXXX" : "";
-    const amiErr = aws.ami_id && !AWS_PROV_RE.ami.test(aws.ami_id)
-        ? "Must match ami-XXXXXXXX" : "";
-    const iamErr = aws.iam_instance_profile && !AWS_PROV_RE.iam.test(aws.iam_instance_profile)
-        ? "Must match arn:aws:iam::ACCOUNT:instance-profile/NAME" : "";
-    const rootErr = aws.root_volume_gb && (aws.root_volume_gb < 10 || aws.root_volume_gb > 16384)
-        ? "Must be 10..16384" : "";
     return (
         <>
             {isConfigured && accessEmpty && secretEmpty && (
@@ -512,141 +539,6 @@ function AWSFields({ config, updateField, isConfigured }: { config: ProvidersCon
                     the access key. If you lost it, generate a new key pair —
                     AWS doesn't let you retrieve the secret.
                 </CredHint>
-            </div>
-            <div className="space-y-2">
-                <label htmlFor="aws-region" className="text-sm font-medium">Region</label>
-                <input
-                    id="aws-region"
-                    value={config.cloud.aws.region || "ap-south-1"}
-                    onChange={(e) => updateField(['cloud', 'aws', 'region'], e.target.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                />
-                <CredHint>
-                    Any AWS region code: <code>us-east-1</code>, <code>eu-west-2</code>,
-                    <code> ap-south-1</code>… Shown top-right of the AWS Console (e.g. "Mumbai").
-                </CredHint>
-            </div>
-
-            {/* AWS Provisioning Configuration — account-wide defaults Pulumi
-                will use when creating EC2 clusters. All optional. */}
-            <div className="mt-6 pt-4 border-t border-border/60">
-                <h3 className="text-sm font-semibold">AWS Provisioning Configuration</h3>
-                <p className="text-xs text-muted-foreground mt-1 mb-4">
-                    Account-wide defaults applied to every AWS pool. Leave blank to
-                    let Pulumi pick a sensible default (auto VPC + default SG +
-                    latest Deep Learning AMI + 100 GB root volume).
-                </p>
-
-                <div className="space-y-2">
-                    <label htmlFor="aws-subnet" className="text-sm font-medium">Subnet ID <span className="text-muted-foreground text-xs">(optional)</span></label>
-                    <input
-                        id="aws-subnet"
-                        value={aws.subnet_id || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'subnet_id'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="subnet-0123456789abcdef0"
-                    />
-                    {subnetErr && <p className="text-xs text-red-500">{subnetErr}</p>}
-                    <CredHint>
-                        VPC Console → <strong>Subnets</strong>. Pick one in the same
-                        region as your access keys. Leave blank to let Pulumi create
-                        a fresh VPC + subnet automatically.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-sg" className="text-sm font-medium">Security Group IDs <span className="text-muted-foreground text-xs">(optional, comma-separated)</span></label>
-                    <input
-                        id="aws-sg"
-                        value={(aws.security_group_ids || []).join(", ")}
-                        onChange={(e) => {
-                            const parts = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
-                            updateField(['cloud', 'aws', 'security_group_ids'], parts.length ? parts : undefined);
-                        }}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="sg-abc12345, sg-def67890"
-                    />
-                    {sgErr && <p className="text-xs text-red-500">{sgErr}</p>}
-                    <CredHint>
-                        EC2 Console → <strong>Security Groups</strong>. Each ID looks like
-                        <code> sg-XXXXXXXX</code>. Must allow outbound TCP 443
-                        (to reach the control plane) and inbound 8080 from the CP.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-ami" className="text-sm font-medium">AMI ID <span className="text-muted-foreground text-xs">(optional)</span></label>
-                    <input
-                        id="aws-ami"
-                        value={aws.ami_id || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'ami_id'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="ami-deadbeef00000000 (auto if blank)"
-                    />
-                    {amiErr && <p className="text-xs text-red-500">{amiErr}</p>}
-                    <CredHint>
-                        EC2 Console → <strong>AMIs</strong>. Leave blank and Pulumi will
-                        auto-detect the latest AWS Deep Learning AMI (Ubuntu 22.04 +
-                        NVIDIA driver) for the selected region.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-iam" className="text-sm font-medium">IAM Instance Profile ARN <span className="text-muted-foreground text-xs">(optional)</span></label>
-                    <input
-                        id="aws-iam"
-                        value={aws.iam_instance_profile || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'iam_instance_profile'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="arn:aws:iam::123456789012:instance-profile/inferia-worker"
-                    />
-                    {iamErr && <p className="text-xs text-red-500">{iamErr}</p>}
-                    <CredHint>
-                        IAM Console → <strong>Roles</strong> → your role →
-                        Trust relationships must include <code>ec2.amazonaws.com</code>.
-                        Only needed if the worker pulls from private ECR or S3.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-root" className="text-sm font-medium">Root Volume Size (GB) <span className="text-muted-foreground text-xs">(default 100)</span></label>
-                    <input
-                        id="aws-root"
-                        type="number"
-                        min={10}
-                        max={16384}
-                        value={aws.root_volume_gb ?? ""}
-                        onChange={(e) => {
-                            const v = e.target.value;
-                            updateField(['cloud', 'aws', 'root_volume_gb'], v === "" ? undefined : parseInt(v, 10));
-                        }}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder="100"
-                    />
-                    {rootErr && <p className="text-xs text-red-500">{rootErr}</p>}
-                    <CredHint>
-                        Size of the EBS root volume in GB. 100 GB is enough for the
-                        worker image + a couple of model containers; bump higher if
-                        you'll pull large model artifacts at runtime.
-                    </CredHint>
-                </div>
-
-                <div className="space-y-2 mt-3">
-                    <label htmlFor="aws-image-tag" className="text-sm font-medium">inferia-worker Image Tag <span className="text-muted-foreground text-xs">(default "latest")</span></label>
-                    <input
-                        id="aws-image-tag"
-                        value={aws.worker_image_tag || ""}
-                        onChange={(e) => updateField(['cloud', 'aws', 'worker_image_tag'], e.target.value || undefined)}
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        placeholder='v1.2.3'
-                    />
-                    <CredHint>
-                        Tag of <code>ghcr.io/inferiaai/inferia-worker</code> to pull on the
-                        EC2 instance. Pin (e.g. <code>0.1.0</code>) for reproducible
-                        deploys, or leave blank to follow the rolling default
-                        (<code>latest</code>).
-                    </CredHint>
-                </div>
             </div>
         </>
     );
@@ -908,42 +800,87 @@ function AkashFields({ config, updateField, handleAddKey }: { config: ProvidersC
 }
 
 function HuggingFaceFields({
-    config,
-    updateField,
+    hfTokens,
+    loadingKeys,
+    handleAddKey,
+    handleDeleteApiKey,
     hfTokenFromEnv,
 }: {
-    config: ProvidersConfig;
-    updateField: (path: string[], value: any) => void;
+    hfTokens: HfTokenResponse[];
+    loadingKeys: boolean;
+    handleAddKey: () => void;
+    handleDeleteApiKey: (name: string) => void;
     hfTokenFromEnv?: boolean;
 }) {
     return (
         <div className="space-y-4">
+            <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Key className="w-4 h-4" />
+                    HuggingFace Tokens
+                </h3>
+                <button
+                    type="button"
+                    onClick={handleAddKey}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Token
+                </button>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+                Add multiple HuggingFace tokens with friendly names.
+                Pick one by name when deploying gated models.
+            </p>
+
             {hfTokenFromEnv && (
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex items-start gap-2 text-xs text-blue-700">
-                    <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
-                    <span>
-                        A token is configured via the <code className="font-mono font-semibold">INFERIA_HF_TOKEN</code> environment variable.
-                        Entering one here overrides it.
-                    </span>
+                <div className="p-3 bg-ember-50 border border-ember-100 rounded-lg text-xs text-ember-700">
+                    A default token is also provided via the <code>INFERIA_HF_TOKEN</code> environment variable
+                    and will be used as a fallback when no named token is selected.
                 </div>
             )}
-            <div className="space-y-2">
-                <label htmlFor="hf-token" className="text-sm font-medium">Access Token</label>
-                <input
-                    id="hf-token"
-                    type="password"
-                    value={config.huggingface?.token || ""}
-                    onChange={(e) => updateField(['huggingface', 'token'], e.target.value)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    placeholder={hfTokenFromEnv ? "(env token active — type to override)" : "hf_..."}
-                    autoComplete="new-password"
-                />
-                <CredHint>
-                    Hugging Face → <strong>Settings</strong> → <strong>Access Tokens</strong>.
-                    Required to download gated or private models (e.g. Llama, Gemma).
-                    Starts with <code>hf_</code>.
-                </CredHint>
-            </div>
+
+            {loadingKeys ? (
+                <div className="text-center py-4 text-muted-foreground text-sm">
+                    Loading tokens...
+                </div>
+            ) : hfTokens.length === 0 ? (
+                <div className="text-center py-6 bg-muted/30 rounded-lg border border-dashed">
+                    <Key className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">No tokens configured</p>
+                    <p className="text-xs text-muted-foreground mt-1">Add your first token to deploy gated models</p>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {hfTokens.map((t) => (
+                        <div
+                            key={t.name}
+                            className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border"
+                        >
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                    <Key className="w-4 h-4 text-primary" />
+                                </div>
+                                <div>
+                                    <p className="font-medium text-sm">{t.name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {t.is_active ? 'Active' : 'Inactive'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => handleDeleteApiKey(t.name)}
+                                className="p-2 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                title="Delete token"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -954,6 +891,7 @@ function ProviderFormFields({
     updateField,
     isConfigured,
     nosanaApiKeys,
+    hfTokens,
     loadingKeys,
     handleAddKey,
     handleDeleteApiKey,
@@ -964,6 +902,7 @@ function ProviderFormFields({
     updateField: (path: string[], value: any) => void;
     isConfigured?: boolean;
     nosanaApiKeys: NosanaApiKeyResponse[];
+    hfTokens: HfTokenResponse[];
     loadingKeys: boolean;
     handleAddKey: () => void;
     handleDeleteApiKey: (name: string) => void;
@@ -988,7 +927,15 @@ function ProviderFormFields({
         case "akash":
             return <AkashFields config={config} updateField={updateField} handleAddKey={handleAddKey} />;
         case "huggingface-token":
-            return <HuggingFaceFields config={config} updateField={updateField} hfTokenFromEnv={hfTokenFromEnv} />;
+            return (
+                <HuggingFaceFields
+                    hfTokens={hfTokens}
+                    loadingKeys={loadingKeys}
+                    handleAddKey={handleAddKey}
+                    handleDeleteApiKey={handleDeleteApiKey}
+                    hfTokenFromEnv={hfTokenFromEnv}
+                />
+            );
         default:
             return <div>Unknown Provider</div>;
     }

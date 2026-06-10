@@ -111,6 +111,7 @@ async def test_createpool_aws_does_not_provision(app_and_pool):
     """
     app, pool = app_and_pool
     payload = _createpool_payload(provider="aws")
+    payload["region_constraint"] = ["us-east-1"]
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -227,6 +228,7 @@ async def test_createpool_persists_metadata(app_and_pool):
         "agent_kind": "worker",
     }
     payload = _createpool_payload(provider="aws", metadata=meta)
+    payload["region_constraint"] = ["us-east-1"]
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -263,6 +265,7 @@ async def test_createpool_duplicate_returns_409(app_and_pool):
     payload = _createpool_payload(
         provider="aws", pool_name=pool_name, owner_id=owner_id
     )
+    payload["region_constraint"] = ["us-east-1"]
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -289,3 +292,92 @@ async def test_createpool_invalid_provider_returns_400(app_and_pool):
     assert resp.status_code == 400, (
         f"Expected 400 for invalid provider, got {resp.status_code}: {resp.text}"
     )
+
+
+# ---------------------------------------------------------------------------
+# T4: region_constraint required for AWS pools
+# ---------------------------------------------------------------------------
+
+async def test_createpool_aws_no_region_returns_422(app_and_pool):
+    """POST /createpool with provider=aws and NO region_constraint must be
+    rejected with 422 and a detail mentioning 'region'.
+
+    Since Task 3 removed the account-wide AWS region, the pool-level
+    region_constraint is now the only source of region for provisioning.
+    Accepting a region-less AWS pool would let it slip through to deploy
+    time where it fails with an opaque internal error instead of a clear
+    early rejection.
+    """
+    app, _ = app_and_pool
+    # Case 1: region_constraint omitted entirely
+    payload_omitted = _createpool_payload(provider="aws")
+    # Ensure region_constraint key is absent (default _createpool_payload does not include it)
+    payload_omitted.pop("region_constraint", None)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/deployment/createpool", json=payload_omitted)
+
+    assert resp.status_code == 422, (
+        f"Expected 422 for AWS pool with no region, got {resp.status_code}: {resp.text}"
+    )
+    assert "region" in resp.text.lower(), (
+        f"Expected 'region' in 422 detail, got: {resp.text}"
+    )
+
+    # Case 2: region_constraint is explicitly an empty list
+    payload_empty = _createpool_payload(provider="aws")
+    payload_empty["region_constraint"] = []
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp2 = await client.post("/deployment/createpool", json=payload_empty)
+
+    assert resp2.status_code == 422, (
+        f"Expected 422 for AWS pool with empty region list, got {resp2.status_code}: {resp2.text}"
+    )
+    assert "region" in resp2.text.lower(), (
+        f"Expected 'region' in 422 detail, got: {resp2.text}"
+    )
+
+
+async def test_createpool_aws_with_region_returns_200(app_and_pool):
+    """POST /createpool with provider=aws and a valid region_constraint must
+    succeed with HTTP 200 and return a pool_id.
+    """
+    app, _ = app_and_pool
+    payload = _createpool_payload(provider="aws")
+    payload["region_constraint"] = ["us-east-1"]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/deployment/createpool", json=payload)
+
+    assert resp.status_code == 200, (
+        f"Expected 200 for AWS pool with valid region, got {resp.status_code}: {resp.text}"
+    )
+    body = resp.json()
+    assert "pool_id" in body
+    assert body["status"] == "CREATED"
+
+
+async def test_createpool_non_aws_without_region_returns_200(app_and_pool):
+    """POST /createpool with a non-AWS provider (nosana) and NO region_constraint
+    must still succeed with HTTP 200 — the region guard must only apply to AWS.
+    """
+    app, _ = app_and_pool
+    payload = _createpool_payload(provider="nosana")
+    payload.pop("region_constraint", None)  # no region
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/deployment/createpool", json=payload)
+
+    assert resp.status_code == 200, (
+        f"Expected 200 for non-AWS pool without region, got {resp.status_code}: {resp.text}"
+    )
+    assert resp.json()["status"] == "CREATED"

@@ -327,7 +327,7 @@ def _model_spec_from_request(req: "DeployModelRequest") -> dict:
 
 
 async def _build_provisioning_spec(
-    *, pool_row, pool_meta: dict, decision, org_id,
+    *, pool_row, pool_meta: dict, decision, org_id, ami_id: str | None = None,
 ) -> dict:
     """Build the provisioning-job spec for a ColdStart enqueue.
 
@@ -337,8 +337,7 @@ async def _build_provisioning_spec(
         provider_pool_id, or pool_meta.instance_type)
       - instance_class: derived from the AWS instance catalog (single source
         of truth — never trust a separately-stored value)
-      - region: pool.region_constraint[0] -> pool_meta.region -> account-wide
-        ProvidersConfig.cloud.aws.region
+      - region: pool.region_constraint[0] -> pool_meta.region (required; 422 if absent)
       - optional per-pool overrides (subnet/SG/IAM/AMI/root volume/image tag)
 
     Raises HTTPException(422) when instance_type / instance_class / region
@@ -388,23 +387,15 @@ async def _build_provisioning_spec(
         )
     instance_class = it.cls
 
+    region = None
     rc = pool_row.get("region_constraint")
-    region = (rc[0] if rc else None) or pool_meta.get("region")
-    if not region:
-        # Fall back to the account-wide AWS region (Settings -> Providers).
-        try:
-            from inferia.services.orchestration.services.adapter_engine.adapters.pulumi.pulumi_aws_adapter import (
-                load_providers_config,
-            )
-            cfg = await load_providers_config()
-            region = cfg.cloud.aws.region
-        except Exception:
-            region = None
+    if rc:
+        region = (rc[0] if isinstance(rc, (list, tuple)) else rc) or None
+    region = region or pool_meta.get("region")
     if not region:
         raise HTTPException(
             status_code=422,
-            detail=(f"AWS pool for {instance_type} has no region configured; "
-                    f"set a region on the pool or in Settings -> Providers -> AWS"),
+            detail="AWS pool has no region (set region_constraint at pool creation)",
         )
 
     spec = {
@@ -424,6 +415,10 @@ async def _build_provisioning_spec(
         val = pool_meta.get(key)
         if val not in (None, "", []):
             spec[key] = val
+    # Per-deploy ami_id override (from DeployModelRequest.ami_id, required for
+    # vLLM). Takes priority over pool_meta.ami_id set above (deploy-level wins).
+    if ami_id:
+        spec["ami_id"] = ami_id
     # Root volume: GPU classes boot a Deep Learning AMI whose backing
     # snapshot is ~75GB+, so the build_program default of 50GB fails with
     # InvalidBlockDeviceMapping ("Volume ... smaller than snapshot, expect
@@ -534,11 +529,14 @@ class DeployModelRequest(BaseModel):
     policies: dict | None = None
     inference_model: str | None = None
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
+    ami_id: str | None = None
+    hf_token_name: str | None = None
 
 
 class PreflightRequest(BaseModel):
     model_id: str
     hf_token: str | None = None
+    hf_token_name: str | None = None
     engine: str | None = None
     gpu_per_replica: int = 1
     gpu_vram_gb: float = 24.0
@@ -811,6 +809,14 @@ async def deployment_preflight(req: PreflightRequest):
 
     checks = []
 
+    # Resolve HF token: prefer explicit raw token; fall back to named token from store
+    _hf_token = req.hf_token
+    if not _hf_token and req.hf_token_name:
+        from inferia.services.orchestration.services.model_deployment.hf_token_resolver import (
+            resolve_hf_token,
+        )
+        _hf_token = await resolve_hf_token(req.hf_token_name)
+
     # Skip HF checks for external engines
     external_engines = {"openai", "anthropic", "gemini", "groq", "cerebras", "mistral", "deepseek", "custom"}
     is_external = req.engine and req.engine.lower() in external_engines
@@ -823,7 +829,7 @@ async def deployment_preflight(req: PreflightRequest):
 
     if not is_external and not uses_own_registry and req.model_id:
         # Check 1: Model accessibility
-        result = await check_model_accessibility(req.model_id, req.hf_token)
+        result = await check_model_accessibility(req.model_id, _hf_token)
         if result.skipped:
             checks.append(PreflightCheckResult(
                 check="model_accessible",
@@ -846,11 +852,11 @@ async def deployment_preflight(req: PreflightRequest):
 
         # Fetch full HF metadata once (used by checks 2-5)
         if result.accessible and not result.skipped:
-            hf_info = await fetch_hf_model_info(req.model_id, req.hf_token)
+            hf_info = await fetch_hf_model_info(req.model_id, _hf_token)
 
         # Check 2: Model format compatibility
         if hf_info and req.engine:
-            fmt = await check_model_format(req.model_id, req.engine, req.hf_token)
+            fmt = await check_model_format(req.model_id, req.engine, _hf_token)
             if fmt.skipped:
                 checks.append(PreflightCheckResult(
                     check="model_format",
@@ -1011,6 +1017,7 @@ async def place_and_provision(
     engine,
     load_spec_source,
     deps,
+    ami_id: str | None = None,
 ) -> tuple[dict, int]:
     """Place a deployment on a pool and provision compute for it.
 
@@ -1141,6 +1148,7 @@ async def place_and_provision(
                                     "spec": await _build_provisioning_spec(
                                         pool_row=pool_row, pool_meta=pool_meta,
                                         decision=decision, org_id=org_id,
+                                        ami_id=ami_id,
                                     ),
                                 }
                     else:
@@ -1198,6 +1206,7 @@ async def place_and_provision(
                             "spec": await _build_provisioning_spec(
                                 pool_row=pool_row, pool_meta=pool_meta,
                                 decision=decision, org_id=org_id,
+                                ami_id=ami_id,
                             ),
                         }
 
@@ -1263,7 +1272,9 @@ async def place_and_provision(
                 "config": _cfg.get("config") or {},
                 "gpu_indices": list(range(gpu_per_replica or 0)),
                 "port": 0,
-                "env": {},
+                # Propagate configuration.env (e.g. HF_TOKEN injected by the
+                # deploy handler for hf_token_name) to the warm-path load spec.
+                "env": dict(_cfg.get("env") or {}),
             }
             try:
                 from inferia.services.orchestration.config import settings as _s
@@ -1447,6 +1458,35 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                 ),
             )
 
+    # 1b. vLLM requires an explicit ami_id (the DLAMI to boot); reject early
+    # so the operator sees an actionable 422 instead of a provisioning failure.
+    if (req.engine or "").lower() == "vllm" and not req.ami_id:
+        raise HTTPException(
+            status_code=422,
+            detail="ami_id is required for vLLM deployments",
+        )
+
+    # 1c. Persist ami_id into configuration so the /start resume path can
+    # reuse the operator's selected AMI instead of falling back to resolve_ami.
+    if req.ami_id:
+        cfg = dict(req.configuration or {})
+        cfg["ami_id"] = req.ami_id
+        req.configuration = cfg
+
+    # 1d. Resolve a named HF token server-side and inject HF_TOKEN into the
+    # worker config.  The client sends only the *name*, never the raw value.
+    if req.hf_token_name:
+        from inferia.services.orchestration.services.model_deployment.hf_token_resolver import (
+            resolve_hf_token,
+        )
+        _tok = await resolve_hf_token(req.hf_token_name)
+        if _tok:
+            cfg = dict(req.configuration or {})
+            env = dict(cfg.get("env") or {})
+            env.setdefault("HF_TOKEN", _tok)  # don't clobber an explicit one
+            cfg["env"] = env
+            req.configuration = cfg
+
     # 2. Create deployment row (CREATED state, target_pool_id=pool_id)
     deploy_id = uuid4()
     policies_val = req.policies
@@ -1520,6 +1560,7 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         engine=req.engine,
         load_spec_source=req,
         deps=deps,
+        ami_id=req.ami_id,
     )
 
     from fastapi.responses import JSONResponse
@@ -2037,6 +2078,17 @@ async def _start_deployment_impl(
             await deploys.set_state(deploy_uuid, "CREATED", tx=conn)
 
     # 5. Re-run the shared place+provision core.
+    # Read back the persisted ami_id from the deployment row's configuration so
+    # the operator's AMI selection is honoured on resume instead of falling back
+    # to resolve_ami's auto-pick.
+    _resume_cfg = _source_field(row, "configuration")
+    if isinstance(_resume_cfg, str):
+        try:
+            _resume_cfg = json.loads(_resume_cfg)
+        except (ValueError, TypeError):
+            _resume_cfg = {}
+    _resume_ami = _resume_cfg.get("ami_id") if isinstance(_resume_cfg, dict) else None
+
     deps = SimpleNamespace(
         db_pool=db_pool,
         controller=controller,
@@ -2055,6 +2107,7 @@ async def _start_deployment_impl(
         engine=_source_field(row, "engine"),
         load_spec_source=row,
         deps=deps,
+        ami_id=_resume_ami,
     )
     return body, status
 
@@ -2307,7 +2360,17 @@ async def create_pool(req: CreatePoolRequest, request: Request):
         except _ValidationError as e:
             raise HTTPException(status_code=422, detail={"errors": e.errors()})
 
-    # 2b. Validate AWS region(s) at the boundary. A malformed code (e.g.
+    # 2b. Require region_constraint for AWS pools. Since the account-wide AWS
+    #     region was removed (Task 3), region MUST come from the pool. Accepting
+    #     a region-less AWS pool would let it through to deploy time where it
+    #     fails with an opaque internal error instead of a clear early rejection.
+    if req.provider == "aws" and not req.region_constraint:
+        raise HTTPException(
+            status_code=422,
+            detail="region_constraint is required for AWS pools",
+        )
+
+    # Validate AWS region(s) at the boundary. A malformed code (e.g.
     #     "us-east1" missing the second hyphen) is otherwise persisted and only
     #     fails much later at preflight with an opaque
     #     "DLAMI lookup failed: EndpointConnectionError" (boto3 can't build an

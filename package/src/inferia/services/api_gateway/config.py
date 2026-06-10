@@ -18,18 +18,6 @@ logger = logging.getLogger(__name__)
 class AWSConfig(BaseModel):
     access_key_id: Optional[str] = None
     secret_access_key: Optional[str] = None
-    region: str = "us-east-1"
-    # Account-wide AWS provisioning defaults. SkyPilot uses these when
-    # spinning up pools; previously the same fields lived on each pool's
-    # compute_pools.metadata jsonb. None ⇒ SkyPilot picks a default
-    # (creates a VPC, default SG, latest Deep Learning AMI, no IAM
-    # instance profile, 100 GB root, "latest" worker image).
-    subnet_id: Optional[str] = None
-    security_group_ids: Optional[list[str]] = None
-    ami_id: Optional[str] = None
-    iam_instance_profile: Optional[str] = None
-    root_volume_gb: Optional[int] = None
-    worker_image_tag: Optional[str] = None
 
 
 class GCPConfig(BaseModel):
@@ -86,8 +74,15 @@ class DePINConfig(BaseModel):
     nosana: NosanaConfig = Field(default_factory=NosanaConfig)
 
 
+class HFTokenEntry(BaseModel):
+    name: str
+    token: str
+    is_active: bool = True
+
+
 class HuggingFaceConfig(BaseModel):
-    token: str = ""
+    token: str = ""  # legacy single token (kept as fallback "default")
+    tokens: list[HFTokenEntry] = Field(default_factory=list)
 
 
 class ProvidersConfig(BaseModel):
