@@ -75,7 +75,7 @@ export default function DeploymentMetrics({ deploymentId, deployment }: Deployme
     return (
         <div className="space-y-4">
             {nodeData && <NodeMetricsCards metrics={nodeData} />}
-            {deployMetric ? <DeployMetricCard metric={deployMetric} /> : <EmptyMetrics />}
+            {deployMetric ? <DeployMetricCard metric={deployMetric} engine={deployment.engine} /> : <EmptyMetrics />}
         </div>
     )
 }
@@ -139,7 +139,7 @@ function NodeMetricsCards({ metrics }: { metrics: NodeMetrics }) {
     )
 }
 
-function DeployMetricCard({ metric }: { metric: DeployMetric }) {
+function DeployMetricCard({ metric, engine }: { metric: DeployMetric; engine?: string }) {
     const items = [
         { label: "Recipe", value: metric.recipe || "—", icon: BarChart3 },
         { label: "Phase", value: metric.phase || "—", icon: Activity },
@@ -168,7 +168,7 @@ function DeployMetricCard({ metric }: { metric: DeployMetric }) {
                     </div>
                 ))}
             </div>
-            {metric.engine_metrics && Object.keys(metric.engine_metrics).length > 0 && (
+            {engine === "vllm" && metric.engine_metrics && Object.keys(metric.engine_metrics).length > 0 && (
                 <>
                     <hr className="border-border" />
                     <div>
