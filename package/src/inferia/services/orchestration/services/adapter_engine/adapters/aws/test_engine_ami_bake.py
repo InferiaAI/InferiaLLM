@@ -299,3 +299,33 @@ def test_bake_no_progress_default_still_works(monkeypatch):
     _patch(monkeypatch, ec2, ssm)
     res = bake.bake_engine_ami(region="us-east-1", aws_env=AWS_ENV, ssm_instance_profile="p")
     assert res.ami_id == "ami-baked"
+
+
+def test_wait_ssm_accumulates_output_across_polls(monkeypatch):
+    """_wait_ssm must emit each new line exactly once as StandardOutputContent grows
+    across polls (the `seen` variable accumulates diffs — no duplicate lines)."""
+    monkeypatch.setattr(bake.time, "sleep", lambda *a, **k: None)
+    invocations = [
+        {"Status": "InProgress", "StandardOutputContent": "pulling vllm\n"},
+        {"Status": "InProgress", "StandardOutputContent": "pulling vllm\nextracting\n"},
+        {"Status": "Success",    "StandardOutputContent": "pulling vllm\nextracting\ndone\n"},
+    ]
+
+    class _SeqSSM:
+        def __init__(self):
+            self.i = 0
+
+        def get_command_invocation(self, **kw):
+            inv = invocations[min(self.i, len(invocations) - 1)]
+            self.i += 1
+            return inv
+
+    emitted = []
+    out = bake._wait_ssm(
+        _SeqSSM(), "cmd-1", "i-1",
+        emit=lambda phase, line: emitted.append(line),
+    )
+    assert out["Status"] == "Success"
+    # Each line must appear exactly once across the 3 polls — no duplication
+    # from the 24KB-tail diff logic in _emit_new_output.
+    assert emitted == ["pulling vllm", "extracting", "done"]

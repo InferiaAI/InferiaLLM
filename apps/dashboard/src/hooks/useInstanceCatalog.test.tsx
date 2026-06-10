@@ -264,6 +264,25 @@ describe("useInstanceCatalog (region-aware live path)", () => {
     expect(result.current.data?.normal_gpu[0].price_per_hour).toBe(0.8);
   });
 
+  it("falls back to curated when live call throws (network/5xx/auth error)", async () => {
+    vi.spyOn(configServiceModule.ConfigService, "listAwsInstanceTypes").mockRejectedValue(
+      new Error("boom"),
+    );
+    vi.mocked(computeApi.get).mockResolvedValue({ data: CURATED_FIXTURE });
+
+    const { result } = renderHook(() => useInstanceCatalog("us-east-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    // query must not be in error state — the throw was swallowed
+    expect(result.current.isError).toBe(false);
+    // curated catalog should have been returned instead
+    expect(result.current.data).toEqual(CURATED_FIXTURE);
+    expect(computeApi.get).toHaveBeenCalledWith("/providers/aws/instance-catalog");
+  });
+
   it("queryKey includes region so different regions return distinct cached data", async () => {
     // Two hooks share one QueryClient but different regions → different query keys
     // → TanStack Query keeps them in separate cache slots.

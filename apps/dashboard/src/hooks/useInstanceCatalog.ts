@@ -70,9 +70,13 @@ export function useInstanceCatalog(region?: string) {
     queryKey: ["aws-instance-catalog", region ?? "curated"],
     queryFn: async () => {
       if (region) {
-        const live = await ConfigService.listAwsInstanceTypes(region);
-        if (!live.fallback && live.instance_types.length) {
-          return groupLiveTypes(live.instance_types);
+        try {
+          const live = await ConfigService.listAwsInstanceTypes(region);
+          if (!live.fallback && live.instance_types.length) {
+            return groupLiveTypes(live.instance_types);
+          }
+        } catch {
+          // live discovery failed (network / 5xx / auth) — fall through to curated
         }
       }
       // No region given, or live returned fallback/empty — use curated catalog.
