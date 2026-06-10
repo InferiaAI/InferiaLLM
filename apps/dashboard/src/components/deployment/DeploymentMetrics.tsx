@@ -145,8 +145,8 @@ function DeployMetricCard({ metric }: { metric: DeployMetric }) {
         { label: "Phase", value: metric.phase || "—", icon: Activity },
         { label: "Requests (sliding)", value: metric.requests_total ?? "—", icon: Gauge },
         { label: "Active Requests", value: metric.active_requests ?? "—", icon: Gauge },
-        { label: "Latency P50", value: metric.request_latency_p50_ms != null ? `${metric.request_latency_p50_ms} ms` : "—", icon: Clock },
-        { label: "Latency P95", value: metric.request_latency_p95_ms != null ? `${metric.request_latency_p95_ms} ms` : "—", icon: Clock },
+        { label: "Latency P95", value: metric.request_latency_p50_ms != null && metric.request_latency_p50_ms > 0 ? `${metric.request_latency_p50_ms} ms` : "—", icon: Clock },
+        { label: "Latency P98", value: metric.request_latency_p95_ms != null && metric.request_latency_p95_ms > 0 ? `${metric.request_latency_p95_ms} ms` : "—", icon: Clock },
         { label: "Pull Duration", value: metric.pull_duration_ms != null ? `${(metric.pull_duration_ms / 1000).toFixed(1)}s` : "—", icon: Clock },
         { label: "Start Duration", value: metric.start_duration_ms != null ? `${(metric.start_duration_ms / 1000).toFixed(1)}s` : "—", icon: Clock },
     ]
