@@ -89,3 +89,55 @@ async def list_regions() -> list[str]:
         raise AwsDiscoveryUnavailable("describe_regions returned no enabled regions")
     _cache_put("regions", regions, _REGIONS_TTL_S)
     return regions
+
+
+async def list_instance_types(region: str) -> list[InstanceTypeInfo]:
+    key = f"itypes:{region}"
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached  # type: ignore[return-value]
+    creds = await _resolve_creds()
+    if not creds:
+        raise AwsDiscoveryUnavailable("no AWS credentials configured")
+    try:
+        ec2 = _ec2(region, creds)
+        names = await asyncio.to_thread(_offered_type_names, ec2, region)
+        infos = await asyncio.to_thread(_describe_types, ec2, names)
+    except AwsDiscoveryUnavailable:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise AwsDiscoveryUnavailable(f"instance-type discovery failed: {e}") from e
+    infos.sort(key=lambda i: (not i.is_gpu, i.instance_type))
+    _cache_put(key, infos, _ITYPES_TTL_S)
+    return infos
+
+
+def _offered_type_names(ec2, region: str) -> list[str]:
+    names: list[str] = []
+    paginator = ec2.get_paginator("describe_instance_type_offerings")
+    for page in paginator.paginate(
+        LocationType="region",
+        Filters=[{"Name": "location", "Values": [region]}],
+    ):
+        names += [o["InstanceType"] for o in page.get("InstanceTypeOfferings", [])]
+    return names
+
+
+def _describe_types(ec2, names: list[str]) -> list[InstanceTypeInfo]:
+    out: list[InstanceTypeInfo] = []
+    for i in range(0, len(names), 100):  # DescribeInstanceTypes max 100/call
+        batch = names[i:i + 100]
+        resp = ec2.describe_instance_types(InstanceTypes=batch)
+        for it in resp.get("InstanceTypes", []):
+            gpus = (it.get("GpuInfo") or {}).get("Gpus") or []
+            gpu_count = sum(g.get("Count", 0) for g in gpus)
+            gpu_model = gpus[0].get("Name") if gpus else None
+            out.append(InstanceTypeInfo(
+                instance_type=it["InstanceType"],
+                vcpus=(it.get("VCpuInfo") or {}).get("DefaultVCpus", 0),
+                memory_gb=round((it.get("MemoryInfo") or {}).get("SizeInMiB", 0) / 1024, 1),
+                gpu_count=gpu_count,
+                gpu_model=gpu_model,
+                is_gpu=gpu_count > 0,
+            ))
+    return out
