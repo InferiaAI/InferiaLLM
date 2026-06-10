@@ -4,13 +4,28 @@ import { toast } from "sonner";
 
 type Ami = { ami_id: string; vllm_tag?: string; region: string; created: string };
 
+const PHASE_LABELS: Record<string, string> = {
+    "starting": "Starting…",
+    "launching-builder": "Launching builder…",
+    "waiting-for-ssm": "Waiting for builder…",
+    "installing-and-pulling": "Installing + pulling vLLM image…",
+    "stopping-builder": "Stopping builder…",
+    "creating-ami": "Creating AMI…",
+    "waiting-for-ami": "Waiting for AMI to become available…",
+    "done": "Done",
+    "failed": "Failed",
+};
+
 export function EngineAmiSection() {
     const [region, setRegion] = useState("us-east-1");
     const [amis, setAmis] = useState<Ami[]>([]);
     const [vllmTag, setVllmTag] = useState("");
     const [baking, setBaking] = useState(false);
     const [status, setStatus] = useState("");
+    const [bakePhase, setBakePhase] = useState("");
+    const [bakeLog, setBakeLog] = useState<string[]>([]);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const logContainerRef = useRef<HTMLDivElement | null>(null);
 
     const refresh = async () => {
         try { setAmis(await ConfigService.listEngineAmis(region)); }
@@ -20,14 +35,23 @@ export function EngineAmiSection() {
     // Clear any in-flight poll on unmount to avoid a state-update-after-unmount leak.
     useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
+    // Auto-scroll the log pane to the bottom whenever new lines arrive.
+    useEffect(() => {
+        if (logContainerRef.current) {
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+    }, [bakeLog]);
+
     const bake = async () => {
-        setBaking(true); setStatus("running");
+        setBaking(true); setStatus("running"); setBakePhase(""); setBakeLog([]);
         try {
             const { bake_id } = await ConfigService.startEngineBake({ region, vllm_tag: vllmTag || undefined });
             pollRef.current = setInterval(async () => {
                 try {
                     const s = await ConfigService.pollBakeStatus(bake_id);
                     setStatus(`${s.status}${s.message ? ": " + s.message : ""}`);
+                    setBakePhase(s.phase ?? "");
+                    setBakeLog(s.log ?? []);
                     if (s.status === "succeeded" || s.status === "failed") {
                         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
                         setBaking(false);
@@ -42,6 +66,8 @@ export function EngineAmiSection() {
         } catch { setBaking(false); setStatus(""); toast.error("Failed to start bake"); }
     };
 
+    const isBakeActive = baking;
+
     return (
         <div className="space-y-4 border border-border rounded-lg p-4">
             <h3 className="text-sm font-semibold">Engine Cache AMIs</h3>
@@ -55,6 +81,27 @@ export function EngineAmiSection() {
                 <button type="button" disabled={baking} onClick={bake} className="h-9 px-3 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">{baking ? "Baking…" : "Bake new AMI"}</button>
             </div>
             {status && <p className="text-xs text-muted-foreground">Status: {status}</p>}
+            {isBakeActive && (
+                <div className="space-y-2">
+                    {bakePhase && (
+                        <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+                                {PHASE_LABELS[bakePhase] ?? bakePhase}
+                            </span>
+                        </div>
+                    )}
+                    {bakeLog.length > 0 && (
+                        <div
+                            ref={logContainerRef}
+                            className="max-h-64 overflow-y-auto rounded-md border border-border bg-muted/50 p-2"
+                        >
+                            <pre className="font-mono text-xs text-muted-foreground whitespace-pre-wrap break-all">
+                                {bakeLog.slice(-200).join("\n")}
+                            </pre>
+                        </div>
+                    )}
+                </div>
+            )}
             <table className="w-full text-xs">
                 <thead><tr className="text-left text-muted-foreground border-b border-border"><th className="py-1">AMI</th><th>vLLM tag</th><th>Created</th></tr></thead>
                 <tbody>
