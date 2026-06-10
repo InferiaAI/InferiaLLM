@@ -5,6 +5,7 @@ import { Clock, User, Shield, Search, ChevronDown, ChevronUp, AlertCircle, Tag }
 export default function AuditLogs() {
     const [logs, setLogs] = useState<AuditLog[]>([])
     const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
     const [expandedId, setExpandedId] = useState<string | null>(null)
     const [filters, setFilters] = useState({
         action: "",
@@ -19,10 +20,16 @@ export default function AuditLogs() {
     const fetchLogs = async () => {
         try {
             setLoading(true)
+            setError(null)
             const data = await auditService.getLogs(filters)
             setLogs(data)
-        } catch (error) {
-            console.error("Failed to fetch audit logs:", error)
+        } catch (err) {
+            console.error("Failed to fetch audit logs:", err)
+            setLogs([])
+            const detail =
+                (err as any)?.response?.data?.detail ??
+                (err instanceof Error ? err.message : "Unknown error")
+            setError(`Failed to load audit logs: ${detail}`)
         } finally {
             setLoading(false)
         }
@@ -103,6 +110,15 @@ export default function AuditLogs() {
                 </div>
             </form>
 
+            {/* Error banner — fetch failed or the endpoint answered with an
+                unexpected shape; keep the page alive instead of crashing. */}
+            {error && !loading && (
+                <div className="flex items-center gap-2 p-4 mb-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-sm">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{error}</span>
+                </div>
+            )}
+
             {/* Logs List */}
             {loading ? (
                 <div className="space-y-4">
@@ -110,7 +126,7 @@ export default function AuditLogs() {
                         <div key={i} className="h-16 bg-muted animate-pulse rounded-lg" />
                     ))}
                 </div>
-            ) : logs.length === 0 ? (
+            ) : error ? null : logs.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground border rounded-lg bg-card/50">
                     <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
                     <p>No audit logs found</p>

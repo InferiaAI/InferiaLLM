@@ -68,6 +68,13 @@ export const auditService = {
         }
 
         const { data } = await api.get<AuditLog[]>("/audit/logs", { params });
+        // Defensive: if a proxy/edge layer answers with something other than
+        // the JSON array (e.g. an SPA index.html fallback), axios still
+        // resolves with that body. Surfacing a typed error here keeps the
+        // page on its error path instead of crashing on logs.map(...).
+        if (!Array.isArray(data)) {
+            throw new Error("Unexpected response from /audit/logs (not a list of audit logs)");
+        }
         return data;
     }
 };
