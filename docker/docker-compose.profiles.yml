@@ -33,13 +33,13 @@ services:
   inferia-unified:
     image: inferiaai/inferiallm:latest
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: unified
     container_name: inferia-unified
     profiles: ["unified"]
     env_file:
-      - ./.env
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - DATABASE_URL=postgresql://inferia:inferia@inferia-postgres:5432/inferia
@@ -71,7 +71,7 @@ services:
     volumes:
       - appdata:/data
       - modelcache:/var/lib/inferia/models
-      - ./inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
     ports:
       - "8000:8000"
       - "8001:8001"
@@ -93,13 +93,13 @@ services:
   api-gateway:
     image: inferiaai/inferia-api-gateway:latest
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: api-gateway
     container_name: inferia-api-gateway
     profiles: ["split"]
     env_file:
-      - ./.env
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
@@ -120,13 +120,13 @@ services:
   inference:
     image: inferiaai/inferia-inference:latest
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: inference
     container_name: inferia-inference
     profiles: ["split"]
     env_file:
-      - ./.env
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0
@@ -144,13 +144,13 @@ services:
   orchestration:
     image: inferiaai/inferia-orchestration:latest
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: orchestration
     container_name: inferia-orchestration
     profiles: ["split"]
     env_file:
-      - ./.env
+      - ../.env
     environment:
       - POSTGRES_DSN=postgresql://inferia:inferia@inferia-postgres:5432/inferia
       - REDIS_URL=redis://inferia-redis:6379/0

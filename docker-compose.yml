@@ -55,7 +55,7 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     container_name: inferia-app
     restart: unless-stopped
     env_file: .env
@@ -154,7 +154,7 @@ services:
       - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
     volumes:
-      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./docker/logstash/pipeline:/usr/share/logstash/pipeline:ro
     deploy:
       resources:
         limits:

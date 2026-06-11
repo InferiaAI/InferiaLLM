@@ -24,7 +24,7 @@ clean:
 # Docker Commands
 # ==========================================
 
-DOCKER_COMPOSE = docker compose -f docker-compose.profiles.yml
+DOCKER_COMPOSE = docker compose -f docker/docker-compose.profiles.yml
 
 # Build images
 docker-build-unified:
@@ -55,7 +55,7 @@ docker-clean:
 # sibling repo at ../inferia-auth/ (relative to this directory). Operator
 # must add `inferia.local` and `auth.inferia.local` to /etc/hosts pointing
 # at 127.0.0.1 before bringing the stack up. See docs/operations/auth.md.
-DOCKER_COMPOSE_SSO = docker compose -f docker-compose.sso.yml
+DOCKER_COMPOSE_SSO = docker compose -f docker/docker-compose.sso.yml
 
 docker-build-sso:
 	$(DOCKER_COMPOSE_SSO) build
@@ -76,7 +76,7 @@ smoke-local-up:    ## bring up unified stack and build worker image (no worker c
 	docker build -t inferia-worker:smoke ../inferia-worker
 
 smoke-local-down:  ## tear down worker compose + unified
-	-docker compose -f compose.worker-local.yml down -v
+	-docker compose -f docker/compose.worker-local.yml down -v
 	docker compose -f docker-compose.yml down
 
 smoke-local: smoke-local-up   ## run the local Qwen3 smoke end-to-end

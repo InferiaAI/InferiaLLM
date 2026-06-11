@@ -50,7 +50,7 @@ services:
   inferia-auth-migrate:
     image: inferia-auth:dev
     build:
-      context: ../inferia-auth
+      context: ../../inferia-auth
       dockerfile: Dockerfile
     container_name: inferia-lh-auth-migrate
     restart: "no"
@@ -65,7 +65,7 @@ services:
   inferia-auth:
     image: inferia-auth:dev
     build:
-      context: ../inferia-auth
+      context: ../../inferia-auth
       dockerfile: Dockerfile
     container_name: inferia-lh-auth
     restart: unless-stopped
@@ -107,8 +107,8 @@ services:
   inferia-app:
     image: inferia-app:dev
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: unified
     container_name: inferia-lh-app
     restart: unless-stopped
@@ -199,7 +199,7 @@ services:
       INFERIA_CONFIG: "/etc/inferia/inferia.yaml"
     volumes:
       - lh-appdata:/data
-      - ./inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -228,7 +228,7 @@ services:
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     volumes:
       - ./Caddyfile.localhost:/etc/caddy/Caddyfile:ro
-      - ./.localhost-dashboard:/srv/dashboard:ro
+      - ../.localhost-dashboard:/srv/dashboard:ro
     depends_on:
       inferia-app:
         condition: service_healthy

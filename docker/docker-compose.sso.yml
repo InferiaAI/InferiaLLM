@@ -74,7 +74,7 @@ services:
   inferia-auth-migrate:
     image: inferia-auth:dev
     build:
-      context: ../inferia-auth
+      context: ../../inferia-auth
       dockerfile: Dockerfile
     container_name: inferia-auth-sso-migrate
     restart: "no"
@@ -95,7 +95,7 @@ services:
   # ---------------------------------------------------------------------------
   inferia-auth:
     build:
-      context: ../inferia-auth
+      context: ../../inferia-auth
       dockerfile: Dockerfile
     image: inferia-auth:dev
     container_name: inferia-auth-sso
@@ -159,8 +159,8 @@ services:
   # ---------------------------------------------------------------------------
   inferia-app:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: unified
     image: inferia-app:dev
     container_name: inferia-app-sso
@@ -242,7 +242,7 @@ services:
       INFERIA_CONFIG: "/etc/inferia/inferia.yaml"
     volumes:
       - sso-appdata:/data
-      - ./inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
       # Read-only access to Caddy's persisted internal CA (see SSL_CA_BUNDLE).
       - sso-caddy-data:/caddy-data:ro
     depends_on:
