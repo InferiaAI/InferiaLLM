@@ -6,7 +6,7 @@ Run with --noconftest to avoid the jwt import conflict in conftest.py:
 
 import warnings
 import pytest
-from services.api_gateway.config import Settings
+from api_gateway.config import Settings
 
 # ---- Shared helper: the four external-auth fields ----
 EXT = dict(

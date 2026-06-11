@@ -84,7 +84,7 @@ class TestInferenceAppCors:
         """The inference app source must call setup_cors, not hardcode wildcard."""
         import pathlib
 
-        app_path = pathlib.Path(__import__("services.inference", fromlist=["_"]).__file__).parent / "app.py"
+        app_path = pathlib.Path(__import__("inference", fromlist=["_"]).__file__).parent / "app.py"
         source = app_path.read_text()
 
         # Should NOT contain the old hardcoded pattern
@@ -98,7 +98,7 @@ class TestInferenceAppCors:
         """The inference app should not directly add CORSMiddleware."""
         import pathlib
 
-        app_path = pathlib.Path(__import__("services.inference", fromlist=["_"]).__file__).parent / "app.py"
+        app_path = pathlib.Path(__import__("inference", fromlist=["_"]).__file__).parent / "app.py"
         source = app_path.read_text()
 
         assert "app.add_middleware(\n    CORSMiddleware" not in source

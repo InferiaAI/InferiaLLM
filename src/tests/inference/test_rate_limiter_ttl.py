@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch
 from cachetools import TTLCache
 
-from services.inference.core.rate_limiter import (
+from inference.core.rate_limiter import (
     TokenBucketLimiter,
     create_rate_limiter,
 )
@@ -75,7 +75,7 @@ class TestMultiWorkerWarning:
     def test_warning_logged_with_multiple_workers(self, caplog):
         """In-memory limiter should warn when WEB_CONCURRENCY > 1."""
         with patch.dict(os.environ, {"WEB_CONCURRENCY": "4"}):
-            with caplog.at_level(logging.WARNING, logger="services.inference.core.rate_limiter"):
+            with caplog.at_level(logging.WARNING, logger="inference.core.rate_limiter"):
                 limiter = create_rate_limiter(redis_url=None)
                 assert isinstance(limiter, TokenBucketLimiter)
 
@@ -92,7 +92,7 @@ class TestMultiWorkerWarning:
 
     def test_no_warning_with_redis(self):
         """No warning when Redis-backed limiter is used."""
-        mock_redis = patch("services.inference.core.rate_limiter.redis")
+        mock_redis = patch("inference.core.rate_limiter.redis")
         with mock_redis as mr:
             mock_client = mr.Redis.from_url.return_value
             mock_client.ping.return_value = True

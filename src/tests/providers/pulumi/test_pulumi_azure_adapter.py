@@ -23,7 +23,7 @@ def fake_db():
 
 @pytest.fixture
 def azure_config():
-    from services.api_gateway.config import (
+    from api_gateway.config import (
         AzureConfig, CloudConfig, ProvidersConfig,
     )
     return ProvidersConfig(cloud=CloudConfig(
@@ -77,7 +77,7 @@ async def test_provision_node_kicks_off_async_task(fake_db, azure_config, tmp_pa
 
 @pytest.mark.asyncio
 async def test_provision_node_missing_creds(fake_db, tmp_path):
-    from services.api_gateway.config import (
+    from api_gateway.config import (
         AzureConfig, CloudConfig, ProvidersConfig,
     )
     empty = ProvidersConfig(cloud=CloudConfig(azure=AzureConfig()))

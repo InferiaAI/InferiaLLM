@@ -14,7 +14,7 @@ from uuid import UUID
 
 import pulumi.automation
 
-from services.orchestration.config import settings
+from orchestration.config import settings
 from providers.aws.bootstrap_builder import (
     build_user_data,
 )
@@ -30,13 +30,13 @@ from providers.pulumi.programs import (
 from providers.pulumi.pulumi_aws_adapter import (
     load_providers_config,  # reuse the same accessor
 )
-from services.orchestration.adapter_engine.base import (
+from orchestration.adapter_engine.base import (
     AdapterType,
     PricingModel,
     ProviderAdapter,
     ProviderCapabilities,
 )
-from services.orchestration.worker_controller.auth import (
+from orchestration.worker_controller.auth import (
     mint_bootstrap_token,
 )
 

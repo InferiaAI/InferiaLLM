@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import services.api_gateway.rbac.oauth_router as orouter
+import api_gateway.rbac.oauth_router as orouter
 
 
 def _client(monkeypatch, mode: str) -> TestClient:

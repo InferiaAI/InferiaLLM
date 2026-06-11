@@ -5,14 +5,14 @@ import pytest
 from unittest.mock import patch
 from cryptography.fernet import Fernet
 
-from services.api_gateway.db.security import EncryptionService
+from api_gateway.db.security import EncryptionService
 
 
 @pytest.fixture
 def enc_service():
     """EncryptionService with a real Fernet key."""
     key = Fernet.generate_key().decode()
-    with patch("services.api_gateway.db.security.ENCRYPTION_KEY", key):
+    with patch("api_gateway.db.security.ENCRYPTION_KEY", key):
         svc = EncryptionService()
     return svc
 
@@ -20,7 +20,7 @@ def enc_service():
 @pytest.fixture
 def no_key_service():
     """EncryptionService with no encryption key."""
-    with patch("services.api_gateway.db.security.ENCRYPTION_KEY", None):
+    with patch("api_gateway.db.security.ENCRYPTION_KEY", None):
         svc = EncryptionService()
     return svc
 

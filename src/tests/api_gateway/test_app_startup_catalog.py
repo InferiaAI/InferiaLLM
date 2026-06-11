@@ -43,7 +43,7 @@ _ensure_stub("asyncpg")
 # Now import appmod — all heavy transitive deps are either real or stubbed
 # ---------------------------------------------------------------------------
 import pytest  # noqa: E402
-import services.api_gateway.app as appmod  # noqa: E402
+import api_gateway.app as appmod  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ async def test_declares_in_inferiaauth_mode(monkeypatch):
     monkeypatch.setattr(appmod.settings, "external_auth_url", "https://auth.example.com")
     monkeypatch.setattr(appmod.settings, "catalog_admin_token", "tok")
     mock = AsyncMock(return_value=True)
-    monkeypatch.setattr("services.api_gateway.rbac.catalog_declare.declare_catalog", mock)
+    monkeypatch.setattr("api_gateway.rbac.catalog_declare.declare_catalog", mock)
     await appmod._maybe_declare_catalog()
     mock.assert_awaited_once_with("https://auth.example.com", "tok")
 
@@ -65,7 +65,7 @@ async def test_declares_in_inferiaauth_mode(monkeypatch):
 async def test_no_declare_in_local_mode(monkeypatch):
     monkeypatch.setattr(appmod.settings, "auth_provider", "local")
     mock = AsyncMock(return_value=True)
-    monkeypatch.setattr("services.api_gateway.rbac.catalog_declare.declare_catalog", mock)
+    monkeypatch.setattr("api_gateway.rbac.catalog_declare.declare_catalog", mock)
     await appmod._maybe_declare_catalog()
     mock.assert_not_awaited()
 
@@ -76,7 +76,7 @@ async def test_no_declare_without_token(monkeypatch):
     monkeypatch.setattr(appmod.settings, "external_auth_url", "https://auth.example.com")
     monkeypatch.setattr(appmod.settings, "catalog_admin_token", None)
     mock = AsyncMock(return_value=True)
-    monkeypatch.setattr("services.api_gateway.rbac.catalog_declare.declare_catalog", mock)
+    monkeypatch.setattr("api_gateway.rbac.catalog_declare.declare_catalog", mock)
     await appmod._maybe_declare_catalog()
     mock.assert_not_awaited()
 
@@ -87,7 +87,7 @@ async def test_no_declare_without_external_auth_url(monkeypatch):
     monkeypatch.setattr(appmod.settings, "external_auth_url", None)
     monkeypatch.setattr(appmod.settings, "catalog_admin_token", "tok")
     mock = AsyncMock(return_value=True)
-    monkeypatch.setattr("services.api_gateway.rbac.catalog_declare.declare_catalog", mock)
+    monkeypatch.setattr("api_gateway.rbac.catalog_declare.declare_catalog", mock)
     await appmod._maybe_declare_catalog()
     mock.assert_not_awaited()
 
@@ -99,7 +99,7 @@ async def test_no_declare_in_oidc_mode(monkeypatch):
     monkeypatch.setattr(appmod.settings, "external_auth_url", "https://auth.example.com")
     monkeypatch.setattr(appmod.settings, "catalog_admin_token", "tok")
     mock = AsyncMock(return_value=True)
-    monkeypatch.setattr("services.api_gateway.rbac.catalog_declare.declare_catalog", mock)
+    monkeypatch.setattr("api_gateway.rbac.catalog_declare.declare_catalog", mock)
     await appmod._maybe_declare_catalog()
     mock.assert_not_awaited()
 
@@ -111,7 +111,7 @@ async def test_declare_failure_is_non_fatal(monkeypatch):
     monkeypatch.setattr(appmod.settings, "external_auth_url", "https://auth.example.com")
     monkeypatch.setattr(appmod.settings, "catalog_admin_token", "tok")
     mock = AsyncMock(return_value=False)
-    monkeypatch.setattr("services.api_gateway.rbac.catalog_declare.declare_catalog", mock)
+    monkeypatch.setattr("api_gateway.rbac.catalog_declare.declare_catalog", mock)
     # Must complete without raising
     await appmod._maybe_declare_catalog()
     mock.assert_awaited_once_with("https://auth.example.com", "tok")

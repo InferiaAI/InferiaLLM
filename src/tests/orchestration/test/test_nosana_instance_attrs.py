@@ -30,13 +30,13 @@ def _load_adapter_class():
     fake_settings = MagicMock()
     fake_settings.internal_api_key = "test-key"
     fake_settings.nosana_sidecar_url = "http://localhost:9999"
-    config_mod = types.ModuleType("services.orchestration.config")
+    config_mod = types.ModuleType("orchestration.config")
     config_mod.settings = fake_settings
-    sys.modules["services.orchestration.config"] = config_mod
+    sys.modules["orchestration.config"] = config_mod
 
     # Stub job_builder
     jb_path = (
-        "services.orchestration.adapter_engine"
+        "orchestration.adapter_engine"
         ".adapters.nosana.job_builder"
     )
     jb_mod = types.ModuleType(jb_path)

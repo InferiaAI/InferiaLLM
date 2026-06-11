@@ -2,7 +2,7 @@ import asyncio
 import grpc
 
 from providers.base.adapter import ProviderAdapter
-from services.orchestration.v1 import compute_node_pb2, compute_node_pb2_grpc
+from orchestration.v1 import compute_node_pb2, compute_node_pb2_grpc
 
 
 class FakeAdapter(ProviderAdapter):

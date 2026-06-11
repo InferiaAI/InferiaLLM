@@ -7,13 +7,13 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from services.api_gateway.management.insights import (
+from api_gateway.management.insights import (
     get_insights_filters,
     get_insights_logs,
     get_insights_summary,
     get_insights_timeseries,
 )
-from services.api_gateway.schemas.auth import UserContext
+from api_gateway.schemas.auth import UserContext
 
 
 def _make_request(with_user: bool = True) -> Request:
@@ -89,7 +89,7 @@ async def test_insights_summary_requires_permission(monkeypatch):
         raise HTTPException(status_code=403, detail="denied")
 
     monkeypatch.setattr(
-        "services.api_gateway.management.insights.authz_service.require_permission",
+        "api_gateway.management.insights.authz_service.require_permission",
         _deny,
     )
 

@@ -8,7 +8,7 @@ Prerequisites:
   - `pip install "skypilot[gcp]"`
 
 Usage:
-  python -m services.orchestration.test.adapter_test.test_gcp_vllm_deploy
+  python -m orchestration.test.adapter_test.test_gcp_vllm_deploy
 """
 
 import asyncio
@@ -17,7 +17,7 @@ import time
 
 import grpc
 
-from services.orchestration.v1 import (
+from orchestration.v1 import (
     compute_pool_pb2,
     compute_pool_pb2_grpc,
     model_registry_pb2,

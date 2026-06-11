@@ -2,7 +2,7 @@ import asyncio
 import grpc
 import json
 
-from services.orchestration.v1 import model_registry_pb2, model_registry_pb2_grpc
+from orchestration.v1 import model_registry_pb2, model_registry_pb2_grpc
 
 
 async def test_model_registry():

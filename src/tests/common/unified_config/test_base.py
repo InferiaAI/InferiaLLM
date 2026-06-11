@@ -84,7 +84,7 @@ def test_api_gateway_settings_loads_yaml_under_docker_shape(
     monkeypatch.setenv("INFERIA_CONFIG", str(yaml_path))
     _clear_cache()
 
-    from services.api_gateway.config import Settings as ApiGatewaySettings
+    from api_gateway.config import Settings as ApiGatewaySettings
 
     # _env_file=None disables the dotenv source so this test isolates the yaml
     # path. In production both layers coexist with env > .env > yaml precedence.

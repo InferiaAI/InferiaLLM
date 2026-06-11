@@ -7,7 +7,7 @@ actually been reclaimed (state='terminated'), not all spot allocations.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from services.orchestration.infra.spot_reclaimer import SpotReclaimer
+from orchestration.infra.spot_reclaimer import SpotReclaimer
 
 
 def make_mock_db():

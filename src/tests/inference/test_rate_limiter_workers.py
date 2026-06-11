@@ -9,7 +9,7 @@ import time
 import pytest
 from unittest.mock import MagicMock, patch
 
-from services.inference.core.rate_limiter import (
+from inference.core.rate_limiter import (
     TokenBucketLimiter,
     RedisTokenBucketLimiter,
     create_rate_limiter,
@@ -36,7 +36,7 @@ class TestCreateRateLimiter:
     def test_returns_redis_limiter_when_redis_url_set(self):
         """When REDIS_HOST is configured, should return Redis-backed limiter."""
         with patch(
-            "services.inference.core.rate_limiter.redis"
+            "inference.core.rate_limiter.redis"
         ) as mock_redis_mod:
             mock_redis_mod.Redis.return_value = MagicMock()
             limiter = create_rate_limiter(redis_url="redis://localhost:6379/0")
@@ -50,7 +50,7 @@ class TestCreateRateLimiter:
     def test_falls_back_to_in_memory_when_redis_unavailable(self):
         """If Redis import fails or connection fails, should fall back."""
         with patch(
-            "services.inference.core.rate_limiter.redis", None
+            "inference.core.rate_limiter.redis", None
         ):
             limiter = create_rate_limiter(redis_url="redis://localhost:6379/0")
             assert isinstance(limiter, TokenBucketLimiter)

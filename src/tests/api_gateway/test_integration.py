@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from services.api_gateway.rbac.auth import auth_service
-from services.api_gateway.db.models import User as DBUser
-from services.api_gateway.schemas.auth import AuthToken
+from api_gateway.rbac.auth import auth_service
+from api_gateway.db.models import User as DBUser
+from api_gateway.schemas.auth import AuthToken
 
 
 @pytest.mark.asyncio

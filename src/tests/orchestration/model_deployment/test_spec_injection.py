@@ -1,6 +1,6 @@
 import pytest
-from services.orchestration.model_deployment.deployment_linker import _spec_from_pending
-from services.orchestration.model_deployment.mirror_decision import resolve_and_apply_mirror
+from orchestration.model_deployment.deployment_linker import _spec_from_pending
+from orchestration.model_deployment.mirror_decision import resolve_and_apply_mirror
 
 
 def _vllm_deploy():

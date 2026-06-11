@@ -1,13 +1,13 @@
 import asyncio
 import uuid
 from uuid import UUID
-from services.orchestration.infra.db import create_test_db_pool
+from orchestration.infra.db import create_test_db_pool
 from tests.orchestration.infra.test_setup import (
     scheduler_stub,
     create_test_pool,
     create_ready_node,
 )
-from services.orchestration.v1 import scheduler_pb2
+from orchestration.v1 import scheduler_pb2
 
 
 async def test_gang_success():

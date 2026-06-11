@@ -8,7 +8,7 @@ before the background task executes).
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.api_gateway.models import InferenceLogCreate
+from api_gateway.models import InferenceLogCreate
 
 
 def _make_log_data(**overrides):
@@ -37,14 +37,14 @@ class TestPersistLogBackground:
     @pytest.mark.asyncio
     async def test_creates_own_session(self):
         """Background task must create its own AsyncSessionLocal, not reuse caller's."""
-        from services.api_gateway.gateway.router import _persist_log_background
+        from api_gateway.gateway.router import _persist_log_background
 
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "services.api_gateway.db.database.AsyncSessionLocal",
+            "api_gateway.db.database.AsyncSessionLocal",
             return_value=mock_session,
         ) as factory:
             await _persist_log_background(_make_log_data(), "log-123")
@@ -56,7 +56,7 @@ class TestPersistLogBackground:
     @pytest.mark.asyncio
     async def test_does_not_accept_db_parameter(self):
         """Function signature must NOT accept a db parameter."""
-        from services.api_gateway.gateway.router import _persist_log_background
+        from api_gateway.gateway.router import _persist_log_background
         import inspect
 
         sig = inspect.signature(_persist_log_background)
@@ -66,7 +66,7 @@ class TestPersistLogBackground:
     @pytest.mark.asyncio
     async def test_swallows_db_errors(self):
         """DB errors must be caught, not propagated to the caller."""
-        from services.api_gateway.gateway.router import _persist_log_background
+        from api_gateway.gateway.router import _persist_log_background
 
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -74,7 +74,7 @@ class TestPersistLogBackground:
         mock_session.commit.side_effect = Exception("connection closed")
 
         with patch(
-            "services.api_gateway.db.database.AsyncSessionLocal",
+            "api_gateway.db.database.AsyncSessionLocal",
             return_value=mock_session,
         ):
             # Should NOT raise
@@ -83,7 +83,7 @@ class TestPersistLogBackground:
     @pytest.mark.asyncio
     async def test_encrypts_payload_when_available(self):
         """Payload should be encrypted when encryption service is available."""
-        from services.api_gateway.gateway import router
+        from api_gateway.gateway import router
 
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -107,7 +107,7 @@ class TestPersistLogBackground:
             router.encryption_service = mock_enc
 
             with patch(
-                "services.api_gateway.db.database.AsyncSessionLocal",
+                "api_gateway.db.database.AsyncSessionLocal",
                 return_value=mock_session,
             ):
                 await router._persist_log_background(
@@ -124,7 +124,7 @@ class TestPersistLogBackground:
     @pytest.mark.asyncio
     async def test_handles_none_payload(self):
         """None payload should be stored as None."""
-        from services.api_gateway.gateway.router import _persist_log_background
+        from api_gateway.gateway.router import _persist_log_background
 
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -139,7 +139,7 @@ class TestPersistLogBackground:
         mock_session.add = capture_add
 
         with patch(
-            "services.api_gateway.db.database.AsyncSessionLocal",
+            "api_gateway.db.database.AsyncSessionLocal",
             return_value=mock_session,
         ):
             await _persist_log_background(
@@ -154,7 +154,7 @@ class TestCreateInferenceLogEndpoint:
     @pytest.mark.asyncio
     async def test_endpoint_does_not_inject_db_into_background_task(self):
         """The endpoint must not pass db to background task."""
-        from services.api_gateway.gateway.router import create_inference_log
+        from api_gateway.gateway.router import create_inference_log
         import inspect
 
         sig = inspect.signature(create_inference_log)
@@ -165,7 +165,7 @@ class TestCreateInferenceLogEndpoint:
     @pytest.mark.asyncio
     async def test_endpoint_returns_log_id(self):
         """Endpoint should return ok status and a log_id."""
-        from services.api_gateway.gateway.router import create_inference_log
+        from api_gateway.gateway.router import create_inference_log
         from fastapi import BackgroundTasks
 
         bg = BackgroundTasks()

@@ -23,7 +23,7 @@ LOG_DATA = {
 async def test_rejects_when_internal_key_not_configured(client):
     """Endpoint must return 503 when settings.internal_api_key is None."""
     with patch(
-        "services.api_gateway.audit.router.settings"
+        "api_gateway.audit.router.settings"
     ) as mock_settings:
         mock_settings.internal_api_key = None
 
@@ -42,7 +42,7 @@ async def test_rejects_when_internal_key_not_configured(client):
 async def test_rejects_wrong_key(client):
     """Endpoint must return 403 when the provided key does not match."""
     with patch(
-        "services.api_gateway.audit.router.settings"
+        "api_gateway.audit.router.settings"
     ) as mock_settings:
         mock_settings.internal_api_key = VALID_INTERNAL_KEY
 
@@ -60,7 +60,7 @@ async def test_rejects_wrong_key(client):
 async def test_rejects_dev_internal_key(client):
     """The static 'dev-internal-key' must NOT be accepted."""
     with patch(
-        "services.api_gateway.audit.router.settings"
+        "api_gateway.audit.router.settings"
     ) as mock_settings:
         mock_settings.internal_api_key = VALID_INTERNAL_KEY
 
@@ -86,10 +86,10 @@ async def test_accepts_valid_key(client):
 
     with (
         patch(
-            "services.api_gateway.audit.router.settings"
+            "api_gateway.audit.router.settings"
         ) as mock_settings,
         patch(
-            "services.api_gateway.audit.router.audit_service"
+            "api_gateway.audit.router.audit_service"
         ) as mock_service,
     ):
         mock_settings.internal_api_key = VALID_INTERNAL_KEY

@@ -56,12 +56,12 @@ def _patch_service(mock_client):
     """Return stacked patches for call_upstream dependencies."""
     return (
         patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ),
-        patch("services.inference.core.service.http_client"),
-        patch("services.inference.core.service.upstream_concurrency_limiter"),
-        patch("services.inference.core.service.settings"),
+        patch("inference.core.service.http_client"),
+        patch("inference.core.service.upstream_concurrency_limiter"),
+        patch("inference.core.service.settings"),
         mock_client,
     )
 
@@ -72,19 +72,19 @@ class TestCircuitBreakerWiring:
     @pytest.mark.asyncio
     async def test_call_upstream_opens_circuit_after_failures(self):
         """After 5 consecutive upstream failures, the 6th call raises 503 (circuit open)."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         concurrency_key = "deploy-fail-test"
 
         with patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ), patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter, patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings:
             mock_hc.get_client.return_value = make_failing_client()
             mock_limiter.limit = noop_limit
@@ -117,19 +117,19 @@ class TestCircuitBreakerWiring:
     @pytest.mark.asyncio
     async def test_call_upstream_circuit_recovers_after_timeout(self):
         """After recovery timeout, a successful call closes the circuit."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         concurrency_key = "deploy-recover-test"
 
         with patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ), patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter, patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings:
             mock_hc.get_client.return_value = make_failing_client()
             mock_limiter.limit = noop_limit
@@ -171,19 +171,19 @@ class TestCircuitBreakerWiring:
     @pytest.mark.asyncio
     async def test_call_upstream_success_does_not_open_circuit(self):
         """Successful calls keep the circuit closed."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         concurrency_key = "deploy-success-test"
 
         with patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ), patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter, patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings:
             mock_hc.get_client.return_value = make_successful_client()
             mock_limiter.limit = noop_limit
@@ -208,7 +208,7 @@ class TestCircuitBreakerWiring:
     @pytest.mark.asyncio
     async def test_stream_upstream_records_failure_on_http_error(self):
         """stream_upstream records circuit breaker failure on HTTPStatusError."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         concurrency_key = "deploy-stream-fail"
 
@@ -225,14 +225,14 @@ class TestCircuitBreakerWiring:
         mock_client.stream = mock_stream
 
         with patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ), patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter, patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings:
             mock_hc.get_client.return_value = mock_client
             mock_limiter.limit = noop_limit

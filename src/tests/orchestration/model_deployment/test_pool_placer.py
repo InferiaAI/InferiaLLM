@@ -5,7 +5,7 @@ import pytest_asyncio
 import asyncpg
 from uuid import UUID, uuid4
 
-from services.orchestration.model_deployment.pool_placer import (
+from orchestration.model_deployment.pool_placer import (
     PoolPlacer,
     BindToReady,
     CoWaitOnProvisioning,

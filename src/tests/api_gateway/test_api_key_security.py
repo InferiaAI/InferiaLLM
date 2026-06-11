@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import cachetools
 
-from services.api_gateway.rbac.auth import AuthService
+from api_gateway.rbac.auth import AuthService
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def auth():
 
 @pytest.fixture
 def policy_engine():
-    from services.api_gateway.policy.engine import PolicyEngine
+    from api_gateway.policy.engine import PolicyEngine
 
     engine = PolicyEngine.__new__(PolicyEngine)
     engine.context_cache = cachetools.TTLCache(maxsize=100, ttl=10)
@@ -70,10 +70,10 @@ class TestApiKeyOrgScoping:
     @pytest.mark.asyncio
     async def test_resolve_context_wrong_org_returns_invalid(self, policy_engine):
         """Key belonging to org-A cannot resolve context for org-B deployments."""
-        from services.api_gateway.db.models import ApiKey as DBApiKey
+        from api_gateway.db.models import ApiKey as DBApiKey
 
         raw_key = "sk-abc123"
-        from services.api_gateway.rbac.auth import auth_service
+        from api_gateway.rbac.auth import auth_service
 
         key_hash = auth_service.get_password_hash(raw_key)
 

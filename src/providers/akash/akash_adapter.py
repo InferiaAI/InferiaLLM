@@ -4,7 +4,7 @@ import aiohttp
 from typing import List, Dict, Optional
 import asyncio
 
-from services.orchestration.adapter_engine.base import (
+from orchestration.adapter_engine.base import (
     ProviderAdapter,
     AdapterType,
     PricingModel,
@@ -14,7 +14,7 @@ from providers.akash.sdl_builder import (
     build_inference_sdl,
     build_training_sdl,
 )
-from services.orchestration.config import settings
+from orchestration.config import settings
 
 logger = logging.getLogger(__name__)
 

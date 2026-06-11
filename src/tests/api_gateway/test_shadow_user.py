@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from services.api_gateway.rbac.shadow_user import get_or_create_shadow_user
+from api_gateway.rbac.shadow_user import get_or_create_shadow_user
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ async def test_create_sets_default_org_id_none():
 
     def capture_add(obj):
         nonlocal created_user
-        from services.api_gateway.db.models import User as DBUser
+        from api_gateway.db.models import User as DBUser
         if hasattr(obj, "password_hash"):
             created_user = obj
 
@@ -114,7 +114,7 @@ async def test_create_adds_no_user_organization_row():
     uo_added = []
 
     def capture_add(obj):
-        from services.api_gateway.db.models import UserOrganization
+        from api_gateway.db.models import UserOrganization
         if isinstance(obj, UserOrganization):
             uo_added.append(obj)
 

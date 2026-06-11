@@ -131,11 +131,11 @@ exclude = ["tests", "tests.*", "**/node_modules"]
 # (each carries an __init__.py so setuptools discovers them).
 dashboard = ["**/*"]
 infra = ["schema/*.sql", "schema/migrations/*.sql"]
-services = [
-  "orchestration/services/depin-sidecar/package.json",
-  "orchestration/services/depin-sidecar/tsconfig.json",
-  "orchestration/services/depin-sidecar/src/**/*",
-  "orchestration/services/depin-sidecar/dist/**/*",
+orchestration = [
+  "services/depin-sidecar/package.json",
+  "services/depin-sidecar/tsconfig.json",
+  "services/depin-sidecar/src/**/*",
+  "services/depin-sidecar/dist/**/*",
 ]
 
 [tool.setuptools.exclude-package-data]

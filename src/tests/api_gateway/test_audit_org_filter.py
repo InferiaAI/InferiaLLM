@@ -4,8 +4,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 
-from services.api_gateway.audit.service import AuditService
-from services.api_gateway.models import AuditLogFilter, UserContext, PermissionEnum
+from api_gateway.audit.service import AuditService
+from api_gateway.models import AuditLogFilter, UserContext, PermissionEnum
 
 
 @pytest.mark.asyncio
@@ -58,7 +58,7 @@ async def test_get_logs_without_org_id_no_org_filter():
 @pytest.mark.asyncio
 async def test_router_passes_user_org_id_to_filter():
     """Test that the audit router injects user_ctx.org_id into the filter."""
-    from services.api_gateway.audit.router import get_audit_logs
+    from api_gateway.audit.router import get_audit_logs
 
     mock_db = AsyncMock()
 
@@ -75,10 +75,10 @@ async def test_router_passes_user_org_id_to_filter():
 
     with (
         patch(
-            "services.api_gateway.audit.router.audit_service"
+            "api_gateway.audit.router.audit_service"
         ) as mock_audit_svc,
         patch(
-            "services.api_gateway.audit.router.authz_service"
+            "api_gateway.audit.router.authz_service"
         ) as mock_authz_svc,
     ):
         mock_authz_svc.require_permission.return_value = None

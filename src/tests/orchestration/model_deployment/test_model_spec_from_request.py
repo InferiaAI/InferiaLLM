@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from services.orchestration.model_deployment.deployment_server import (
+from orchestration.model_deployment.deployment_server import (
     _model_spec_from_request,
 )
 

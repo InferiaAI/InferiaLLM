@@ -18,7 +18,7 @@ import pytest_asyncio
 import asyncpg
 from uuid import uuid4
 
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
 

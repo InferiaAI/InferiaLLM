@@ -24,23 +24,23 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
-from services.orchestration.repositories.pool_repo import (
+from orchestration.repositories.pool_repo import (
     ComputePoolRepository,
 )
-from services.orchestration.provisioning_state_machine.jobs.repository import (
+from orchestration.provisioning_state_machine.jobs.repository import (
     ProvisioningJobRepository,
 )
-from services.orchestration.provisioning_state_machine.reconciler.reaper import (
+from orchestration.provisioning_state_machine.reconciler.reaper import (
     TerminationReaper,
 )
 
 pytestmark = pytest.mark.asyncio
 
 _SWEEP_PATH = (
-    "services.orchestration.adapter_engine."
+    "orchestration.adapter_engine."
     "aws_orphan_sweep.sweep_node_instances"
 )
 
@@ -436,11 +436,11 @@ async def test_clear_terminating_node_strips_flags(pool):
 # ---------------------------------------------------------------------------
 
 _RESOLVE_CREDS_PATH = (
-    "services.orchestration.adapter_engine."
+    "orchestration.adapter_engine."
     "aws_orphan_sweep.resolve_sweep_aws_env"
 )
 _SWEEP_BUILDERS_PATH = (
-    "services.orchestration.adapter_engine."
+    "orchestration.adapter_engine."
     "aws_orphan_sweep.sweep_stale_builders"
 )
 

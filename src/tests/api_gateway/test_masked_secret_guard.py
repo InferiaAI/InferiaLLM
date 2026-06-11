@@ -4,12 +4,12 @@ These guard the providers POST against the dashboard round-trip bug where a
 form pre-populated with masked values would be saved as-is, replacing the
 real credential in the DB with the literal mask string.
 """
-from services.api_gateway.management.configuration import (
+from api_gateway.management.configuration import (
     _is_masked,
     _mask_config,
     _preserve_masked_secrets,
 )
-from services.api_gateway.config import (
+from api_gateway.config import (
     AWSConfig,
     HuggingFaceConfig,
     HFTokenEntry,

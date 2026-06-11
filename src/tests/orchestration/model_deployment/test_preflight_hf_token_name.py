@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from services.orchestration.model_deployment import deployment_server
-from services.orchestration.model_deployment.deployment_server import (
+from orchestration.model_deployment import deployment_server
+from orchestration.model_deployment.deployment_server import (
     PreflightRequest,
 )
 
@@ -82,40 +82,40 @@ async def test_preflight_named_token_resolved_and_passed_to_checks(app):
 
     with (
         patch(
-            "services.orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
+            "orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
             new_callable=AsyncMock,
             return_value=resolved,
         ) as mock_resolve,
         patch(
-            "services.orchestration.model_deployment.preflight.check_model_accessibility",
+            "orchestration.model_deployment.preflight.check_model_accessibility",
             new_callable=AsyncMock,
             return_value=_make_accessibility(accessible=True),
         ) as mock_access,
         patch(
-            "services.orchestration.model_deployment.preflight.fetch_hf_model_info",
+            "orchestration.model_deployment.preflight.fetch_hf_model_info",
             new_callable=AsyncMock,
             return_value=_make_hf_info(),
         ) as mock_info,
         patch(
-            "services.orchestration.model_deployment.preflight.check_model_format",
+            "orchestration.model_deployment.preflight.check_model_format",
             new_callable=AsyncMock,
             return_value=_make_fmt(),
         ) as mock_fmt,
         patch(
-            "services.orchestration.model_deployment.preflight.check_vram_fit",
+            "orchestration.model_deployment.preflight.check_vram_fit",
             return_value=MagicMock(skipped=True),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_pipeline_compatibility",
+            "orchestration.model_deployment.preflight.check_pipeline_compatibility",
             return_value=MagicMock(skipped=True),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_docker_image_exists",
+            "orchestration.model_deployment.preflight.check_docker_image_exists",
             new_callable=AsyncMock,
             return_value=MagicMock(exists=True, skipped=False),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_duplicate_deployment",
+            "orchestration.model_deployment.preflight.check_duplicate_deployment",
             new_callable=AsyncMock,
             return_value=MagicMock(is_duplicate=False),
         ),
@@ -152,38 +152,38 @@ async def test_preflight_explicit_hf_token_takes_priority_over_name(app):
 
     with (
         patch(
-            "services.orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
+            "orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
         ) as mock_resolve,
         patch(
-            "services.orchestration.model_deployment.preflight.check_model_accessibility",
+            "orchestration.model_deployment.preflight.check_model_accessibility",
             new_callable=AsyncMock,
             return_value=_make_accessibility(accessible=True),
         ) as mock_access,
         patch(
-            "services.orchestration.model_deployment.preflight.fetch_hf_model_info",
+            "orchestration.model_deployment.preflight.fetch_hf_model_info",
             new_callable=AsyncMock,
             return_value=_make_hf_info(),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_model_format",
+            "orchestration.model_deployment.preflight.check_model_format",
             new_callable=AsyncMock,
             return_value=_make_fmt(),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_vram_fit",
+            "orchestration.model_deployment.preflight.check_vram_fit",
             return_value=MagicMock(skipped=True),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_pipeline_compatibility",
+            "orchestration.model_deployment.preflight.check_pipeline_compatibility",
             return_value=MagicMock(skipped=True),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_docker_image_exists",
+            "orchestration.model_deployment.preflight.check_docker_image_exists",
             new_callable=AsyncMock,
             return_value=MagicMock(exists=True, skipped=False),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_duplicate_deployment",
+            "orchestration.model_deployment.preflight.check_duplicate_deployment",
             new_callable=AsyncMock,
             return_value=MagicMock(is_duplicate=False),
         ),
@@ -212,24 +212,24 @@ async def test_preflight_named_token_not_found_runs_without_token(app):
     """When hf_token_name resolves to None, checks still run (with token=None)."""
     with (
         patch(
-            "services.orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
+            "orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
             new_callable=AsyncMock,
             return_value=None,
         ) as mock_resolve,
         patch(
-            "services.orchestration.model_deployment.preflight.check_model_accessibility",
+            "orchestration.model_deployment.preflight.check_model_accessibility",
             new_callable=AsyncMock,
             return_value=_make_accessibility(
                 accessible=False, needs_token=True, error="requires token"
             ),
         ) as mock_access,
         patch(
-            "services.orchestration.model_deployment.preflight.check_docker_image_exists",
+            "orchestration.model_deployment.preflight.check_docker_image_exists",
             new_callable=AsyncMock,
             return_value=MagicMock(exists=True, skipped=False),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_duplicate_deployment",
+            "orchestration.model_deployment.preflight.check_duplicate_deployment",
             new_callable=AsyncMock,
             return_value=MagicMock(is_duplicate=False),
         ),
@@ -259,38 +259,38 @@ async def test_preflight_no_token_fields_runs_normally(app):
     """No hf_token or hf_token_name → resolve_hf_token never called, runs as before."""
     with (
         patch(
-            "services.orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
+            "orchestration.model_deployment.hf_token_resolver.resolve_hf_token",
         ) as mock_resolve,
         patch(
-            "services.orchestration.model_deployment.preflight.check_model_accessibility",
+            "orchestration.model_deployment.preflight.check_model_accessibility",
             new_callable=AsyncMock,
             return_value=_make_accessibility(accessible=True),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.fetch_hf_model_info",
+            "orchestration.model_deployment.preflight.fetch_hf_model_info",
             new_callable=AsyncMock,
             return_value=_make_hf_info(),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_model_format",
+            "orchestration.model_deployment.preflight.check_model_format",
             new_callable=AsyncMock,
             return_value=_make_fmt(),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_vram_fit",
+            "orchestration.model_deployment.preflight.check_vram_fit",
             return_value=MagicMock(skipped=True),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_pipeline_compatibility",
+            "orchestration.model_deployment.preflight.check_pipeline_compatibility",
             return_value=MagicMock(skipped=True),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_docker_image_exists",
+            "orchestration.model_deployment.preflight.check_docker_image_exists",
             new_callable=AsyncMock,
             return_value=MagicMock(exists=True, skipped=False),
         ),
         patch(
-            "services.orchestration.model_deployment.preflight.check_duplicate_deployment",
+            "orchestration.model_deployment.preflight.check_duplicate_deployment",
             new_callable=AsyncMock,
             return_value=MagicMock(is_duplicate=False),
         ),

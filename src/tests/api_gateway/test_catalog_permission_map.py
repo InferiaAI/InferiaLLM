@@ -12,12 +12,12 @@ bridge the two. These tests pin:
 """
 from __future__ import annotations
 
-from services.api_gateway.rbac.catalog import CATALOG
-from services.api_gateway.rbac.permissions import (
+from api_gateway.rbac.catalog import CATALOG
+from api_gateway.rbac.permissions import (
     CATALOG_PERMISSION_MAP,
     expand_catalog_permissions,
 )
-from services.api_gateway.schemas.auth import PermissionEnum
+from api_gateway.schemas.auth import PermissionEnum
 
 # Catalog resources with no local-vocabulary surface (no SPA gate / route guard
 # checks a local permission for them) — they intentionally have no mapping.

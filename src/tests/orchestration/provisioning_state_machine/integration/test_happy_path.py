@@ -31,19 +31,19 @@ async def test_full_happy_path_to_ready(app_with_real_db):
     # path the handlers actually resolve at call time, so patching here
     # short-circuits boto3 / Pulumi without injecting mock creds.
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.verify_credentials", return_value={"Account": "123"},
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.resolve_ami", return_value="ami-abc",
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.verify_subnet_exists", return_value=None,
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.verify_security_group_exists", return_value=None,
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync",
         return_value=StackOutputs(
             instance_id="i-abc",

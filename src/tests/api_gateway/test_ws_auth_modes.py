@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-import services.api_gateway.rbac.middleware as mw
-from services.api_gateway.models import UserContext
+import api_gateway.rbac.middleware as mw
+from api_gateway.models import UserContext
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ async def test_oidc_mode_both_fail_raises(monkeypatch):
 
 def test_resolve_token_exported_from_middleware():
     """resolve_token_to_user_context must be importable from middleware."""
-    from services.api_gateway.rbac.middleware import resolve_token_to_user_context  # noqa: F401
+    from api_gateway.rbac.middleware import resolve_token_to_user_context  # noqa: F401
     import inspect
     assert inspect.iscoroutinefunction(resolve_token_to_user_context)
 
@@ -215,9 +215,8 @@ def test_proxy_routes_imports_resolve_token(monkeypatch):
     import pathlib
 
     src = pathlib.Path(
-        "/home/celestix/work/hooman/InferiaLLM/src/"
-        "services/api_gateway/gateway/proxy_routes.py"
-    ).read_text()
+        __import__("api_gateway", fromlist=["_"]).__path__[0]
+    ).joinpath("gateway", "proxy_routes.py").read_text()
 
     tree = ast.parse(src)
     imported_names = []
@@ -241,9 +240,8 @@ def test_get_ws_user_context_calls_resolve_token(monkeypatch):
     import pathlib
 
     src = pathlib.Path(
-        "/home/celestix/work/hooman/InferiaLLM/src/"
-        "services/api_gateway/gateway/proxy_routes.py"
-    ).read_text()
+        __import__("api_gateway", fromlist=["_"]).__path__[0]
+    ).joinpath("gateway", "proxy_routes.py").read_text()
 
     tree = ast.parse(src)
     called_names = []

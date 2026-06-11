@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
-from services.orchestration.repositories.pool_repo import (
+from orchestration.repositories.pool_repo import (
     ComputePoolRepository,
 )
-from services.orchestration.worker_controller.controller import (
+from orchestration.worker_controller.controller import (
     NodeUnreachableError,  # for symmetry / unused
 )
 
@@ -98,7 +98,7 @@ class TestUpsertWorker:
 
     @pytest.mark.asyncio
     async def test_conflict_with_non_worker_kind_raises(self):
-        from services.orchestration.repositories.inventory_repo import (
+        from orchestration.repositories.inventory_repo import (
             DuplicateNodeError,
         )
         # First fetchrow returns a row with agent_kind != worker → repo must

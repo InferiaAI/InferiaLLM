@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from services.orchestration.infra.spot_reclaimer import SpotReclaimer, BATCH_SIZE
+from orchestration.infra.spot_reclaimer import SpotReclaimer, BATCH_SIZE
 
 
 def _make_victim(alloc_id="a1", node_id="n1", gpu=1, vcpu=4, ram_gb=16):

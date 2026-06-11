@@ -18,7 +18,7 @@ def _patched_client_init(self, *args, **kwargs):
 _httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 from fastapi.testclient import TestClient  # noqa: E402
 
-from services.orchestration.api import admin_engine_ami as mod
+from orchestration.api import admin_engine_ami as mod
 
 
 def _raise_forbidden():
@@ -94,7 +94,7 @@ import types
 from unittest.mock import AsyncMock
 
 import providers.aws.engine_ami_bake as _eab
-import services.orchestration.adapter_engine.aws_orphan_sweep as _sweep
+import orchestration.adapter_engine.aws_orphan_sweep as _sweep
 import providers.pulumi.ami as _ami
 
 
@@ -182,7 +182,7 @@ def test_list_503_when_not_configured(monkeypatch):
 # --- Task 5: _BAKES phase + log; _make_progress factory ---
 
 def test_bake_record_accumulates_phase_and_log():
-    from services.orchestration.api import admin_engine_ami as m
+    from orchestration.api import admin_engine_ami as m
     bake_id = "b1"
     m._BAKES[bake_id] = {"status": "running", "phase": "", "ami_id": None, "region": "us-east-1", "log": []}
     cb = m._make_progress(bake_id)
@@ -195,7 +195,7 @@ def test_bake_record_accumulates_phase_and_log():
 
 
 def test_bake_log_caps_at_2000_lines():
-    from services.orchestration.api import admin_engine_ami as m
+    from orchestration.api import admin_engine_ami as m
     bake_id = "b2"
     m._BAKES[bake_id] = {"status": "running", "phase": "", "ami_id": None, "region": "r", "log": []}
     cb = m._make_progress(bake_id)
@@ -206,13 +206,13 @@ def test_bake_log_caps_at_2000_lines():
 
 
 def test_make_progress_unknown_bake_id_noop():
-    from services.orchestration.api import admin_engine_ami as m
+    from orchestration.api import admin_engine_ami as m
     cb = m._make_progress("does-not-exist")
     cb("phase", "line")  # must not raise
 
 
 def test_make_progress_empty_phase_keeps_prior_phase():
-    from services.orchestration.api import admin_engine_ami as m
+    from orchestration.api import admin_engine_ami as m
     m._BAKES["b3"] = {"status": "running", "phase": "creating-ami", "log": [], "region": "r", "ami_id": None}
     cb = m._make_progress("b3")
     cb("", "a log line with no phase")

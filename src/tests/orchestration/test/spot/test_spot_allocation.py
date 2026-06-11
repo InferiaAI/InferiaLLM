@@ -1,8 +1,8 @@
 import asyncio
 import uuid
-from services.orchestration.infra.db import create_test_db_pool
+from orchestration.infra.db import create_test_db_pool
 from tests.orchestration.infra.test_setup import scheduler_stub, create_test_pool
-from services.orchestration.v1 import scheduler_pb2
+from orchestration.v1 import scheduler_pb2
 
 
 async def test_spot_allocation_is_preemptible():

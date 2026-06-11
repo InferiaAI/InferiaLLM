@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
-from services.orchestration.repositories.pool_repo import (
+from orchestration.repositories.pool_repo import (
     ComputePoolRepository,
 )
 
@@ -167,7 +167,7 @@ class TestSetLabels:
 
     @pytest.mark.asyncio
     async def test_node_not_found(self):
-        from services.orchestration.repositories.inventory_repo import (
+        from orchestration.repositories.inventory_repo import (
             NodeNotFoundError,
         )
         pool, conn = make_db()
@@ -178,7 +178,7 @@ class TestSetLabels:
 
     @pytest.mark.asyncio
     async def test_terminated_node_rejected(self):
-        from services.orchestration.repositories.inventory_repo import (
+        from orchestration.repositories.inventory_repo import (
             NodeTerminatedError,
         )
         pool, conn = make_db()
@@ -191,7 +191,7 @@ class TestSetLabels:
 
     @pytest.mark.asyncio
     async def test_overlapping_add_remove_rejected(self):
-        from services.orchestration.repositories.inventory_repo import (
+        from orchestration.repositories.inventory_repo import (
             LabelConflictError,
         )
         pool, _ = make_db()

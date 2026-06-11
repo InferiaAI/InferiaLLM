@@ -11,7 +11,7 @@ from fastapi import HTTPException
 @pytest.fixture
 def gateway_client():
     """Create a fresh ApiGatewayClient with mocked settings."""
-    with patch("services.inference.client.settings") as mock_settings:
+    with patch("inference.client.settings") as mock_settings:
         mock_settings.api_gateway_url = "http://gateway:8000"
         mock_settings.api_gateway_internal_key = "test-key"
         mock_settings.request_timeout = 5.0
@@ -22,7 +22,7 @@ def gateway_client():
         mock_settings.gateway_http_max_connections = 100
         mock_settings.gateway_http_max_keepalive_connections = 10
 
-        from services.inference.client import ApiGatewayClient
+        from inference.client import ApiGatewayClient
 
         client = ApiGatewayClient()
         yield client

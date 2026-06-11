@@ -6,7 +6,7 @@ import pytest_asyncio
 import asyncpg
 from uuid import UUID, uuid4
 
-from services.orchestration.repositories.model_deployment_repo import (
+from orchestration.repositories.model_deployment_repo import (
     ModelDeploymentRepository,
 )
 

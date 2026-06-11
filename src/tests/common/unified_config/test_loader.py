@@ -143,7 +143,7 @@ def test_load_unified_config_full_path(fixtures_dir, clean_env):
     _clear_cache()
     cfg = load_unified_config(path=str(fixtures_dir / "valid.yaml"))
     assert isinstance(cfg, InferiaConfig)
-    assert cfg.services.api_gateway.enabled is True
+    assert cfg.api_gateway.enabled is True
 
 
 def test_load_unified_config_interpolation_failure(fixtures_dir, clean_env, monkeypatch):

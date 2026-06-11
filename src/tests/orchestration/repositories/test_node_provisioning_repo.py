@@ -8,7 +8,7 @@ import pytest
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from services.orchestration.repositories.node_provisioning_repo import (
+from orchestration.repositories.node_provisioning_repo import (
     NodeProvisioningRepo,
     PHASES,
 )

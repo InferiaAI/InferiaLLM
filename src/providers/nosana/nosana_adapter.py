@@ -6,7 +6,7 @@ from typing import List, Dict, Optional
 import aiohttp
 import time
 
-from services.orchestration.adapter_engine.base import (
+from orchestration.adapter_engine.base import (
     ProviderAdapter,
     AdapterType,
     PricingModel,
@@ -17,7 +17,7 @@ from providers.nosana.job_builder import (
     create_training_job,
     INTERNAL_API_KEY,
 )
-from services.orchestration.config import settings
+from orchestration.config import settings
 
 logger = logging.getLogger(__name__)
 

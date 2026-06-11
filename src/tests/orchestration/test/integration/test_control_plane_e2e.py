@@ -3,7 +3,7 @@ import grpc
 import uuid
 import time
 
-from services.orchestration.v1 import (
+from orchestration.v1 import (
     compute_pool_pb2,
     compute_pool_pb2_grpc,
     adapter_engine_pb2,

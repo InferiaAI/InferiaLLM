@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.api_gateway.rbac.router import get_current_user_info
-from services.api_gateway.models import UserContext
+from api_gateway.rbac.router import get_current_user_info
+from api_gateway.models import UserContext
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +59,8 @@ def _make_db(db_user):
 
 async def _call_me(monkeypatch, auth_provider: str, totp_enabled: bool) -> dict:
     """Call get_current_user_info and return the Pydantic model as a dict."""
-    import services.api_gateway.rbac.router as rtr
-    import services.api_gateway.rbac.local_identity_guard as guard
+    import api_gateway.rbac.router as rtr
+    import api_gateway.rbac.local_identity_guard as guard
 
     monkeypatch.setattr(rtr.settings, "auth_provider", auth_provider, raising=False)
     monkeypatch.setattr(guard.settings, "auth_provider", auth_provider, raising=False)
@@ -71,7 +71,7 @@ async def _call_me(monkeypatch, auth_provider: str, totp_enabled: bool) -> dict:
     request.state.user = ctx
 
     with patch(
-        "services.api_gateway.rbac.router.get_current_user_from_request",
+        "api_gateway.rbac.router.get_current_user_from_request",
         return_value=ctx,
     ):
         response = await get_current_user_info(request=request, db=db)

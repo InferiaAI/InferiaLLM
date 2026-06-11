@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import services.api_gateway.rbac.middleware as mw
-from services.api_gateway.rbac.jwks_verifier import JWKSVerifyError
-from services.api_gateway.models import UserContext
+import api_gateway.rbac.middleware as mw
+from api_gateway.rbac.jwks_verifier import JWKSVerifyError
+from api_gateway.models import UserContext
 
 
 class _FakeUser:
@@ -73,7 +73,7 @@ async def test_oidc_token_authenticated_is_admin(monkeypatch):
 @pytest.mark.asyncio
 async def test_oidc_token_admin_has_all_catalog_perms(monkeypatch):
     """Admin permissions granted by OIDC path match the full catalog admin role."""
-    from services.api_gateway.rbac.catalog import CATALOG
+    from api_gateway.rbac.catalog import CATALOG
 
     monkeypatch.setattr(
         mw,
@@ -90,7 +90,7 @@ async def test_oidc_token_admin_has_all_catalog_perms(monkeypatch):
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
     # Catalog admin perms, expanded with their local-vocabulary equivalents.
-    from services.api_gateway.rbac.permissions import expand_catalog_permissions
+    from api_gateway.rbac.permissions import expand_catalog_permissions
 
     expected = [p for r in CATALOG.roles if r.name == "admin" for p in r.permissions]
     assert set(ctx.permissions) == set(expand_catalog_permissions(expected))

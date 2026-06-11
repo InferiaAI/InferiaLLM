@@ -23,10 +23,10 @@ from fastapi.responses import Response
 # App + fixtures
 # ---------------------------------------------------------------------------
 
-from services.api_gateway.app import app
-from services.api_gateway.rbac.auth import auth_service
-from services.api_gateway.db.models import User as DBUser
-from services.api_gateway.db.database import get_db
+from api_gateway.app import app
+from api_gateway.rbac.auth import auth_service
+from api_gateway.db.models import User as DBUser
+from api_gateway.db.database import get_db
 
 # Re-use conftest fixtures via import (pytest discovers them automatically, but
 # we import them here for clarity and IDE resolution).
@@ -79,7 +79,7 @@ async def test_get_models_forwards_to_v1_models(client, admin_token):
     mock_resp = _make_fastapi_response(200, b'{"models":[]}')
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.proxy_request",
+        "api_gateway.gateway.proxy_routes.proxy_request",
         new_callable=AsyncMock,
         return_value=mock_resp,
     ) as mock_pr:
@@ -107,7 +107,7 @@ async def test_post_models_enforces_model_add(client, admin_token):
     mock_resp = _make_fastapi_response(202, b'{"status":"downloading","model_id":"x/y"}')
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.proxy_request",
+        "api_gateway.gateway.proxy_routes.proxy_request",
         new_callable=AsyncMock,
         return_value=mock_resp,
     ):
@@ -126,7 +126,7 @@ async def test_delete_model_enforces_model_delete(client, admin_token):
     mock_resp = _make_fastapi_response(204, b"")
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.proxy_request",
+        "api_gateway.gateway.proxy_routes.proxy_request",
         new_callable=AsyncMock,
         return_value=mock_resp,
     ):
@@ -186,7 +186,7 @@ async def test_get_models_requires_model_list_permission():
     with (
         patch.object(auth_service, "get_current_user", side_effect=_mock_get_current_user),
         patch(
-            "services.api_gateway.rbac.middleware.AsyncSessionLocal",
+            "api_gateway.rbac.middleware.AsyncSessionLocal",
             mock_session_maker,
         ),
     ):
@@ -213,7 +213,7 @@ async def test_hf_passthrough_unauthenticated_no_auth_error(client):
     upstream_body = b"fake-model-weights"
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -234,7 +234,7 @@ async def test_hf_passthrough_forwards_range_header(client):
     upstream_body = b"partial-bytes"
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         stream_ctx = _make_mock_stream_ctx(
@@ -265,7 +265,7 @@ async def test_hf_passthrough_forwards_hf_metadata_headers(client):
     HF metadata headers (x-repo-commit + the LFS x-linked-etag/x-linked-size),
     not just content-type/length, or the whole HF cache-first path is dead."""
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -300,7 +300,7 @@ async def test_v2_blob_location_forwarded(client):
     gateway MUST forward the Location header (ollama reads resp.Location() off
     the 200 to find the download URL, and aborts without it)."""
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -321,7 +321,7 @@ async def test_v2_passthrough_unauthenticated_no_auth_error(client):
     upstream_body = b"oci-blob-content"
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -340,7 +340,7 @@ async def test_v2_passthrough_unauthenticated_no_auth_error(client):
 async def test_hf_passthrough_upstream_503_propagated(client):
     """When the upstream returns 503, the gateway propagates that status."""
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -357,7 +357,7 @@ async def test_hf_passthrough_upstream_503_propagated(client):
 async def test_hf_passthrough_network_error_returns_503(client):
     """When httpx raises RequestError, the gateway returns 503."""
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream.side_effect = httpx.ConnectError("refused")
@@ -383,7 +383,7 @@ async def test_hf_path_traversal_percent_encoded_rejected(client):
     No upstream call is made (stream mock is never invoked).
     """
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -402,7 +402,7 @@ async def test_hf_path_traversal_percent_encoded_rejected(client):
 async def test_v2_path_traversal_percent_encoded_rejected(client):
     """GET /v2/%2e%2e/v1/nodes must return 400 — NOT reach orchestration."""
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -426,7 +426,7 @@ async def test_hf_normal_path_still_forwards(client):
     upstream_body = b"model-weights-bytes"
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -447,7 +447,7 @@ async def test_v2_normal_path_still_forwards(client):
     upstream_body = b"oci-blob"
 
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -471,7 +471,7 @@ async def test_hf_double_dot_literal_rejected(client):
     still escape the /hf/* prefix and the handler must reject it.
     """
     with patch(
-        "services.api_gateway.gateway.proxy_routes.gateway_http_client"
+        "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
         mock_proxy = MagicMock()
         mock_proxy.stream = MagicMock(
@@ -483,7 +483,7 @@ async def test_hf_double_dot_literal_rejected(client):
         # already contains double-dots. We invoke the handler logic indirectly
         # by patching the path parameter at the route level.
         from fastapi import HTTPException as _HTTPException
-        from services.api_gateway.gateway.proxy_routes import proxy_hf_mirror
+        from api_gateway.gateway.proxy_routes import proxy_hf_mirror
         import starlette.requests
 
         # Build a minimal request object sufficient for proxy_hf_mirror's

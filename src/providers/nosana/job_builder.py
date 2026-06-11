@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, List
 import json
 import os
 import shlex
-from services.orchestration.config import settings
+from orchestration.config import settings
 
 # Internal API key used for service-to-service auth and vLLM security
 INTERNAL_API_KEY = settings.internal_api_key or os.getenv("INTERNAL_API_KEY", "")

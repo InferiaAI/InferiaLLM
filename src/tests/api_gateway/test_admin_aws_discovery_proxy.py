@@ -6,7 +6,7 @@ The gateway router has prefix /api/v1, so the registered paths are
 
 
 def test_discovery_routes_registered():
-    from services.api_gateway.app import app
+    from api_gateway.app import app
     paths = {r.path for r in app.routes}
     # Gateway router prefix is /api/v1; full registered paths include it.
     assert "/api/v1/admin/aws/regions" in paths, (

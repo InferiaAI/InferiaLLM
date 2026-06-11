@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from cachetools import TTLCache
 
-from services.inference.core.concurrency_limiter import UpstreamConcurrencyLimiter
+from inference.core.concurrency_limiter import UpstreamConcurrencyLimiter
 
 
 class TestConcurrencyLimiterTTLCache:

@@ -20,8 +20,8 @@ class TestCreateDeployment:
     async def test_create_does_not_attach_legacy_policies(self):
         """Creating a deployment no longer attaches guardrail/rag/prompt_template
         policies (those features were removed)."""
-        from services.api_gateway.management.deployments import create_deployment
-        from services.api_gateway.schemas.management import DeploymentCreate
+        from api_gateway.management.deployments import create_deployment
+        from api_gateway.schemas.management import DeploymentCreate
 
         dep_data = DeploymentCreate(
             name="test-dep",
@@ -59,15 +59,15 @@ class TestCreateDeployment:
         no_existing_result.scalars.return_value.first.return_value = None
         mock_db.execute = AsyncMock(return_value=no_existing_result)
 
-        from services.api_gateway.db.models import Policy as DBPolicy
+        from api_gateway.db.models import Policy as DBPolicy
 
         with patch(
-            "services.api_gateway.management.deployments.get_current_user_context",
+            "api_gateway.management.deployments.get_current_user_context",
             return_value=_make_user_ctx(),
         ), patch(
-            "services.api_gateway.management.deployments.authz_service"
+            "api_gateway.management.deployments.authz_service"
         ), patch(
-            "services.api_gateway.audit.service.audit_service"
+            "api_gateway.audit.service.audit_service"
         ) as mock_audit:
             mock_audit.log_event = AsyncMock()
 
@@ -85,8 +85,8 @@ class TestCreateDeployment:
     @pytest.mark.asyncio
     async def test_create_duplicate_name_raises_409(self):
         """Creating a deployment with a name that already exists in the org raises 409."""
-        from services.api_gateway.management.deployments import create_deployment
-        from services.api_gateway.schemas.management import DeploymentCreate
+        from api_gateway.management.deployments import create_deployment
+        from api_gateway.schemas.management import DeploymentCreate
 
         dep_data = DeploymentCreate(
             name="test-dep",
@@ -105,10 +105,10 @@ class TestCreateDeployment:
         mock_db.execute = AsyncMock(return_value=existing_result)
 
         with patch(
-            "services.api_gateway.management.deployments.get_current_user_context",
+            "api_gateway.management.deployments.get_current_user_context",
             return_value=_make_user_ctx(),
         ), patch(
-            "services.api_gateway.management.deployments.authz_service"
+            "api_gateway.management.deployments.authz_service"
         ):
             with pytest.raises(HTTPException) as exc:
                 await create_deployment(dep_data, mock_request, mock_db)
@@ -118,8 +118,8 @@ class TestCreateDeployment:
     @pytest.mark.asyncio
     async def test_create_without_org_raises_400(self):
         """Creating a deployment without org context raises 400."""
-        from services.api_gateway.management.deployments import create_deployment
-        from services.api_gateway.schemas.management import DeploymentCreate
+        from api_gateway.management.deployments import create_deployment
+        from api_gateway.schemas.management import DeploymentCreate
 
         dep_data = DeploymentCreate(
             name="test-dep",
@@ -132,10 +132,10 @@ class TestCreateDeployment:
         mock_db = AsyncMock()
 
         with patch(
-            "services.api_gateway.management.deployments.get_current_user_context",
+            "api_gateway.management.deployments.get_current_user_context",
             return_value=_make_user_ctx(org_id=None),
         ), patch(
-            "services.api_gateway.management.deployments.authz_service"
+            "api_gateway.management.deployments.authz_service"
         ):
             with pytest.raises(HTTPException) as exc:
                 await create_deployment(dep_data, mock_request, mock_db)
@@ -148,7 +148,7 @@ class TestListDeployments:
     @pytest.mark.asyncio
     async def test_list_returns_only_caller_org(self):
         """list_deployments filters by org_id from user context."""
-        from services.api_gateway.management.deployments import list_deployments
+        from api_gateway.management.deployments import list_deployments
 
         mock_request = MagicMock()
         mock_db = AsyncMock()
@@ -160,10 +160,10 @@ class TestListDeployments:
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         with patch(
-            "services.api_gateway.management.deployments.get_current_user_context",
+            "api_gateway.management.deployments.get_current_user_context",
             return_value=_make_user_ctx(org_id="org-001"),
         ), patch(
-            "services.api_gateway.management.deployments.authz_service"
+            "api_gateway.management.deployments.authz_service"
         ):
             result = await list_deployments(mock_request, skip=0, limit=50, db=mock_db)
             assert len(result) == 1
@@ -172,16 +172,16 @@ class TestListDeployments:
     @pytest.mark.asyncio
     async def test_list_without_org_returns_empty(self):
         """list_deployments with no org context returns empty list."""
-        from services.api_gateway.management.deployments import list_deployments
+        from api_gateway.management.deployments import list_deployments
 
         mock_request = MagicMock()
         mock_db = AsyncMock()
 
         with patch(
-            "services.api_gateway.management.deployments.get_current_user_context",
+            "api_gateway.management.deployments.get_current_user_context",
             return_value=_make_user_ctx(org_id=None),
         ), patch(
-            "services.api_gateway.management.deployments.authz_service"
+            "api_gateway.management.deployments.authz_service"
         ):
             result = await list_deployments(mock_request, db=mock_db)
             assert result == []
@@ -194,7 +194,7 @@ class TestDeleteDeployment:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_deployment_raises_404(self):
         """Deleting a deployment that doesn't exist raises 404."""
-        from services.api_gateway.management.deployments import delete_deployment
+        from api_gateway.management.deployments import delete_deployment
 
         mock_request = MagicMock()
         mock_db = AsyncMock()
@@ -204,10 +204,10 @@ class TestDeleteDeployment:
         mock_db.execute = AsyncMock(return_value=empty_result)
 
         with patch(
-            "services.api_gateway.management.deployments.get_current_user_context",
+            "api_gateway.management.deployments.get_current_user_context",
             return_value=_make_user_ctx(),
         ), patch(
-            "services.api_gateway.management.deployments.authz_service"
+            "api_gateway.management.deployments.authz_service"
         ):
             with pytest.raises(HTTPException) as exc:
                 await delete_deployment("non-existent-id", mock_request, mock_db)

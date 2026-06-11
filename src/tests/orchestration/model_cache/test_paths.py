@@ -1,7 +1,7 @@
 """Tests for CachePaths — cache path layout and traversal safety."""
 from __future__ import annotations
 
-from services.orchestration.model_cache.paths import CachePaths
+from orchestration.model_cache.paths import CachePaths
 
 
 def test_hf_dir_is_sanitized_and_scoped(tmp_path):
@@ -44,7 +44,7 @@ def test_traversal_attempt_stays_under_root(tmp_path):
 
 
 def test_ollama_model_dir_matches_ollama_dir_parent(tmp_path):
-    from services.orchestration.model_cache.paths import CachePaths
+    from orchestration.model_cache.paths import CachePaths
     p = CachePaths(str(tmp_path))
     # The blob mirror's model root must equal the parent of any revision dir.
     assert p.ollama_dir("ns/gemma3", "4b").parent == p.ollama_model_dir("ns/gemma3")

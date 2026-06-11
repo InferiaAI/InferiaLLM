@@ -9,16 +9,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.orchestration.provisioning_state_machine.errors import (
+from orchestration.provisioning_state_machine.errors import (
     NetworkError, TransientError,
 )
-from services.orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.provisioning_state_machine.jobs.model import (
     Phase, ProvisioningJob,
 )
-from services.orchestration.provisioning_state_machine.phases.base import (
+from orchestration.provisioning_state_machine.phases.base import (
     PhaseContext,
 )
-from services.orchestration.provisioning_state_machine.phases.bootstrap import (
+from orchestration.provisioning_state_machine.phases.bootstrap import (
     BootstrapHandler,
 )
 
@@ -90,7 +90,7 @@ async def test_raises_transient_error_on_timeout():
 async def test_raises_permanent_when_node_state_becomes_failed():
     """If the worker's startup script crashes, inventory.state may flip to
     'failed' directly. Bootstrap should fail-loud, not poll forever."""
-    from services.orchestration.provisioning_state_machine.errors import (
+    from orchestration.provisioning_state_machine.errors import (
         PermanentError,
     )
     ctx, inv = _ctx(get_inventory_states=["provisioning", "failed"])

@@ -1,11 +1,11 @@
 import asyncio
 from uuid import UUID
 import uuid
-from services.orchestration.infra.db import create_test_db_pool
+from orchestration.infra.db import create_test_db_pool
 from tests.orchestration.infra.test_setup import uid
 
 # gRPC stubs
-from services.orchestration.v1 import (
+from orchestration.v1 import (
     compute_pool_pb2,
     compute_pool_pb2_grpc,
     scheduler_pb2,

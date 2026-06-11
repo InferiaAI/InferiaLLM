@@ -23,7 +23,7 @@ def _build_app(monkeypatch, *, auth_provider: str,
 
     Patches settings + rate limiter + auth_service for deterministic tests.
     """
-    from services.api_gateway.config import settings as gw_settings
+    from api_gateway.config import settings as gw_settings
 
     monkeypatch.setattr(gw_settings, "auth_provider", auth_provider, raising=False)
     monkeypatch.setattr(gw_settings, "external_auth_url", external_auth_url, raising=False)
@@ -40,7 +40,7 @@ def _build_app(monkeypatch, *, auth_provider: str,
     monkeypatch.setattr(rl.login_rate_limiter, "is_allowed", lambda *a, **kw: (True, 0))
 
     app = FastAPI()
-    from services.api_gateway.rbac.router import router as auth_router
+    from api_gateway.rbac.router import router as auth_router
     app.include_router(auth_router)
     return app
 
@@ -66,7 +66,7 @@ async def test_external_non_superadmin_post_login_returns_403(external_client, m
     """Per C6: external mode + non-superadmin email must return 403 with brand-friendly text."""
     # Auth service should NEVER be reached (the gate fires before any DB or
     # password check).
-    from services.api_gateway.rbac import router as r
+    from api_gateway.rbac import router as r
     called = AsyncMock(return_value=None)
     monkeypatch.setattr(r.auth_service, "authenticate_user", called)
 
@@ -83,8 +83,8 @@ async def test_external_non_superadmin_post_login_returns_403(external_client, m
 @pytest.mark.asyncio
 async def test_external_superadmin_post_login_still_works(external_client, monkeypatch):
     """The superadmin must always be able to sign in directly (break-glass)."""
-    from services.api_gateway.rbac import router as r
-    from services.api_gateway.db.models import User as DBUser
+    from api_gateway.rbac import router as r
+    from api_gateway.db.models import User as DBUser
 
     # Mock authenticate_user to return a non-None user for the superadmin.
     user = DBUser(
@@ -98,7 +98,7 @@ async def test_external_superadmin_post_login_still_works(external_client, monke
         r.auth_service, "authenticate_user", AsyncMock(return_value=user)
     )
     # Stub login() to return a canned AuthToken.
-    from services.api_gateway.models import AuthToken
+    from api_gateway.models import AuthToken
     monkeypatch.setattr(
         r.auth_service,
         "login",
@@ -122,9 +122,9 @@ async def test_external_superadmin_post_login_still_works(external_client, monke
 @pytest.mark.asyncio
 async def test_local_mode_any_user_login_path_unaffected(local_client, monkeypatch):
     """In local mode, the new gate must not trigger — auth_service flows normally."""
-    from services.api_gateway.rbac import router as r
-    from services.api_gateway.db.models import User as DBUser
-    from services.api_gateway.models import AuthToken
+    from api_gateway.rbac import router as r
+    from api_gateway.db.models import User as DBUser
+    from api_gateway.models import AuthToken
 
     user = DBUser(
         id="u-1",
@@ -163,13 +163,13 @@ async def test_external_with_empty_external_auth_url_does_not_gate(monkeypatch):
     # We must set external_auth_url to empty before model_validator runs.
     # Build via monkeypatch after construction.
     app = _build_app(monkeypatch, auth_provider="external")
-    from services.api_gateway.config import settings as gw_settings
+    from api_gateway.config import settings as gw_settings
     monkeypatch.setattr(gw_settings, "external_auth_url", "", raising=False)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="https://gw.example.test") as c:
         # Authenticate_user fails (no such user) — we expect 401, not 403.
-        from services.api_gateway.rbac import router as r
+        from api_gateway.rbac import router as r
         monkeypatch.setattr(
             r.auth_service, "authenticate_user", AsyncMock(return_value=None)
         )
@@ -196,7 +196,7 @@ async def test_external_case_insensitive_superadmin_match_currently_strict(
     email under external mode they are gated. We keep this test to lock
     behaviour; a future enhancement could lowercase both sides.
     """
-    from services.api_gateway.rbac import router as r
+    from api_gateway.rbac import router as r
     monkeypatch.setattr(
         r.auth_service, "authenticate_user", AsyncMock(return_value=None)
     )

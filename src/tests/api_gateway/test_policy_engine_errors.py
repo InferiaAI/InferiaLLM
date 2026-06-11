@@ -11,9 +11,9 @@ class TestPolicyEngineErrors:
 
     def _make_engine(self):
         """Create a PolicyEngine with mocked Redis."""
-        with patch("services.api_gateway.policy.engine.redis") as mock_redis:
+        with patch("api_gateway.policy.engine.redis") as mock_redis:
             mock_redis.from_url.return_value = AsyncMock()
-            from services.api_gateway.policy.engine import PolicyEngine
+            from api_gateway.policy.engine import PolicyEngine
 
             return PolicyEngine()
 

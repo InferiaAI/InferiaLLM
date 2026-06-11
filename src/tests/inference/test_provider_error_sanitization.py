@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 import httpx
 
-from services.inference.core.service import GatewayService
+from inference.core.service import GatewayService
 
 
 class TestCallUpstreamErrorSanitization:
@@ -36,10 +36,10 @@ class TestCallUpstreamErrorSanitization:
         mock_client.post = AsyncMock(side_effect=error)
 
         with patch(
-            "services.inference.core.service.http_client.get_client",
+            "inference.core.service.http_client.get_client",
             return_value=mock_client,
         ), patch(
-            "services.inference.core.service.upstream_concurrency_limiter.limit",
+            "inference.core.service.upstream_concurrency_limiter.limit",
             return_value=AsyncMock().__aenter__(),
         ):
             # Use a context manager mock for the concurrency limiter
@@ -48,7 +48,7 @@ class TestCallUpstreamErrorSanitization:
             limiter_cm.__aexit__ = AsyncMock(return_value=False)
 
             with patch(
-                "services.inference.core.service.upstream_concurrency_limiter.limit",
+                "inference.core.service.upstream_concurrency_limiter.limit",
                 return_value=limiter_cm,
             ):
                 from fastapi import HTTPException
@@ -82,10 +82,10 @@ class TestCallUpstreamErrorSanitization:
         limiter_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "services.inference.core.service.http_client.get_client",
+            "inference.core.service.http_client.get_client",
             return_value=mock_client,
         ), patch(
-            "services.inference.core.service.upstream_concurrency_limiter.limit",
+            "inference.core.service.upstream_concurrency_limiter.limit",
             return_value=limiter_cm,
         ):
             from fastapi import HTTPException
@@ -127,10 +127,10 @@ class TestStreamUpstreamErrorSanitization:
         limiter_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "services.inference.core.service.http_client.get_client",
+            "inference.core.service.http_client.get_client",
             return_value=mock_client,
         ), patch(
-            "services.inference.core.service.upstream_concurrency_limiter.limit",
+            "inference.core.service.upstream_concurrency_limiter.limit",
             return_value=limiter_cm,
         ):
             chunks = []
@@ -160,10 +160,10 @@ class TestStreamUpstreamErrorSanitization:
         limiter_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "services.inference.core.service.http_client.get_client",
+            "inference.core.service.http_client.get_client",
             return_value=mock_client,
         ), patch(
-            "services.inference.core.service.upstream_concurrency_limiter.limit",
+            "inference.core.service.upstream_concurrency_limiter.limit",
             return_value=limiter_cm,
         ):
             chunks = []
@@ -202,13 +202,13 @@ class TestErrorsStillLogged:
         limiter_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "services.inference.core.service.http_client.get_client",
+            "inference.core.service.http_client.get_client",
             return_value=mock_client,
         ), patch(
-            "services.inference.core.service.upstream_concurrency_limiter.limit",
+            "inference.core.service.upstream_concurrency_limiter.limit",
             return_value=limiter_cm,
         ), patch(
-            "services.inference.core.service.logger"
+            "inference.core.service.logger"
         ) as mock_logger:
             from fastapi import HTTPException
 

@@ -10,7 +10,7 @@ class TestResolveInferenceContext:
     @pytest.mark.asyncio
     async def test_invalid_api_key_returns_not_valid(self):
         """Invalid API key returns valid=False response (not a 4xx raise)."""
-        from services.api_gateway.gateway.router import (
+        from api_gateway.gateway.router import (
             resolve_inference_context,
             ResolveContextRequest,
         )
@@ -18,7 +18,7 @@ class TestResolveInferenceContext:
         request = ResolveContextRequest(api_key="bad-key", model="llama-3")
 
         with patch(
-            "services.api_gateway.gateway.router.policy_engine"
+            "api_gateway.gateway.router.policy_engine"
         ) as mock_pe:
             mock_pe.resolve_context = AsyncMock(
                 return_value={"valid": False, "error": "Invalid API Key"}
@@ -31,7 +31,7 @@ class TestResolveInferenceContext:
     @pytest.mark.asyncio
     async def test_valid_key_returns_deployment_context(self):
         """Valid key returns deployment configuration."""
-        from services.api_gateway.gateway.router import (
+        from api_gateway.gateway.router import (
             resolve_inference_context,
             ResolveContextRequest,
         )
@@ -57,7 +57,7 @@ class TestResolveInferenceContext:
         }
 
         with patch(
-            "services.api_gateway.gateway.router.policy_engine"
+            "api_gateway.gateway.router.policy_engine"
         ) as mock_pe:
             mock_pe.resolve_context = AsyncMock(return_value=resolved)
             mock_db = AsyncMock()
@@ -69,7 +69,7 @@ class TestResolveInferenceContext:
     @pytest.mark.asyncio
     async def test_rate_limit_config_forwarded(self):
         """rate_limit configuration is forwarded in the resolved context."""
-        from services.api_gateway.gateway.router import (
+        from api_gateway.gateway.router import (
             resolve_inference_context,
             ResolveContextRequest,
         )
@@ -95,7 +95,7 @@ class TestResolveInferenceContext:
         }
 
         with patch(
-            "services.api_gateway.gateway.router.policy_engine"
+            "api_gateway.gateway.router.policy_engine"
         ) as mock_pe:
             mock_pe.resolve_context = AsyncMock(return_value=resolved)
             mock_db = AsyncMock()
@@ -110,14 +110,14 @@ class TestModelsList:
     @pytest.mark.asyncio
     async def test_missing_bearer_token_returns_401(self):
         """Models list without Bearer token returns 401."""
-        from services.api_gateway.gateway.router import list_models
+        from api_gateway.gateway.router import list_models
         from fastapi import HTTPException
 
         mock_request = MagicMock()
         mock_request.headers = {}
 
         with patch(
-            "services.api_gateway.gateway.router.rate_limiter"
+            "api_gateway.gateway.router.rate_limiter"
         ) as mock_rl:
             mock_rl.check_rate_limit = AsyncMock()
             mock_db = AsyncMock()
@@ -129,16 +129,16 @@ class TestModelsList:
     @pytest.mark.asyncio
     async def test_invalid_api_key_returns_401(self):
         """Models list with invalid key returns 401."""
-        from services.api_gateway.gateway.router import list_models
+        from api_gateway.gateway.router import list_models
         from fastapi import HTTPException
 
         mock_request = MagicMock()
         mock_request.headers = {"Authorization": "Bearer sk-bad-key"}
 
         with patch(
-            "services.api_gateway.gateway.router.rate_limiter"
+            "api_gateway.gateway.router.rate_limiter"
         ) as mock_rl, patch(
-            "services.api_gateway.gateway.router.policy_engine"
+            "api_gateway.gateway.router.policy_engine"
         ) as mock_pe:
             mock_rl.check_rate_limit = AsyncMock()
             mock_pe.verify_api_key = AsyncMock(return_value=None)

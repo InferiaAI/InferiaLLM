@@ -51,8 +51,8 @@ _httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 from fastapi.testclient import TestClient  # noqa: E402
 from starlette.websockets import WebSocketDisconnect  # noqa: E402
 
-from services.orchestration.api import admin_workers
-from services.orchestration.worker_controller.protocol import (
+from orchestration.api import admin_workers
+from orchestration.worker_controller.protocol import (
     LogsEndBody,
     LogsLineBody,
     LogsOpenBody,
@@ -61,7 +61,7 @@ from services.orchestration.worker_controller.protocol import (
     ShellOpenBody,
     ShellOutputBody,
 )
-from services.orchestration.worker_controller.registry import (
+from orchestration.worker_controller.registry import (
     StreamHandle,
     WorkerNotConnectedError,
 )

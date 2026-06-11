@@ -26,7 +26,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport
 
-from services.orchestration.model_deployment import (
+from orchestration.model_deployment import (
     deployment_server,
 )
 
@@ -44,7 +44,7 @@ pytestmark = pytest.mark.asyncio
 # force_cancel is patched at the class so it fires regardless of which pool the
 # route builds internally (the route connects via POSTGRES_DSN, not app.state).
 _FORCE_CANCEL = (
-    "services.orchestration.provisioning_state_machine.jobs.repository."
+    "orchestration.provisioning_state_machine.jobs.repository."
     "ProvisioningJobRepository.force_cancel"
 )
 

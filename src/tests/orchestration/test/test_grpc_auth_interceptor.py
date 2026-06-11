@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 import grpc
 
-from services.orchestration.grpc_auth_interceptor import (
+from orchestration.grpc_auth_interceptor import (
     InternalAPIKeyInterceptor,
 )
 

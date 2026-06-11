@@ -13,13 +13,13 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.orchestration.provisioning_state_machine.errors import (
+from orchestration.provisioning_state_machine.errors import (
     AWSThrottledError, InvalidCredentialsError, PermanentError,
 )
-from services.orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.provisioning_state_machine.jobs.model import (
     Phase, PhaseResult, ProvisioningJob,
 )
-from services.orchestration.provisioning_state_machine.reconciler.loop import (
+from orchestration.provisioning_state_machine.reconciler.loop import (
     ProvisioningReconciler,
 )
 
@@ -319,7 +319,7 @@ async def test_terminal_terminated_purges_node_and_sweeps_orphans():
     rec.worker_registry = registry
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances",
         return_value=["i-orphan"],
     ) as sweep:
@@ -348,7 +348,7 @@ async def test_terminated_sweep_failure_does_not_block_purge():
     rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances",
         side_effect=RuntimeError("AWS describe blew up"),
     ):
@@ -369,7 +369,7 @@ async def test_terminated_no_region_skips_sweep_but_still_purges():
     rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances",
     ) as sweep:
         await rec.tick_once()
@@ -393,7 +393,7 @@ async def test_terminated_region_falls_back_to_stack_outputs():
     rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances",
         return_value=[],
     ) as sweep:
@@ -415,7 +415,7 @@ async def test_terminated_purge_failure_is_swallowed():
     rec = _make_reconciler(repo, [h], inventory_repo=inventory_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances",
         return_value=[],
     ):
@@ -439,7 +439,7 @@ async def test_terminated_no_registry_purges_without_crashing():
     rec.worker_registry = None  # explicit
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances",
         return_value=[],
     ):
@@ -602,10 +602,10 @@ async def test_last_node_of_terminating_pool_finalizes_and_sweeps():
     rec = _terminated_rec(repo, pool_repo=pool_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances", return_value=["i-poolorphan"],
     ) as pool_sweep:
         await rec.tick_once()
@@ -629,10 +629,10 @@ async def test_terminating_pool_with_nodes_left_does_not_finalize():
     rec = _terminated_rec(repo, pool_repo=pool_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances",
     ) as pool_sweep:
         await rec.tick_once()
@@ -654,10 +654,10 @@ async def test_non_terminating_pool_purges_node_but_does_not_finalize():
     rec = _terminated_rec(repo, pool_repo=pool_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances",
     ) as pool_sweep:
         await rec.tick_once()
@@ -679,10 +679,10 @@ async def test_pool_repo_none_skips_finalizer_without_crashing():
     rec = _terminated_rec(repo, pool_repo=None)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances",
     ) as pool_sweep:
         await rec.tick_once()
@@ -707,10 +707,10 @@ async def test_finalize_failure_does_not_block_node_teardown():
     rec.worker_registry = registry
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances",
     ) as pool_sweep:
         await rec.tick_once()
@@ -738,10 +738,10 @@ async def test_pool_sweep_failure_does_not_block_node_teardown():
     rec.worker_registry = registry
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances",
         side_effect=RuntimeError("AWS describe blew up"),
     ):
@@ -764,10 +764,10 @@ async def test_finalize_no_region_skips_pool_sweep_but_finalizes():
     rec = _terminated_rec(repo, pool_repo=pool_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances",
     ) as pool_sweep:
         await rec.tick_once()
@@ -789,10 +789,10 @@ async def test_finalize_lifecycle_read_failure_swallowed():
     rec = _terminated_rec(repo, pool_repo=pool_repo)
 
     with patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ), patch(
-        "services.orchestration.adapter_engine."
+        "orchestration.adapter_engine."
         "aws_orphan_sweep.sweep_pool_instances",
     ) as pool_sweep:
         await rec.tick_once()

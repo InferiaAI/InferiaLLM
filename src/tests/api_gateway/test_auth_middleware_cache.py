@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from cachetools import TTLCache
 
-from services.api_gateway.rbac import middleware as mw
+from api_gateway.rbac import middleware as mw
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ class TestAuthCacheProperties:
 class TestCacheBehavior:
     def test_different_tokens_get_separate_entries(self):
         """Different tokens produce different cache entries."""
-        from services.api_gateway.models import UserContext
+        from api_gateway.models import UserContext
 
         ctx1 = UserContext(
             user_id="u1", username="a@test.com", email="a@test.com",
@@ -68,7 +68,7 @@ class TestCacheBehavior:
 
     def test_cache_hit_returns_stored_value(self):
         """Cached value should be retrievable."""
-        from services.api_gateway.models import UserContext
+        from api_gateway.models import UserContext
 
         ctx = UserContext(
             user_id="u1", username="a@test.com", email="a@test.com",
@@ -95,7 +95,7 @@ class TestAuthMiddlewareIntegration:
     @pytest.mark.asyncio
     async def test_cached_token_skips_db(self):
         """When a token is in cache, the middleware should skip DB queries."""
-        from services.api_gateway.models import UserContext
+        from api_gateway.models import UserContext
 
         user_ctx = UserContext(
             user_id="u1", username="test@test.com", email="test@test.com",
@@ -116,7 +116,7 @@ class TestAuthMiddlewareIntegration:
         call_next = AsyncMock(return_value=MagicMock())
 
         # Should NOT create a DB session
-        with patch("services.api_gateway.rbac.middleware.AsyncSessionLocal") as mock_session:
+        with patch("api_gateway.rbac.middleware.AsyncSessionLocal") as mock_session:
             await mw.auth_middleware(request, call_next)
 
         mock_session.assert_not_called()
@@ -152,8 +152,8 @@ class TestAuthMiddlewareIntegration:
 
         call_next = AsyncMock(return_value=MagicMock())
 
-        with patch("services.api_gateway.rbac.middleware.AsyncSessionLocal", return_value=mock_db), \
-             patch("services.api_gateway.rbac.middleware.auth_service") as mock_svc:
+        with patch("api_gateway.rbac.middleware.AsyncSessionLocal", return_value=mock_db), \
+             patch("api_gateway.rbac.middleware.auth_service") as mock_svc:
             mock_svc.get_current_user = AsyncMock(return_value=(mock_user, "org1", ["admin"]))
             await mw.auth_middleware(request, call_next)
 
@@ -181,8 +181,8 @@ class TestAuthMiddlewareIntegration:
 
         call_next = AsyncMock()
 
-        with patch("services.api_gateway.rbac.middleware.AsyncSessionLocal", return_value=mock_db), \
-             patch("services.api_gateway.rbac.middleware.auth_service") as mock_svc:
+        with patch("api_gateway.rbac.middleware.AsyncSessionLocal", return_value=mock_db), \
+             patch("api_gateway.rbac.middleware.auth_service") as mock_svc:
             mock_svc.get_current_user = AsyncMock(
                 side_effect=HTTPException(status_code=401, detail="Invalid token")
             )

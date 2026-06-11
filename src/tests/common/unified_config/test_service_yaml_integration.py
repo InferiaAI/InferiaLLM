@@ -44,19 +44,19 @@ def _yaml_env(monkeypatch, tmp_path):
 
 class TestInferenceSettingsFromYaml:
     def test_upstream_timeout_read_from_yaml(self):
-        from services.inference.config import Settings
+        from inference.config import Settings
         s = Settings(_env_file=None)
         # upstream.http_timeout_seconds → flattened to upstream_http_timeout_seconds
         assert s.upstream_http_timeout_seconds == 60.0
 
     def test_context_cache_ttl_read_from_yaml(self):
-        from services.inference.config import Settings
+        from inference.config import Settings
         s = Settings(_env_file=None)
         assert s.context_cache_ttl == 30
 
     def test_allowed_origins_coerced_from_list(self, monkeypatch):
         """security.allowed_origins is a list in yaml; field must be a str."""
-        from services.inference.config import Settings
+        from inference.config import Settings
         monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
         s = Settings(_env_file=None)
         # allowed_origins comes from shared security subtree as a list; must be str
@@ -66,22 +66,22 @@ class TestInferenceSettingsFromYaml:
         from common.unified_config.loader import _clear_cache
         monkeypatch.setenv("INFERENCE_WORKERS", "4")
         _clear_cache()
-        from services.inference.config import Settings
+        from inference.config import Settings
         s = Settings(_env_file=None)
         assert s.workers == 4
 
     def test_request_timeout_read_from_yaml(self):
-        from services.inference.config import Settings
+        from inference.config import Settings
         s = Settings(_env_file=None)
         assert s.request_timeout == 30
 
     def test_upstream_max_response_bytes_from_yaml(self):
-        from services.inference.config import Settings
+        from inference.config import Settings
         s = Settings(_env_file=None)
         assert s.upstream_max_response_bytes == 52_428_800
 
     def test_context_cache_maxsize_from_yaml(self):
-        from services.inference.config import Settings
+        from inference.config import Settings
         s = Settings(_env_file=None)
         assert s.context_cache_maxsize == 1000
 
@@ -90,26 +90,26 @@ class TestInferenceSettingsFromYaml:
 
 class TestOrchestrationSettingsFromYaml:
     def test_readiness_timeout_from_yaml(self):
-        from services.orchestration.config import Settings
+        from orchestration.config import Settings
         s = Settings(_env_file=None)
         assert s.default_readiness_timeout == 300
 
     def test_deployment_log_buffer_size_from_yaml(self):
-        from services.orchestration.config import Settings
+        from orchestration.config import Settings
         s = Settings(_env_file=None)
         assert s.deployment_log_buffer_size == 10000
 
     def test_ephemeral_failure_threshold_from_yaml(self):
-        from services.orchestration.config import Settings
+        from orchestration.config import Settings
         s = Settings(_env_file=None)
         assert s.ephemeral_failure_threshold_minutes == 10
 
     def test_deployment_log_flush_interval_from_yaml(self):
-        from services.orchestration.config import Settings
+        from orchestration.config import Settings
         s = Settings(_env_file=None)
         assert s.deployment_log_flush_interval == 10
 
     def test_default_polling_interval_from_yaml(self):
-        from services.orchestration.config import Settings
+        from orchestration.config import Settings
         s = Settings(_env_file=None)
         assert s.default_polling_interval == 20

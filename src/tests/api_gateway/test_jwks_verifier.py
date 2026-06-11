@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-from services.api_gateway.rbac.jwks_verifier import (
+from api_gateway.rbac.jwks_verifier import (
     JWKSVerifier,
     JWKSVerifyError,
 )

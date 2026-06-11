@@ -9,7 +9,7 @@ import pytest
 # Patch settings before importing job_builder
 _mock_settings = type("Settings", (), {"internal_api_key": "test-key"})()
 
-with patch("services.orchestration.config.settings", _mock_settings):
+with patch("orchestration.config.settings", _mock_settings):
     from providers.nosana.job_builder import (
         create_vllm_job,
         create_training_job,

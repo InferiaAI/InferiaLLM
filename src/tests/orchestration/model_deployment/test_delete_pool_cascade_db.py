@@ -28,7 +28,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from services.orchestration.model_deployment import (
+from orchestration.model_deployment import (
     deployment_server,
 )
 

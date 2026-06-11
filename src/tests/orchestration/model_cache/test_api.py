@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from services.orchestration.model_cache import deps
+from orchestration.model_cache import deps
 
 pytestmark = pytest.mark.asyncio
 
@@ -77,7 +77,7 @@ class _FakeEviction:
 def _make_app(fake_repo, fake_downloader, fake_eviction=None):
     deps._reset()
     deps.configure(repo=fake_repo, downloader=fake_downloader, eviction=fake_eviction)
-    from services.orchestration.model_cache.api import router
+    from orchestration.model_cache.api import router
     app = FastAPI()
     app.include_router(router)
     return app

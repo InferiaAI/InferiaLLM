@@ -15,13 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 @pytest.fixture
 def make_rate_limiter():
     """Create a RateLimiter instance with mocked limiter backend."""
-    with patch("services.api_gateway.gateway.rate_limiter.settings") as mock_settings:
+    with patch("api_gateway.gateway.rate_limiter.settings") as mock_settings:
         mock_settings.rate_limit_enabled = True
         mock_settings.rate_limit_requests_per_minute = 100
         mock_settings.rate_limit_burst_size = 50
         mock_settings.use_redis_rate_limit = False
 
-        from services.api_gateway.gateway.rate_limiter import RateLimiter
+        from api_gateway.gateway.rate_limiter import RateLimiter
 
         rl = RateLimiter()
         rl.limiter = MagicMock()

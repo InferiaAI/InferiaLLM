@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from services.api_gateway.rbac.external_org import (
+from api_gateway.rbac.external_org import (
     _fallback_name,
     ensure_external_org,
     fetch_idp_org_name,
@@ -29,7 +29,7 @@ def _client(handler) -> httpx.AsyncClient:
 
 @pytest.mark.asyncio
 async def test_fetch_name_flat_shape(monkeypatch):
-    from services.api_gateway.config import settings
+    from api_gateway.config import settings
 
     monkeypatch.setattr(settings, "external_auth_url", "https://idp.test", raising=False)
 
@@ -44,7 +44,7 @@ async def test_fetch_name_flat_shape(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_name_nested_org_envelope(monkeypatch):
-    from services.api_gateway.config import settings
+    from api_gateway.config import settings
 
     monkeypatch.setattr(settings, "external_auth_url", "https://idp.test", raising=False)
     name = await fetch_idp_org_name(
@@ -56,7 +56,7 @@ async def test_fetch_name_nested_org_envelope(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_name_failures_return_none(monkeypatch):
-    from services.api_gateway.config import settings
+    from api_gateway.config import settings
 
     monkeypatch.setattr(settings, "external_auth_url", "https://idp.test", raising=False)
 
@@ -80,7 +80,7 @@ async def test_fetch_name_failures_return_none(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_name_skips_without_token_or_url(monkeypatch):
-    from services.api_gateway.config import settings
+    from api_gateway.config import settings
 
     monkeypatch.setattr(settings, "external_auth_url", "https://idp.test", raising=False)
     assert await fetch_idp_org_name(ORG_ID, None) is None
@@ -110,7 +110,7 @@ def _db(execute_results) -> AsyncMock:
 async def test_creates_org_with_idp_name():
     db = _db([None, None])  # org missing, membership missing
     with patch(
-        "services.api_gateway.rbac.external_org.fetch_idp_org_name",
+        "api_gateway.rbac.external_org.fetch_idp_org_name",
         AsyncMock(return_value="Acme Corp"),
     ):
         await ensure_external_org(db, ORG_ID, user_id="u1", bearer_token="tok")
@@ -130,7 +130,7 @@ async def test_creates_org_with_idp_name():
 async def test_falls_back_to_synthetic_name_when_fetch_fails():
     db = _db([None, None])
     with patch(
-        "services.api_gateway.rbac.external_org.fetch_idp_org_name",
+        "api_gateway.rbac.external_org.fetch_idp_org_name",
         AsyncMock(return_value=None),
     ):
         await ensure_external_org(db, ORG_ID, user_id="u1", bearer_token="tok")
@@ -146,7 +146,7 @@ async def test_existing_org_skips_create_and_fetch():
     db = _db([existing, MagicMock()])  # org exists, membership exists
     fetch = AsyncMock(return_value="should-not-be-called")
     with patch(
-        "services.api_gateway.rbac.external_org.fetch_idp_org_name", fetch
+        "api_gateway.rbac.external_org.fetch_idp_org_name", fetch
     ):
         await ensure_external_org(db, ORG_ID, user_id="u1", bearer_token="tok")
 

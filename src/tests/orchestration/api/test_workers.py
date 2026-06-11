@@ -27,16 +27,16 @@ def _patched_client_init(self, *args, **kwargs):
 _httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 from fastapi.testclient import TestClient  # noqa: E402
 
-from services.orchestration.api import workers
-from services.orchestration.worker_controller.auth import (
+from orchestration.api import workers
+from orchestration.worker_controller.auth import (
     BootstrapClaim,
     InvalidBootstrapToken,
     WorkerAuth,
 )
-from services.orchestration.worker_controller.registry import (
+from orchestration.worker_controller.registry import (
     WorkerRegistry,
 )
-from services.orchestration.worker_controller.protocol import (
+from orchestration.worker_controller.protocol import (
     Envelope,
 )
 
@@ -252,7 +252,7 @@ def test_register_with_bootstrap_token_happy(app_and_deps):
     claim = _make_claim()
     consume_fn = _single_use_consume(call_count, claim)
 
-    with patch("services.orchestration.api.workers._consume_bootstrap_token",
+    with patch("orchestration.api.workers._consume_bootstrap_token",
                consume_fn):
         r1 = client.post(
             "/v1/workers/register",
@@ -299,7 +299,7 @@ def test_register_records_cloud_env_in_labels(app_and_deps):
         call_count[0] += 1
         return claim
 
-    with patch("services.orchestration.api.workers._consume_bootstrap_token",
+    with patch("orchestration.api.workers._consume_bootstrap_token",
                _consume):
         r = client.post(
             "/v1/workers/register",
@@ -336,7 +336,7 @@ def test_register_without_cloud_env_still_works(app_and_deps):
     async def _consume(conn, *, token):
         return claim
 
-    with patch("services.orchestration.api.workers._consume_bootstrap_token",
+    with patch("orchestration.api.workers._consume_bootstrap_token",
                _consume):
         r = client.post(
             "/v1/workers/register",
@@ -365,7 +365,7 @@ def test_register_bootstrap_token_pool_mismatch_rejected(app_and_deps):
     async def _consume(conn, *, token):
         return claim
 
-    with patch("services.orchestration.api.workers._consume_bootstrap_token",
+    with patch("orchestration.api.workers._consume_bootstrap_token",
                _consume):
         r = client.post(
             "/v1/workers/register",
@@ -501,7 +501,7 @@ def _open_shell_stream_sync(registry, *, node_id, stream_id):
     file we run inside TestClient's sync context so we drive the loop
     via run_until_complete on a fresh loop.
     """
-    from services.orchestration.worker_controller.protocol import (
+    from orchestration.worker_controller.protocol import (
         ShellOpenBody,
     )
     loop = asyncio.new_event_loop()
@@ -521,7 +521,7 @@ def _drain_one(loop, queue, timeout=2.0):
 def test_channel_routes_shell_output_to_stream_queue(app_and_deps):
     """ShellOutput envelope must land on the stream's incoming queue as a
     ShellOutputBody, not a raw dict."""
-    from services.orchestration.worker_controller.protocol import (
+    from orchestration.worker_controller.protocol import (
         ShellOutputBody,
     )
     app, auth, registry, _inv = app_and_deps
@@ -550,7 +550,7 @@ def test_channel_routes_shell_output_to_stream_queue(app_and_deps):
 def test_channel_routes_shell_exit_sets_closed_event(app_and_deps):
     """ShellExit must arrive at the queue AND set the closed event so the
     proxy's drain loop terminates cleanly."""
-    from services.orchestration.worker_controller.protocol import (
+    from orchestration.worker_controller.protocol import (
         ShellExitBody,
     )
     app, auth, registry, _inv = app_and_deps
@@ -578,7 +578,7 @@ def test_channel_routes_shell_exit_sets_closed_event(app_and_deps):
 
 
 def test_channel_routes_shell_error_sets_closed_event(app_and_deps):
-    from services.orchestration.worker_controller.protocol import (
+    from orchestration.worker_controller.protocol import (
         ShellErrorBody,
     )
     app, auth, registry, _inv = app_and_deps
@@ -606,7 +606,7 @@ def test_channel_routes_shell_error_sets_closed_event(app_and_deps):
 
 def test_channel_routes_logs_line_and_end(app_and_deps):
     """LogsLine then LogsEnd must arrive in order, with End setting closed."""
-    from services.orchestration.worker_controller.protocol import (
+    from orchestration.worker_controller.protocol import (
         LogsEndBody,
         LogsLineBody,
         LogsOpenBody,

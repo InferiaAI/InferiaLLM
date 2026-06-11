@@ -18,12 +18,12 @@ import pytest
 @pytest.fixture
 def make_in_memory_limiter():
     """Create an InMemoryRateLimiter with mocked settings."""
-    with patch("services.api_gateway.gateway.rate_limiter.settings") as mock_settings:
+    with patch("api_gateway.gateway.rate_limiter.settings") as mock_settings:
         mock_settings.rate_limit_requests_per_minute = 60
         mock_settings.rate_limit_burst_size = 10
         mock_settings.use_redis_rate_limit = False
 
-        from services.api_gateway.gateway.rate_limiter import InMemoryRateLimiter
+        from api_gateway.gateway.rate_limiter import InMemoryRateLimiter
 
         yield InMemoryRateLimiter()
 
@@ -59,7 +59,7 @@ class TestBucketCreationAtomicity:
         """
         # Read the source file directly to avoid stale bytecode cache issues
         source_file = (
-            Path(list(__import__("services.api_gateway", fromlist=["_"]).__path__)[0])
+            Path(list(__import__("api_gateway", fromlist=["_"]).__path__)[0])
             / "gateway"
             / "rate_limiter.py"
         )

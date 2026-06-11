@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 @pytest.fixture
 def mock_settings():
     """Provide minimal settings so ApiGatewayClient can be instantiated."""
-    with patch("services.inference.client.settings") as s:
+    with patch("inference.client.settings") as s:
         s.api_gateway_url = "http://localhost:8000"
         s.api_gateway_internal_key = "test-key"
         s.request_timeout = 5
@@ -22,7 +22,7 @@ def mock_settings():
 
 @pytest.fixture
 def gateway_client(mock_settings):
-    from services.inference.client import ApiGatewayClient
+    from inference.client import ApiGatewayClient
 
     return ApiGatewayClient()
 
@@ -35,7 +35,7 @@ async def test_track_usage_logs_error_on_failure(gateway_client):
     fake_client.is_closed = False
     gateway_client._client = fake_client
 
-    with patch("services.inference.client.logger") as mock_logger:
+    with patch("inference.client.logger") as mock_logger:
         await gateway_client.track_usage(
             user_id="user-1",
             model="gpt-4",

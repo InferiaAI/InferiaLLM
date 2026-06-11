@@ -18,18 +18,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.orchestration.provisioning_state_machine.errors import (
+from orchestration.provisioning_state_machine.errors import (
     AMINotFoundError, InvalidCredentialsError, InvalidInstanceTypeError,
     InvalidSpecError, PulumiCliMissingError, SecurityGroupNotFoundError,
     SubnetNotFoundError,
 )
-from services.orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.provisioning_state_machine.jobs.model import (
     Phase, ProvisioningJob,
 )
-from services.orchestration.provisioning_state_machine.phases.base import (
+from orchestration.provisioning_state_machine.phases.base import (
     PhaseContext,
 )
-from services.orchestration.provisioning_state_machine.phases.preflight import (
+from orchestration.provisioning_state_machine.phases.preflight import (
     PreflightHandler,
 )
 
@@ -62,7 +62,7 @@ async def test_none_aws_creds_raises_invalid_credentials():
     """When the reconciler couldn't load AWS creds (load_aws_context
     returned None), preflight must fail cleanly with InvalidCredentialsError
     instead of crashing on None.access_key_id deep in boto3."""
-    from services.orchestration.provisioning_state_machine.errors import (
+    from orchestration.provisioning_state_machine.errors import (
         InvalidCredentialsError,
     )
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"):
@@ -110,7 +110,7 @@ async def test_credential_verification_failure_raises():
     """If sts:GetCallerIdentity fails, raise InvalidCredentialsError."""
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_credentials",
             side_effect=InvalidCredentialsError("bad creds"),
         ):
@@ -123,20 +123,20 @@ async def test_happy_path_returns_provisioning():
     """All preflight checks pass → next_phase=PROVISIONING."""
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_credentials",
             return_value={"Account": "123"},
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_subnet_exists", return_value=None,
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_security_group_exists", return_value=None,
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.resolve_ami", return_value="ami-abc",
         ):
         ctx = _ctx()
@@ -185,11 +185,11 @@ async def test_subnet_check_failure_raises():
     })
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_credentials", return_value={},
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_subnet_exists",
             side_effect=SubnetNotFoundError("subnet-abc"),
         ):
@@ -207,15 +207,15 @@ async def test_security_group_check_failure_raises():
     })
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_credentials", return_value={},
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_subnet_exists", return_value=None,
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_security_group_exists",
             side_effect=SecurityGroupNotFoundError("sg-abc"),
         ):
@@ -227,19 +227,19 @@ async def test_security_group_check_failure_raises():
 async def test_ami_check_failure_raises():
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_credentials", return_value={},
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_subnet_exists", return_value=None,
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_security_group_exists", return_value=None,
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.resolve_ami",
             side_effect=AMINotFoundError("ami-x not in us-east-1"),
         ):
@@ -259,7 +259,7 @@ async def test_preflight_prefers_spec_ami_id(monkeypatch):
     verbatim by the preflight phase instead of triggering an SSM lookup
     that may look up a different AMI or fail in non-standard regions.
     """
-    import services.orchestration.provisioning_state_machine.phases.preflight as pf
+    import orchestration.provisioning_state_machine.phases.preflight as pf
 
     def _must_not_call(**_k):
         raise AssertionError("resolve_ami must NOT be called when spec has ami_id")
@@ -275,7 +275,7 @@ async def test_preflight_prefers_spec_ami_id(monkeypatch):
 
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_credentials",
             return_value={"Account": "123"},
         ):
@@ -291,12 +291,12 @@ async def test_preflight_falls_back_to_resolve_ami_when_spec_has_no_ami_id():
     """When spec.ami_id is absent, resolve_ami is still called (existing behaviour)."""
     with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.verify_credentials",
             return_value={"Account": "123"},
         ), \
          patch(
-            "services.orchestration.provisioning_state_machine.phases."
+            "orchestration.provisioning_state_machine.phases."
             "preflight.resolve_ami",
             return_value="ami-auto-pick",
         ) as mock_resolve:

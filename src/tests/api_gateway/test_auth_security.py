@@ -8,8 +8,8 @@ from jose import jwt
 
 import bcrypt
 
-from services.api_gateway.rbac.auth import AuthService
-from services.api_gateway.db.models import User as DBUser
+from api_gateway.rbac.auth import AuthService
+from api_gateway.db.models import User as DBUser
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ preventing double-publish by concurrent workers.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from services.orchestration.repositories.outbox_repo import OutboxRepository
+from orchestration.repositories.outbox_repo import OutboxRepository
 
 
 class _AsyncCtx:

@@ -6,16 +6,16 @@ import pytest_asyncio
 import asyncpg
 from uuid import uuid4
 
-from services.orchestration.model_deployment.deployment_linker import (
+from orchestration.model_deployment.deployment_linker import (
     DeploymentLinker,
 )
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
-from services.orchestration.repositories.model_deployment_repo import (
+from orchestration.repositories.model_deployment_repo import (
     ModelDeploymentRepository,
 )
-from services.orchestration.worker_controller.controller import (
+from orchestration.worker_controller.controller import (
     WorkerController,
 )
 
@@ -227,7 +227,7 @@ async def test_load_model_failed_status_releases_gpu_and_marks_failed(pool):
     readiness probe timed out) WITHOUT raising — controller.load_model returns
     that body verbatim. The linker must treat it as a load failure (release
     GPU + FAILED + NO endpoint), not silently mark the deploy RUNNING."""
-    from services.orchestration.worker_controller.protocol import (
+    from orchestration.worker_controller.protocol import (
         CommandResultBody,
     )
     pool_id, node_id = await _seed_pool_and_node(

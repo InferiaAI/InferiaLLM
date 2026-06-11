@@ -33,8 +33,8 @@ import json
 import httpx
 import pytest
 
-from services.api_gateway.rbac.catalog import CATALOG, to_declare_request
-from services.api_gateway.rbac.catalog_declare import (
+from api_gateway.rbac.catalog import CATALOG, to_declare_request
+from api_gateway.rbac.catalog_declare import (
     declare_catalog,
     resolve_service_id,
 )

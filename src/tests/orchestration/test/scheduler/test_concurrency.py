@@ -2,7 +2,7 @@ import asyncio
 import uuid
 import grpc
 
-from services.orchestration.v1 import (
+from orchestration.v1 import (
     scheduler_pb2,
     scheduler_pb2_grpc,
 )

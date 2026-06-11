@@ -11,7 +11,7 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent
 gateway_path = project_root / "services" / "api_gateway"
 sys.path.insert(0, str(gateway_path))
 
-from services.api_gateway.app import app
+from api_gateway.app import app
 from pathlib import Path
 import os
 
@@ -20,14 +20,14 @@ project_root = Path(__file__).resolve().parent.parent.parent.parent
 gateway_path = project_root / "services" / "api_gateway"
 sys.path.insert(0, str(gateway_path))
 
-from services.api_gateway.app import app
-from services.api_gateway.rbac.mock_data import mock_db
-from services.api_gateway.config import settings
-from services.api_gateway.rbac.auth import auth_service
-from services.api_gateway.db.models import User as DBUser
+from api_gateway.app import app
+from api_gateway.rbac.mock_data import mock_db
+from api_gateway.config import settings
+from api_gateway.rbac.auth import auth_service
+from api_gateway.db.models import User as DBUser
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
-from services.api_gateway.db.database import get_db
+from api_gateway.db.database import get_db
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ async def client(mock_db_session):
             auth_service, "get_current_user", side_effect=mock_get_current_user
         ),
         patch(
-            "services.api_gateway.rbac.middleware.AsyncSessionLocal",
+            "api_gateway.rbac.middleware.AsyncSessionLocal",
             mock_session_maker,
         ),
     ):

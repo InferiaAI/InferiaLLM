@@ -9,7 +9,7 @@ import asyncio
 import pytest
 from unittest.mock import patch
 
-from services.inference.core.concurrency_limiter import (
+from inference.core.concurrency_limiter import (
     UpstreamConcurrencyLimiter,
 )
 
@@ -20,7 +20,7 @@ class TestSemaphoresNotCreatedAtConstruction:
     def test_global_semaphore_not_created_at_init(self):
         """Global semaphore must be None right after construction."""
         with patch(
-            "services.inference.core.concurrency_limiter.settings"
+            "inference.core.concurrency_limiter.settings"
         ) as mock_settings:
             mock_settings.upstream_global_max_in_flight = 100
             mock_settings.upstream_per_deployment_max_in_flight = 50
@@ -31,7 +31,7 @@ class TestSemaphoresNotCreatedAtConstruction:
     def test_lock_not_created_at_init(self):
         """The internal asyncio.Lock must be None right after construction."""
         with patch(
-            "services.inference.core.concurrency_limiter.settings"
+            "inference.core.concurrency_limiter.settings"
         ) as mock_settings:
             mock_settings.upstream_global_max_in_flight = 100
             mock_settings.upstream_per_deployment_max_in_flight = 50
@@ -42,7 +42,7 @@ class TestSemaphoresNotCreatedAtConstruction:
     def test_deployment_semaphores_empty_at_init(self):
         """Per-deployment semaphore dict must be empty after construction."""
         with patch(
-            "services.inference.core.concurrency_limiter.settings"
+            "inference.core.concurrency_limiter.settings"
         ) as mock_settings:
             mock_settings.upstream_global_max_in_flight = 0
             mock_settings.upstream_per_deployment_max_in_flight = 50
@@ -58,7 +58,7 @@ class TestSemaphoresCreatedOnFirstUse:
     async def test_global_semaphore_created_on_acquire(self):
         """Global semaphore must be created on first call to limit()."""
         with patch(
-            "services.inference.core.concurrency_limiter.settings"
+            "inference.core.concurrency_limiter.settings"
         ) as mock_settings:
             mock_settings.upstream_global_max_in_flight = 10
             mock_settings.upstream_per_deployment_max_in_flight = 0
@@ -74,7 +74,7 @@ class TestSemaphoresCreatedOnFirstUse:
     async def test_lock_created_on_acquire(self):
         """Internal lock must be created on first call to limit()."""
         with patch(
-            "services.inference.core.concurrency_limiter.settings"
+            "inference.core.concurrency_limiter.settings"
         ) as mock_settings:
             mock_settings.upstream_global_max_in_flight = 0
             mock_settings.upstream_per_deployment_max_in_flight = 10
@@ -90,7 +90,7 @@ class TestSemaphoresCreatedOnFirstUse:
     async def test_deployment_semaphore_created_on_acquire(self):
         """Per-deployment semaphore must be created on first call."""
         with patch(
-            "services.inference.core.concurrency_limiter.settings"
+            "inference.core.concurrency_limiter.settings"
         ) as mock_settings:
             mock_settings.upstream_global_max_in_flight = 0
             mock_settings.upstream_per_deployment_max_in_flight = 10
@@ -108,7 +108,7 @@ class TestSemaphoresCreatedOnFirstUse:
     async def test_semaphore_reused_across_calls(self):
         """Subsequent calls must reuse the same semaphore, not create new ones."""
         with patch(
-            "services.inference.core.concurrency_limiter.settings"
+            "inference.core.concurrency_limiter.settings"
         ) as mock_settings:
             mock_settings.upstream_global_max_in_flight = 10
             mock_settings.upstream_per_deployment_max_in_flight = 10

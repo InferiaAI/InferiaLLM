@@ -59,7 +59,7 @@ BASE_DIR = Path(__file__).parent.parent
 SCHEMA_DIR = BASE_DIR / "infra" / "schema"
 
 # Path to API Gateway bootstrap script
-API_GATEWAY_BOOTSTRAP_SCRIPT = BASE_DIR / "services" / "api_gateway" / "bootstrap_db.py"
+API_GATEWAY_BOOTSTRAP_SCRIPT = BASE_DIR / "api_gateway" / "bootstrap_db.py"
 
 
 MIGRATIONS_DIR = SCHEMA_DIR / "migrations"

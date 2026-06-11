@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import HTTPException
 
-from services.inference.core.validators import (
+from inference.core.validators import (
     validate_upstream_url,
     sanitize_headers,
     strip_hop_by_hop_headers,
@@ -154,12 +154,12 @@ class TestTLSWarning:
     """Verify TLS disable warning is logged."""
 
     def test_tls_disabled_logs_warning(self):
-        from services.inference.core.http_client import HttpClientManager
+        from inference.core.http_client import HttpClientManager
 
         with patch(
-            "services.inference.core.http_client.settings"
+            "inference.core.http_client.settings"
         ) as mock_settings, patch(
-            "services.inference.core.http_client.logger"
+            "inference.core.http_client.logger"
         ) as mock_logger:
             mock_settings.verify_ssl = False
             mock_settings.upstream_http_timeout_seconds = 60.0
@@ -191,12 +191,12 @@ class TestCallUpstreamSecurity:
 
     @pytest.mark.asyncio
     async def test_call_upstream_private_ip_raises_400(self):
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         with patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter:
             mock_settings.upstream_allowed_internal_hosts = ""
             mock_settings.upstream_max_response_bytes = 52_428_800
@@ -214,12 +214,12 @@ class TestCallUpstreamSecurity:
     @pytest.mark.asyncio
     async def test_call_upstream_with_path_param_also_validates(self):
         """The path= parameter branch also gets URL validation."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         with patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter:
             mock_settings.upstream_allowed_internal_hosts = ""
             mock_settings.upstream_max_response_bytes = 52_428_800
@@ -237,10 +237,10 @@ class TestCallUpstreamSecurity:
     @pytest.mark.asyncio
     async def test_stream_upstream_private_ip_yields_error(self):
         """stream_upstream yields SSE error for blocked hosts."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         with patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings:
             mock_settings.upstream_allowed_internal_hosts = ""
             mock_settings.upstream_max_response_bytes = 52_428_800
@@ -259,7 +259,7 @@ class TestCallUpstreamSecurity:
     @pytest.mark.asyncio
     async def test_stream_upstream_oversized_response_aborted(self):
         """Streaming aborts when byte counter exceeds limit."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         mock_response = AsyncMock()
         mock_response.raise_for_status = MagicMock()
@@ -274,11 +274,11 @@ class TestCallUpstreamSecurity:
         mock_client.send = AsyncMock(return_value=mock_response)
 
         with patch(
-            "services.inference.core.service.settings"
+            "inference.core.service.settings"
         ) as mock_settings, patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter:
             mock_settings.upstream_allowed_internal_hosts = ""
             mock_settings.upstream_max_response_bytes = 1000  # Small limit

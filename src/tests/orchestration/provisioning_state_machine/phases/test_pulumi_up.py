@@ -10,16 +10,16 @@ import pytest
 from providers.pulumi.pulumi_aws_adapter import (
     StackOutputs,
 )
-from services.orchestration.provisioning_state_machine.errors import (
+from orchestration.provisioning_state_machine.errors import (
     AWSThrottledError, InvalidCredentialsError,
 )
-from services.orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.provisioning_state_machine.jobs.model import (
     Phase, ProvisioningJob,
 )
-from services.orchestration.provisioning_state_machine.phases.base import (
+from orchestration.provisioning_state_machine.phases.base import (
     PhaseContext,
 )
-from services.orchestration.provisioning_state_machine.phases.pulumi_up import (
+from orchestration.provisioning_state_machine.phases.pulumi_up import (
     PulumiUpHandler,
 )
 
@@ -58,7 +58,7 @@ async def test_happy_path_returns_bootstrapping_with_outputs():
         region="us-east-1", ami_id="ami-abc",
     )
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync", return_value=outputs,
     ):
         result = await PulumiUpHandler().run(_job(), _ctx())
@@ -81,7 +81,7 @@ async def test_outputs_omit_region_ami_when_stack_does_not_export_them():
         instance_id="i-abc", public_dns=None, region=None, ami_id=None,
     )
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync", return_value=outputs,
     ):
         result = await PulumiUpHandler().run(_job(), _ctx())
@@ -122,16 +122,16 @@ async def test_aws_bootstrap_injected_when_user_data_absent():
     outputs = StackOutputs(instance_id="i", public_dns=None,
                            region=None, ami_id=None)
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.build_program", side_effect=_capture_program,
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync", return_value=outputs,
     ), patch(
-        "services.orchestration.worker_controller.auth."
+        "orchestration.worker_controller.auth."
         "mint_bootstrap_token", new=AsyncMock(return_value=("tok", uuid.uuid4())),
     ), patch(
-        "services.orchestration.repositories.pool_repo."
+        "orchestration.repositories.pool_repo."
         "ComputePoolRepository.get_or_generate_inference_token",
         new=AsyncMock(return_value="inf-tok"),
     ):
@@ -160,10 +160,10 @@ async def test_node_id_threaded_into_spec_for_tag_emission():
     outputs = StackOutputs(instance_id="i", public_dns=None,
                            region=None, ami_id=None)
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.build_program", side_effect=_capture_program,
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync", return_value=outputs,
     ):
         await PulumiUpHandler().run(job, _ctx())
@@ -175,7 +175,7 @@ async def test_node_id_threaded_into_spec_for_tag_emission():
 async def test_throttled_error_propagates():
     """TransientError from run_pulumi_up_sync propagates — reconciler retries."""
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync",
         side_effect=AWSThrottledError("rate limited"),
     ):
@@ -186,7 +186,7 @@ async def test_throttled_error_propagates():
 @pytest.mark.asyncio
 async def test_auth_failure_propagates_as_permanent():
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync",
         side_effect=InvalidCredentialsError("bad creds"),
     ):
@@ -204,7 +204,7 @@ async def test_stack_name_is_deterministic_and_within_pulumi_limit():
         return StackOutputs(instance_id="i", public_dns=None, region=None, ami_id=None)
     j = _job()
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync", side_effect=_spy,
     ):
         await PulumiUpHandler().run(j, _ctx())
@@ -221,7 +221,7 @@ async def test_emit_event_logs_progress():
     )
     ctx = _ctx()
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync", return_value=outputs,
     ):
         await PulumiUpHandler().run(_job(), ctx)

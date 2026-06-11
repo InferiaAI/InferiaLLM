@@ -28,7 +28,7 @@ class TestTerminateLogging:
         _fake_sky.down.side_effect = RuntimeError("cloud API timeout")
 
         # Import after env is set so the module-level guard passes.
-        from services.orchestration.provisioning.skypilot import (
+        from orchestration.provisioning.skypilot import (
             SkyPilotProvisioner,
         )
 
@@ -46,7 +46,7 @@ class TestTerminateLogging:
     async def test_terminate_does_not_reraise(self, _fake_sky):
         _fake_sky.down.side_effect = RuntimeError("cloud API timeout")
 
-        from services.orchestration.provisioning.skypilot import (
+        from orchestration.provisioning.skypilot import (
             SkyPilotProvisioner,
         )
 

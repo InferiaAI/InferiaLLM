@@ -4,15 +4,15 @@ import asyncio
 
 import pytest
 
-from services.orchestration.worker_controller.controller import (
+from orchestration.worker_controller.controller import (
     NodeUnreachableError,
     WorkerController,
 )
-from services.orchestration.worker_controller.protocol import (
+from orchestration.worker_controller.protocol import (
     CommandResultBody,
     Envelope,
 )
-from services.orchestration.worker_controller.registry import (
+from orchestration.worker_controller.registry import (
     WorkerConn,
     WorkerRegistry,
 )

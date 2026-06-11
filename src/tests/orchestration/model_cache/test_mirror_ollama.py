@@ -4,8 +4,8 @@ import json
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
-from services.orchestration.model_cache import deps
-from services.orchestration.model_cache.paths import CachePaths
+from orchestration.model_cache import deps
+from orchestration.model_cache.paths import CachePaths
 
 pytestmark = pytest.mark.asyncio
 
@@ -15,7 +15,7 @@ _MANIFEST = {"schemaVersion": 2,
 
 
 def _app():
-    from services.orchestration.model_cache import mirror_ollama
+    from orchestration.model_cache import mirror_ollama
     app = FastAPI(); app.include_router(mirror_ollama.router)
     return app
 
@@ -160,7 +160,7 @@ async def test_blob_path_traversal_is_contained(tmp_path):
 # gemma3:4b deploy FAILED at load on `HEAD /v2/library/gemma3/blobs/<digest>`).
 # ---------------------------------------------------------------------------
 
-from services.orchestration.model_cache.mirror_ollama import (  # noqa: E402
+from orchestration.model_cache.mirror_ollama import (  # noqa: E402
     _MANIFEST_CT,
 )
 

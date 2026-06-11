@@ -4,7 +4,7 @@ import os
 import base64
 import pytest
 
-from services.api_gateway.security.encryption import LogEncryption
+from api_gateway.security.encryption import LogEncryption
 
 
 @pytest.fixture

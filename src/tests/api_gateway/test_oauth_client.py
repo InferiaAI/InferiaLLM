@@ -12,7 +12,7 @@ import asyncio
 import pytest
 from pytest_httpserver import HTTPServer
 
-from services.api_gateway.rbac.oauth_client import (
+from api_gateway.rbac.oauth_client import (
     OAuthClient,
     OAuthClientError,
 )

@@ -15,7 +15,7 @@ import pytest
 _mock_settings = type("Settings", (), {"internal_api_key": "test-key"})()
 
 with patch(
-    "services.orchestration.config.settings", _mock_settings
+    "orchestration.config.settings", _mock_settings
 ):
     from providers.nosana.job_builder import (
         create_training_job,

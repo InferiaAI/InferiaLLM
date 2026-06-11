@@ -1,5 +1,5 @@
 import pytest
-from services.orchestration.model_deployment.mirror_decision import (
+from orchestration.model_deployment.mirror_decision import (
     derive_cache_key, choose_fetch_source, apply_mirror_to_spec,
     resolve_and_apply_mirror,
 )

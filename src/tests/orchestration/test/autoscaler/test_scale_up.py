@@ -2,10 +2,10 @@ import asyncio
 import uuid
 import json
 
-from services.orchestration.autoscaler.worker import Autoscaler
-from services.orchestration.repositories.autoscaler_repo import AutoscalerRepository
-from services.orchestration.adapter_stub import FakeAdapterStub
-from services.orchestration.infra.db import create_test_db_pool
+from orchestration.autoscaler.worker import Autoscaler
+from orchestration.repositories.autoscaler_repo import AutoscalerRepository
+from orchestration.adapter_stub import FakeAdapterStub
+from orchestration.infra.db import create_test_db_pool
 
 
 async def test_autoscaler_scale_up():

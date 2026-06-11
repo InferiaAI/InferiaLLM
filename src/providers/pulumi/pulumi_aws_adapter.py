@@ -28,21 +28,21 @@ from typing import Any, Callable, Dict, List, Optional
 import pulumi.automation
 from pulumi.automation import ConcurrentUpdateError
 
-from services.api_gateway.config import ProvidersConfig
-from services.orchestration.config import settings
+from api_gateway.config import ProvidersConfig
+from orchestration.config import settings
 from providers.pulumi.base import (
     PulumiProvisioningBase,
 )
 from providers.pulumi.credentials import (
     resolve_aws_env,
 )
-from services.orchestration.adapter_engine.base import (
+from orchestration.adapter_engine.base import (
     AdapterType,
     PricingModel,
     ProviderAdapter,
     ProviderCapabilities,
 )
-from services.orchestration.provisioning_state_machine.errors import (
+from orchestration.provisioning_state_machine.errors import (
     AMINotFoundError,
     InvalidCredentialsError,
     ProvisioningError,
@@ -209,7 +209,7 @@ class ProvisionError(Exception):
     Kept for callers that still raise/catch this type via the surviving
     adapter methods (wait_for_ready / deprovision_node fallbacks). New
     code should use the typed hierarchy in
-    ``services.orchestration.provisioning_state_machine.errors``
+    ``orchestration.provisioning_state_machine.errors``
     instead.
     """
 
@@ -222,8 +222,8 @@ async def load_providers_config() -> ProvidersConfig:
     ProvidersConfig. Indirection lives here so tests can monkey-patch
     this function and skip the DB entirely.
     """
-    from services.api_gateway.db.database import AsyncSessionLocal
-    from services.api_gateway.management.config_manager import config_manager
+    from api_gateway.db.database import AsyncSessionLocal
+    from api_gateway.management.config_manager import config_manager
     async with AsyncSessionLocal() as db:
         data = await config_manager.load_config(db) or {}
     raw = data.get("providers") or {}
@@ -237,7 +237,7 @@ async def load_providers_config() -> ProvidersConfig:
 # ``asyncio.to_thread(...)``. It owns the DB writes, retry policy, and
 # lease ownership; this function only knows how to drive ``pulumi up``
 # and translate AWS errors into the typed exception hierarchy from
-# ``services.orchestration.provisioning_state_machine.errors``.
+# ``orchestration.provisioning_state_machine.errors``.
 # ---------------------------------------------------------------------------
 
 

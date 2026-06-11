@@ -1,7 +1,7 @@
 """The warm deploy path must apply the same mirror decision as the cold path."""
 from __future__ import annotations
 import pytest
-from services.orchestration.model_deployment.mirror_decision import (
+from orchestration.model_deployment.mirror_decision import (
     derive_cache_key, choose_fetch_source, apply_mirror_to_spec,
 )
 

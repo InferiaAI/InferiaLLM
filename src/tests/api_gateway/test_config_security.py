@@ -9,7 +9,7 @@ import logging
 import os
 import pytest
 from unittest.mock import patch
-from services.api_gateway.config import Settings
+from api_gateway.config import Settings
 
 
 PLACEHOLDER = "placeholder-secret-key-at-least-32-chars-long"
@@ -46,7 +46,7 @@ class TestJWTSecretGuard:
             database_url="postgresql+asyncpg://x:x@localhost/x",
         )
         with patch.dict(os.environ, env, clear=True):
-            with patch("services.api_gateway.config.logger") as mock_logger:
+            with patch("api_gateway.config.logger") as mock_logger:
                 s = Settings(_env_file=None)
                 assert s.jwt_secret_key == PLACEHOLDER
                 mock_logger.warning.assert_called_once()
@@ -73,7 +73,7 @@ class TestJWTSecretGuard:
             database_url="postgresql+asyncpg://x:x@localhost/x",
         )
         with patch.dict(os.environ, env, clear=True):
-            with patch("services.api_gateway.config.logger") as mock_logger:
+            with patch("api_gateway.config.logger") as mock_logger:
                 s = Settings(_env_file=None)
                 assert s.jwt_secret_key == real_secret
                 mock_logger.warning.assert_not_called()

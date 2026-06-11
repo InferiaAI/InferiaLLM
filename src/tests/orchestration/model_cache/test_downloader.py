@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from services.orchestration.model_cache.downloader import DownloadManager
+from orchestration.model_cache.downloader import DownloadManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -210,7 +210,7 @@ async def test_start_dedups_by_key():
 # Real _hf_list (tree API) + _hf_file (status check) behavior
 # ---------------------------------------------------------------------------
 import json as _json
-from services.orchestration.model_cache.paths import CachePaths
+from orchestration.model_cache.paths import CachePaths
 
 
 class _FakeHTTP:
@@ -666,7 +666,7 @@ async def test_load_hf_token_uses_db_token_when_present(monkeypatch):
         return db_config
 
     # Patch out the DB session and config_manager to avoid a real DB
-    import services.orchestration.model_cache.downloader as _mod
+    import orchestration.model_cache.downloader as _mod
 
     class _FakeDB:
         async def __aenter__(self):
@@ -688,13 +688,13 @@ async def test_load_hf_token_uses_db_token_when_present(monkeypatch):
     import sys
     import types
 
-    fake_db_mod = types.ModuleType("services.api_gateway.db.database")
+    fake_db_mod = types.ModuleType("api_gateway.db.database")
     fake_db_mod.AsyncSessionLocal = _FakeDB
-    monkeypatch.setitem(sys.modules, "services.api_gateway.db.database", fake_db_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.db.database", fake_db_mod)
 
-    fake_cm_mod = types.ModuleType("services.api_gateway.management.config_manager")
+    fake_cm_mod = types.ModuleType("api_gateway.management.config_manager")
     fake_cm_mod.config_manager = _FakeCM()
-    monkeypatch.setitem(sys.modules, "services.api_gateway.management.config_manager", fake_cm_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.management.config_manager", fake_cm_mod)
 
     dm = DownloadManager(repo=FakeRepo(), paths=None, settings=_FakeSettings(hf_token="hf_env_token"))
     tok = await dm._load_hf_token()
@@ -719,13 +719,13 @@ async def test_load_hf_token_falls_back_to_env_when_db_empty(monkeypatch):
         async def load_config(self, db):
             return db_config
 
-    fake_db_mod = types.ModuleType("services.api_gateway.db.database")
+    fake_db_mod = types.ModuleType("api_gateway.db.database")
     fake_db_mod.AsyncSessionLocal = _FakeDB
-    monkeypatch.setitem(sys.modules, "services.api_gateway.db.database", fake_db_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.db.database", fake_db_mod)
 
-    fake_cm_mod = types.ModuleType("services.api_gateway.management.config_manager")
+    fake_cm_mod = types.ModuleType("api_gateway.management.config_manager")
     fake_cm_mod.config_manager = _FakeCM()
-    monkeypatch.setitem(sys.modules, "services.api_gateway.management.config_manager", fake_cm_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.management.config_manager", fake_cm_mod)
 
     dm = DownloadManager(repo=FakeRepo(), paths=None, settings=_FakeSettings(hf_token="hf_from_env"))
     tok = await dm._load_hf_token()
@@ -748,13 +748,13 @@ async def test_load_hf_token_falls_back_to_env_when_db_raises(monkeypatch):
         async def __aexit__(self, *a):
             return False
 
-    fake_db_mod = types.ModuleType("services.api_gateway.db.database")
+    fake_db_mod = types.ModuleType("api_gateway.db.database")
     fake_db_mod.AsyncSessionLocal = _FakeDB
-    monkeypatch.setitem(sys.modules, "services.api_gateway.db.database", fake_db_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.db.database", fake_db_mod)
 
-    fake_cm_mod = types.ModuleType("services.api_gateway.management.config_manager")
+    fake_cm_mod = types.ModuleType("api_gateway.management.config_manager")
     fake_cm_mod.config_manager = _FakeCMError()
-    monkeypatch.setitem(sys.modules, "services.api_gateway.management.config_manager", fake_cm_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.management.config_manager", fake_cm_mod)
 
     dm = DownloadManager(repo=FakeRepo(), paths=None, settings=_FakeSettings(hf_token="hf_fallback"))
     tok = await dm._load_hf_token()
@@ -776,13 +776,13 @@ async def test_load_hf_token_returns_empty_when_no_settings_and_db_empty(monkeyp
         async def load_config(self, db):
             return {}
 
-    fake_db_mod = types.ModuleType("services.api_gateway.db.database")
+    fake_db_mod = types.ModuleType("api_gateway.db.database")
     fake_db_mod.AsyncSessionLocal = _FakeDB
-    monkeypatch.setitem(sys.modules, "services.api_gateway.db.database", fake_db_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.db.database", fake_db_mod)
 
-    fake_cm_mod = types.ModuleType("services.api_gateway.management.config_manager")
+    fake_cm_mod = types.ModuleType("api_gateway.management.config_manager")
     fake_cm_mod.config_manager = _FakeCM()
-    monkeypatch.setitem(sys.modules, "services.api_gateway.management.config_manager", fake_cm_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.management.config_manager", fake_cm_mod)
 
     dm = DownloadManager(repo=FakeRepo(), paths=None, settings=None)
     tok = await dm._load_hf_token()
@@ -845,13 +845,13 @@ async def test_prewarm_hf_resolves_token_once_per_prewarm(monkeypatch):
         async def load_config(self, db):
             return db_config
 
-    fake_db_mod = types.ModuleType("services.api_gateway.db.database")
+    fake_db_mod = types.ModuleType("api_gateway.db.database")
     fake_db_mod.AsyncSessionLocal = _FakeDB
-    monkeypatch.setitem(sys.modules, "services.api_gateway.db.database", fake_db_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.db.database", fake_db_mod)
 
-    fake_cm_mod = types.ModuleType("services.api_gateway.management.config_manager")
+    fake_cm_mod = types.ModuleType("api_gateway.management.config_manager")
     fake_cm_mod.config_manager = _FakeCM()
-    monkeypatch.setitem(sys.modules, "services.api_gateway.management.config_manager", fake_cm_mod)
+    monkeypatch.setitem(sys.modules, "api_gateway.management.config_manager", fake_cm_mod)
 
     repo = FakeRepo()
     files = [{"path": "weights.bin", "size": 10}]

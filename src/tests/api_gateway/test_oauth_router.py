@@ -20,7 +20,7 @@ def _build_app(monkeypatch, *, auth_provider="external", base="https://auth.exam
                redirect_uri="https://app.example.test/auth/callback",
                client_id="inferiallm-dashboard") -> FastAPI:
     """Wire the oauth_router into a clean FastAPI app with patched settings."""
-    from services.api_gateway.config import settings
+    from api_gateway.config import settings
 
     monkeypatch.setattr(settings, "auth_provider", auth_provider, raising=False)
     monkeypatch.setattr(settings, "external_auth_url", base, raising=False)
@@ -30,7 +30,7 @@ def _build_app(monkeypatch, *, auth_provider="external", base="https://auth.exam
 
     # Reset the module-level oauth_client singleton so a freshly imported
     # settings is picked up.
-    from services.api_gateway.rbac import oauth_router as r
+    from api_gateway.rbac import oauth_router as r
     r._oauth_client = None
 
     app = FastAPI()
@@ -111,7 +111,7 @@ async def test_start_pkce_challenge_matches_verifier(client):
 @pytest.mark.asyncio
 async def test_callback_happy_path(monkeypatch):
     app = _build_app(monkeypatch)
-    from services.api_gateway.rbac import oauth_router as r
+    from api_gateway.rbac import oauth_router as r
     fake_client = AsyncMock()
     fake_client.exchange_code = AsyncMock(
         return_value={"access_token": "atk", "refresh_token": "rtk",
@@ -187,7 +187,7 @@ async def test_callback_missing_verifier_cookie(monkeypatch):
 @pytest.mark.asyncio
 async def test_callback_exchange_returns_none_502(monkeypatch):
     app = _build_app(monkeypatch)
-    from services.api_gateway.rbac import oauth_router as r
+    from api_gateway.rbac import oauth_router as r
     fake_client = AsyncMock()
     fake_client.exchange_code = AsyncMock(return_value=None)
     monkeypatch.setattr(r, "_get_oauth_client", lambda: fake_client)
@@ -207,8 +207,8 @@ async def test_callback_exchange_returns_none_502(monkeypatch):
 @pytest.mark.asyncio
 async def test_callback_exchange_raises_502(monkeypatch):
     app = _build_app(monkeypatch)
-    from services.api_gateway.rbac import oauth_router as r
-    from services.api_gateway.rbac.oauth_client import OAuthClientError
+    from api_gateway.rbac import oauth_router as r
+    from api_gateway.rbac.oauth_client import OAuthClientError
     fake_client = AsyncMock()
     fake_client.exchange_code = AsyncMock(side_effect=OAuthClientError("boom"))
     monkeypatch.setattr(r, "_get_oauth_client", lambda: fake_client)
@@ -230,7 +230,7 @@ async def test_callback_code_too_long_rejected_before_network(monkeypatch):
     """A 'code' query param longer than 256 chars must be rejected with 400
     before any HTTP call is attempted."""
     app = _build_app(monkeypatch)
-    from services.api_gateway.rbac import oauth_router as r
+    from api_gateway.rbac import oauth_router as r
     fake_client = AsyncMock()
     fake_client.exchange_code = AsyncMock()
     monkeypatch.setattr(r, "_get_oauth_client", lambda: fake_client)
@@ -323,11 +323,11 @@ async def test_start_redirects_to_configured_authorize_url_with_port(monkeypatch
 @pytest.mark.asyncio
 async def test_get_oauth_client_singleton_returns_same_instance(monkeypatch):
     """Lazily-built singleton must reuse the same client across calls."""
-    monkeypatch.setattr("services.api_gateway.config.settings.external_auth_url",
+    monkeypatch.setattr("api_gateway.config.settings.external_auth_url",
                         "https://auth.example.test", raising=False)
-    monkeypatch.setattr("services.api_gateway.config.settings.oauth_client_id",
+    monkeypatch.setattr("api_gateway.config.settings.oauth_client_id",
                         "inferiallm-dashboard", raising=False)
-    from services.api_gateway.rbac import oauth_router as r
+    from api_gateway.rbac import oauth_router as r
     r._oauth_client = None
     a = r._get_oauth_client()
     b = r._get_oauth_client()

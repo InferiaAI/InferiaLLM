@@ -13,7 +13,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from services.orchestration.api import workers as workers_api
+from orchestration.api import workers as workers_api
 
 pytestmark = pytest.mark.asyncio
 
@@ -77,10 +77,10 @@ async def test_register_worker_does_NOT_fire_linker_hook(app_and_deps):
     app, _, inventory, pool_id, node_id = app_and_deps
 
     with patch(
-        "services.orchestration.api.workers._consume_bootstrap_token",
+        "orchestration.api.workers._consume_bootstrap_token",
         new_callable=AsyncMock,
     ) as mock_consume, patch(
-        "services.orchestration.model_deployment."
+        "orchestration.model_deployment."
         "deployment_linker.DeploymentLinker.on_worker_ready",
         new_callable=AsyncMock,
     ) as mock_ready:
@@ -116,7 +116,7 @@ async def test_channel_ready_helper_fires_linker_with_node_uuid():
     ws.app.state.event_bus = None
 
     with patch(
-        "services.orchestration.model_deployment."
+        "orchestration.model_deployment."
         "deployment_linker.DeploymentLinker.on_worker_ready",
         new_callable=AsyncMock,
     ) as mock_ready:

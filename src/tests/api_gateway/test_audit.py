@@ -27,10 +27,10 @@ async def test_audit_flow_admin(client, admin_token):
 
     with (
         patch(
-            "services.api_gateway.audit.router.settings"
+            "api_gateway.audit.router.settings"
         ) as mock_settings,
         patch(
-            "services.api_gateway.audit.router.audit_service"
+            "api_gateway.audit.router.audit_service"
         ) as mock_service,
     ):
         mock_settings.internal_api_key = VALID_INTERNAL_KEY

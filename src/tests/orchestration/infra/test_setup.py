@@ -2,7 +2,7 @@ import uuid
 import json
 import grpc
 
-from services.orchestration.v1 import scheduler_pb2_grpc
+from orchestration.v1 import scheduler_pb2_grpc
 
 
 def uid():

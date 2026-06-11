@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from services.orchestration.model_deployment.controller import (
+from orchestration.model_deployment.controller import (
     ModelDeploymentController,
 )
 

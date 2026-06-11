@@ -11,8 +11,8 @@ Run with --noconftest:
 import pytest
 from fastapi.routing import APIRoute
 
-import services.api_gateway.rbac.router as rbac_router
-from services.api_gateway.rbac.local_identity_guard import require_local_identity
+import api_gateway.rbac.router as rbac_router
+from api_gateway.rbac.local_identity_guard import require_local_identity
 
 
 def _guarded_routes():
@@ -111,7 +111,7 @@ def test_switch_org_blocked_in_external_mode(monkeypatch):
     """In inferiaauth mode POST /switch-org returns 409."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import services.api_gateway.rbac.local_identity_guard as guard
+    import api_gateway.rbac.local_identity_guard as guard
 
     monkeypatch.setattr(guard.settings, "auth_provider", "inferiaauth", raising=False)
 
@@ -130,7 +130,7 @@ def test_totp_setup_blocked_in_external_mode(monkeypatch):
     """In oidc mode POST /totp/setup returns 409."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import services.api_gateway.rbac.local_identity_guard as guard
+    import api_gateway.rbac.local_identity_guard as guard
 
     monkeypatch.setattr(guard.settings, "auth_provider", "oidc", raising=False)
 
@@ -146,7 +146,7 @@ def test_totp_verify_blocked_in_external_mode(monkeypatch):
     """In inferiaauth mode POST /totp/verify returns 409."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import services.api_gateway.rbac.local_identity_guard as guard
+    import api_gateway.rbac.local_identity_guard as guard
 
     monkeypatch.setattr(guard.settings, "auth_provider", "inferiaauth", raising=False)
 
@@ -162,7 +162,7 @@ def test_totp_disable_blocked_in_external_mode(monkeypatch):
     """In inferiaauth mode POST /totp/disable returns 409."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import services.api_gateway.rbac.local_identity_guard as guard
+    import api_gateway.rbac.local_identity_guard as guard
 
     monkeypatch.setattr(guard.settings, "auth_provider", "inferiaauth", raising=False)
 
@@ -178,7 +178,7 @@ def test_accept_invite_blocked_in_external_mode(monkeypatch):
     """In inferiaauth mode POST /accept-invite returns 409."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import services.api_gateway.rbac.local_identity_guard as guard
+    import api_gateway.rbac.local_identity_guard as guard
 
     monkeypatch.setattr(guard.settings, "auth_provider", "inferiaauth", raising=False)
 

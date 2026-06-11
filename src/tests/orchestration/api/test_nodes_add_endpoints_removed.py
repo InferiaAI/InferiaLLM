@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from services.orchestration.api import nodes as nodes_api
+from orchestration.api import nodes as nodes_api
 
 pytestmark = pytest.mark.asyncio
 

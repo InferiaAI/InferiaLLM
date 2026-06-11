@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from services.orchestration.placement_engine.scoring import score_node
+from orchestration.placement_engine.scoring import score_node
 
 
 def make_node(**overrides):

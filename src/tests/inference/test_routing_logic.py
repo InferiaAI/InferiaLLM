@@ -24,7 +24,7 @@ class TestBuildFullUrl:
     """URL construction logic."""
 
     def test_no_duplicate_v1_prefix(self):
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         url = GatewayService._build_full_url(
             "http://host:8000/v1", "/v1/chat/completions"
@@ -33,7 +33,7 @@ class TestBuildFullUrl:
         assert "v1/v1" not in url
 
     def test_no_v1_on_base_appends_correctly(self):
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         url = GatewayService._build_full_url(
             "http://host:8000", "/v1/chat/completions"
@@ -41,7 +41,7 @@ class TestBuildFullUrl:
         assert url == "http://host:8000/v1/chat/completions"
 
     def test_trailing_slash_on_base_handled(self):
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         url = GatewayService._build_full_url(
             "http://host:8000/", "/v1/chat/completions"
@@ -55,7 +55,7 @@ class TestCallUpstreamRouting:
     @pytest.mark.asyncio
     async def test_successful_response_returned(self):
         """Successful upstream call returns parsed JSON."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
 
         response_data = {"choices": [{"message": {"content": "Hello!"}}]}
         mock_resp = MagicMock()
@@ -68,12 +68,12 @@ class TestCallUpstreamRouting:
         mock_client.post = AsyncMock(return_value=mock_resp)
 
         with patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ), patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter:
             mock_hc.get_client.return_value = mock_client
             mock_limiter.limit = noop_limit
@@ -86,7 +86,7 @@ class TestCallUpstreamRouting:
     @pytest.mark.asyncio
     async def test_provider_500_raises_http_exception(self):
         """Provider 500 raises HTTPException."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
         from fastapi import HTTPException
 
         mock_resp = MagicMock()
@@ -100,12 +100,12 @@ class TestCallUpstreamRouting:
         mock_client.post = AsyncMock(return_value=mock_resp)
 
         with patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ), patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter:
             mock_hc.get_client.return_value = mock_client
             mock_limiter.limit = noop_limit
@@ -119,7 +119,7 @@ class TestCallUpstreamRouting:
     @pytest.mark.asyncio
     async def test_connection_refused_returns_502(self):
         """Provider connection refused returns 502."""
-        from services.inference.core.service import GatewayService
+        from inference.core.service import GatewayService
         from fastapi import HTTPException
 
         mock_client = AsyncMock()
@@ -128,12 +128,12 @@ class TestCallUpstreamRouting:
         )
 
         with patch(
-            "services.inference.core.service.get_adapter",
+            "inference.core.service.get_adapter",
             return_value=make_mock_adapter(),
         ), patch(
-            "services.inference.core.service.http_client"
+            "inference.core.service.http_client"
         ) as mock_hc, patch(
-            "services.inference.core.service.upstream_concurrency_limiter"
+            "inference.core.service.upstream_concurrency_limiter"
         ) as mock_limiter:
             mock_hc.get_client.return_value = mock_client
             mock_limiter.limit = noop_limit

@@ -5,7 +5,7 @@ import functools
 import datetime as dt
 import os
 from adapters.base.adapter import ProviderAdapter
-from services.orchestration.v1 import (
+from orchestration.v1 import (
     compute_node_pb2_grpc,
     compute_node_pb2,
 )

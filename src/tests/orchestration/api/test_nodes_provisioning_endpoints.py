@@ -28,7 +28,7 @@ def _patched_client_init(self, *args, **kwargs):
 _httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 from fastapi.testclient import TestClient  # noqa: E402
 
-from services.orchestration.api import nodes as nodes_api  # noqa: E402
+from orchestration.api import nodes as nodes_api  # noqa: E402
 
 
 def _user_ctx_header():

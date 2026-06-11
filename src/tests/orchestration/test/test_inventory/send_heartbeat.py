@@ -1,7 +1,7 @@
 import asyncio
 import grpc
 
-from services.orchestration.v1 import (
+from orchestration.v1 import (
     inventory_manager_pb2,
     inventory_manager_pb2_grpc,
 )

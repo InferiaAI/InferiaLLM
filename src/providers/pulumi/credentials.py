@@ -10,8 +10,8 @@ import os
 import tempfile
 from dataclasses import dataclass
 
-from services.api_gateway.config import ProvidersConfig
-from services.api_gateway.management.configuration import _is_masked
+from api_gateway.config import ProvidersConfig
+from api_gateway.management.configuration import _is_masked
 
 
 @dataclass(frozen=True)
@@ -128,7 +128,7 @@ def verify_credentials(creds: "AWSCredentials") -> dict:
     from botocore.exceptions import (  # local import: optional dep
         ClientError, EndpointConnectionError,
     )
-    from services.orchestration.provisioning_state_machine.errors import (
+    from orchestration.provisioning_state_machine.errors import (
         InvalidCredentialsError, NetworkError,
     )
 

@@ -41,7 +41,7 @@ def run_api_gateway_service(queue=None):
     try:
         if queue:
             queue.put(ServiceStarting("API Gateway Service"))
-        from services.api_gateway.main import start_api
+        from api_gateway.main import start_api
 
         if queue:
             queue.put(
@@ -61,7 +61,7 @@ def run_inference_service(queue=None):
     try:
         if queue:
             queue.put(ServiceStarting("Inference Service"))
-        from services.inference.main import start_api
+        from inference.main import start_api
 
         if queue:
             queue.put(
@@ -81,7 +81,7 @@ def run_orchestration_service(queue=None):
     try:
         if queue:
             queue.put(ServiceStarting("Orchestration Service"))
-        from services.orchestration.main import start_api
+        from orchestration.main import start_api
 
         if queue:
             queue.put(
@@ -122,7 +122,7 @@ def run_worker(queue=None):
             return
 
         import asyncio
-        from services.orchestration.model_deployment.worker_main import (
+        from orchestration.model_deployment.worker_main import (
             main,
         )
 
@@ -148,7 +148,7 @@ def run_nosana_sidecar(queue=None, env: str = "production"):
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sidecar_dir = os.path.join(
-        base_dir, "services/orchestration/services/depin-sidecar"
+        base_dir, "orchestration/services/depin-sidecar"
     )
 
     print(f"[DePIN] Starting Sidecar from {sidecar_dir}")
@@ -403,7 +403,7 @@ def build_sidecar():
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sidecar_dir = os.path.join(
-        base_dir, "services/orchestration/services/depin-sidecar"
+        base_dir, "orchestration/services/depin-sidecar"
     )
 
     print(f"[inferia:init] Building Sidecar at {sidecar_dir}")

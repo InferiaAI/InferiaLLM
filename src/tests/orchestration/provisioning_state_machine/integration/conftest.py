@@ -73,11 +73,11 @@ def _build_app(db_pool, *, reconciler) -> FastAPI:
     X-Internal-API-Key, and require_permission is short-circuited to
     always allow so the test doesn't have to mint a JWT.
     """
-    from services.orchestration.api import nodes as nodes_api
-    from services.orchestration.repositories.inventory_repo import (
+    from orchestration.api import nodes as nodes_api
+    from orchestration.repositories.inventory_repo import (
         InventoryRepository,
     )
-    from services.orchestration.repositories.pool_repo import (
+    from orchestration.repositories.pool_repo import (
         ComputePoolRepository,
     )
 
@@ -89,10 +89,10 @@ def _build_app(db_pool, *, reconciler) -> FastAPI:
     # log, used for the phase-summary view and GET /provisioning-logs).
     # Production server.py wires both side-by-side; the integration test
     # mirrors that wiring so we exercise the same code paths.
-    from services.orchestration.repositories.node_provisioning_repo import (
+    from orchestration.repositories.node_provisioning_repo import (
         NodeProvisioningRepo,
     )
-    from services.orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.provisioning_state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
     provisioning_repo = ProvisioningJobRepository(db_pool)
@@ -137,31 +137,31 @@ async def app_with_real_db(test_database_url) -> AsyncIterator[tuple]:
     via ``await app.state.reconciler.tick_once()`` for deterministic
     state-machine progression.
     """
-    from services.orchestration.provisioning_state_machine.events import (
+    from orchestration.provisioning_state_machine.events import (
         emit_event as _emit_event_to_db,
     )
-    from services.orchestration.provisioning_state_machine.jobs.model import (
+    from orchestration.provisioning_state_machine.jobs.model import (
         Phase,
     )
-    from services.orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.provisioning_state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
-    from services.orchestration.provisioning_state_machine.phases.bootstrap import (
+    from orchestration.provisioning_state_machine.phases.bootstrap import (
         BootstrapHandler,
     )
-    from services.orchestration.provisioning_state_machine.phases.cancel import (
+    from orchestration.provisioning_state_machine.phases.cancel import (
         CancelHandler,
     )
-    from services.orchestration.provisioning_state_machine.phases.preflight import (
+    from orchestration.provisioning_state_machine.phases.preflight import (
         PreflightHandler,
     )
-    from services.orchestration.provisioning_state_machine.phases.pulumi_up import (
+    from orchestration.provisioning_state_machine.phases.pulumi_up import (
         PulumiUpHandler,
     )
-    from services.orchestration.provisioning_state_machine.reconciler.loop import (
+    from orchestration.provisioning_state_machine.reconciler.loop import (
         ProvisioningReconciler,
     )
-    from services.orchestration.repositories.inventory_repo import (
+    from orchestration.repositories.inventory_repo import (
         InventoryRepository,
     )
 

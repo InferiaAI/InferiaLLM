@@ -4,7 +4,7 @@ Reads and writes the same `system_settings` JSON blob that the dashboard uses
 (key = "providers_config").  All operations are async, backed by asyncpg.
 
 Persistence note: the dashboard writes/reads via SQLAlchemy with the
-`EncryptedJSON` type decorator at `services.api_gateway.db.security` —
+`EncryptedJSON` type decorator at `api_gateway.db.security` —
 the on-disk value is `{"data": "<Fernet-encrypted JSON>"}`. This CLI mirrors
 that contract so the dashboard and CLI see the same view of the data.
 
@@ -35,7 +35,7 @@ def _fernet():
     """Return a Fernet instance built from SECRET_ENCRYPTION_KEY, or None.
 
     Matches the dashboard's encryption layer in
-    `services.api_gateway.db.security.EncryptionService`. When no key
+    `api_gateway.db.security.EncryptionService`. When no key
     is configured (dev mode) the dashboard stores plain JSON; we mirror that.
     """
     key = os.environ.get("SECRET_ENCRYPTION_KEY")

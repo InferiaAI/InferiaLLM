@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
-from services.orchestration.model_deployment.deployment_linker import (
+from orchestration.model_deployment.deployment_linker import (
     _spec_from_pending,
 )
 

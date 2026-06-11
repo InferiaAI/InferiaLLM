@@ -2,7 +2,7 @@
 
 import pytest
 
-from services.inference.core.stream_processor import StreamProcessor
+from inference.core.stream_processor import StreamProcessor
 
 
 class TestStreamProcessor:

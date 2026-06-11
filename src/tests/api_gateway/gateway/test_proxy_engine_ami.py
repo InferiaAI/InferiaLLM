@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import inspect
 
-from services.api_gateway.gateway import proxy_routes
+from api_gateway.gateway import proxy_routes
 
 
 def test_engine_ami_proxy_route_registered():

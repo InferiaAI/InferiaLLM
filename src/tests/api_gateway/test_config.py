@@ -10,7 +10,7 @@ import types
 from typing import Iterator
 import pytest
 
-from services.api_gateway.config import Settings, httpx_verify
+from api_gateway.config import Settings, httpx_verify
 
 
 def _clean_env(monkeypatch, **overrides) -> None:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import inspect
 
-from services.orchestration.repositories import placement_repo
+from orchestration.repositories import placement_repo
 
 
 def _source() -> str:

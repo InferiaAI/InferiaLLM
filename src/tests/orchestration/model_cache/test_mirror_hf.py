@@ -5,11 +5,11 @@ import pytest
 import httpx
 from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport
-from services.orchestration.model_cache import (
+from orchestration.model_cache import (
     deps,
     mirror_hf,
 )
-from services.orchestration.model_cache import paths as paths_mod
+from orchestration.model_cache import paths as paths_mod
 
 pytestmark = pytest.mark.asyncio
 
@@ -153,9 +153,9 @@ async def test_traversal_filename_rejected(tmp_path):
 
 
 async def test_resolve_awaits_inflight_then_serves_from_disk(tmp_path):
-    from services.orchestration.model_cache import deps
-    from services.orchestration.model_cache.paths import CachePaths
-    from services.orchestration.model_cache import mirror_hf
+    from orchestration.model_cache import deps
+    from orchestration.model_cache.paths import CachePaths
+    from orchestration.model_cache import mirror_hf
     from fastapi import FastAPI
     from httpx import AsyncClient, ASGITransport
 
@@ -185,7 +185,7 @@ async def test_resolve_awaits_inflight_then_serves_from_disk(tmp_path):
 async def test_head_resolve_returns_200_with_metadata_headers(monkeypatch):
     """huggingface_hub HEADs the resolve URL for metadata before download.
     The mirror must answer 200 (not 405) with etag/x-repo-commit/content-length."""
-    from services.orchestration.model_cache import deps, mirror_hf
+    from orchestration.model_cache import deps, mirror_hf
     from fastapi import FastAPI
     from httpx import AsyncClient, ASGITransport
 

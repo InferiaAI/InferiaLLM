@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from services.orchestration.worker_controller.auth import (
+from orchestration.worker_controller.auth import (
     BootstrapClaim,
     BootstrapClaims,
     InvalidBootstrapToken,

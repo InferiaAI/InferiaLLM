@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.orchestration.provisioning_state_machine.events import emit_event
-from services.orchestration.provisioning_state_machine.jobs.model import Phase
+from orchestration.provisioning_state_machine.events import emit_event
+from orchestration.provisioning_state_machine.jobs.model import Phase
 
 
 def _make_db_with_conn(conn):

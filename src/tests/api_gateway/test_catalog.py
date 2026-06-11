@@ -1,4 +1,4 @@
-from services.api_gateway.rbac.catalog import CATALOG, to_declare_request
+from api_gateway.rbac.catalog import CATALOG, to_declare_request
 
 
 def test_every_role_permission_is_declared():

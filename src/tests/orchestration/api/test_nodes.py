@@ -28,13 +28,13 @@ def _patched_client_init(self, *args, **kwargs):
 _httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 from fastapi.testclient import TestClient  # noqa: E402
 
-from services.orchestration.api import nodes as nodes_api
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.api import nodes as nodes_api
+from orchestration.repositories.inventory_repo import (
     NodeNotFoundError,
     NodeTerminatedError,
     LabelConflictError,
 )
-from services.orchestration.provisioning_state_machine.jobs.model import Phase
+from orchestration.provisioning_state_machine.jobs.model import Phase
 
 
 ORG = "69ff5234-a4ea-4c88-adf0-d5702508f7ef"
@@ -710,7 +710,7 @@ import httpx
 from httpx import ASGITransport
 from unittest.mock import AsyncMock, patch
 
-from services.orchestration.adapter_engine import aws_deprovision
+from orchestration.adapter_engine import aws_deprovision
 
 
 class FakeDbPool:
@@ -869,7 +869,7 @@ def _open_require_permission(perm: str):
 
 def test_get_provisioning_includes_error_and_aws_metadata():
     """Response gains error, aws_metadata, attempt_count fields."""
-    from services.orchestration.provisioning_state_machine.jobs.model import (
+    from orchestration.provisioning_state_machine.jobs.model import (
         ErrorClass, Phase,
     )
 

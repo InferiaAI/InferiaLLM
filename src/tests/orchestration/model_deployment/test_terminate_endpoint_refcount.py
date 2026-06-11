@@ -24,10 +24,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from services.orchestration.model_deployment import (
+from orchestration.model_deployment import (
     deployment_server,
 )
-from services.orchestration.worker_controller.controller import (
+from orchestration.worker_controller.controller import (
     WorkerController,
 )
 
@@ -271,11 +271,11 @@ async def test_terminate_last_deploy_triggers_destroy(app_and_pool):
     )
 
     with patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.force_cancel",
         new_callable=AsyncMock, return_value=True,
     ) as mock_force_cancel, patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.enqueue",
         new_callable=AsyncMock,
     ) as mock_enqueue:
@@ -334,7 +334,7 @@ async def test_terminate_with_other_deploys_does_not_destroy(app_and_pool):
     )
 
     with patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.enqueue",
         new_callable=AsyncMock,
     ) as mock_enqueue:
@@ -389,7 +389,7 @@ async def test_concurrent_double_terminate_releases_gpu_once(app_and_pool):
     )
 
     with patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.enqueue",
         new_callable=AsyncMock,
     ):
@@ -420,7 +420,7 @@ async def test_terminate_already_terminal_is_noop(app_and_pool):
     deploy_id = await _seed_deploy(pool, pool_id, state="FAILED", gpu_per_replica=1)
 
     with patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.enqueue",
         new_callable=AsyncMock,
     ) as mock_enqueue:
@@ -522,7 +522,7 @@ async def test_terminate_destroys_node_even_when_pool_soft_deleted(app_and_pool)
         )
 
     with patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.force_cancel",
         new_callable=AsyncMock, return_value=True,
     ) as mock_force_cancel:
@@ -548,7 +548,7 @@ async def test_terminate_failed_deploy_destroys_orphan_node(app_and_pool):
         pool, pool_id, state="FAILED", gpu_per_replica=1, target_node_id=node_id,
     )
     with patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.force_cancel",
         new_callable=AsyncMock, return_value=True,
     ) as mock_force_cancel:
@@ -576,7 +576,7 @@ async def test_terminate_failed_deploy_keeps_node_with_other_live_deploy(app_and
     await _seed_deploy(pool, pool_id, state="RUNNING", gpu_per_replica=1,
                        target_node_id=node_id, org_id=org)
     with patch(
-        "services.orchestration.provisioning_state_machine.jobs.repository."
+        "orchestration.provisioning_state_machine.jobs.repository."
         "ProvisioningJobRepository.force_cancel",
         new_callable=AsyncMock, return_value=True,
     ) as mock_force_cancel:

@@ -6,7 +6,7 @@ Run with --noconftest to avoid the jwt import conflict in conftest.py:
 import pytest
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
-import services.api_gateway.rbac.local_identity_guard as guard
+import api_gateway.rbac.local_identity_guard as guard
 
 
 def _app():

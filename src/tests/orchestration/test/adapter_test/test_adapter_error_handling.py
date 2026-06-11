@@ -99,7 +99,7 @@ class TestNosanaAdapterErrors:
             "nosana_sidecar_url": "http://localhost:3000",
         })()
 
-        with patch("services.orchestration.config.settings", mock_settings):
+        with patch("orchestration.config.settings", mock_settings):
             from providers.nosana.nosana_adapter import (
                 NosanaAdapter,
             )
@@ -129,7 +129,7 @@ class TestNosanaAdapterErrors:
             "nosana_sidecar_url": "http://localhost:3000",
         })()
 
-        with patch("services.orchestration.config.settings", mock_settings):
+        with patch("orchestration.config.settings", mock_settings):
             from providers.nosana.nosana_adapter import (
                 NosanaAdapter,
             )

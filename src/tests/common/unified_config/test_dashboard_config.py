@@ -1,7 +1,7 @@
 """Tests for write-dashboard-config CLI subcommand (issue #243).
 
 Dashboard URLs are env-only after the yaml schema refactor:
-  - services.api_gateway.dashboard is removed from the yaml schema.
+  - api_gateway.dashboard is removed from the yaml schema.
   - write-dashboard-config reads all four URLs purely from env.
   - The --config flag is unused for this subcommand; tests verify env-only behaviour.
 

@@ -4,10 +4,10 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from services.orchestration.config import Settings
+from orchestration.config import Settings
 
 # Resolve the config source file relative to this test file
-_CONFIG_FILE = Path(__import__("services.orchestration", fromlist=["_"]).__file__).parent / "config.py"
+_CONFIG_FILE = Path(__import__("orchestration", fromlist=["_"]).__file__).parent / "config.py"
 
 
 def _make_settings(**overrides):

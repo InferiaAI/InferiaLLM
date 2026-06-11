@@ -1,7 +1,7 @@
 import asyncio
 from grpc.experimental import aio
-from services.orchestration.v1 import compute_pool_pb2, compute_pool_pb2_grpc
-from services.orchestration.v1 import compute_node_pb2, compute_node_pb2_grpc
+from orchestration.v1 import compute_pool_pb2, compute_pool_pb2_grpc
+from orchestration.v1 import compute_node_pb2, compute_node_pb2_grpc
 
 
 async def test():

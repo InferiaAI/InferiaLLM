@@ -59,19 +59,19 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
         )
 
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.verify_credentials", return_value={"Account": "123"},
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.resolve_ami", return_value="ami-abc",
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.verify_subnet_exists", return_value=None,
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "preflight.verify_security_group_exists", return_value=None,
     ), patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "pulumi_up.run_pulumi_up_sync",
         side_effect=_pulumi_first_hangs_then_succeeds,
     ):

@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
-from services.orchestration.api import admin_aws_discovery as mod
+from orchestration.api import admin_aws_discovery as mod
 
 
 def _app():

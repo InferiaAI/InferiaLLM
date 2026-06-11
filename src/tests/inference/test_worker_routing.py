@@ -9,7 +9,7 @@ own api_key and get no such header.
 """
 from __future__ import annotations
 
-from services.inference.core.worker_routing import (
+from inference.core.worker_routing import (
     provider_auth,
     upstream_model,
 )

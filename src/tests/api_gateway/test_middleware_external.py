@@ -24,8 +24,8 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-from services.api_gateway.db.models import User as DBUser
-from services.api_gateway.models import UserContext
+from api_gateway.db.models import User as DBUser
+from api_gateway.models import UserContext
 
 
 def _jwk_from_public(priv: Ed25519PrivateKey, kid: str = "test-key") -> dict:
@@ -93,8 +93,8 @@ def _make_user(email="ext@example.test", id_="user-1") -> DBUser:
 @pytest.fixture(autouse=True)
 def patch_settings(httpserver, monkeypatch):
     """Wire settings to a fake JWKS endpoint + reset module-level singleton."""
-    from services.api_gateway.config import settings
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.config import settings
+    from api_gateway.rbac import middleware as mw
 
     base = httpserver.url_for("")
     monkeypatch.setattr(settings, "auth_provider", "external", raising=False)
@@ -112,7 +112,7 @@ def patch_settings(httpserver, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_valid_token_uses_claim_roles_not_db(httpserver, keypair):
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -123,7 +123,7 @@ async def test_valid_token_uses_claim_roles_not_db(httpserver, keypair):
     # would DIFFER from the claim if the middleware read them from DB.
     fake_user = _make_user()
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         AsyncMock(return_value=(fake_user, "org-local", ["member"])),
     ):
         db = AsyncMock()
@@ -149,7 +149,7 @@ async def test_catalog_org_read_grants_local_organization_view(httpserver, keypa
     """The dashboard gates /dashboard on the LOCAL 'organization:view' — a token
     carrying only catalog keys (inferiallm:org:read) must expand to include it,
     or every SaaS user is locked out of the dashboard."""
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -161,7 +161,7 @@ async def test_catalog_org_read_grants_local_organization_view(httpserver, keypa
 
     fake_user = _make_user()
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         AsyncMock(return_value=(fake_user, "org-local", ["member"])),
     ):
         db = AsyncMock()
@@ -178,7 +178,7 @@ async def test_catalog_org_read_grants_local_organization_view(httpserver, keypa
 async def test_external_token_provisions_shadow_org(httpserver, keypair):
     """The IdP org has no local row; resolution must call ensure_external_org
     with the org id, the shadow user's id, and the caller's bearer token."""
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -188,10 +188,10 @@ async def test_external_token_provisions_shadow_org(httpserver, keypair):
     fake_user = _make_user()
     ensure_mock = AsyncMock()
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         AsyncMock(return_value=(fake_user, "org-local", ["member"])),
     ), patch(
-        "services.api_gateway.rbac.middleware.ensure_external_org",
+        "api_gateway.rbac.middleware.ensure_external_org",
         ensure_mock,
     ):
         db = AsyncMock()
@@ -206,7 +206,7 @@ async def test_external_token_provisions_shadow_org(httpserver, keypair):
 @pytest.mark.asyncio
 async def test_expired_token_raises_401(httpserver, keypair):
     from fastapi import HTTPException
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -223,7 +223,7 @@ async def test_expired_token_raises_401(httpserver, keypair):
 @pytest.mark.asyncio
 async def test_wrong_audience_raises_401(httpserver, keypair):
     from fastapi import HTTPException
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -236,7 +236,7 @@ async def test_wrong_audience_raises_401(httpserver, keypair):
 
 @pytest.mark.asyncio
 async def test_new_email_provisions_shadow_user(httpserver, keypair):
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -245,7 +245,7 @@ async def test_new_email_provisions_shadow_user(httpserver, keypair):
     fake_user = _make_user(email="newcomer@example.test", id_="user-new")
     shadow_mock = AsyncMock(return_value=(fake_user, "org-local", ["member"]))
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         shadow_mock,
     ):
         db = AsyncMock()
@@ -262,7 +262,7 @@ async def test_new_email_provisions_shadow_user(httpserver, keypair):
 async def test_existing_user_reused_no_duplicate(httpserver, keypair):
     """Existing shadow user with the same email is reused (verified by
     asserting the same User instance flows out)."""
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -270,7 +270,7 @@ async def test_existing_user_reused_no_duplicate(httpserver, keypair):
     existing = _make_user(email="ext@example.test", id_="user-existing-id")
     shadow_mock = AsyncMock(return_value=(existing, "org-local", ["member"]))
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         shadow_mock,
     ):
         db = AsyncMock()
@@ -285,7 +285,7 @@ async def test_existing_user_reused_no_duplicate(httpserver, keypair):
 
 @pytest.mark.asyncio
 async def test_org_id_falls_back_to_org_ids_list(httpserver, keypair):
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -296,7 +296,7 @@ async def test_org_id_falls_back_to_org_ids_list(httpserver, keypair):
     token = _sign(priv, claims)
 
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         AsyncMock(return_value=(_make_user(), "org-local", ["member"])),
     ):
         db = AsyncMock()
@@ -306,7 +306,7 @@ async def test_org_id_falls_back_to_org_ids_list(httpserver, keypair):
 
 @pytest.mark.asyncio
 async def test_missing_roles_claim_defaults_to_empty(httpserver, keypair):
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -317,7 +317,7 @@ async def test_missing_roles_claim_defaults_to_empty(httpserver, keypair):
     token = _sign(priv, claims)
 
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         AsyncMock(return_value=(_make_user(), "org-local", ["member"])),
     ):
         db = AsyncMock()
@@ -329,7 +329,7 @@ async def test_missing_roles_claim_defaults_to_empty(httpserver, keypair):
 @pytest.mark.asyncio
 async def test_sub_without_colon_prefix_passed_through(httpserver, keypair):
     """Tokens with a bare sub (no 'user:' prefix) still work."""
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -337,7 +337,7 @@ async def test_sub_without_colon_prefix_passed_through(httpserver, keypair):
     token = _sign(priv, _default_claims(sub="01HX-bare"))
     shadow_mock = AsyncMock(return_value=(_make_user(), "org-local", ["member"]))
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         shadow_mock,
     ):
         db = AsyncMock()
@@ -351,7 +351,7 @@ async def test_sub_without_colon_prefix_passed_through(httpserver, keypair):
 async def test_token_with_huge_length_rejected_401(httpserver, keypair):
     """JWKSVerifier's token-length cap must surface as 401 in middleware."""
     from fastapi import HTTPException
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     _, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
@@ -365,13 +365,13 @@ async def test_token_with_huge_length_rejected_401(httpserver, keypair):
 @pytest.mark.asyncio
 async def test_verifier_singleton_reuses_jwks_cache(httpserver, keypair):
     """The middleware should not re-instantiate JWKSVerifier per request."""
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)
 
     with patch(
-        "services.api_gateway.rbac.middleware.get_or_create_shadow_user",
+        "api_gateway.rbac.middleware.get_or_create_shadow_user",
         AsyncMock(return_value=(_make_user(), "org-local", ["member"])),
     ):
         db = AsyncMock()
@@ -385,7 +385,7 @@ async def test_verifier_singleton_reuses_jwks_cache(httpserver, keypair):
 @pytest.mark.asyncio
 async def test_wrong_issuer_raises_401(httpserver, keypair):
     from fastapi import HTTPException
-    from services.api_gateway.rbac import middleware as mw
+    from api_gateway.rbac import middleware as mw
 
     priv, jwks = keypair
     httpserver.expect_request("/.well-known/jwks.json").respond_with_json(jwks)

@@ -6,7 +6,7 @@ import pytest_asyncio
 import asyncpg
 from uuid import UUID, uuid4
 
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
 
@@ -156,7 +156,7 @@ async def test_release_gpu_to_zero_with_pending_deploy_does_not_destroy(pool):
 async def test_release_gpu_underflow_logs_and_no_destroy(pool, caplog):
     import logging
     caplog.set_level(logging.ERROR,
-                      logger="services.orchestration.repositories.inventory_repo")
+                      logger="orchestration.repositories.inventory_repo")
     repo = InventoryRepository(pool)
     _, pool_id = await _seed_org_and_pool(pool)
     node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=0)

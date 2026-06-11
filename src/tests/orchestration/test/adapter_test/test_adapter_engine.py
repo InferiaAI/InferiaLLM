@@ -1,6 +1,6 @@
 import asyncio
 import grpc
-from services.orchestration.v1 import adapter_engine_pb2, adapter_engine_pb2_grpc
+from orchestration.v1 import adapter_engine_pb2, adapter_engine_pb2_grpc
 
 
 GRPC_ENDPOINT = "localhost:50051"

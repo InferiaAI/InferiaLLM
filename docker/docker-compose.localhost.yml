@@ -126,9 +126,9 @@ services:
       - sh
       - -c
       - |
-        python -m uvicorn services.api_gateway.app:app --host 0.0.0.0 --port 8000 --forwarded-allow-ips '*' &
-        python -c 'from services.inference.main import start_api; start_api()' &
-        python -c 'from services.orchestration.main import start_api; start_api()' &
+        python -m uvicorn api_gateway.app:app --host 0.0.0.0 --port 8000 --forwarded-allow-ips '*' &
+        python -c 'from inference.main import start_api; start_api()' &
+        python -c 'from orchestration.main import start_api; start_api()' &
         wait
     environment:
       SERVICE_TYPE: "core-planes"

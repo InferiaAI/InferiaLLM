@@ -11,7 +11,7 @@ import logging
 
 import pytest
 
-from services.orchestration.worker_controller.protocol import (
+from orchestration.worker_controller.protocol import (
     LogsEndBody,
     LogsLineBody,
     LogsOpenBody,
@@ -21,7 +21,7 @@ from services.orchestration.worker_controller.protocol import (
     ShellOpenBody,
     ShellOutputBody,
 )
-from services.orchestration.worker_controller.registry import (
+from orchestration.worker_controller.registry import (
     StreamHandle,
     WorkerConn,
     WorkerNotConnectedError,

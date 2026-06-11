@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.api_gateway.config import (
+from api_gateway.config import (
     HFTokenEntry,
     HuggingFaceConfig,
     ProvidersConfig,
@@ -42,23 +42,23 @@ def _patched(tokens):
     force_replace = AsyncMock()
     with (
         patch(
-            "services.api_gateway.management.configuration.settings",
+            "api_gateway.management.configuration.settings",
             MagicMock(providers=providers),
         ),
         patch(
-            "services.api_gateway.management.config_manager.config_manager.save_config",
+            "api_gateway.management.config_manager.config_manager.save_config",
             save,
         ),
         patch(
-            "services.api_gateway.management.config_manager.config_manager._force_replace_config",
+            "api_gateway.management.config_manager.config_manager._force_replace_config",
             force_replace,
         ),
         patch(
-            "services.api_gateway.management.configuration.audit_service.log_event",
+            "api_gateway.management.configuration.audit_service.log_event",
             AsyncMock(),
         ),
         patch(
-            "services.api_gateway.management.configuration._cleanup_provider_resources",
+            "api_gateway.management.configuration._cleanup_provider_resources",
             AsyncMock(),
         ),
     ):

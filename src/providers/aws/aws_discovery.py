@@ -53,7 +53,7 @@ class InstanceTypeInfo:
 
 
 async def _resolve_creds() -> Optional[dict]:
-    from services.orchestration.adapter_engine.aws_orphan_sweep import (
+    from orchestration.adapter_engine.aws_orphan_sweep import (
         resolve_sweep_aws_env, _creds_from_aws_env,
     )
     aws_env = await resolve_sweep_aws_env()

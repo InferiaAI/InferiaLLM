@@ -122,18 +122,18 @@ class TestSkyPilotAsync:
 
         with patch.dict("os.environ", {"INFERIA_ENV": "container"}), \
              patch(
-                 "services.orchestration.provisioning.skypilot.asyncio.to_thread",
+                 "orchestration.provisioning.skypilot.asyncio.to_thread",
                  new_callable=AsyncMock,
              ) as mock_to_thread, \
              patch(
-                 "services.orchestration.provisioning.skypilot.sky",
+                 "orchestration.provisioning.skypilot.sky",
                  create=True,
              ) as mock_sky:
             mock_sky.Resources.return_value = MagicMock()
             mock_sky.Task.return_value = MagicMock()
             mock_to_thread.return_value = None
 
-            from services.orchestration.provisioning.skypilot import (
+            from orchestration.provisioning.skypilot import (
                 SkyPilotProvisioner,
             )
 
@@ -147,13 +147,13 @@ class TestSkyPilotAsync:
     async def test_terminate_uses_to_thread(self):
         """sky.down must be called via asyncio.to_thread."""
         with patch(
-            "services.orchestration.provisioning.skypilot.asyncio.to_thread",
+            "orchestration.provisioning.skypilot.asyncio.to_thread",
             new_callable=AsyncMock,
         ) as mock_to_thread, patch(
-            "services.orchestration.provisioning.skypilot.sky",
+            "orchestration.provisioning.skypilot.sky",
             create=True,
         ):
-            from services.orchestration.provisioning.skypilot import (
+            from orchestration.provisioning.skypilot import (
                 SkyPilotProvisioner,
             )
 
@@ -166,14 +166,14 @@ class TestSkyPilotAsync:
     async def test_terminate_handles_error(self):
         """terminate should not raise on failure (best-effort)."""
         with patch(
-            "services.orchestration.provisioning.skypilot.asyncio.to_thread",
+            "orchestration.provisioning.skypilot.asyncio.to_thread",
             new_callable=AsyncMock,
             side_effect=Exception("cluster not found"),
         ), patch(
-            "services.orchestration.provisioning.skypilot.sky",
+            "orchestration.provisioning.skypilot.sky",
             create=True,
         ):
-            from services.orchestration.provisioning.skypilot import (
+            from orchestration.provisioning.skypilot import (
                 SkyPilotProvisioner,
             )
 
@@ -185,7 +185,7 @@ class TestSkyPilotAsync:
     async def test_provision_requires_container_env(self):
         """provision should raise if INFERIA_ENV != container."""
         with patch.dict("os.environ", {"INFERIA_ENV": "local"}):
-            from services.orchestration.provisioning.skypilot import (
+            from orchestration.provisioning.skypilot import (
                 SkyPilotProvisioner,
             )
 

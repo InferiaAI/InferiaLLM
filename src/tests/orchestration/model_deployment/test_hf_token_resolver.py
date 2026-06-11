@@ -12,7 +12,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
-from services.orchestration.model_deployment import hf_token_resolver as r
+from orchestration.model_deployment import hf_token_resolver as r
 
 pytestmark = pytest.mark.asyncio
 
@@ -123,7 +123,7 @@ async def test_resolve_hf_config_returns_none_falls_back_to_env(monkeypatch):
 
 async def test_resolve_pydantic_object_form(monkeypatch):
     """resolve_hf_token works when _load_hf_config returns a Pydantic object (not dict)."""
-    from services.api_gateway.config import HuggingFaceConfig, HFTokenEntry
+    from api_gateway.config import HuggingFaceConfig, HFTokenEntry
     hf = HuggingFaceConfig(
         token="hf_legacy_pydantic",
         tokens=[HFTokenEntry(name="p", token="hf_pydantic", is_active=True)],
@@ -136,7 +136,7 @@ async def test_resolve_pydantic_object_form(monkeypatch):
 
 async def test_resolve_pydantic_inactive_falls_back(monkeypatch):
     """Inactive Pydantic HFTokenEntry falls back to legacy token."""
-    from services.api_gateway.config import HuggingFaceConfig, HFTokenEntry
+    from api_gateway.config import HuggingFaceConfig, HFTokenEntry
     hf = HuggingFaceConfig(
         token="hf_leg_pb",
         tokens=[HFTokenEntry(name="p", token="hf_pb", is_active=False)],
@@ -159,7 +159,7 @@ async def test_load_hf_config_is_awaitable_and_returns_object_or_none():
     result = await r._load_hf_config()
     # In the test environment there may be no DB, so result is either a
     # HuggingFaceConfig or None.  Either is fine — just must not raise.
-    from services.api_gateway.config import HuggingFaceConfig
+    from api_gateway.config import HuggingFaceConfig
     assert result is None or isinstance(result, HuggingFaceConfig), (
         f"_load_hf_config returned unexpected type: {type(result)!r}"
     )

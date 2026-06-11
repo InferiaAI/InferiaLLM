@@ -11,7 +11,7 @@ import pytest
 import pytest_asyncio
 from unittest.mock import patch
 
-from services.api_gateway.config import HuggingFaceConfig, HFTokenEntry
+from api_gateway.config import HuggingFaceConfig, HFTokenEntry
 
 
 _ENDPOINT = "/management/config/providers/huggingface/token-names"
@@ -28,7 +28,7 @@ async def test_token_names_returns_active_names(client, admin_token):
         ],
     )
     with patch(
-        "services.api_gateway.management.configuration.settings"
+        "api_gateway.management.configuration.settings"
     ) as mock_settings:
         mock_settings.providers.huggingface = hf
         resp = await client.get(
@@ -53,7 +53,7 @@ async def test_token_names_excludes_inactive(client, admin_token):
         ]
     )
     with patch(
-        "services.api_gateway.management.configuration.settings"
+        "api_gateway.management.configuration.settings"
     ) as mock_settings:
         mock_settings.providers.huggingface = hf
         resp = await client.get(
@@ -69,7 +69,7 @@ async def test_token_names_empty_list(client, admin_token):
     """No tokens configured → empty names list, not an error."""
     hf = HuggingFaceConfig(tokens=[])
     with patch(
-        "services.api_gateway.management.configuration.settings"
+        "api_gateway.management.configuration.settings"
     ) as mock_settings:
         mock_settings.providers.huggingface = hf
         resp = await client.get(
@@ -99,7 +99,7 @@ async def test_token_names_deployer_scoped_permission(client, developer_token):
         tokens=[HFTokenEntry(name="alpha", token="hf_alpha", is_active=True)]
     )
     with patch(
-        "services.api_gateway.management.configuration.settings"
+        "api_gateway.management.configuration.settings"
     ) as mock_settings:
         mock_settings.providers.huggingface = hf
         resp = await client.get(
@@ -120,7 +120,7 @@ async def test_token_names_skips_blank_names(client, admin_token):
         ]
     )
     with patch(
-        "services.api_gateway.management.configuration.settings"
+        "api_gateway.management.configuration.settings"
     ) as mock_settings:
         mock_settings.providers.huggingface = hf
         resp = await client.get(
@@ -140,7 +140,7 @@ async def test_token_names_only_inactive_tokens_returns_empty(client, admin_toke
         ]
     )
     with patch(
-        "services.api_gateway.management.configuration.settings"
+        "api_gateway.management.configuration.settings"
     ) as mock_settings:
         mock_settings.providers.huggingface = hf
         resp = await client.get(

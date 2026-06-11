@@ -3,7 +3,7 @@ import pytest
 import sys
 from unittest.mock import MagicMock
 
-from services.orchestration.provisioning.skypilot import SkyPilotProvisioner
+from orchestration.provisioning.skypilot import SkyPilotProvisioner
 
 
 class DummyRequest:

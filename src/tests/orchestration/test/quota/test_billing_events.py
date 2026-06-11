@@ -1,7 +1,7 @@
 import asyncio
 import uuid
-from services.orchestration.infra.db import create_test_db_pool
-from services.orchestration.v1 import scheduler_pb2
+from orchestration.infra.db import create_test_db_pool
+from orchestration.v1 import scheduler_pb2
 from tests.orchestration.infra.test_setup import scheduler_stub
 
 

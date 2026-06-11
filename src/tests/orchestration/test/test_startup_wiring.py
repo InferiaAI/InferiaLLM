@@ -19,7 +19,7 @@ def test_reconciler_lock_key_fits_signed_bigint():
     fit in [-(2^63), 2^63-1] or asyncpg fails to encode it and the advisory
     lock call raises — silently crashing the reconciler before it ever
     claims a job (regression: the previous 0xD1F2... value overflowed)."""
-    from services.orchestration.server import RECONCILER_LOCK_KEY
+    from orchestration.server import RECONCILER_LOCK_KEY
 
     assert -(2 ** 63) <= RECONCILER_LOCK_KEY <= (2 ** 63) - 1
 
@@ -28,7 +28,7 @@ def test_reconciler_lock_key_fits_signed_bigint():
 async def test_reconciler_starts_on_app_startup_and_holds_advisory_lock():
     """Starting the orchestration app starts a ProvisioningReconciler task
     that holds the Postgres advisory lock."""
-    from services.orchestration.server import start_reconciler
+    from orchestration.server import start_reconciler
 
     # Fake db that tracks advisory_lock + advisory_unlock calls.
     lock_calls = []
@@ -62,7 +62,7 @@ async def test_reconciler_starts_on_app_startup_and_holds_advisory_lock():
 async def test_reconciler_polls_for_lock_when_not_acquired():
     """If another inferia-app holds the lock, this instance sleeps and
     retries until either it gets the lock or stop fires."""
-    from services.orchestration.server import start_reconciler
+    from orchestration.server import start_reconciler
 
     attempts = []
     conn = MagicMock()

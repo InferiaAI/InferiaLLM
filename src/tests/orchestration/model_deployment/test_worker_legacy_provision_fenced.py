@@ -24,19 +24,19 @@ from uuid import uuid4
 
 import pytest
 
-from services.orchestration.model_deployment.worker import (
+from orchestration.model_deployment.worker import (
     ModelDeploymentWorker,
 )
-from services.orchestration.repositories.inventory_repo import (
+from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
-from services.orchestration.repositories.model_deployment_repo import (
+from orchestration.repositories.model_deployment_repo import (
     ModelDeploymentRepository,
 )
-from services.orchestration.repositories.placement_repo import (
+from orchestration.repositories.placement_repo import (
     PlacementRepository,
 )
-from services.orchestration.repositories.pool_repo import (
+from orchestration.repositories.pool_repo import (
     ComputePoolRepository,
 )
 
@@ -158,7 +158,7 @@ async def test_fenced_provider_marks_failed_without_calling_provision_node(provi
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         await worker.handle_deploy_requested(deploy_id)
@@ -229,7 +229,7 @@ async def test_aws_fenced_deployment_error_message_exact_format():
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         await worker.handle_deploy_requested(deploy_id)
@@ -289,7 +289,7 @@ async def test_fenced_provider_returns_cleanly_no_exception_raised():
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         # Must not raise
@@ -368,7 +368,7 @@ async def test_non_fenced_provider_calls_provision_node(provider):
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         await worker.handle_deploy_requested(deploy_id)
@@ -411,7 +411,7 @@ async def test_fenced_deployment_not_reached_when_state_not_pending():
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         await worker.handle_deploy_requested(deploy_id)
@@ -448,7 +448,7 @@ async def test_fenced_deployment_cas_fails_does_not_reach_provision():
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         await worker.handle_deploy_requested(deploy_id)
@@ -493,7 +493,7 @@ async def test_fenced_provider_fence_runs_on_first_retry_attempt():
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         await worker.handle_deploy_requested(deploy_id)
@@ -547,7 +547,7 @@ async def test_on_prem_alias_is_also_fenced():
     )
 
     with patch(
-        "services.orchestration.model_deployment.worker.get_adapter",
+        "orchestration.model_deployment.worker.get_adapter",
         return_value=mock_adapter,
     ):
         result = await worker.handle_deploy_requested(deploy_id)

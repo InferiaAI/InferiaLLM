@@ -5,9 +5,9 @@ import pytest_asyncio
 import pyotp
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.api_gateway.rbac.router import totp_setup, totp_verify
-from services.api_gateway.db.models import User as DBUser
-from services.api_gateway.models import UserContext, TOTPVerifyRequest
+from api_gateway.rbac.router import totp_setup, totp_verify
+from api_gateway.db.models import User as DBUser
+from api_gateway.models import UserContext, TOTPVerifyRequest
 
 
 def _make_user(**overrides):
@@ -66,7 +66,7 @@ async def test_totp_setup_writes_to_pending_secret():
     request = _make_request(_user_context())
 
     with patch(
-        "services.api_gateway.rbac.router.get_current_user_from_request",
+        "api_gateway.rbac.router.get_current_user_from_request",
         return_value=_user_context(),
     ):
         response = await totp_setup(request=request, db=db)
@@ -91,7 +91,7 @@ async def test_totp_setup_does_not_overwrite_active_secret():
     request = _make_request(_user_context())
 
     with patch(
-        "services.api_gateway.rbac.router.get_current_user_from_request",
+        "api_gateway.rbac.router.get_current_user_from_request",
         return_value=_user_context(),
     ):
         await totp_setup(request=request, db=db)
@@ -121,7 +121,7 @@ async def test_totp_verify_promotes_pending_to_active():
     payload = TOTPVerifyRequest(totp_code=valid_code)
 
     with patch(
-        "services.api_gateway.rbac.router.get_current_user_from_request",
+        "api_gateway.rbac.router.get_current_user_from_request",
         return_value=_user_context(),
     ):
         response = await totp_verify(payload=payload, request=request, db=db)
@@ -144,7 +144,7 @@ async def test_totp_verify_rejects_invalid_code():
     payload = TOTPVerifyRequest(totp_code="000000")
 
     with patch(
-        "services.api_gateway.rbac.router.get_current_user_from_request",
+        "api_gateway.rbac.router.get_current_user_from_request",
         return_value=_user_context(),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -167,7 +167,7 @@ async def test_totp_verify_fails_without_pending_secret():
     payload = TOTPVerifyRequest(totp_code="123456")
 
     with patch(
-        "services.api_gateway.rbac.router.get_current_user_from_request",
+        "api_gateway.rbac.router.get_current_user_from_request",
         return_value=_user_context(),
     ):
         with pytest.raises(HTTPException) as exc_info:

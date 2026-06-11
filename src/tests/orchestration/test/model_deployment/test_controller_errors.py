@@ -5,7 +5,7 @@ from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
 from contextlib import asynccontextmanager
 
-from services.orchestration.model_deployment.controller import (
+from orchestration.model_deployment.controller import (
     ModelDeploymentController,
 )
 

@@ -4,7 +4,7 @@ import pytest
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.orchestration.model_deployment.worker import (
+from orchestration.model_deployment.worker import (
     ModelDeploymentWorker,
 )
 
@@ -126,7 +126,7 @@ class TestWorkerLifecycle:
         mock_adapter.wait_for_ready = AsyncMock(return_value="http://endpoint:8000")
 
         with patch(
-            "services.orchestration.model_deployment.worker.get_adapter",
+            "orchestration.model_deployment.worker.get_adapter",
             return_value=mock_adapter,
         ):
             await worker.handle_deploy_requested(dep_id)
@@ -178,7 +178,7 @@ class TestWorkerLifecycle:
         mock_adapter.get_capabilities.return_value = MagicMock(is_ephemeral=True)
 
         with patch(
-            "services.orchestration.model_deployment.worker.get_adapter",
+            "orchestration.model_deployment.worker.get_adapter",
             return_value=mock_adapter,
         ):
             await worker.handle_terminate_requested(dep_id)

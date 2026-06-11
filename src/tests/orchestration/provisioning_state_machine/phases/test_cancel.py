@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.provisioning_state_machine.jobs.model import (
     Phase, ProvisioningJob,
 )
-from services.orchestration.provisioning_state_machine.phases.base import (
+from orchestration.provisioning_state_machine.phases.base import (
     PhaseContext,
 )
-from services.orchestration.provisioning_state_machine.phases.cancel import (
+from orchestration.provisioning_state_machine.phases.cancel import (
     CancelHandler,
 )
 
@@ -40,7 +40,7 @@ def _ctx():
 @pytest.mark.asyncio
 async def test_happy_path_destroys_stack_and_returns_terminated():
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "cancel.run_pulumi_destroy_sync", return_value=None,
     ) as destroy:
         result = await CancelHandler().run(_job(), _ctx())
@@ -59,7 +59,7 @@ async def test_destroy_on_empty_state_is_noop():
     j = _job()
     object.__setattr__(j, "pulumi_stack_outputs", {})  # bypass frozen
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "cancel.run_pulumi_destroy_sync", return_value=None,
     ) as destroy:
         result = await CancelHandler().run(j, _ctx())
@@ -75,14 +75,14 @@ async def test_real_destroy_failure_stamps_metadata_and_reraises():
     inventory row and re-raises so the reconciler keeps the job retryable —
     the node must never silently show terminated while its EC2 lives.
     """
-    from services.orchestration.repositories import inventory_repo as ir
+    from orchestration.repositories import inventory_repo as ir
 
     inv = MagicMock()
     inv.mark_destroy_failed = AsyncMock()
     boom = RuntimeError("pulumi destroy: api error in-use dependency")
 
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "cancel.run_pulumi_destroy_sync", side_effect=boom,
     ), patch.object(ir, "InventoryRepository", return_value=inv):
         with pytest.raises(RuntimeError, match="api error"):
@@ -99,13 +99,13 @@ async def test_destroy_failure_metadata_record_error_does_not_mask_destroy_exc()
     """If recording the destroy_failed flag ALSO fails, the original destroy
     exception must still propagate (the reconciler needs the real error to
     classify retry-vs-fail)."""
-    from services.orchestration.repositories import inventory_repo as ir
+    from orchestration.repositories import inventory_repo as ir
 
     inv = MagicMock()
     inv.mark_destroy_failed = AsyncMock(side_effect=RuntimeError("DB down"))
 
     with patch(
-        "services.orchestration.provisioning_state_machine.phases."
+        "orchestration.provisioning_state_machine.phases."
         "cancel.run_pulumi_destroy_sync",
         side_effect=ValueError("destroy exploded"),
     ), patch.object(ir, "InventoryRepository", return_value=inv):

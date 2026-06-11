@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from services.orchestration.model_deployment.strategies.worker import (
+from orchestration.model_deployment.strategies.worker import (
     WorkerDeploymentStrategy,
 )
-from services.orchestration.worker_controller.protocol import (
+from orchestration.worker_controller.protocol import (
     CommandResultBody,
 )
 
