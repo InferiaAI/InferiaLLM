@@ -6,6 +6,8 @@
 # 2. Run: docker compose up -d
 # =============================================================================
 
+name: deploy
+
 services:
   postgres:
     image: postgres:15
@@ -52,8 +54,8 @@ services:
 
   app:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: inferia-app
     restart: unless-stopped
     env_file: .env
@@ -89,7 +91,7 @@ services:
       - pulumistate:/var/lib/inferia/pulumi-state
       # Unified config yaml — mounted read-only. Edit the host file to change
       # operational parameters; restart the container to apply.
-      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+      - ./inferia.yaml.example:/etc/inferia/inferia.yaml:ro
       # SSH authorized_keys to install on every provisioned EC2 worker.
       # Operator drops one or more public keys (one per line) into the
       # host file; Pulumi reads it at provision time and bakes it into
@@ -152,7 +154,7 @@ services:
       - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
     volumes:
-      - ../docker/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
     deploy:
       resources:
         limits:

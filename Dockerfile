@@ -26,11 +26,11 @@ FROM node:20-slim AS node-builder
 WORKDIR /build/depin-sidecar
 
 # Copy package files first for better caching
-COPY package/src/inferia/services/orchestration/services/depin-sidecar/package*.json ./
+COPY src/inferia/services/orchestration/services/depin-sidecar/package*.json ./
 RUN npm install
 
 # Copy source and build
-COPY package/src/inferia/services/orchestration/services/depin-sidecar/ ./
+COPY src/inferia/services/orchestration/services/depin-sidecar/ ./
 RUN npm run build
 
 WORKDIR /build/dashboard
@@ -52,14 +52,15 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package definition
-COPY package/ /app/package/
+# Copy package definition (src layout now lives at the repo root)
+COPY pyproject.toml MANIFEST.in README.md /app/
+COPY src /app/src
 
-WORKDIR /app/package
+WORKDIR /app
 
-RUN rm -rf /app/package/src/inferia/dashboard
-COPY --from=node-builder /build/dashboard/dist /app/package/src/inferia/dashboard
-COPY --from=node-builder /build/depin-sidecar/dist /app/package/src/inferia/services/orchestration/services/depin-sidecar/dist
+RUN rm -rf /app/src/inferia/dashboard
+COPY --from=node-builder /build/dashboard/dist /app/src/inferia/dashboard
+COPY --from=node-builder /build/depin-sidecar/dist /app/src/inferia/services/orchestration/services/depin-sidecar/dist
 
 # 1. Install CPU-only Torch first to prevent downloading the 2GB CUDA version
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
@@ -69,7 +70,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 RUN pip install --no-cache-dir '.[logstash]'
 
 # Copy entrypoint script
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["entrypoint.sh"]

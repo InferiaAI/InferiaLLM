@@ -17,7 +17,7 @@ inferiallm start              # Start all microservices
 
 # Testing
 make test                     # Run all tests (pytest)
-pytest package/src/inferia/services/api_gateway/tests/test_rbac.py  # Single test file
+pytest src/inferia/services/api_gateway/tests/test_rbac.py  # Single test file
 pytest -k "test_name"         # Run specific test by name
 
 # Docker
@@ -28,18 +28,18 @@ make docker-clean             # Stop + remove volumes
 
 # Dashboard (React)
 cd apps/dashboard && npm run dev    # Dev server with HMR
-cd apps/dashboard && npm run build  # Production build → package/src/inferia/dashboard/
+cd apps/dashboard && npm run build  # Production build → src/inferia/dashboard/
 cd apps/dashboard && npm run lint   # ESLint
 
 # Package build
-cd package && python -m build       # Build Python package
+python -m build       # Build Python package
 ```
 
 ## Architecture
 
 ### Service Layout
 
-All services live under `package/src/inferia/services/`:
+All services live under `src/inferia/services/`:
 
 | Service | Port | Role |
 |---------|------|------|
@@ -68,10 +68,10 @@ Each service follows: `main.py` → `start_api()` → `uvicorn.run("app:app")`. 
 
 ### Key Shared Code
 
-- `package/src/inferia/common/` — logging, error schemas, shared utilities
-- `package/src/inferia/infra/schema/` — SQL schemas and migration files
-- `package/src/inferia/cli.py` — CLI entry point
-- `package/src/inferia/startup_events.py` — service startup handlers
+- `src/inferia/common/` — logging, error schemas, shared utilities
+- `src/inferia/infra/schema/` — SQL schemas and migration files
+- `src/inferia/cli.py` — CLI entry point
+- `src/inferia/startup_events.py` — service startup handlers
 
 ## Conventions
 
@@ -106,7 +106,7 @@ Copy `.env.sample` to `.env` for local development. Key variables: `DATABASE_URL
 <!-- Add entries here when mistakes are made during development. Format: -->
 <!-- - **[DATE] Short description**: Root cause and fix. Edge cases to watch for. -->
 
-- **[2026-05-12] Unified config: Pydantic Settings v2 source order is significant.** Appending vs. inserting a custom source changes precedence silently. Always assert order in a test (see `package/src/inferia/common/tests/unified_config/test_base.py::test_env_wins_over_yaml`). Edge case: a custom source returning `None` for a field still counts as "this source had no value" — only non-None values participate in the chain.
+- **[2026-05-12] Unified config: Pydantic Settings v2 source order is significant.** Appending vs. inserting a custom source changes precedence silently. Always assert order in a test (see `src/inferia/common/tests/unified_config/test_base.py::test_env_wins_over_yaml`). Edge case: a custom source returning `None` for a field still counts as "this source had no value" — only non-None values participate in the chain.
 - **[2026-05-12] Unified config: `yaml.safe_load("")` returns `None`, not `{}`.** Wrap with `or {}` (or an explicit `is None` check) in `load_yaml` or the loader will `AttributeError` on the empty-file path. Edge case: a yaml file whose top level is a list or scalar also fails the `dict` contract — reject early with `ConfigParseError` rather than letting `**data` raise a confusing `TypeError`.
 - **[2026-05-12] Unified config: `os.environ` reads at fork time.** Child multiprocessing workers see the parent's env *at fork*. Set `INFERIA_CONFIG` in the CLI *before* `multiprocessing.Process.start()`. Edge case: `spawn` start method on macOS/Windows also inherits env, but anything mutated after spawn won't propagate either way.
 - **[2026-05-12] Unified config: `${VAR}` with an empty env var is not the same as unset.** `${VAR:-default}` treats empty as unset (falls back). `${VAR-default}` keeps the empty value. Mirror POSIX shell semantics; document the distinction at the call site. Edge case: `${A-B}` where `B` looks like a valid env-var name (`[A-Z_][A-Z0-9_]*$`) is rejected as ambiguous — use `${A:-B}` to pass a literal default that happens to look env-shaped.

@@ -46,26 +46,26 @@ jobs:
           cd apps/dashboard
           npm ci
           npm run build
-          rm -rf ../../package/src/inferia/dashboard
-          cp -r dist ../../package/src/inferia/dashboard
+          rm -rf ../../src/inferia/dashboard
+          cp -r dist ../../src/inferia/dashboard
 
       - name: Build Sidecar
         run: |
-          cd package/src/inferia/services/orchestration/services/depin-sidecar
+          cd src/inferia/services/orchestration/services/depin-sidecar
           npm ci
           npm run build
 
       - name: Build package
-        working-directory: ./package
+        working-directory: .
         run: python -m build
 
       - name: Show built artifacts
-        run: ls -la package/dist/
+        run: ls -la dist/
 
       - name: Publish to PyPI
         if: inputs.dry-run != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
-          packages-dir: package/dist/
+          packages-dir: dist/
           skip-existing: true

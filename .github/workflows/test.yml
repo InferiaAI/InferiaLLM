@@ -24,104 +24,104 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.pythonLocation }}
-          key: py-v2-${{ runner.os }}-${{ env.pythonLocation }}-${{ hashFiles('package/pyproject.toml') }}
+          key: py-v2-${{ runner.os }}-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
 
       - name: Install dependencies
         if: steps.cache-python.outputs.cache-hit != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install skypilot
-          pip install -e "./package[dev]"
+          pip install -e ".[dev]"
 
       - name: Run unit tests
         run: |
           pytest \
-            package/src/inferia/services/api_gateway/tests/test_rbac.py \
-            package/src/inferia/services/api_gateway/tests/test_audit.py \
-            package/src/inferia/services/api_gateway/tests/test_audit_org_filter.py \
-            package/src/inferia/services/api_gateway/tests/test_audit_key_security.py \
-            package/src/inferia/services/api_gateway/tests/test_gateway.py \
-            package/src/inferia/services/api_gateway/tests/test_integration.py \
-            package/src/inferia/services/api_gateway/tests/test_management_insights.py \
-            package/src/inferia/services/orchestration/test/test_traffic_router.py \
-            package/src/inferia/services/orchestration/test/adapter_test/test_command_injection.py \
-            package/src/inferia/services/orchestration/test/model_deployment/test_start_deployment_controller.py \
-            package/src/inferia/services/data/tests/test_collection_scoping.py \
-            package/src/inferia/services/data/tests/test_prompt_templates.py \
-            package/src/inferia/services/api_gateway/tests/test_config_security.py \
-            package/src/inferia/services/api_gateway/tests/test_rate_limit_bypass.py \
-            package/src/inferia/services/api_gateway/tests/test_rate_limiter_user_source.py \
-            package/src/inferia/tests/test_cli_init_sql_injection.py \
-            package/src/inferia/services/api_gateway/tests/test_internal_auth_bypass.py \
-            package/src/inferia/services/orchestration/test/test_grpc_auth_interceptor.py \
-            package/src/inferia/services/inference/tests/test_cors_config.py \
-            package/src/inferia/common/tests/test_app_setup.py \
-            package/src/inferia/services/inference/tests/test_provider_error_sanitization.py \
-            package/src/inferia/services/guardrail/tests/test_guardrail_fail_closed.py \
-            package/src/inferia/common/tests/test_middleware.py \
-            package/src/inferia/common/tests/test_rate_limit.py \
-            package/src/inferia/common/tests/test_errors.py \
-            package/src/inferia/common/tests/test_circuit_breaker.py \
-            package/src/inferia/services/inference/tests/test_circuit_breaker_wiring.py \
-            package/src/inferia/common/tests/test_exception_handlers.py \
-            package/src/inferia/common/tests/test_http_client.py \
-            package/src/inferia/services/api_gateway/tests/test_auth_security.py \
-            package/src/inferia/services/api_gateway/tests/test_jwt_token_type.py \
-            package/src/inferia/services/api_gateway/tests/test_encryption.py \
-            package/src/inferia/services/api_gateway/tests/test_db_security.py \
-            package/src/inferia/services/guardrail/tests/test_engine_error_handling.py \
-            package/src/inferia/services/guardrail/tests/test_engine_orchestration.py \
-            package/src/inferia/services/data/tests/test_chunker.py \
-            package/src/inferia/services/data/tests/test_prompt_engine.py \
-            package/src/inferia/services/orchestration/test/placement_test/test_placement_scoring.py \
-            package/src/inferia/services/orchestration/test/model_deployment/test_controller_errors.py \
-            package/src/inferia/services/orchestration/test/autoscaler/test_autoscaler_logic.py \
-            package/src/inferia/services/inference/tests/test_stream_processor.py \
-            package/src/inferia/services/inference/tests/test_service_error_handling.py \
-            package/src/inferia/services/api_gateway/tests/test_policy_engine_errors.py \
-            package/src/inferia/services/data/tests/test_upload_security.py \
-            package/src/inferia/services/data/tests/test_engine_error_handling.py \
-            package/src/inferia/services/guardrail/tests/test_scan_endpoint_security.py \
-            package/src/inferia/services/orchestration/test/model_deployment/test_worker_lifecycle.py \
-            package/src/inferia/services/orchestration/test/model_deployment/test_terminate_state_update.py \
-            package/src/inferia/services/orchestration/test/model_deployment/test_preflight.py \
-            package/src/inferia/services/orchestration/test/adapter_test/test_injection_expanded.py \
-            package/src/inferia/services/orchestration/test/adapter_test/test_sdl_injection.py \
-            package/src/inferia/services/orchestration/test/compute_pools_nodes/test_pool_manager.py \
-            package/src/inferia/services/api_gateway/tests/test_gateway_error_handling.py \
-            package/src/inferia/services/inference/tests/test_upstream_security.py \
-            package/src/inferia/services/api_gateway/tests/test_api_key_security.py \
-            package/src/inferia/services/api_gateway/tests/test_deployment_management.py \
-            package/src/inferia/services/api_gateway/tests/test_inference_routing.py \
-            package/src/inferia/services/inference/tests/test_routing_logic.py \
-            package/src/inferia/services/inference/tests/test_rate_limiter_workers.py \
-            package/src/inferia/services/inference/tests/test_usage_tracking_logging.py \
-            package/src/inferia/services/inference/tests/test_concurrency_limiter_lazy_init.py \
-            package/src/inferia/services/inference/tests/test_negative_cache.py \
-            package/src/inferia/services/orchestration/test/adapter_test/test_adapter_error_handling.py \
-            package/src/inferia/services/orchestration/test/test_grpc_abort_return.py \
-            package/src/inferia/services/orchestration/test/spot/test_spot_reclaimer_filter.py \
-            package/src/inferia/services/orchestration/test/test_aws_instance_resources.py \
-            package/src/inferia/services/orchestration/test/test_config_properties.py \
-            package/src/inferia/services/api_gateway/tests/test_invitation_auth_bypass.py \
-            package/src/inferia/services/guardrail/tests/test_scan_error_sanitization.py \
-            package/src/inferia/services/guardrail/tests/test_asyncio_loop_usage.py \
-            package/src/inferia/services/data/tests/test_error_sanitization.py \
-            package/src/inferia/services/data/tests/test_router_error_sanitization.py \
-            package/src/inferia/services/data/tests/test_filename_sanitization.py \
-            package/src/inferia/services/api_gateway/tests/test_totp_setup_security.py \
-            package/src/inferia/services/api_gateway/tests/test_rate_limiter_bucket_race.py \
-            package/src/inferia/services/orchestration/test/test_nosana_instance_attrs.py \
-            package/src/inferia/services/inference/tests/test_orchestrator_guardrail_fixes.py \
-            package/src/inferia/services/orchestration/test/test_outbox_transaction.py \
-            package/src/inferia/services/inference/tests/test_quota_cache_race.py \
-            package/src/inferia/services/orchestration/test/test_skypilot_terminate.py \
-            package/src/inferia/services/orchestration/api/test_admin_workers_ws_proxy.py \
-            package/src/inferia/services/orchestration/test/placement_test/test_placement_placeholder.py \
-            package/src/inferia/services/orchestration/test/model_deployment/test_engine_only_gate.py \
+            src/inferia/services/api_gateway/tests/test_rbac.py \
+            src/inferia/services/api_gateway/tests/test_audit.py \
+            src/inferia/services/api_gateway/tests/test_audit_org_filter.py \
+            src/inferia/services/api_gateway/tests/test_audit_key_security.py \
+            src/inferia/services/api_gateway/tests/test_gateway.py \
+            src/inferia/services/api_gateway/tests/test_integration.py \
+            src/inferia/services/api_gateway/tests/test_management_insights.py \
+            src/inferia/services/orchestration/test/test_traffic_router.py \
+            src/inferia/services/orchestration/test/adapter_test/test_command_injection.py \
+            src/inferia/services/orchestration/test/model_deployment/test_start_deployment_controller.py \
+            src/inferia/services/data/tests/test_collection_scoping.py \
+            src/inferia/services/data/tests/test_prompt_templates.py \
+            src/inferia/services/api_gateway/tests/test_config_security.py \
+            src/inferia/services/api_gateway/tests/test_rate_limit_bypass.py \
+            src/inferia/services/api_gateway/tests/test_rate_limiter_user_source.py \
+            src/inferia/tests/test_cli_init_sql_injection.py \
+            src/inferia/services/api_gateway/tests/test_internal_auth_bypass.py \
+            src/inferia/services/orchestration/test/test_grpc_auth_interceptor.py \
+            src/inferia/services/inference/tests/test_cors_config.py \
+            src/inferia/common/tests/test_app_setup.py \
+            src/inferia/services/inference/tests/test_provider_error_sanitization.py \
+            src/inferia/services/guardrail/tests/test_guardrail_fail_closed.py \
+            src/inferia/common/tests/test_middleware.py \
+            src/inferia/common/tests/test_rate_limit.py \
+            src/inferia/common/tests/test_errors.py \
+            src/inferia/common/tests/test_circuit_breaker.py \
+            src/inferia/services/inference/tests/test_circuit_breaker_wiring.py \
+            src/inferia/common/tests/test_exception_handlers.py \
+            src/inferia/common/tests/test_http_client.py \
+            src/inferia/services/api_gateway/tests/test_auth_security.py \
+            src/inferia/services/api_gateway/tests/test_jwt_token_type.py \
+            src/inferia/services/api_gateway/tests/test_encryption.py \
+            src/inferia/services/api_gateway/tests/test_db_security.py \
+            src/inferia/services/guardrail/tests/test_engine_error_handling.py \
+            src/inferia/services/guardrail/tests/test_engine_orchestration.py \
+            src/inferia/services/data/tests/test_chunker.py \
+            src/inferia/services/data/tests/test_prompt_engine.py \
+            src/inferia/services/orchestration/test/placement_test/test_placement_scoring.py \
+            src/inferia/services/orchestration/test/model_deployment/test_controller_errors.py \
+            src/inferia/services/orchestration/test/autoscaler/test_autoscaler_logic.py \
+            src/inferia/services/inference/tests/test_stream_processor.py \
+            src/inferia/services/inference/tests/test_service_error_handling.py \
+            src/inferia/services/api_gateway/tests/test_policy_engine_errors.py \
+            src/inferia/services/data/tests/test_upload_security.py \
+            src/inferia/services/data/tests/test_engine_error_handling.py \
+            src/inferia/services/guardrail/tests/test_scan_endpoint_security.py \
+            src/inferia/services/orchestration/test/model_deployment/test_worker_lifecycle.py \
+            src/inferia/services/orchestration/test/model_deployment/test_terminate_state_update.py \
+            src/inferia/services/orchestration/test/model_deployment/test_preflight.py \
+            src/inferia/services/orchestration/test/adapter_test/test_injection_expanded.py \
+            src/inferia/services/orchestration/test/adapter_test/test_sdl_injection.py \
+            src/inferia/services/orchestration/test/compute_pools_nodes/test_pool_manager.py \
+            src/inferia/services/api_gateway/tests/test_gateway_error_handling.py \
+            src/inferia/services/inference/tests/test_upstream_security.py \
+            src/inferia/services/api_gateway/tests/test_api_key_security.py \
+            src/inferia/services/api_gateway/tests/test_deployment_management.py \
+            src/inferia/services/api_gateway/tests/test_inference_routing.py \
+            src/inferia/services/inference/tests/test_routing_logic.py \
+            src/inferia/services/inference/tests/test_rate_limiter_workers.py \
+            src/inferia/services/inference/tests/test_usage_tracking_logging.py \
+            src/inferia/services/inference/tests/test_concurrency_limiter_lazy_init.py \
+            src/inferia/services/inference/tests/test_negative_cache.py \
+            src/inferia/services/orchestration/test/adapter_test/test_adapter_error_handling.py \
+            src/inferia/services/orchestration/test/test_grpc_abort_return.py \
+            src/inferia/services/orchestration/test/spot/test_spot_reclaimer_filter.py \
+            src/inferia/services/orchestration/test/test_aws_instance_resources.py \
+            src/inferia/services/orchestration/test/test_config_properties.py \
+            src/inferia/services/api_gateway/tests/test_invitation_auth_bypass.py \
+            src/inferia/services/guardrail/tests/test_scan_error_sanitization.py \
+            src/inferia/services/guardrail/tests/test_asyncio_loop_usage.py \
+            src/inferia/services/data/tests/test_error_sanitization.py \
+            src/inferia/services/data/tests/test_router_error_sanitization.py \
+            src/inferia/services/data/tests/test_filename_sanitization.py \
+            src/inferia/services/api_gateway/tests/test_totp_setup_security.py \
+            src/inferia/services/api_gateway/tests/test_rate_limiter_bucket_race.py \
+            src/inferia/services/orchestration/test/test_nosana_instance_attrs.py \
+            src/inferia/services/inference/tests/test_orchestrator_guardrail_fixes.py \
+            src/inferia/services/orchestration/test/test_outbox_transaction.py \
+            src/inferia/services/inference/tests/test_quota_cache_race.py \
+            src/inferia/services/orchestration/test/test_skypilot_terminate.py \
+            src/inferia/services/orchestration/api/test_admin_workers_ws_proxy.py \
+            src/inferia/services/orchestration/test/placement_test/test_placement_placeholder.py \
+            src/inferia/services/orchestration/test/model_deployment/test_engine_only_gate.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \
-            --cov=package/src/inferia \
+            --cov=src/inferia \
             --cov-report=xml \
             --cov-report=term-missing
 

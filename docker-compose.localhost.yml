@@ -10,7 +10,7 @@
 #   InferiaLLM  (dashboard + API)  →  http://localhost:8081
 #
 # Superuser login:  admin@inferia.local / sso-dev-superuser-pass-2026
-# Bring up:  docker compose -f deploy/docker-compose.localhost.yml up -d
+# Bring up:  docker compose -f docker-compose.localhost.yml up -d
 # (Redis uses 6380 to avoid a host redis already on 6379.) DEV-ONLY secrets.
 # =============================================================================
 name: inferia-localhost
@@ -50,7 +50,7 @@ services:
   inferia-auth-migrate:
     image: inferia-auth:dev
     build:
-      context: ../../inferia-auth
+      context: ../inferia-auth
       dockerfile: Dockerfile
     container_name: inferia-lh-auth-migrate
     restart: "no"
@@ -65,7 +65,7 @@ services:
   inferia-auth:
     image: inferia-auth:dev
     build:
-      context: ../../inferia-auth
+      context: ../inferia-auth
       dockerfile: Dockerfile
     container_name: inferia-lh-auth
     restart: unless-stopped
@@ -107,8 +107,8 @@ services:
   inferia-app:
     image: inferia-app:dev
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: .
+      dockerfile: Dockerfile
       target: unified
     container_name: inferia-lh-app
     restart: unless-stopped
@@ -199,7 +199,7 @@ services:
       INFERIA_CONFIG: "/etc/inferia/inferia.yaml"
     volumes:
       - lh-appdata:/data
-      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+      - ./inferia.yaml.example:/etc/inferia/inferia.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -54,14 +54,14 @@ logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "inferia-aws"
 
-# Where the cloudflared sidecar (deploy/docker-compose.yml) writes the
+# Where the cloudflared sidecar (docker-compose.yml) writes the
 # ephemeral public tunnel URL. Read at provision time, NOT at startup,
 # so a control-plane restart picks up a freshly-rotated tunnel URL on
 # the next provision without needing a separate refresh path.
 _TUNNEL_URL_FILE = "/var/lib/inferia/tunnel/url"
 
 # Operator-supplied SSH authorized_keys mounted into the orchestration
-# container (see deploy/docker-compose.yml). Each line is one public
+# container (see docker-compose.yml). Each line is one public
 # key; when non-empty the EC2 bootstrap installs zsh + writes the
 # keys for both `ubuntu` and `root` users.
 _SSH_AUTHORIZED_KEYS_FILE = "/var/lib/inferia/ssh/authorized_keys"
@@ -137,7 +137,7 @@ def _validate_control_plane_url(url: Optional[str]) -> Optional[str]:
             "CONTROL_PLANE_EXTERNAL_URL is not configured. Cloud workers cannot "
             "phone home. Either set the INFERIA_CONTROL_PLANE_EXTERNAL_URL env "
             "var on the control plane, or start the bundled `cloudflared` "
-            "service (see deploy/docker-compose.yml) to auto-generate a public "
+            "service (see docker-compose.yml) to auto-generate a public "
             "tunnel URL."
         )
     lowered = url.lower()
@@ -163,7 +163,7 @@ def _validate_control_plane_url(url: Optional[str]) -> Optional[str]:
             f"CONTROL_PLANE_EXTERNAL_URL={url!r} uses an unqualified hostname "
             f"({host!r}). A cloud EC2 instance cannot resolve it. Set "
             "INFERIA_CONTROL_PLANE_EXTERNAL_URL to a public URL (e.g. via the "
-            "cloudflared sidecar in deploy/docker-compose.yml)."
+            "cloudflared sidecar in docker-compose.yml)."
         )
     return None
 
