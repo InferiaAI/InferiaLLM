@@ -6,14 +6,14 @@ import socket
 
 import pytest
 
-from orchestration.provisioning_state_machine.errors import (
+from orchestration.state_machine.errors import (
     AMINotFoundError, AWSServerError, AWSThrottledError,
     CapacityUnavailableError, InvalidCredentialsError, InvalidInstanceTypeError,
     NetworkError, PulumiCliMissingError, PulumiTransientError,
     QuotaExceededError, SecurityGroupNotFoundError, SubnetNotFoundError,
 )
-from orchestration.provisioning_state_machine.jobs.model import ErrorClass
-from orchestration.provisioning_state_machine.retry.classifier import (
+from orchestration.state_machine.jobs.model import ErrorClass
+from orchestration.state_machine.retry.classifier import (
     classify_error,
 )
 
@@ -175,7 +175,7 @@ def test_pulumi_cli_missing_hint_includes_install_command():
 
 def test_bare_provisioning_error_classified_as_permanent():
     """Direct ProvisioningError (not a subclass) → PERMANENT."""
-    from orchestration.provisioning_state_machine.errors import (
+    from orchestration.state_machine.errors import (
         ProvisioningError,
     )
     exc = ProvisioningError("raw error")

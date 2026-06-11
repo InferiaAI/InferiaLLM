@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.state_machine.jobs.model import (
     ClassifiedError, ErrorClass, EventLine, Phase, ProvisioningJob,
 )
-from orchestration.provisioning_state_machine.jobs.repository import (
+from orchestration.state_machine.jobs.repository import (
     ProvisioningJobRepository,
 )
 
@@ -418,7 +418,7 @@ async def test_schedule_retry_returns_bool():
 @pytest.mark.asyncio
 async def test_affected_one_does_not_match_multi_digit_counts():
     """Regression guard for 'UPDATE 11'.endswith(' 1') == True bug."""
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         _affected_one,
     )
     assert _affected_one("UPDATE 1") is True

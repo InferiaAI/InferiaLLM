@@ -80,7 +80,7 @@ async def test_register_worker_does_NOT_fire_linker_hook(app_and_deps):
         "orchestration.api.workers._consume_bootstrap_token",
         new_callable=AsyncMock,
     ) as mock_consume, patch(
-        "orchestration.model_deployment."
+        "orchestration.models.model_deployment."
         "deployment_linker.DeploymentLinker.on_worker_ready",
         new_callable=AsyncMock,
     ) as mock_ready:
@@ -116,7 +116,7 @@ async def test_channel_ready_helper_fires_linker_with_node_uuid():
     ws.app.state.event_bus = None
 
     with patch(
-        "orchestration.model_deployment."
+        "orchestration.models.model_deployment."
         "deployment_linker.DeploymentLinker.on_worker_ready",
         new_callable=AsyncMock,
     ) as mock_ready:

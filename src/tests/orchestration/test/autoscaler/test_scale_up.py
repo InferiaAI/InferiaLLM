@@ -2,9 +2,9 @@ import asyncio
 import uuid
 import json
 
-from orchestration.autoscaler.worker import Autoscaler
+from orchestration.scheduling.autoscaler import Autoscaler
 from orchestration.repositories.autoscaler_repo import AutoscalerRepository
-from orchestration.adapter_stub import FakeAdapterStub
+from orchestration.provisioning.adapter_stub import FakeAdapterStub
 from orchestration.infra.db import create_test_db_pool
 
 

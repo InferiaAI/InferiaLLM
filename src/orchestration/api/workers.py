@@ -14,13 +14,13 @@ import uuid
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
-from orchestration.worker_controller.auth import (
+from orchestration.workers.worker_controller.auth import (
     InvalidBootstrapToken,
     InvalidTokenError,
     WorkerAuth,
     consume_bootstrap_token as _db_consume_bootstrap_token,
 )
-from orchestration.worker_controller.protocol import (
+from orchestration.workers.worker_controller.protocol import (
     CommandResultBody,
     Envelope,
     HeartbeatBody,
@@ -32,7 +32,7 @@ from orchestration.worker_controller.protocol import (
     ShellExitBody,
     ShellOutputBody,
 )
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     WorkerConn,
     WorkerRegistry,
 )
@@ -56,7 +56,7 @@ def _fire_linker_on_channel_ready(ws: WebSocket, node_id_str: str) -> None:
     blocking on it inline would deadlock.
     """
     try:
-        from orchestration.model_deployment.deployment_linker import (
+        from orchestration.models.model_deployment.deployment_linker import (
             DeploymentLinker,
         )
         from orchestration.repositories.inventory_repo import (

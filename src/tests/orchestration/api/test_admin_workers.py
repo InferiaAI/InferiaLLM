@@ -28,10 +28,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from httpx import ASGITransport  # noqa: E402
 
 from orchestration.api import admin_workers
-from orchestration.worker_controller.auth import (
+from orchestration.workers.worker_controller.auth import (
     WorkerAuth,
 )
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     WorkerConn,
     WorkerRegistry,
 )
@@ -361,8 +361,8 @@ class TestRevokeWorker:
 # ---------------------------------------------------------------------------
 
 
-from orchestration.adapter_engine import aws_deprovision  # noqa: E402
-from orchestration.provisioning_state_machine.jobs import (  # noqa: E402
+from orchestration.provisioning.engine import aws_deprovision  # noqa: E402
+from orchestration.state_machine.jobs import (  # noqa: E402
     repository as jobs_repository,
 )
 
@@ -394,10 +394,10 @@ class FakeDbPool:
 @pytest.fixture
 def aws_app_and_deps():
     from orchestration.api import admin_workers as _aw
-    from orchestration.worker_controller.auth import (
+    from orchestration.workers.worker_controller.auth import (
         WorkerAuth,
     )
-    from orchestration.worker_controller.registry import (
+    from orchestration.workers.worker_controller.registry import (
         WorkerRegistry,
     )
 

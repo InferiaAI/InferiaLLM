@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from orchestration.model_cache.repo import ModelCacheRepo
+from orchestration.models.model_cache.repo import ModelCacheRepo
 
 pytestmark = pytest.mark.asyncio
 

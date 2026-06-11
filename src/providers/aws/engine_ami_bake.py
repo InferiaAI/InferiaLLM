@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from providers.pulumi.ami import (
     latest_dlami_ami,
 )
-from orchestration.adapter_engine.aws_orphan_sweep import (
+from orchestration.provisioning.engine.aws_orphan_sweep import (
     _creds_from_aws_env,
 )
 

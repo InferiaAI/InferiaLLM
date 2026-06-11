@@ -25,14 +25,14 @@ async def test_failed_job_retried_to_ready(app_with_real_db):
     from providers.pulumi.pulumi_aws_adapter import (
         StackOutputs,
     )
-    from orchestration.provisioning_state_machine.errors import (
+    from orchestration.state_machine.errors import (
         InvalidCredentialsError,
     )
     app, client, pool = app_with_real_db
 
     # --- Run 1: creds fail -> phase=failed --------------------------------
     with patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.verify_credentials",
         side_effect=InvalidCredentialsError("bad creds"),
     ):
@@ -69,19 +69,19 @@ async def test_failed_job_retried_to_ready(app_with_real_db):
 
     # --- Run 2: creds work + pulumi works -> ready ------------------------
     with patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.verify_credentials", return_value={"Account": "123"},
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.resolve_ami", return_value="ami-abc",
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.verify_subnet_exists", return_value=None,
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.verify_security_group_exists", return_value=None,
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "pulumi_up.run_pulumi_up_sync",
         return_value=StackOutputs(
             instance_id="i-abc", public_dns="ec2.x.compute.amazonaws.com",

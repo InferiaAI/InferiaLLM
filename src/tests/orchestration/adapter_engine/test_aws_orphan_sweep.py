@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orchestration.adapter_engine import (
+from orchestration.provisioning.engine import (
     aws_orphan_sweep,
 )
 
@@ -403,7 +403,7 @@ async def test_resolve_sweep_aws_env_returns_none_on_db_failure(caplog) -> None:
 
 from datetime import datetime, timedelta, timezone
 
-from orchestration.adapter_engine import aws_orphan_sweep as sweep
+from orchestration.provisioning.engine import aws_orphan_sweep as sweep
 
 AWS_ENV = {"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s"}
 

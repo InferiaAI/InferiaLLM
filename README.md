@@ -317,14 +317,14 @@ We welcome contributions. Each component has its own README with architecture co
 
 | Component | Responsibility | Documentation |
 | :--- | :--- | :--- |
-| **Orchestrator** | Compute lifecycle and workload management | [README](./src/services/orchestration/README.md) |
-| **Guardrail Engine** | Content safety scanning and PII detection | [README](./src/services/guardrail/README.md) |
-| **Data Engine** | Knowledge base and data processing | [README](./src/services/data/README.md) |
-| **RBAC** | Identity and access boundaries | [README](./src/services/api_gateway/rbac/README.md) |
-| **Gateway** | Secure internal service routing | [README](./src/services/api_gateway/gateway/README.md) |
-| **Audit** | Immutable execution and policy logs | [README](./src/services/api_gateway/audit/README.md) |
-| **Policy** | Quota, rate, and budget enforcement | [README](./src/services/api_gateway/policy/README.md) |
-| **Prompt** | Prompt templates and versioning | [README](./src/services/api_gateway/prompt/README.md) |
+| **Orchestrator** | Compute lifecycle and workload management | [README](./src/orchestration/README.md) |
+| **Guardrail Engine** | Content safety scanning and PII detection | [README](./src/guardrail/README.md) |
+| **Data Engine** | Knowledge base and data processing | [README](./src/data/README.md) |
+| **RBAC** | Identity and access boundaries | [README](./src/api_gateway/rbac/README.md) |
+| **Gateway** | Secure internal service routing | [README](./src/api_gateway/gateway/README.md) |
+| **Audit** | Immutable execution and policy logs | [README](./src/api_gateway/audit/README.md) |
+| **Policy** | Quota, rate, and budget enforcement | [README](./src/api_gateway/policy/README.md) |
+| **Prompt** | Prompt templates and versioning | [README](./src/api_gateway/prompt/README.md) |
 | **Packages** | Installation, versioning, and initialization | [README](./README.md) |
 
 Open an [issue](https://github.com/InferiaAI/InferiaLLM/issues) to report bugs or request features.

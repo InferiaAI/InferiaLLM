@@ -1,5 +1,5 @@
 import unittest
-from orchestration.traffic_router.engine import TrafficRouter
+from orchestration.messaging.traffic_router import TrafficRouter
 
 class TestTrafficRouter(unittest.TestCase):
     def setUp(self):

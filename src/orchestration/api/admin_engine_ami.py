@@ -137,7 +137,7 @@ def _default_start_bake(
     from providers.aws.engine_ami_bake import (
         bake_engine_ami,
     )
-    from orchestration.adapter_engine.aws_orphan_sweep import (
+    from orchestration.provisioning.engine.aws_orphan_sweep import (
         resolve_sweep_aws_env,
     )
 
@@ -181,7 +181,7 @@ async def _default_list_engine_amis(region: str) -> list:
     from providers.pulumi.ami import (
         _ENGINE_CACHE_TAG, _engine_ec2_client,
     )
-    from orchestration.adapter_engine.aws_orphan_sweep import (
+    from orchestration.provisioning.engine.aws_orphan_sweep import (
         _creds_from_aws_env, resolve_sweep_aws_env,
     )
 

@@ -19,15 +19,15 @@ from uuid import uuid4
 
 import pytest
 
-from orchestration.model_deployment import (
+from orchestration.models.model_deployment import (
     deployment_server,
 )
-from orchestration.model_deployment.deployment_server import (
+from orchestration.models.model_deployment.deployment_server import (
     DeployModelRequest,
     place_and_provision,
     _model_spec_from_source,
 )
-from orchestration.model_deployment.pool_placer import (
+from orchestration.models.model_deployment.pool_placer import (
     PoolPlacer,
     BindToReady,
     ColdStart,
@@ -38,13 +38,13 @@ from orchestration.repositories.inventory_repo import (
 from orchestration.repositories.model_deployment_repo import (
     ModelDeploymentRepository,
 )
-from orchestration.provisioning_state_machine.jobs.repository import (
+from orchestration.state_machine.jobs.repository import (
     ProvisioningJobRepository,
 )
-from orchestration.worker_controller.protocol import (
+from orchestration.workers.worker_controller.protocol import (
     CommandResultBody,
 )
-from orchestration.worker_controller.controller import (
+from orchestration.workers.worker_controller.controller import (
     WorkerController,
 )
 

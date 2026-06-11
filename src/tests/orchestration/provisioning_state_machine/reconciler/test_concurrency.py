@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from orchestration.provisioning_state_machine.reconciler.concurrency import (
+from orchestration.state_machine.reconciler.concurrency import (
     WorkerPool,
 )
 

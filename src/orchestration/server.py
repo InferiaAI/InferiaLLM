@@ -32,10 +32,10 @@ logger = setup_logging(
 )
 
 # Import from absolute paths
-from orchestration.inventory_manager.http import (
+from orchestration.scheduling.inventory_http import (
     router as inventory_router,
 )
-from orchestration.model_deployment.deployment_server import (
+from orchestration.models.model_deployment.deployment_server import (
     router as deployment_engine_router,
 )
 from orchestration.api import workers as workers_api
@@ -44,16 +44,16 @@ from orchestration.api import admin_engine_ami as admin_engine_ami_api
 from orchestration.api import admin_aws_discovery as admin_aws_discovery_api
 from orchestration.api import nodes as nodes_api
 from orchestration.api import providers as providers_api
-from orchestration.adapter_engine.registry import (
+from orchestration.provisioning.engine.registry import (
     ADAPTER_REGISTRY,
 )
-from orchestration.worker_controller.auth import (
+from orchestration.workers.worker_controller.auth import (
     WorkerAuth,
 )
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     WorkerRegistry,
 )
-from orchestration.worker_controller.controller import (
+from orchestration.workers.worker_controller.controller import (
     WorkerController,
 )
 
@@ -63,31 +63,31 @@ from orchestration.v1 import (
     model_deployment_pb2_grpc,
 )
 
-from orchestration.compute_pool_engine.compute_pool_manager import (
+from orchestration.scheduling.compute_pool import (
     ComputePoolManagerService,
 )
-from orchestration.model_registry.service import (
+from orchestration.models.model_registry.service import (
     ModelRegistryService,
 )
-from orchestration.model_deployment.service import (
+from orchestration.models.model_deployment.service import (
     ModelDeploymentService,
 )
-from orchestration.model_deployment.controller import (
+from orchestration.models.model_deployment.controller import (
     ModelDeploymentController,
 )
-from orchestration.model_deployment.worker import (
+from orchestration.models.model_deployment.worker import (
     ModelDeploymentWorker,
 )
-from orchestration.model_deployment.runtime_resolver import (
+from orchestration.models.model_deployment.runtime_resolver import (
     RuntimeResolver,
 )
-from orchestration.model_deployment.strategies.vllm import (
+from orchestration.models.model_deployment.strategies.vllm import (
     VLLMDeploymentStrategy,
 )
-from orchestration.model_deployment.strategies.localai import (
+from orchestration.models.model_deployment.strategies.localai import (
     LocalAIDeploymentStrategy,
 )
-from orchestration.model_deployment.strategies.worker import (
+from orchestration.models.model_deployment.strategies.worker import (
     WorkerDeploymentStrategy,
 )
 from orchestration.repositories.placement_repo import (
@@ -117,7 +117,7 @@ from orchestration.grpc_auth_interceptor import (
 )
 
 # Model-cache imports — wired after db_pool is available in serve()
-from orchestration.model_cache import (
+from orchestration.models.model_cache import (
     api as mc_api,
     mirror_hf as mc_mirror_hf,
     mirror_ollama as mc_mirror_ollama,
@@ -181,13 +181,13 @@ async def start_reconciler(
     """
     # Local imports keep module import cheap and avoid pulling the
     # reconciler graph into unrelated unit tests.
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
-    from orchestration.provisioning_state_machine.reconciler.loop import (
+    from orchestration.state_machine.reconciler.loop import (
         ProvisioningReconciler,
     )
-    from orchestration.provisioning_state_machine.reconciler.reaper import (
+    from orchestration.state_machine.reconciler.reaper import (
         TerminationReaper,
     )
 
@@ -386,7 +386,7 @@ async def serve():
     from orchestration.repositories.node_provisioning_repo import (
         NodeProvisioningRepo,
     )
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
     # The new state-machine endpoints (POST /add/aws thin enqueue, POST
@@ -694,22 +694,22 @@ async def serve():
     reconciler_task: asyncio.Task | None = None
     if os.getenv("INFERIA_DISABLE_PROVISIONING_RECONCILER", "0") != "1":
         try:
-            from orchestration.provisioning_state_machine.events import (
+            from orchestration.state_machine.events import (
                 emit_event as _emit_event_to_db,
             )
-            from orchestration.provisioning_state_machine.jobs.model import (
+            from orchestration.state_machine.jobs.model import (
                 Phase,
             )
-            from orchestration.provisioning_state_machine.phases.bootstrap import (
+            from orchestration.state_machine.phases.bootstrap import (
                 BootstrapHandler,
             )
-            from orchestration.provisioning_state_machine.phases.cancel import (
+            from orchestration.state_machine.phases.cancel import (
                 CancelHandler,
             )
-            from orchestration.provisioning_state_machine.phases.preflight import (
+            from orchestration.state_machine.phases.preflight import (
                 PreflightHandler,
             )
-            from orchestration.provisioning_state_machine.phases.pulumi_up import (
+            from orchestration.state_machine.phases.pulumi_up import (
                 PulumiUpHandler,
             )
 

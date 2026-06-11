@@ -12,7 +12,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
-from orchestration.model_deployment import hf_token_resolver as r
+from orchestration.models.model_deployment import hf_token_resolver as r
 
 pytestmark = pytest.mark.asyncio
 

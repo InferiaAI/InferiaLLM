@@ -71,5 +71,5 @@ To run tests for the API Gateway logic:
 
 ```bash
 # from root
-pytest src/services/api_gateway/tests/
+pytest src/tests/api_gateway/
 ```

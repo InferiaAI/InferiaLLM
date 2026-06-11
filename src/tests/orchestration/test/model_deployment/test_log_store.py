@@ -45,7 +45,7 @@ class TestLogPersistenceConfig:
 class TestDeploymentLogStore:
     @pytest.mark.asyncio
     async def test_init_sets_unavailable_when_no_url(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -56,7 +56,7 @@ class TestDeploymentLogStore:
     @_skip_no_es
     @pytest.mark.asyncio
     async def test_init_sets_available_when_es_responds(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -74,7 +74,7 @@ class TestDeploymentLogStore:
     @_skip_no_es
     @pytest.mark.asyncio
     async def test_init_sets_unavailable_when_es_unreachable(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -91,7 +91,7 @@ class TestDeploymentLogStore:
 
     @pytest.mark.asyncio
     async def test_flush_is_noop_when_unavailable(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -103,7 +103,7 @@ class TestDeploymentLogStore:
     @_skip_no_es
     @pytest.mark.asyncio
     async def test_flush_bulk_indexes_lines(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -133,7 +133,7 @@ class TestDeploymentLogStore:
 
     @pytest.mark.asyncio
     async def test_get_logs_returns_empty_when_unavailable(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -145,7 +145,7 @@ class TestDeploymentLogStore:
     @_skip_no_es
     @pytest.mark.asyncio
     async def test_get_logs_queries_es_by_deployment_id(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -186,7 +186,7 @@ class TestDeploymentLogStore:
     @_skip_no_es
     @pytest.mark.asyncio
     async def test_get_max_line_number_returns_zero_when_no_docs(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogStore,
         )
 
@@ -209,7 +209,7 @@ class TestDeploymentLogStore:
 class TestDeploymentLogBuffer:
     @pytest.mark.asyncio
     async def test_append_adds_to_buffer(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogBuffer,
             DeploymentLogStore,
         )
@@ -230,7 +230,7 @@ class TestDeploymentLogBuffer:
 
     @pytest.mark.asyncio
     async def test_buffer_respects_max_lines(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogBuffer,
             DeploymentLogStore,
         )
@@ -256,7 +256,7 @@ class TestDeploymentLogBuffer:
     @_skip_no_es
     @pytest.mark.asyncio
     async def test_flush_sends_pending_lines_to_store(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogBuffer,
             DeploymentLogStore,
         )
@@ -291,7 +291,7 @@ class TestDeploymentLogBuffer:
 
     @pytest.mark.asyncio
     async def test_flush_is_noop_when_no_new_lines(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogBuffer,
             DeploymentLogStore,
         )
@@ -311,7 +311,7 @@ class TestDeploymentLogBuffer:
 
     @pytest.mark.asyncio
     async def test_line_numbers_are_monotonic(self):
-        from orchestration.model_deployment.log_store import (
+        from orchestration.models.model_deployment.log_store import (
             DeploymentLogBuffer,
             DeploymentLogStore,
         )

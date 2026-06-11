@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestration.model_deployment.model_ref import (
+from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
 

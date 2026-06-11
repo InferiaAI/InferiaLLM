@@ -17,7 +17,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from orchestration.worker_controller.protocol import (
+from orchestration.workers.worker_controller.protocol import (
     Envelope,
     LogsCloseBody,
     LogsEndBody,

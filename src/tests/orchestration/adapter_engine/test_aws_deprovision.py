@@ -90,14 +90,14 @@ def _make_factory(*, raises: BaseException | None = None):
 
 @pytest.mark.asyncio
 async def test_happy_path_transitions_terminated() -> None:
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision,
     )
 
     pool = FakePool()
     factory = _make_factory()
 
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision as _awsdep,
     )
     with patch.object(_awsdep, "ADAPTER_REGISTRY", {"aws": factory}):
@@ -128,14 +128,14 @@ async def test_happy_path_transitions_terminated() -> None:
 
 @pytest.mark.asyncio
 async def test_failure_records_destroy_failed_with_reason() -> None:
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision,
     )
 
     pool = FakePool()
     factory = _make_factory(raises=RuntimeError("pulumi boom"))
 
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision as _awsdep,
     )
     with patch.object(_awsdep, "ADAPTER_REGISTRY", {"aws": factory}):
@@ -165,7 +165,7 @@ async def test_failure_records_destroy_failed_with_reason() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_mid_flight_still_completes_state_machine() -> None:
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision,
     )
 
@@ -189,7 +189,7 @@ async def test_cancel_mid_flight_still_completes_state_machine() -> None:
         adapter.db = db
         return adapter
 
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision as _awsdep,
     )
     with patch.object(_awsdep, "ADAPTER_REGISTRY", {"aws": factory}):
@@ -222,13 +222,13 @@ async def test_cancel_mid_flight_still_completes_state_machine() -> None:
 
 @pytest.mark.asyncio
 async def test_missing_pool_id_is_no_op() -> None:
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision,
     )
 
     pool = FakePool()
     factory = _make_factory()
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision as _awsdep,
     )
     with patch.object(_awsdep, "ADAPTER_REGISTRY", {"aws": factory}):
@@ -244,13 +244,13 @@ async def test_missing_pool_id_is_no_op() -> None:
 
 @pytest.mark.asyncio
 async def test_missing_node_id_is_no_op() -> None:
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision,
     )
 
     pool = FakePool()
     factory = _make_factory()
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision as _awsdep,
     )
     with patch.object(_awsdep, "ADAPTER_REGISTRY", {"aws": factory}):
@@ -267,14 +267,14 @@ async def test_missing_node_id_is_no_op() -> None:
 
 @pytest.mark.asyncio
 async def test_spawn_destroy_tracks_task_until_done() -> None:
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision,
     )
 
     pool = FakePool()
     factory = _make_factory()
     aws_deprovision._BG.clear()  # ensure clean state
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision as _awsdep,
     )
     with patch.object(_awsdep, "ADAPTER_REGISTRY", {"aws": factory}):
@@ -290,14 +290,14 @@ async def test_spawn_destroy_tracks_task_until_done() -> None:
 @pytest.mark.asyncio
 async def test_spawn_destroy_callback_runs_on_error() -> None:
     """If the underlying deprovision raises, the task still self-discards."""
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision,
     )
 
     pool = FakePool()
     factory = _make_factory(raises=RuntimeError("boom"))
     aws_deprovision._BG.clear()
-    from orchestration.adapter_engine import (
+    from orchestration.provisioning.engine import (
         aws_deprovision as _awsdep,
     )
     with patch.object(_awsdep, "ADAPTER_REGISTRY", {"aws": factory}):

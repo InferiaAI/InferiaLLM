@@ -51,7 +51,7 @@ jobs:
 
       - name: Build Sidecar
         run: |
-          cd src/services/orchestration/services/depin-sidecar
+          cd src/orchestration/services/depin-sidecar
           npm ci
           npm run build
 

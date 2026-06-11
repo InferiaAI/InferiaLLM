@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from orchestration.adapter_engine.base import (
+from orchestration.provisioning.engine.base import (
     AdapterType,
     PricingModel,
     ProviderAdapter,

@@ -28,15 +28,15 @@ _httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 from fastapi.testclient import TestClient  # noqa: E402
 
 from orchestration.api import workers
-from orchestration.worker_controller.auth import (
+from orchestration.workers.worker_controller.auth import (
     BootstrapClaim,
     InvalidBootstrapToken,
     WorkerAuth,
 )
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     WorkerRegistry,
 )
-from orchestration.worker_controller.protocol import (
+from orchestration.workers.worker_controller.protocol import (
     Envelope,
 )
 
@@ -501,7 +501,7 @@ def _open_shell_stream_sync(registry, *, node_id, stream_id):
     file we run inside TestClient's sync context so we drive the loop
     via run_until_complete on a fresh loop.
     """
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         ShellOpenBody,
     )
     loop = asyncio.new_event_loop()
@@ -521,7 +521,7 @@ def _drain_one(loop, queue, timeout=2.0):
 def test_channel_routes_shell_output_to_stream_queue(app_and_deps):
     """ShellOutput envelope must land on the stream's incoming queue as a
     ShellOutputBody, not a raw dict."""
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         ShellOutputBody,
     )
     app, auth, registry, _inv = app_and_deps
@@ -550,7 +550,7 @@ def test_channel_routes_shell_output_to_stream_queue(app_and_deps):
 def test_channel_routes_shell_exit_sets_closed_event(app_and_deps):
     """ShellExit must arrive at the queue AND set the closed event so the
     proxy's drain loop terminates cleanly."""
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         ShellExitBody,
     )
     app, auth, registry, _inv = app_and_deps
@@ -578,7 +578,7 @@ def test_channel_routes_shell_exit_sets_closed_event(app_and_deps):
 
 
 def test_channel_routes_shell_error_sets_closed_event(app_and_deps):
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         ShellErrorBody,
     )
     app, auth, registry, _inv = app_and_deps
@@ -606,7 +606,7 @@ def test_channel_routes_shell_error_sets_closed_event(app_and_deps):
 
 def test_channel_routes_logs_line_and_end(app_and_deps):
     """LogsLine then LogsEnd must arrive in order, with End setting closed."""
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         LogsEndBody,
         LogsLineBody,
         LogsOpenBody,

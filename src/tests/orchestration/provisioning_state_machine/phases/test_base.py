@@ -6,10 +6,10 @@ from typing import runtime_checkable
 
 import pytest
 
-from orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.state_machine.jobs.model import (
     Phase, PhaseResult,
 )
-from orchestration.provisioning_state_machine.phases.base import (
+from orchestration.state_machine.phases.base import (
     PhaseContext, PhaseHandler,
 )
 

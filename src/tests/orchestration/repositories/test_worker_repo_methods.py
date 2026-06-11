@@ -13,7 +13,7 @@ from orchestration.repositories.inventory_repo import (
 from orchestration.repositories.pool_repo import (
     ComputePoolRepository,
 )
-from orchestration.worker_controller.controller import (
+from orchestration.workers.worker_controller.controller import (
     NodeUnreachableError,  # for symmetry / unused
 )
 

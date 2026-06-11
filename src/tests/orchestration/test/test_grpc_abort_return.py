@@ -21,7 +21,7 @@ def make_non_raising_context():
 # ── ModelRegistryService ──────────────────────────────────────────
 
 
-from orchestration.model_registry.service import (
+from orchestration.models.model_registry.service import (
     ModelRegistryService,
 )
 
@@ -71,7 +71,7 @@ class TestModelRegistryAbortReturn:
 # ── InventoryManagerService ───────────────────────────────────────
 
 
-from orchestration.inventory_manager.service import (
+from orchestration.scheduling.inventory_service import (
     InventoryManagerService,
 )
 

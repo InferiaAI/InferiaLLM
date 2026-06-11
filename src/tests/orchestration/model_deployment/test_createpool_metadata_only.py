@@ -14,7 +14,7 @@ Run with:
     TEST_DATABASE_URL=postgresql://inferia:inferia@172.18.0.3:5432/inferia_test \\
     PYTHONPATH=src \\
     python -m pytest \\
-      src/services/orchestration/services/model_deployment/tests/test_createpool_metadata_only.py \\
+      src/tests/orchestration/model_deployment/test_createpool_metadata_only.py \\
       -v
 """
 from __future__ import annotations
@@ -30,10 +30,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from orchestration.model_deployment import (
+from orchestration.models.model_deployment import (
     deployment_server,
 )
-from orchestration.worker_controller.controller import (
+from orchestration.workers.worker_controller.controller import (
     WorkerController,
 )
 

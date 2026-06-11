@@ -36,7 +36,7 @@ def _load_adapter_class():
 
     # Stub job_builder
     jb_path = (
-        "orchestration.adapter_engine"
+        "orchestration.provisioning.engine"
         ".adapters.nosana.job_builder"
     )
     jb_mod = types.ModuleType(jb_path)

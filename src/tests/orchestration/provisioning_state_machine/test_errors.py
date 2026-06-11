@@ -1,7 +1,7 @@
 """Tests for the ProvisioningError hierarchy."""
 import pytest
 
-from orchestration.provisioning_state_machine.errors import (
+from orchestration.state_machine.errors import (
     ProvisioningError,
     TransientError, AWSThrottledError, AWSServerError,
     PulumiTransientError, NetworkError,

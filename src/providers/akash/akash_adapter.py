@@ -4,7 +4,7 @@ import aiohttp
 from typing import List, Dict, Optional
 import asyncio
 
-from orchestration.adapter_engine.base import (
+from orchestration.provisioning.engine.base import (
     ProviderAdapter,
     AdapterType,
     PricingModel,

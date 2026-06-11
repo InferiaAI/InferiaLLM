@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import AsyncMock
 
-from orchestration.autoscaler.worker import Autoscaler
+from orchestration.scheduling.autoscaler import Autoscaler
 
 
 def make_pool(max_nodes=5, min_nodes=1, scale_up=80, scale_down=20, cooldown=60):

@@ -38,14 +38,14 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from orchestration.model_deployment import (
+from orchestration.models.model_deployment import (
     deployment_server,
 )
-from orchestration.model_deployment.deployment_server import (
+from orchestration.models.model_deployment.deployment_server import (
     _build_terminate_deps,
     terminate_deployment_core,
 )
-from orchestration.model_deployment.worker import (
+from orchestration.models.model_deployment.worker import (
     ModelDeploymentWorker,
 )
 from orchestration.repositories.inventory_repo import (
@@ -60,7 +60,7 @@ from orchestration.repositories.pool_repo import (
 from orchestration.repositories.placement_repo import (
     PlacementRepository,
 )
-from orchestration.worker_controller.controller import (
+from orchestration.workers.worker_controller.controller import (
     WorkerController,
 )
 
@@ -81,7 +81,7 @@ _DSN = os.getenv(
 )
 
 _JOBS_REPO = (
-    "orchestration.provisioning_state_machine.jobs.repository."
+    "orchestration.state_machine.jobs.repository."
     "ProvisioningJobRepository"
 )
 
@@ -250,7 +250,7 @@ async def test_grpc_aws_terminate_routes_through_core_not_deprovision(db_pool):
                return_value=True) as mock_force_cancel, \
          patch(f"{_JOBS_REPO}.enqueue", new_callable=AsyncMock) as mock_enqueue, \
          patch(
-             "orchestration.model_deployment.worker.get_adapter",
+             "orchestration.models.model_deployment.worker.get_adapter",
              return_value=mock_adapter,
          ):
         await worker.handle_terminate_requested(deploy_id)
@@ -306,7 +306,7 @@ async def test_grpc_aws_terminate_with_other_deploy_keeps_node(db_pool):
                return_value=True) as mock_force_cancel, \
          patch(f"{_JOBS_REPO}.enqueue", new_callable=AsyncMock), \
          patch(
-             "orchestration.model_deployment.worker.get_adapter",
+             "orchestration.models.model_deployment.worker.get_adapter",
              return_value=mock_adapter,
          ):
         await worker.handle_terminate_requested(deploy_a)
@@ -361,7 +361,7 @@ async def test_grpc_reconciler_providers_never_deprovision(db_pool, provider):
                return_value=True) as mock_force_cancel, \
          patch(f"{_JOBS_REPO}.enqueue", new_callable=AsyncMock), \
          patch(
-             "orchestration.model_deployment.worker.get_adapter",
+             "orchestration.models.model_deployment.worker.get_adapter",
              return_value=mock_adapter,
          ):
         await worker.handle_terminate_requested(deploy_id)
@@ -413,7 +413,7 @@ async def test_grpc_nosana_terminate_uses_legacy_deprovision(db_pool):
     with patch(f"{_JOBS_REPO}.force_cancel", new_callable=AsyncMock,
                return_value=True) as mock_force_cancel, \
          patch(
-             "orchestration.model_deployment.worker.get_adapter",
+             "orchestration.models.model_deployment.worker.get_adapter",
              return_value=mock_adapter,
          ):
         await worker.handle_terminate_requested(deploy_id)

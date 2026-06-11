@@ -5,7 +5,7 @@ from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
 
-from orchestration.compute_pool_engine.compute_pool_manager import (
+from orchestration.scheduling.compute_pool import (
     ComputePoolManagerService,
 )
 
@@ -132,10 +132,10 @@ class TestPoolManager:
         reconciler via ``force_cancel_pool(pool_id)`` (per-node
         ``inferia-<node_id>`` stacks) — NOT the leaky pool-scoped
         ``aws_deprovision._spawn_destroy`` path."""
-        from orchestration.adapter_engine import (
+        from orchestration.provisioning.engine import (
             aws_deprovision,
         )
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from unittest.mock import patch
@@ -198,7 +198,7 @@ class TestPoolManager:
         the non-final 'terminating' so the async finalizer can later hard-delete
         the row once the EC2 destroys complete. So the entry state here is
         'terminated' (StopPool ran), and we assert the override to 'terminating'."""
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from unittest.mock import patch
@@ -253,7 +253,7 @@ class TestPoolManager:
     ):
         """A force_cancel_pool error must not block the pool soft-delete;
         the reconciler/orphan-sweep is the backstop."""
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from unittest.mock import patch
@@ -298,7 +298,7 @@ class TestPoolManager:
         the periodic TerminationReaper, whose stuck-node query keys off
         ``metadata->>'terminating'='true'`` (+ no live cancelling job). Assert
         ``mark_terminating_node`` is called once per pool node."""
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from orchestration.repositories import (
@@ -366,7 +366,7 @@ class TestPoolManager:
         """Node-flagging is best-effort: a list_pool_inventory / flag error
         must NOT block the pool soft-delete (consistent with the
         force_cancel_pool best-effort branch above)."""
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from orchestration.repositories import (
@@ -424,7 +424,7 @@ class TestPoolManager:
         'terminating' forever (DB residue: pool row + unique name never freed).
         DeletePool must finalize it itself: count_live_inventory==0 →
         finalize_pool_delete(pool_id)."""
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from unittest.mock import patch
@@ -470,7 +470,7 @@ class TestPoolManager:
         """The empty-pool finalize is best-effort: a finalize_pool_delete error
         must NOT break the delete RPC (a later teardown still finalizes, and
         finalize is idempotent)."""
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from unittest.mock import patch
@@ -513,10 +513,10 @@ class TestPoolManager:
     async def test_delete_non_aws_pool_keeps_legacy_path(self, pool_service):
         """Non-AWS pools (worker/nosana/akash) skip EC2 teardown entirely —
         neither the reconciler force_cancel_pool nor the legacy destroy run."""
-        from orchestration.adapter_engine import (
+        from orchestration.provisioning.engine import (
             aws_deprovision,
         )
-        from orchestration.provisioning_state_machine.jobs import (
+        from orchestration.state_machine.jobs import (
             repository as jobs_repository,
         )
         from unittest.mock import patch

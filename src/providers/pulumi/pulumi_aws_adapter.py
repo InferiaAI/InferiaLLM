@@ -36,13 +36,13 @@ from providers.pulumi.base import (
 from providers.pulumi.credentials import (
     resolve_aws_env,
 )
-from orchestration.adapter_engine.base import (
+from orchestration.provisioning.engine.base import (
     AdapterType,
     PricingModel,
     ProviderAdapter,
     ProviderCapabilities,
 )
-from orchestration.provisioning_state_machine.errors import (
+from orchestration.state_machine.errors import (
     AMINotFoundError,
     InvalidCredentialsError,
     ProvisioningError,
@@ -209,7 +209,7 @@ class ProvisionError(Exception):
     Kept for callers that still raise/catch this type via the surviving
     adapter methods (wait_for_ready / deprovision_node fallbacks). New
     code should use the typed hierarchy in
-    ``orchestration.provisioning_state_machine.errors``
+    ``orchestration.state_machine.errors``
     instead.
     """
 
@@ -237,7 +237,7 @@ async def load_providers_config() -> ProvidersConfig:
 # ``asyncio.to_thread(...)``. It owns the DB writes, retry policy, and
 # lease ownership; this function only knows how to drive ``pulumi up``
 # and translate AWS errors into the typed exception hierarchy from
-# ``orchestration.provisioning_state_machine.errors``.
+# ``orchestration.state_machine.errors``.
 # ---------------------------------------------------------------------------
 
 

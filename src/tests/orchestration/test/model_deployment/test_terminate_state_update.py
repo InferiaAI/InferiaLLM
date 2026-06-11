@@ -8,7 +8,7 @@ import pytest
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from orchestration.model_deployment.worker import (
+from orchestration.models.model_deployment.worker import (
     ModelDeploymentWorker,
 )
 
@@ -65,7 +65,7 @@ class TestTerminateStateUpdate:
         )
 
         with patch(
-            "orchestration.model_deployment.worker.get_adapter",
+            "orchestration.models.model_deployment.worker.get_adapter",
             return_value=mock_adapter,
         ):
             await worker.handle_terminate_requested(dep_id)
@@ -94,7 +94,7 @@ class TestTerminateStateUpdate:
         )
 
         with patch(
-            "orchestration.model_deployment.worker.get_adapter",
+            "orchestration.models.model_deployment.worker.get_adapter",
             return_value=mock_adapter,
         ):
             await worker.handle_terminate_requested(dep_id)
@@ -115,7 +115,7 @@ class TestTerminateStateUpdate:
         )
 
         with patch(
-            "orchestration.model_deployment.worker.get_adapter",
+            "orchestration.models.model_deployment.worker.get_adapter",
             return_value=MagicMock(),
         ):
             await worker.handle_terminate_requested(dep_id)

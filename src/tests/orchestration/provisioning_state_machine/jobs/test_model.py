@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.state_machine.jobs.model import (
     ClassifiedError,
     ErrorClass,
     EventLine,

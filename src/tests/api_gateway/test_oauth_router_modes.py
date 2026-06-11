@@ -5,7 +5,7 @@ Verifies that the redirect-SSO flow is available in BOTH external modes
 
 Run with --noconftest to avoid the shared-conftest jwt fixture conflict:
   PYTHONPATH=/home/celestix/.pyenv/versions/3.12.9/lib/python3.12/site-packages:src \\
-    pytest src/services/api_gateway/tests/test_oauth_router_modes.py --noconftest
+    pytest src/tests/api_gateway/test_oauth_router_modes.py --noconftest
 """
 
 from __future__ import annotations

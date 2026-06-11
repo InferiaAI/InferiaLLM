@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from orchestration.model_cache.downloader import DownloadManager
+from orchestration.models.model_cache.downloader import DownloadManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -210,7 +210,7 @@ async def test_start_dedups_by_key():
 # Real _hf_list (tree API) + _hf_file (status check) behavior
 # ---------------------------------------------------------------------------
 import json as _json
-from orchestration.model_cache.paths import CachePaths
+from orchestration.models.model_cache.paths import CachePaths
 
 
 class _FakeHTTP:
@@ -666,7 +666,7 @@ async def test_load_hf_token_uses_db_token_when_present(monkeypatch):
         return db_config
 
     # Patch out the DB session and config_manager to avoid a real DB
-    import orchestration.model_cache.downloader as _mod
+    import orchestration.models.model_cache.downloader as _mod
 
     class _FakeDB:
         async def __aenter__(self):

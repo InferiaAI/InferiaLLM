@@ -35,32 +35,32 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
         destroy_called["value"] = True
 
     with patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.verify_credentials", return_value={"Account": "123"},
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.resolve_ami", return_value="ami-abc",
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.verify_subnet_exists", return_value=None,
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "preflight.verify_security_group_exists", return_value=None,
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "pulumi_up.run_pulumi_up_sync",
         return_value=StackOutputs(
             instance_id="i-abc", public_dns=None,
             region="us-east-1", ami_id="ami-abc",
         ),
     ), patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "cancel.run_pulumi_destroy_sync", side_effect=_fake_destroy,
     ), patch(
         # The reconciler's teardown runs a boto3 tag-based orphan sweep on
         # the TERMINATED transition. Patch it so the test never touches AWS;
         # its own unit tests cover the sweep internals.
-        "orchestration.adapter_engine."
+        "orchestration.provisioning.engine."
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ) as sweep:
         # 1. Submit + drive one tick (preflight -> provisioning).

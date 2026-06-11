@@ -94,7 +94,7 @@ import types
 from unittest.mock import AsyncMock
 
 import providers.aws.engine_ami_bake as _eab
-import orchestration.adapter_engine.aws_orphan_sweep as _sweep
+import orchestration.provisioning.engine.aws_orphan_sweep as _sweep
 import providers.pulumi.ami as _ami
 
 

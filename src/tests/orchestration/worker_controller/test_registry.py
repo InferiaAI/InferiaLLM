@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     WorkerConn,
     WorkerRegistry,
 )
-from orchestration.worker_controller.protocol import (
+from orchestration.workers.worker_controller.protocol import (
     Envelope,
     CommandResultBody,
     ShellOpenBody,

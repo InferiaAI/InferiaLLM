@@ -34,7 +34,7 @@ from orchestration.repositories.inventory_repo import (
     NodeTerminatedError,
     LabelConflictError,
 )
-from orchestration.provisioning_state_machine.jobs.model import Phase
+from orchestration.state_machine.jobs.model import Phase
 
 
 ORG = "69ff5234-a4ea-4c88-adf0-d5702508f7ef"
@@ -710,7 +710,7 @@ import httpx
 from httpx import ASGITransport
 from unittest.mock import AsyncMock, patch
 
-from orchestration.adapter_engine import aws_deprovision
+from orchestration.provisioning.engine import aws_deprovision
 
 
 class FakeDbPool:
@@ -869,7 +869,7 @@ def _open_require_permission(perm: str):
 
 def test_get_provisioning_includes_error_and_aws_metadata():
     """Response gains error, aws_metadata, attempt_count fields."""
-    from orchestration.provisioning_state_machine.jobs.model import (
+    from orchestration.state_machine.jobs.model import (
         ErrorClass, Phase,
     )
 

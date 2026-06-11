@@ -34,10 +34,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from orchestration.model_deployment import (
+from orchestration.models.model_deployment import (
     deployment_server,
 )
-from orchestration.worker_controller.controller import (
+from orchestration.workers.worker_controller.controller import (
     WorkerController,
 )
 
@@ -271,7 +271,7 @@ async def test_resume_warm_pool_binds_to_ready_node(app_and_pool):
         configuration={"model": {"artifact_uri": "hf://resume-model"}},
     )
 
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         CommandResultBody,
     )
     app.state.worker_controller.load_model.return_value = CommandResultBody(
@@ -440,7 +440,7 @@ async def test_resume_impl_unbinds_and_places(monkeypatch):
     """``_start_deployment_impl`` clears the stale binding (unbind once) and
     drives PoolPlacer.place (>=1) before provisioning, returning a
     PENDING_NODE/DEPLOYING body — and never touches the legacy event bus."""
-    from orchestration.model_deployment.pool_placer import (
+    from orchestration.models.model_deployment.pool_placer import (
         PoolPlacer, ColdStart,
     )
     from orchestration.repositories.inventory_repo import (
@@ -452,7 +452,7 @@ async def test_resume_impl_unbinds_and_places(monkeypatch):
     from orchestration.repositories.pool_repo import (
         ComputePoolRepository,
     )
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
 
@@ -560,7 +560,7 @@ async def test_resume_reads_ami_id_from_configuration(monkeypatch):
     _build_provisioning_spec (which place_and_provision calls internally) and
     assert it equals the value stored in configuration, not None.
     """
-    from orchestration.model_deployment.pool_placer import (
+    from orchestration.models.model_deployment.pool_placer import (
         PoolPlacer, ColdStart,
     )
     from orchestration.repositories.inventory_repo import (
@@ -572,7 +572,7 @@ async def test_resume_reads_ami_id_from_configuration(monkeypatch):
     from orchestration.repositories.pool_repo import (
         ComputePoolRepository,
     )
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
 
@@ -673,7 +673,7 @@ async def test_resume_reads_ami_id_from_configuration(monkeypatch):
 async def test_resume_ami_id_from_configuration_json_string(monkeypatch):
     """configuration stored as a JSON string (asyncpg jsonb->str) is decoded
     and ami_id extracted correctly on resume."""
-    from orchestration.model_deployment.pool_placer import (
+    from orchestration.models.model_deployment.pool_placer import (
         PoolPlacer, ColdStart,
     )
     from orchestration.repositories.inventory_repo import (
@@ -685,7 +685,7 @@ async def test_resume_ami_id_from_configuration_json_string(monkeypatch):
     from orchestration.repositories.pool_repo import (
         ComputePoolRepository,
     )
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
 
@@ -785,7 +785,7 @@ async def test_resume_no_ami_id_in_configuration_passes_none(monkeypatch):
     """When configuration has no ami_id (older rows, non-vLLM engines),
     place_and_provision is called with ami_id=None so resolve_ami's auto-pick
     still applies — no regression."""
-    from orchestration.model_deployment.pool_placer import (
+    from orchestration.models.model_deployment.pool_placer import (
         PoolPlacer, ColdStart,
     )
     from orchestration.repositories.inventory_repo import (
@@ -797,7 +797,7 @@ async def test_resume_no_ami_id_in_configuration_passes_none(monkeypatch):
     from orchestration.repositories.pool_repo import (
         ComputePoolRepository,
     )
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
 

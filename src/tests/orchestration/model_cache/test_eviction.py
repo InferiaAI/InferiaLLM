@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from orchestration.model_cache.eviction import EvictionManager
-from orchestration.model_cache.paths import CachePaths
+from orchestration.models.model_cache.eviction import EvictionManager
+from orchestration.models.model_cache.paths import CachePaths
 
 
 # ---------------------------------------------------------------------------

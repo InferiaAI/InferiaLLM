@@ -32,7 +32,7 @@ from orchestration.repositories.inventory_repo import (
     NodeNotFoundError,
     NodeTerminatedError,
 )
-from orchestration.provisioning_state_machine.jobs.model import Phase
+from orchestration.state_machine.jobs.model import Phase
 
 logger = logging.getLogger("nodes_api")
 router = APIRouter(prefix="/v1/nodes")

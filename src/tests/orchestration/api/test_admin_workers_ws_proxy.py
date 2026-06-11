@@ -52,7 +52,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from starlette.websockets import WebSocketDisconnect  # noqa: E402
 
 from orchestration.api import admin_workers
-from orchestration.worker_controller.protocol import (
+from orchestration.workers.worker_controller.protocol import (
     LogsEndBody,
     LogsLineBody,
     LogsOpenBody,
@@ -61,7 +61,7 @@ from orchestration.worker_controller.protocol import (
     ShellOpenBody,
     ShellOutputBody,
 )
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     StreamHandle,
     WorkerNotConnectedError,
 )

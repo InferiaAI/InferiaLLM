@@ -1,7 +1,7 @@
 """Tests for the three-mode auth_provider config (local | oidc | inferiaauth).
 
 Run with --noconftest to avoid the jwt import conflict in conftest.py:
-    python -m pytest src/services/api_gateway/tests/test_config_modes.py -v --noconftest
+    python -m pytest src/tests/api_gateway/test_config_modes.py -v --noconftest
 """
 
 import warnings

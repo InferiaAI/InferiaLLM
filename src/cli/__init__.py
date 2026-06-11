@@ -122,7 +122,7 @@ def run_worker(queue=None):
             return
 
         import asyncio
-        from orchestration.model_deployment.worker_main import (
+        from orchestration.models.model_deployment.worker_main import (
             main,
         )
 

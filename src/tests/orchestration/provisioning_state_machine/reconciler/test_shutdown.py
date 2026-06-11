@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.state_machine.jobs.model import (
     Phase, PhaseResult, ProvisioningJob,
 )
-from orchestration.provisioning_state_machine.reconciler.loop import (
+from orchestration.state_machine.reconciler.loop import (
     ProvisioningReconciler,
 )
 

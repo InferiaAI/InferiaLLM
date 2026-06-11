@@ -26,10 +26,10 @@ _httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 from fastapi.testclient import TestClient  # noqa: E402
 
 from orchestration.api import admin_workers, workers
-from orchestration.worker_controller.auth import (
+from orchestration.workers.worker_controller.auth import (
     WorkerAuth,
 )
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     WorkerRegistry,
 )
 

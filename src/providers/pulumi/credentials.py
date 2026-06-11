@@ -128,7 +128,7 @@ def verify_credentials(creds: "AWSCredentials") -> dict:
     from botocore.exceptions import (  # local import: optional dep
         ClientError, EndpointConnectionError,
     )
-    from orchestration.provisioning_state_machine.errors import (
+    from orchestration.state_machine.errors import (
         InvalidCredentialsError, NetworkError,
     )
 

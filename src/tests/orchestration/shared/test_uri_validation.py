@@ -8,7 +8,7 @@ itself is removed but the validators it contained still live here.
 
 import pytest
 
-from orchestration.shared.uri_validation import (
+from orchestration.messaging.uri_validation import (
     sanitize_config,
     validate_artifact_uri,
     _ALLOWED_CONFIG_KEYS,

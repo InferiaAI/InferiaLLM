@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orchestration.provisioning_state_machine.jobs.model import (
+from orchestration.state_machine.jobs.model import (
     Phase, ProvisioningJob,
 )
-from orchestration.provisioning_state_machine.phases.base import (
+from orchestration.state_machine.phases.base import (
     PhaseContext,
 )
-from orchestration.provisioning_state_machine.phases.cancel import (
+from orchestration.state_machine.phases.cancel import (
     CancelHandler,
 )
 
@@ -40,7 +40,7 @@ def _ctx():
 @pytest.mark.asyncio
 async def test_happy_path_destroys_stack_and_returns_terminated():
     with patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "cancel.run_pulumi_destroy_sync", return_value=None,
     ) as destroy:
         result = await CancelHandler().run(_job(), _ctx())
@@ -59,7 +59,7 @@ async def test_destroy_on_empty_state_is_noop():
     j = _job()
     object.__setattr__(j, "pulumi_stack_outputs", {})  # bypass frozen
     with patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "cancel.run_pulumi_destroy_sync", return_value=None,
     ) as destroy:
         result = await CancelHandler().run(j, _ctx())
@@ -82,7 +82,7 @@ async def test_real_destroy_failure_stamps_metadata_and_reraises():
     boom = RuntimeError("pulumi destroy: api error in-use dependency")
 
     with patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "cancel.run_pulumi_destroy_sync", side_effect=boom,
     ), patch.object(ir, "InventoryRepository", return_value=inv):
         with pytest.raises(RuntimeError, match="api error"):
@@ -105,7 +105,7 @@ async def test_destroy_failure_metadata_record_error_does_not_mask_destroy_exc()
     inv.mark_destroy_failed = AsyncMock(side_effect=RuntimeError("DB down"))
 
     with patch(
-        "orchestration.provisioning_state_machine.phases."
+        "orchestration.state_machine.phases."
         "cancel.run_pulumi_destroy_sync",
         side_effect=ValueError("destroy exploded"),
     ), patch.object(ir, "InventoryRepository", return_value=inv):

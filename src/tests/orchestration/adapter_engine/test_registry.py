@@ -1,7 +1,7 @@
 """Tests for adapter_engine.registry — confirms Pulumi is the cloud path."""
 import pytest
 
-from orchestration.adapter_engine.registry import (
+from orchestration.provisioning.engine.registry import (
     get_adapter, ADAPTER_REGISTRY,
 )
 from providers.pulumi.pulumi_aws_adapter import (

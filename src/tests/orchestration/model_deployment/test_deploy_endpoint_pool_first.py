@@ -9,7 +9,7 @@ Run with:
     TEST_DATABASE_URL=postgresql://inferia:inferia@172.18.0.3:5432/inferia_test \\
     PYTHONPATH=src \\
     python -m pytest \\
-      src/services/orchestration/services/model_deployment/tests/test_deploy_endpoint_pool_first.py -v
+      src/tests/orchestration/model_deployment/test_deploy_endpoint_pool_first.py -v
 """
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
-from orchestration.model_deployment import (
+from orchestration.models.model_deployment import (
     deployment_server,
 )
-from orchestration.worker_controller.controller import (
+from orchestration.workers.worker_controller.controller import (
     WorkerController,
 )
 
@@ -215,7 +215,7 @@ async def test_deploy_to_warm_pool_returns_running(app_and_pool):
     node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=0)
 
     # Worker reports the model loaded successfully.
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         CommandResultBody,
     )
     app.state.worker_controller.load_model.return_value = CommandResultBody(
@@ -613,7 +613,7 @@ async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
     # the load_model call's spec.env for HF_TOKEN.
     node_id = await _seed_ready_node(pool, pool_id, gpu_total=4)
 
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         CommandResultBody,
     )
     app.state.worker_controller.load_model.return_value = CommandResultBody(
@@ -622,12 +622,12 @@ async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
     )
 
     # Patch resolve_hf_token so no real provider config is needed.
-    import orchestration.model_deployment.deployment_server as ds
+    import orchestration.models.model_deployment.deployment_server as ds
     from unittest.mock import patch
 
     from unittest.mock import AsyncMock as _AsyncMock
     with patch(
-        "orchestration.model_deployment"
+        "orchestration.models.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
         new_callable=_AsyncMock,
         return_value="hf_secret_tok",
@@ -666,7 +666,7 @@ async def test_deploy_hf_token_name_does_not_clobber_explicit_hf_token(app_and_p
     org_id = str(uuid4())
     await _seed_ready_node(pool, pool_id, gpu_total=4)
 
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         CommandResultBody,
     )
     app.state.worker_controller.load_model.return_value = CommandResultBody(
@@ -678,7 +678,7 @@ async def test_deploy_hf_token_name_does_not_clobber_explicit_hf_token(app_and_p
 
     from unittest.mock import AsyncMock as _AsyncMock
     with patch(
-        "orchestration.model_deployment"
+        "orchestration.models.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
         new_callable=_AsyncMock,
         return_value="hf_from_name",
@@ -720,7 +720,7 @@ async def test_deploy_hf_token_name_not_found_no_injection(app_and_pool):
     org_id = str(uuid4())
     await _seed_ready_node(pool, pool_id, gpu_total=4)
 
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         CommandResultBody,
     )
     app.state.worker_controller.load_model.return_value = CommandResultBody(
@@ -732,7 +732,7 @@ async def test_deploy_hf_token_name_not_found_no_injection(app_and_pool):
 
     from unittest.mock import AsyncMock as _AsyncMock
     with patch(
-        "orchestration.model_deployment"
+        "orchestration.models.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
         new_callable=_AsyncMock,
         return_value=None,
@@ -819,7 +819,7 @@ async def test_deploy_vllm_ami_id_in_configuration_alongside_hf_token(app_and_po
     org_id = str(uuid4())
     await _seed_ready_node(pool, pool_id, gpu_total=4)
 
-    from orchestration.worker_controller.protocol import (
+    from orchestration.workers.worker_controller.protocol import (
         CommandResultBody,
     )
     app.state.worker_controller.load_model.return_value = CommandResultBody(
@@ -831,7 +831,7 @@ async def test_deploy_vllm_ami_id_in_configuration_alongside_hf_token(app_and_po
 
     from unittest.mock import AsyncMock as _AsyncMock
     with patch(
-        "orchestration.model_deployment"
+        "orchestration.models.model_deployment"
         ".hf_token_resolver.resolve_hf_token",
         new_callable=_AsyncMock,
         return_value="hf_combined_tok",

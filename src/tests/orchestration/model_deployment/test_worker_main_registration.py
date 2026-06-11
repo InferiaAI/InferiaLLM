@@ -18,10 +18,10 @@ def test_worker_main_has_strategy_registration():
     """
     import pathlib
     src = pathlib.Path(
-        "src/services/orchestration/services/model_deployment/worker_main.py"
+        "src/orchestration/models/model_deployment/worker_main.py"
     ).read_text()
 
-    assert "from orchestration.model_deployment.strategies.worker import WorkerDeploymentStrategy" in src, (
+    assert "from orchestration.models.model_deployment.strategies.worker import WorkerDeploymentStrategy" in src, (
         "WorkerDeploymentStrategy not imported in worker_main.py"
     )
     assert "WorkerDeploymentStrategy(" in src, (
@@ -33,13 +33,13 @@ def test_worker_main_has_strategy_registration():
 
 
 def test_strategy_constructible_with_main_di_shape():
-    from orchestration.model_deployment.strategies.worker import (
+    from orchestration.models.model_deployment.strategies.worker import (
         WorkerDeploymentStrategy,
     )
-    from orchestration.worker_controller.controller import (
+    from orchestration.workers.worker_controller.controller import (
         WorkerController,
     )
-    from orchestration.worker_controller.registry import (
+    from orchestration.workers.worker_controller.registry import (
         WorkerRegistry,
     )
 
@@ -58,13 +58,13 @@ def test_strategy_signature_matches_other_strategies():
     keyword arguments to ``deploy()`` so the dispatcher can call them
     uniformly."""
     import inspect
-    from orchestration.model_deployment.strategies.vllm import (
+    from orchestration.models.model_deployment.strategies.vllm import (
         VLLMDeploymentStrategy,
     )
-    from orchestration.model_deployment.strategies.localai import (
+    from orchestration.models.model_deployment.strategies.localai import (
         LocalAIDeploymentStrategy,
     )
-    from orchestration.model_deployment.strategies.worker import (
+    from orchestration.models.model_deployment.strategies.worker import (
         WorkerDeploymentStrategy,
     )
 

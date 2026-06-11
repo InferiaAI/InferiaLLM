@@ -15,7 +15,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from orchestration.provisioning_state_machine.jobs.repository import (
+from orchestration.state_machine.jobs.repository import (
     ProvisioningJobRepository,
 )
 

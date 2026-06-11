@@ -1,7 +1,7 @@
 """Tests for the require_local_identity dependency.
 
 Run with --noconftest to avoid the jwt import conflict in conftest.py:
-    python -m pytest src/services/api_gateway/tests/test_local_identity_guard.py -v --noconftest
+    python -m pytest src/tests/api_gateway/test_local_identity_guard.py -v --noconftest
 """
 import pytest
 from fastapi import FastAPI, Depends

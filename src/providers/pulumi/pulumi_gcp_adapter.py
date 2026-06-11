@@ -30,13 +30,13 @@ from providers.pulumi.programs import (
 from providers.pulumi.pulumi_aws_adapter import (
     load_providers_config,  # reuse the same accessor
 )
-from orchestration.adapter_engine.base import (
+from orchestration.provisioning.engine.base import (
     AdapterType,
     PricingModel,
     ProviderAdapter,
     ProviderCapabilities,
 )
-from orchestration.worker_controller.auth import (
+from orchestration.workers.worker_controller.auth import (
     mint_bootstrap_token,
 )
 

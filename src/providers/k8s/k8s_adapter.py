@@ -1,5 +1,5 @@
 from kubernetes import client, config
-from orchestration.adapter_engine.base import (
+from orchestration.provisioning.engine.base import (
     ProviderAdapter,
     AdapterType,
     PricingModel,

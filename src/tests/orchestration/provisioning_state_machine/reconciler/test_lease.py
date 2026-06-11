@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from orchestration.provisioning_state_machine.reconciler.lease import (
+from orchestration.state_machine.reconciler.lease import (
     renew_loop,
 )
 

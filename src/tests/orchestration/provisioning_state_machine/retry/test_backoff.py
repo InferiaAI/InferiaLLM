@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from orchestration.provisioning_state_machine.retry.backoff import (
+from orchestration.state_machine.retry.backoff import (
     TRANSIENT_MAX_ATTEMPTS,
     next_attempt_after,
 )

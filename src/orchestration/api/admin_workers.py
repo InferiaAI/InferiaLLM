@@ -32,10 +32,10 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from orchestration.worker_controller.auth import (
+from orchestration.workers.worker_controller.auth import (
     WorkerAuth,
 )
-from orchestration.worker_controller.protocol import (
+from orchestration.workers.worker_controller.protocol import (
     LogsEndBody,
     LogsLineBody,
     LogsOpenBody,
@@ -44,7 +44,7 @@ from orchestration.worker_controller.protocol import (
     ShellOpenBody,
     ShellOutputBody,
 )
-from orchestration.worker_controller.registry import (
+from orchestration.workers.worker_controller.registry import (
     WorkerNotConnectedError,
     WorkerRegistry,
 )
@@ -261,7 +261,7 @@ async def revoke_worker(
     # so ``pulumi destroy`` reported success while the real EC2 LEAKED.
     provider = node.get("provider") if isinstance(node, dict) else None
     if provider == "aws" and _deps.db_pool is not None:
-        from orchestration.provisioning_state_machine.jobs.repository import (
+        from orchestration.state_machine.jobs.repository import (
             ProvisioningJobRepository,
         )
         try:

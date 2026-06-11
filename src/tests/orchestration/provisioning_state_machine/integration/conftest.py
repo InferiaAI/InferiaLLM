@@ -92,7 +92,7 @@ def _build_app(db_pool, *, reconciler) -> FastAPI:
     from orchestration.repositories.node_provisioning_repo import (
         NodeProvisioningRepo,
     )
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
     provisioning_repo = ProvisioningJobRepository(db_pool)
@@ -137,28 +137,28 @@ async def app_with_real_db(test_database_url) -> AsyncIterator[tuple]:
     via ``await app.state.reconciler.tick_once()`` for deterministic
     state-machine progression.
     """
-    from orchestration.provisioning_state_machine.events import (
+    from orchestration.state_machine.events import (
         emit_event as _emit_event_to_db,
     )
-    from orchestration.provisioning_state_machine.jobs.model import (
+    from orchestration.state_machine.jobs.model import (
         Phase,
     )
-    from orchestration.provisioning_state_machine.jobs.repository import (
+    from orchestration.state_machine.jobs.repository import (
         ProvisioningJobRepository,
     )
-    from orchestration.provisioning_state_machine.phases.bootstrap import (
+    from orchestration.state_machine.phases.bootstrap import (
         BootstrapHandler,
     )
-    from orchestration.provisioning_state_machine.phases.cancel import (
+    from orchestration.state_machine.phases.cancel import (
         CancelHandler,
     )
-    from orchestration.provisioning_state_machine.phases.preflight import (
+    from orchestration.state_machine.phases.preflight import (
         PreflightHandler,
     )
-    from orchestration.provisioning_state_machine.phases.pulumi_up import (
+    from orchestration.state_machine.phases.pulumi_up import (
         PulumiUpHandler,
     )
-    from orchestration.provisioning_state_machine.reconciler.loop import (
+    from orchestration.state_machine.reconciler.loop import (
         ProvisioningReconciler,
     )
     from orchestration.repositories.inventory_repo import (
