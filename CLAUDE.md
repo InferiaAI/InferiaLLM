@@ -17,7 +17,7 @@ inferiallm start              # Start all microservices
 
 # Testing
 make test                     # Run all tests (pytest)
-pytest package/src/inferia/services/api_gateway/tests/test_rbac.py  # Single test file
+pytest src/tests/api_gateway/test_rbac.py  # Single test file
 pytest -k "test_name"         # Run specific test by name
 
 # Docker
@@ -28,18 +28,18 @@ make docker-clean             # Stop + remove volumes
 
 # Dashboard (React)
 cd apps/dashboard && npm run dev    # Dev server with HMR
-cd apps/dashboard && npm run build  # Production build → package/src/inferia/dashboard/
+cd apps/dashboard && npm run build  # Production build → src/dashboard/
 cd apps/dashboard && npm run lint   # ESLint
 
 # Package build
-cd package && python -m build       # Build Python package
+python -m build       # Build Python package
 ```
 
 ## Architecture
 
 ### Service Layout
 
-All services live under `package/src/inferia/services/`:
+All services live as top-level packages under `src/` (`api_gateway/`, `inference/`, `orchestration/`):
 
 | Service | Port | Role |
 |---------|------|------|
@@ -68,10 +68,11 @@ Each service follows: `main.py` → `start_api()` → `uvicorn.run("app:app")`. 
 
 ### Key Shared Code
 
-- `package/src/inferia/common/` — logging, error schemas, shared utilities
-- `package/src/inferia/infra/schema/` — SQL schemas and migration files
-- `package/src/inferia/cli.py` — CLI entry point
-- `package/src/inferia/startup_events.py` — service startup handlers
+- `src/common/` — logging, error schemas, shared utilities
+- `src/infra/schema/` — SQL schemas and migration files
+- `src/providers/` — pluggable compute provider adapters (aws, nosana, akash, k8s, pulumi, worker)
+- `src/cli/` — CLI entry point (package; `cli:main`)
+- `src/startup_events.py` — service startup handlers
 
 ## Conventions
 
@@ -106,7 +107,7 @@ Copy `.env.sample` to `.env` for local development. Key variables: `DATABASE_URL
 <!-- Add entries here when mistakes are made during development. Format: -->
 <!-- - **[DATE] Short description**: Root cause and fix. Edge cases to watch for. -->
 
-- **[2026-05-12] Unified config: Pydantic Settings v2 source order is significant.** Appending vs. inserting a custom source changes precedence silently. Always assert order in a test (see `package/src/inferia/common/tests/unified_config/test_base.py::test_env_wins_over_yaml`). Edge case: a custom source returning `None` for a field still counts as "this source had no value" — only non-None values participate in the chain.
+- **[2026-05-12] Unified config: Pydantic Settings v2 source order is significant.** Appending vs. inserting a custom source changes precedence silently. Always assert order in a test (see `src/common/tests/unified_config/test_base.py::test_env_wins_over_yaml`). Edge case: a custom source returning `None` for a field still counts as "this source had no value" — only non-None values participate in the chain.
 - **[2026-05-12] Unified config: `yaml.safe_load("")` returns `None`, not `{}`.** Wrap with `or {}` (or an explicit `is None` check) in `load_yaml` or the loader will `AttributeError` on the empty-file path. Edge case: a yaml file whose top level is a list or scalar also fails the `dict` contract — reject early with `ConfigParseError` rather than letting `**data` raise a confusing `TypeError`.
 - **[2026-05-12] Unified config: `os.environ` reads at fork time.** Child multiprocessing workers see the parent's env *at fork*. Set `INFERIA_CONFIG` in the CLI *before* `multiprocessing.Process.start()`. Edge case: `spawn` start method on macOS/Windows also inherits env, but anything mutated after spawn won't propagate either way.
 - **[2026-05-12] Unified config: `${VAR}` with an empty env var is not the same as unset.** `${VAR:-default}` treats empty as unset (falls back). `${VAR-default}` keeps the empty value. Mirror POSIX shell semantics; document the distinction at the call site. Edge case: `${A-B}` where `B` looks like a valid env-var name (`[A-Z_][A-Z0-9_]*$`) is rejected as ambiguous — use `${A:-B}` to pass a literal default that happens to look env-shaped.
@@ -117,3 +118,5 @@ Copy `.env.sample` to `.env` for local development. Key variables: `DATABASE_URL
 - **[2026-06-09] External-auth httpx calls must honor the custom CA.** In SaaS/SSO mode InferiaAuth sits behind a self-signed CA (Caddy `tls internal`), so token exchange (`rbac/oauth_client`), JWKS fetch (`rbac/jwks_verifier`), and catalog declare all `CERTIFICATE_VERIFY_FAILED` unless every `httpx` client passes `verify=config.httpx_verify(settings)` (= `ssl_ca_bundle` path if set, else the `verify_ssl` bool). Edge case: the **boot-time** declare in `app.py` is easy to miss — it calls `declare_catalog(...)` directly, so it must thread `verify=` + `service_id=` too, or only the boot path silently ignores the CA. Set `SSL_CA_BUNDLE` to a mounted CA bundle in the deployment (the SSO compose mounts Caddy's `sso-caddy-data` volume read-only).
 - **[2026-06-09] SSM `AWS-RunShellScript` runs under `/bin/sh` (dash on Ubuntu), not bash.** The engine-AMI bake script (`engine_ami_bake._build_bake_script`) began with `set -euxo pipefail`; the first live bake aborted with `set: Illegal option -o pipefail` (dash has no `pipefail`) — exit 2, before any install. Fix: use POSIX `set -eux`. Edge case: ANY bashism in an SSM RunShellScript fails the same way — `pipefail`, `[[ ]]`, arrays, `<(...)` process substitution, `function` keyword. Keep SSM shell scripts POSIX-sh. This is invisible to unit tests (the interpreter is an AWS runtime fact) — only a live `SendCommand` exercises it; regression-guarded by `test_build_bake_script_is_posix_sh_safe_no_pipefail`.
 - **[2026-06-10] Saving the provider config from ANY provider page wiped OTHER providers' stored secrets (silent credential loss).** The dashboard `clearMaskedSecrets` scrubs masked secrets (`********` / `AKIA...636B`) to `""` on load, then `handleSave` POSTs the WHOLE config. The backend guard `_preserve_masked_secrets` only restored values that arrived as the literal mask — NOT blank — so the scrubbed `""` for an untouched provider flowed through `_merge_configs` (which overwrites scalar fields) and blanked real AWS/GCP/nosana creds in the DB. Reproduced live: a user adding an HF token from the providers page wiped the account's AWS access key + secret (secret unrecoverable — only ever stored encrypted). The AWS form's own copy says "leave blank to keep existing", so the contract was always blank=keep; the backend just never honored it. Fix (`_preserve_secret` helper): treat **masked OR blank-with-a-stored-value** as "unchanged → restore"; only a non-empty non-masked value overwrites; a mask with no stored value is dropped; fields absent from the payload are untouched. Edge cases regression-guarded in `test_masked_secret_guard.py`: blank+stored→restore, blank+no-stored→stays blank, absent-provider→not injected, new-real-value-while-other-field-blank→new saved + other preserved. Related: this is why HF tokens were migrated to immediate-persist credential endpoints (no whole-config save needed to add a token). Mock/unit-only testing missed the original wipe because the destructive path is the dashboard's full-config POST with scrubbed values — a partial POST (only the edited subtree, as curl smokes used) never triggers it.
+- **[2026-06-11] Flattening a package namespace silently drops modules from the wheel — editable mode hides it.** The repo restructure dropped the `inferia` import namespace so its contents became TOP-LEVEL packages under `src/` (cli, common, infra, dashboard, providers, services). Imports, all 516 curated tests, and `find_packages('src')` for the *regular* packages passed under the editable install (the `.pth` puts `src` on `sys.path`, so PEP-420 namespace packages and top-level single-file modules resolve). But the INSTALLED wheel/image crash-looped `ModuleNotFoundError: No module named 'startup_ui'`: `[tool.setuptools.packages.find]` (regular `find_packages`) does NOT include (a) namespace-package dirs that lack `__init__.py` (e.g. `services/`, `services/api_gateway/` — so ZERO of `services.*` shipped) nor (b) top-level single-file modules (`startup_events.py`/`startup_ui.py`/`inferiadocs.py`). Fix: add `__init__.py` to every former namespace dir AND declare `py-modules = ["inferiadocs","startup_events","startup_ui"]` under `[tool.setuptools]`. Edge cases: package-data must be re-keyed per top-level package (no umbrella pkg) and `dashboard/`+`infra/` need an `__init__.py` to be discovered as data packages (the Dockerfile must `touch /app/src/dashboard/__init__.py` after copying the built dist, which the `rm -rf`+dist-COPY would otherwise drop). VERIFY packaging with `python -c "from setuptools import find_packages; print(find_packages('src'))"` plus a throwaway `docker run python:3.12-slim sh -c 'pip install --no-deps --target=/tmp/wt .'` (copy `src` to a WRITABLE dir first — a `:ro` mount + a stale `src/*.egg-info` makes the `egg_info` step fail with "Cannot update time stamp") — NEVER trust editable-mode boot/tests for packaging correctness. Related: moving compose out of `deploy/` must pin `name: deploy` or the default (dir-based) project name orphans the `deploy_*` volumes (DB/model-cache/pulumi-state → EC2 leak); and a 2-phase path move (`package/src/inferia`→`src/inferia`→`src/`) leaves a stale intermediate `src/inferia` PATH string in CI/docs that grepping only for `package/` or `inferia.`-imports misses (pypi-publish.yml; caught by the adversarial final-review workflow).
+- **[2026-06-11] Renaming a generated protobuf (`_pb2`) package corrupts it; and blind path-rewrites over-match substrings.** During the orchestration regroup, renaming `orchestration/v1/` → `grpc/` and text-replacing `orchestration.v1` → `orchestration.grpc` broke every `_pb2` import with `TypeError: Couldn't parse file content!`. Cause: protoc bakes the package name into the **serialized binary `FileDescriptor`** inside `DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'...\x10orchestration.v1...')`; rewriting the string changes the blob's byte length so the descriptor no longer parses. You CANNOT rename a generated protobuf package by moving files / editing text — you must re-run protoc with the new `package`/path. Fix: kept `v1/` as-is. Edge case: the reverse text-replace to undo it (`orchestration.grpc` → `orchestration.v1`) ALSO over-matched the real module `orchestration.grpc_auth_interceptor` → `orchestration.v1_auth_interceptor` (a `MODULE_NOT_FOUND` at boot), because `orchestration.grpc` is a substring of it; likewise `orchestration.model_deployment` → `orchestration.models.model_deployment` corrupted the test self-import `tests.orchestration.model_deployment...`. Lesson: path/namespace text-rewrites must be word-boundary-aware (or apply longest-key-first AND grep for the unintended substring hits afterward); never blindly `str.replace` a dotted prefix that is also a prefix of an unrelated module. Tell: a burst of `Couldn't parse file content!` right after a package rename = a touched `_pb2` serialized descriptor; an unexpected `orchestration.v1_<x>` / doubled segment = a substring over-match.

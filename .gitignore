@@ -130,11 +130,11 @@ sync_package.sh
 apps/docs
 
 *.bin
-package/chroma_db
-package/dist/
+chroma_db
+dist/
 sync_dashboard.sh
 
 chroma_db
 chromadb/chroma.sqlite3
-package/src/inferia/dashboard
+src/dashboard
 .localhost-dashboard/

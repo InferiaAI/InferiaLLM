@@ -69,7 +69,7 @@ git clone https://github.com/InferiaAI/InferiaLLM.git
 cd InferiaLLM
 
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e package/
+pip install -e .
 
 cp .env.sample .env
 # Edit .env — set DB, Redis, and secrets
@@ -109,10 +109,10 @@ cp .env.sample .env
 cd deploy && docker compose up -d --build
 
 # Development — unified (monolithic)
-docker compose -f deploy/docker-compose.yml --profile unified up --build
+docker compose -f docker-compose.profiles.yml --profile unified up --build
 
 # Development — split (microservices)
-docker compose -f deploy/docker-compose.yml --profile split up --build
+docker compose -f docker-compose.profiles.yml --profile split up --build
 ```
 </details>
 
@@ -317,15 +317,15 @@ We welcome contributions. Each component has its own README with architecture co
 
 | Component | Responsibility | Documentation |
 | :--- | :--- | :--- |
-| **Orchestrator** | Compute lifecycle and workload management | [README](./package/src/inferia/services/orchestration/README.md) |
-| **Guardrail Engine** | Content safety scanning and PII detection | [README](./package/src/inferia/services/guardrail/README.md) |
-| **Data Engine** | Knowledge base and data processing | [README](./package/src/inferia/services/data/README.md) |
-| **RBAC** | Identity and access boundaries | [README](./package/src/inferia/services/api_gateway/rbac/README.md) |
-| **Gateway** | Secure internal service routing | [README](./package/src/inferia/services/api_gateway/gateway/README.md) |
-| **Audit** | Immutable execution and policy logs | [README](./package/src/inferia/services/api_gateway/audit/README.md) |
-| **Policy** | Quota, rate, and budget enforcement | [README](./package/src/inferia/services/api_gateway/policy/README.md) |
-| **Prompt** | Prompt templates and versioning | [README](./package/src/inferia/services/api_gateway/prompt/README.md) |
-| **Packages** | Installation, versioning, and initialization | [README](./package/README.md) |
+| **Orchestrator** | Compute lifecycle and workload management | [README](./src/orchestration/README.md) |
+| **Guardrail Engine** | Content safety scanning and PII detection | [README](./src/guardrail/README.md) |
+| **Data Engine** | Knowledge base and data processing | [README](./src/data/README.md) |
+| **RBAC** | Identity and access boundaries | [README](./src/api_gateway/rbac/README.md) |
+| **Gateway** | Secure internal service routing | [README](./src/api_gateway/gateway/README.md) |
+| **Audit** | Immutable execution and policy logs | [README](./src/api_gateway/audit/README.md) |
+| **Policy** | Quota, rate, and budget enforcement | [README](./src/api_gateway/policy/README.md) |
+| **Prompt** | Prompt templates and versioning | [README](./src/api_gateway/prompt/README.md) |
+| **Packages** | Installation, versioning, and initialization | [README](./README.md) |
 
 Open an [issue](https://github.com/InferiaAI/InferiaLLM/issues) to report bugs or request features.
 

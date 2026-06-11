@@ -84,13 +84,13 @@ done
 
 # --- Verify the gateway can reach inferia-auth's OIDC discovery ---------------
 echo "===> verifying OIDC discovery reachable from inferia-app container"
-docker compose -f deploy/docker-compose.sso.yml exec -T inferia-app \
+docker compose -f docker-compose.sso.yml exec -T inferia-app \
   curl -sfk https://auth.inferia.local/.well-known/openid-configuration >/dev/null \
   || {
     echo "  inferia-app could not reach auth.inferia.local's discovery doc."
     echo "  This usually means the Caddy network alias isn't resolving inside"
     echo "  the inferia-app container. Check the sso-net aliases in"
-    echo "  deploy/docker-compose.sso.yml."
+    echo "  docker-compose.sso.yml."
     exit 1
   }
 echo "  OIDC discovery reachable."

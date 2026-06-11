@@ -1,0 +1,341 @@
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import func
+import uuid
+import secrets
+
+from api_gateway.db.database import get_db
+from api_gateway.db.models import (
+    Organization as DBOrganization,
+    Invitation as DBInvitation,
+    User as DBUser,
+    UserOrganization,
+)
+from api_gateway.schemas.management import (
+    OrganizationCreate,
+    OrganizationResponse,
+    OrganizationUpdate,
+    InviteRequest,
+    InviteResponse,
+    InvitationListResponse,
+)
+from api_gateway.management.dependencies import get_current_user_context
+from api_gateway.schemas.auth import PermissionEnum
+from api_gateway.rbac.authorization import authz_service
+from datetime import datetime, timedelta, timezone
+from api_gateway.audit.service import audit_service
+from api_gateway.models import AuditLogCreate
+from api_gateway.rbac.local_identity_guard import require_local_identity
+
+
+def utcnow_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+def build_invite_link_path(token: str) -> str:
+    return f"/auth/accept-invite?token={token}"
+
+
+# Identity MANAGEMENT (create/update orgs, invitations) is owned by the IdP in
+# external modes and stays 409-gated per-endpoint. Reads of the active org
+# context (GET /organizations/me) work in every mode — in external modes the
+# row is the shadow org provisioned at token resolution (rbac/external_org.py),
+# named from the IdP. Do NOT re-add a router-level guard: it locks the
+# dashboard's main screen out of its own org context.
+router = APIRouter(tags=["Organizations"])
+
+_local_identity_only = [Depends(require_local_identity)]
+
+
+@router.post(
+    "/organizations",
+    response_model=OrganizationResponse,
+    status_code=201,
+    dependencies=_local_identity_only,
+)
+async def create_organization(
+    org_data: OrganizationCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+
+    # Generate API Key
+    api_key = f"sk-inferia-{uuid.uuid4()}"
+
+    new_org = DBOrganization(
+        name=org_data.name, api_key=api_key, log_payloads=org_data.log_payloads
+    )
+    db.add(new_org)
+    await db.flush()
+
+    # Creator is automatically admin of the new organization.
+    creator_link = UserOrganization(
+        user_id=user_ctx.user_id,
+        org_id=new_org.id,
+        role="admin",
+    )
+    db.add(creator_link)
+
+    creator_result = await db.execute(select(DBUser).where(DBUser.id == user_ctx.user_id))
+    creator = creator_result.scalars().first()
+    if creator and not creator.default_org_id:
+        creator.default_org_id = new_org.id
+
+    await db.commit()
+    await db.refresh(new_org)
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=new_org.id,
+            action="organization.create",
+            resource_type="organization",
+            resource_id=new_org.id,
+            details={"name": new_org.name},
+            status="success",
+        ),
+    )
+
+    return new_org
+
+
+@router.get("/organizations/me", response_model=OrganizationResponse)
+async def get_my_organization(request: Request, db: AsyncSession = Depends(get_db)):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_VIEW)
+
+    if not user_ctx.org_id:
+        raise HTTPException(
+            status_code=400, detail="No active organization context found in token"
+        )
+
+    org_result = await db.execute(
+        select(DBOrganization).where(DBOrganization.id == user_ctx.org_id)
+    )
+    org = org_result.scalars().first()
+
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    return org
+
+
+@router.patch(
+    "/organizations/me",
+    response_model=OrganizationResponse,
+    dependencies=_local_identity_only,
+)
+async def update_my_organization(
+    org_data: OrganizationUpdate, request: Request, db: AsyncSession = Depends(get_db)
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+
+    if not user_ctx.org_id:
+        raise HTTPException(status_code=400, detail="No active organization context")
+
+    org_result = await db.execute(
+        select(DBOrganization).where(DBOrganization.id == user_ctx.org_id)
+    )
+    org = org_result.scalars().first()
+
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if org_data.name is not None:
+        org.name = org_data.name
+    if org_data.log_payloads is not None:
+        org.log_payloads = org_data.log_payloads
+
+    await db.commit()
+    await db.refresh(org)
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="organization.update",
+            resource_type="organization",
+            resource_id=user_ctx.org_id,
+            details={"name": org.name},
+            status="success",
+        ),
+    )
+
+    return org
+
+
+# --- Invitations (Grouped with Org Management) ---
+
+
+@router.post(
+    "/invitations",
+    response_model=InviteResponse,
+    status_code=201,
+    dependencies=_local_identity_only,
+)
+async def create_invitation(
+    invite_data: InviteRequest, request: Request, db: AsyncSession = Depends(get_db)
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.MEMBER_INVITE)
+
+    if not user_ctx.org_id:
+        raise HTTPException(
+            status_code=400, detail="Requester must belong to an organization"
+        )
+
+    # Check if user is already a member of *this* organization
+    normalized_email = invite_data.email.strip().lower()
+    existing_user_result = await db.execute(
+        select(DBUser).where(func.lower(DBUser.email) == normalized_email)
+    )
+    existing_user = existing_user_result.scalars().first()
+
+    if existing_user:
+        # Check membership
+        membership = await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == existing_user.id,
+                UserOrganization.org_id == user_ctx.org_id,
+            )
+        )
+        if membership.scalars().first():
+            raise HTTPException(
+                status_code=400, detail="User is already a member of this organization"
+            )
+
+    # Check for existing pending invitation
+    existing_invite = await db.execute(
+        select(DBInvitation).where(
+            func.lower(DBInvitation.email) == normalized_email,
+            DBInvitation.org_id == user_ctx.org_id,
+            DBInvitation.accepted_at == None,
+            DBInvitation.expires_at > utcnow_naive(),
+        )
+    )
+    if existing_invite.scalars().first():
+        raise HTTPException(
+            status_code=400, detail="Pending invitation already exists for this email"
+        )
+
+    token = secrets.token_urlsafe(32)
+    expires = utcnow_naive() + timedelta(hours=48)
+
+    new_invite = DBInvitation(
+        email=normalized_email,
+        role=invite_data.role,
+        org_id=user_ctx.org_id,
+        created_by=user_ctx.user_id,
+        token=token,
+        expires_at=expires,
+    )
+
+    db.add(new_invite)
+    await db.commit()
+    await db.refresh(new_invite)
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="invitation.create",
+            resource_type="invitation",
+            resource_id=new_invite.id,
+            details={"email": normalized_email, "role": invite_data.role},
+            status="success",
+        ),
+    )
+
+    invite_link = build_invite_link_path(token)
+
+    return InviteResponse(
+        id=new_invite.id,
+        email=new_invite.email,
+        role=new_invite.role,
+        token=new_invite.token,
+        invite_link=invite_link,
+        status="pending",
+        expires_at=new_invite.expires_at,
+        created_at=new_invite.created_at,
+    )
+
+
+@router.get(
+    "/invitations",
+    response_model=InvitationListResponse,
+    dependencies=_local_identity_only,
+)
+async def list_invitations(request: Request, db: AsyncSession = Depends(get_db)):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.MEMBER_LIST)
+
+    if not user_ctx.org_id:
+        return InvitationListResponse(invitations=[])
+
+    invites_query = select(DBInvitation).where(
+        DBInvitation.org_id == user_ctx.org_id,
+        DBInvitation.accepted_at == None,
+        DBInvitation.expires_at > utcnow_naive(),
+    )
+    invites = await db.execute(invites_query)
+
+    response_list = []
+
+    for inv in invites.scalars().all():
+        response_list.append(
+            InviteResponse(
+                id=inv.id,
+                email=inv.email,
+                role=inv.role,
+                token=inv.token,
+                invite_link=build_invite_link_path(inv.token),
+                status="pending",
+                expires_at=inv.expires_at,
+                created_at=inv.created_at,
+            )
+        )
+
+    return InvitationListResponse(invitations=response_list)
+
+
+@router.delete(
+    "/invitations/{invite_id}",
+    status_code=204,
+    dependencies=_local_identity_only,
+)
+async def revoke_invitation(
+    invite_id: str, request: Request, db: AsyncSession = Depends(get_db)
+):
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.MEMBER_DELETE)
+
+    invite = await db.get(DBInvitation, invite_id)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+
+    if invite.org_id != user_ctx.org_id:
+        raise HTTPException(
+            status_code=403, detail="Invitation belongs to different organization"
+        )
+
+    await db.delete(invite)
+    await db.commit()
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user_ctx.user_id,
+            org_id=user_ctx.org_id,
+            action="invitation.revoke",
+            resource_type="invitation",
+            resource_id=invite_id,
+            details={"email": invite.email},
+            status="success",
+        ),
+    )

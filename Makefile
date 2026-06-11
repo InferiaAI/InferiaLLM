@@ -24,7 +24,7 @@ clean:
 # Docker Commands
 # ==========================================
 
-DOCKER_COMPOSE = docker compose -f docker/docker-compose.yml
+DOCKER_COMPOSE = docker compose -f docker/docker-compose.profiles.yml
 
 # Build images
 docker-build-unified:
@@ -51,11 +51,11 @@ docker-clean:
 # ==========================================
 # SSO Topology (InferiaLLM + inferia-auth + Caddy)
 # ==========================================
-# Self-contained compose at deploy/docker-compose.sso.yml. Requires the
+# Self-contained compose at docker-compose.sso.yml. Requires the
 # sibling repo at ../inferia-auth/ (relative to this directory). Operator
 # must add `inferia.local` and `auth.inferia.local` to /etc/hosts pointing
 # at 127.0.0.1 before bringing the stack up. See docs/operations/auth.md.
-DOCKER_COMPOSE_SSO = docker compose -f deploy/docker-compose.sso.yml
+DOCKER_COMPOSE_SSO = docker compose -f docker/docker-compose.sso.yml
 
 docker-build-sso:
 	$(DOCKER_COMPOSE_SSO) build
@@ -72,12 +72,12 @@ docker-logs-sso:
 .PHONY: smoke-local smoke-local-up smoke-local-down smoke-aws smoke-aws-dry
 
 smoke-local-up:    ## bring up unified stack and build worker image (no worker container yet)
-	docker compose -f deploy/docker-compose.yml up -d
+	docker compose -f docker-compose.yml up -d
 	docker build -t inferia-worker:smoke ../inferia-worker
 
 smoke-local-down:  ## tear down worker compose + unified
-	-docker compose -f deploy/compose.worker-local.yml down -v
-	docker compose -f deploy/docker-compose.yml down
+	-docker compose -f docker/compose.worker-local.yml down -v
+	docker compose -f docker-compose.yml down
 
 smoke-local: smoke-local-up   ## run the local Qwen3 smoke end-to-end
 	python -m scripts.smoke.local

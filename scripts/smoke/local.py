@@ -32,7 +32,7 @@ from scripts.smoke.lib import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.worker-local.yml"
+COMPOSE_FILE = REPO_ROOT / "compose.worker-local.yml"
 
 GATEWAY_URL = os.environ.get("SMOKE_GATEWAY_URL", "http://localhost:8000")
 INFERENCE_URL = os.environ.get("SMOKE_INFERENCE_URL", "http://localhost:8001")

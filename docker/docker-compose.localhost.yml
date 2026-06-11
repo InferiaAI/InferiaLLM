@@ -1,0 +1,238 @@
+# =============================================================================
+# InferiaLLM LOCALHOST topology — plain HTTP, no Caddy, no TLS, no hostnames.
+# =============================================================================
+# Everything runs on `network_mode: host` so `localhost:<port>` means the same
+# thing to your browser AND to the containers' own server-side calls — which is
+# exactly what OIDC needs (issuer/redirect URLs must be identical from both
+# sides). Reuses the already-built inferia-auth:dev / inferia-app:dev images.
+#
+#   InferiaAuth (OAuth2 IdP + API) →  http://localhost:3001
+#   InferiaLLM  (dashboard + API)  →  http://localhost:8081
+#
+# Superuser login:  admin@inferia.local / sso-dev-superuser-pass-2026
+# Bring up:  docker compose -f docker-compose.localhost.yml up -d
+# (Redis uses 6380 to avoid a host redis already on 6379.) DEV-ONLY secrets.
+# =============================================================================
+name: inferia-localhost
+
+services:
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: inferia-lh-postgres
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      POSTGRES_USER: inferia
+      POSTGRES_PASSWORD: inferia
+      POSTGRES_DB: inferia
+    volumes:
+      - lh-pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sso.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inferia -d inferia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: inferia-lh-redis
+    restart: unless-stopped
+    network_mode: host
+    command: ["redis-server", "--port", "6380"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  inferia-auth-migrate:
+    image: inferia-auth:dev
+    build:
+      context: ../../inferia-auth
+      dockerfile: Dockerfile
+    container_name: inferia-lh-auth-migrate
+    restart: "no"
+    network_mode: host
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: "postgres://inferia:inferia@localhost:5432/inferia_auth?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  inferia-auth:
+    image: inferia-auth:dev
+    build:
+      context: ../../inferia-auth
+      dockerfile: Dockerfile
+    container_name: inferia-lh-auth
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SERVER_HTTP_PORT: "3001"
+      SERVER_GRPC_PORT: "50051"
+      SERVER_ISSUER: "http://localhost:3001"
+      GRPC_SERVICE_TOKEN: "dev-shared-grpc-service-token-change-me"
+      DATABASE_URL: "postgres://inferia:inferia@localhost:5432/inferia_auth?sslmode=disable"
+      OPENFGA_DATABASE_URL: "postgres://inferia:inferia@localhost:5432/inferia_openfga?sslmode=disable"
+      OPENFGA_STORE_NAME: "inferia-auth"
+      JWT_PRIVATE_KEY: "/i5FUjyhcld2023H6Xp8JksHwUhHekhYHn3or7SK+bOM1YIRu3/v0wNPbeKfXJCoAptWUrbWxsDqmi40hoK93g=="
+      JWT_PUBLIC_KEY: "jNWCEbt/79MDT23in1yQqAKbVlK21sbA6pouNIaCvd4="
+      JWT_ACCESS_TTL: "15m"
+      JWT_REFRESH_TTL: "168h"
+      ENCRYPTION_KEY: "x9tZfrL6OCoGDLg26VKE3F4djdjoPQK989p9lmCt8UY="
+      # Plain HTTP → the dashboard redirect_uri is localhost:8081.
+      OAUTH_SEED_REDIRECT_URI: "http://localhost:8081/auth/callback"
+      # Break-glass superuser (non-default password so the secret-guard boots).
+      SUPERUSER_EMAIL: "admin@inferia.local"
+      SUPERUSER_PASSWORD: "sso-dev-superuser-pass-2026"
+      # No TLS here → cookies must NOT be Secure-only or the browser drops them.
+      COOKIE_SECURE: "false"
+      RATE_LIMIT_MAX: "60"
+      RATE_LIMIT_WINDOW: "1m"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inferia-auth-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  inferia-app:
+    image: inferia-app:dev
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: unified
+    container_name: inferia-lh-app
+    restart: unless-stopped
+    network_mode: host
+    # Run the three core planes in one container, ports adjusted for host
+    # networking: API gateway :8000 (behind the Caddy front on :8081), inference
+    # :8001 (its default), orchestration HTTP :8082 + gRPC :50052 (its defaults
+    # 8080/50051 collide with a host InferiaGate and inferia-auth's gRPC).
+    # `unified` mode is unusable here: it would also bind the SPA server on
+    # :3001 (inferia-auth's port). SERVICE_TYPE is unrecognized on purpose so
+    # the entrypoint still runs dashboard-config + DB init, then falls through
+    # to `exec "$@"` (this command). Do NOT set a global PORT env — the
+    # gateway's AND inference's `port` settings both read it and would collide.
+    command:
+      - sh
+      - -c
+      - |
+        python -m uvicorn api_gateway.app:app --host 0.0.0.0 --port 8000 --forwarded-allow-ips '*' &
+        python -c 'from inference.main import start_api; start_api()' &
+        python -c 'from orchestration.main import start_api; start_api()' &
+        wait
+    environment:
+      SERVICE_TYPE: "core-planes"
+      ENVIRONMENT: "development"
+      LOG_LEVEL: "INFO"
+      HOST: "0.0.0.0"
+      # Orchestration plane listen ports (host-networking remaps).
+      HTTP_PORT: "8082"
+      GRPC_PORT: "50052"
+      # Orchestration's HTTP handlers reach their own gRPC server through this
+      # loopback address — it MUST track GRPC_PORT, or they dial whatever else
+      # holds 50051 (here: inferia-auth's gRPC → "unknown service ...").
+      ORCHESTRATION_GRPC_ADDR: "127.0.0.1:50052"
+      # Gateway -> plane proxy targets.
+      ORCHESTRATION_URL: "http://localhost:8082"
+      INFERENCE_URL: "http://localhost:8001"
+
+      # Auth provider — inferiaauth (SaaS) mode, pointed at the localhost IdP.
+      AUTH_PROVIDER: "inferiaauth"
+      EXTERNAL_AUTH_URL: "http://localhost:3001"
+      EXTERNAL_AUTH_ISSUER: "http://localhost:3001"
+      APP_NAMESPACE: "inferiallm"
+      OAUTH_CLIENT_ID: "inferiallm-dashboard"
+      OAUTH_REDIRECT_URI: "http://localhost:8081/auth/callback"
+      OAUTH_JWKS_CACHE_TTL_SECONDS: "3600"
+      CATALOG_ADMIN_TOKEN: "${CATALOG_ADMIN_TOKEN:-}"
+      EXTERNAL_SERVICE_ID: "${EXTERNAL_SERVICE_ID:-}"
+      # Plain HTTP → default verify is fine; no custom CA needed.
+      VERIFY_SSL: "false"
+
+      # Build-time dashboard vars are already baked; the login flow is server
+      # driven (/auth/start) so it follows EXTERNAL_AUTH_URL at runtime anyway.
+      VITE_AUTH_PROVIDER: "inferiaauth"
+      VITE_EXTERNAL_AUTH_URL: "http://localhost:3001"
+
+      SUPERADMIN_EMAIL: "admin@example.com"
+      SUPERADMIN_PASSWORD: "change-me-immediately-1234"
+
+      DATABASE_URL: "postgresql://inferia:inferia@localhost:5432/inferia"
+      DATABASE_SSL: "false"
+      PG_HOST: "localhost"
+      PG_PORT: "5432"
+      PG_ADMIN_USER: "inferia"
+      PG_ADMIN_PASSWORD: "inferia"
+      INFERIA_DB_USER: "inferia"
+      INFERIA_DB_PASSWORD: "inferia"
+      INFERIA_DB: "inferia"
+      REDIS_HOST: "localhost"
+      REDIS_PORT: "6380"
+      REDIS_DB: "0"
+      REDIS_USERNAME: "default"
+      REDIS_PASSWORD: ""
+      REDIS_SSL: "false"
+
+      JWT_SECRET_KEY: "dev-jwt-secret-please-rotate-before-production-use-32b"
+      INTERNAL_API_KEY: "dev-internal-api-key-please-rotate-before-production"
+      SECRET_ENCRYPTION_KEY: "BFogM9wUArPKU+CWLzFDqfYPCiMsWMOjIBEoc8d6yIA="
+      LOG_ENCRYPTION_KEY: "02ca6d7c1c01a04cd74c92cd273bb1e3ce0ee32b87182a317857d6fabf425d39"
+
+      FORWARDED_ALLOW_IPS: "*"
+      ALLOWED_ORIGINS: "http://localhost:8081,http://localhost:3001"
+
+      DASHBOARD_API_GATEWAY_URL: "http://localhost:8081"
+      DASHBOARD_INFERENCE_URL: "http://localhost:8081"
+      DASHBOARD_WEB_SOCKET_URL: "ws://localhost:8081"
+      DASHBOARD_SIDECAR_URL: ""
+
+      INFERIA_CONFIG: "/etc/inferia/inferia.yaml"
+    volumes:
+      - lh-appdata:/data
+      - ../inferia.yaml.example:/etc/inferia/inferia.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inferia-auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # Plain-HTTP front: serves the dashboard SPA + proxies the API on :8081, so
+  # InferiaLLM is a single origin (UI + API) — mirrors the role Caddy plays in
+  # the SSO topology but without TLS/hostnames. The SPA lives in
+  # ./.localhost-dashboard (reboot-safe, unlike /tmp): copy apps/dashboard/dist
+  # there and write a config.js with AUTH_PROVIDER (what write-dashboard-config
+  # emits inside the image).
+  caddy:
+    image: caddy:2-alpine
+    container_name: inferia-lh-caddy
+    restart: unless-stopped
+    network_mode: host
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - ./Caddyfile.localhost:/etc/caddy/Caddyfile:ro
+      - ../.localhost-dashboard:/srv/dashboard:ro
+    depends_on:
+      inferia-app:
+        condition: service_healthy
+
+volumes:
+  lh-pgdata:
+  lh-appdata:
