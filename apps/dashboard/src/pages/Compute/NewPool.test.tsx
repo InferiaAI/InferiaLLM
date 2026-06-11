@@ -22,7 +22,7 @@
  *     so Step 1 → click → Step 2 lands on the cluster-provider branch.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -450,27 +450,20 @@ describe("AWS InstanceDropdown (GPU-first flat list, no tier tabs)", () => {
         expect(screen.getByTestId("gpu-count")).toBeInTheDocument();
     });
 
-    it("spot toggle applies a 60% discount on the AWS price summary", async () => {
+    it("shows the on-demand AWS price summary (spot option removed)", async () => {
         const user = await gotoStep2("aws");
         await waitFor(() => screen.getByTestId("instance-dropdown-trigger"));
 
         selectAwsRegion("us-east-1");
         await selectInstanceFromDropdown(user, "g6.xlarge");
 
-        // Pre-spot: 0.805 * 1 → "$0.81/hr"
+        // On-demand cost: 0.805 * 1 → "$0.81/hr"
         await waitFor(() =>
             expect(screen.getByText(/Estimated: \$0\.81\/hr/i)).toBeInTheDocument(),
         );
 
-        // Toggle spot
-        const spotLabel = screen.getByText("Use Spot Instances");
-        const row = spotLabel.closest("div.flex");
-        const spotToggle = row?.querySelector("button.rounded-full");
-        expect(spotToggle).toBeTruthy();
-        await act(async () => { await user.click(spotToggle as HTMLButtonElement); });
-
-        // Post-spot: 0.805 * 0.4 = 0.322 → "$0.32/hr"
-        expect(screen.getByText(/Estimated: \$0\.32\/hr/i)).toBeInTheDocument();
+        // The "Use Spot Instances" option was removed — it must not render.
+        expect(screen.queryByText("Use Spot Instances")).not.toBeInTheDocument();
     });
 
     // -----------------------------------------------------------------------

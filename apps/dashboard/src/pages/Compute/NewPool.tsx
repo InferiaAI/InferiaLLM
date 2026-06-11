@@ -712,7 +712,7 @@ export default function NewPool() {
     return (
         <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 font-sans text-foreground">
             <div>
-                <h2 className="text-3xl font-bold tracking-tight">Create New Compute Node</h2>
+                <h2 className="text-3xl font-bold tracking-tight">Create New Compute Pool</h2>
                 <p className="text-muted-foreground mt-2">
                     Add a compute node so deployments can land on it. Each provider registers exactly one node per submission.
                 </p>
@@ -982,33 +982,6 @@ export default function NewPool() {
                                 </p>
                             </div>
                         )}
-
-                        {/* Spot Toggle */}
-                        <div className="p-4 rounded-lg border border-border bg-card">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <div className="font-medium">Use Spot Instances</div>
-                                    <div className="text-xs text-muted-foreground">Up to 60% cheaper, but may be interrupted</div>
-                                </div>
-                                <button
-                                    onClick={() => dispatch({ type: "SET_USE_SPOT", payload: !useSpot })}
-                                    className={cn(
-                                        "relative w-12 h-6 rounded-full transition-colors",
-                                        useSpot ? "bg-ember-600" : "bg-muted dark:bg-card"
-                                    )}
-                                >
-                                    <div className={cn(
-                                        "absolute top-1 w-4 h-4 bg-card rounded-full transition-transform",
-                                        useSpot ? "translate-x-7" : "translate-x-1"
-                                    )} />
-                                </button>
-                            </div>
-                            {useSpot && (
-                                <div className="mt-2 text-xs text-ember-600">
-                                    Estimated cost: ~${(computeHourlyCost(selectedResource, useSpot, gpuCount, estimateGcpCost)).toFixed(2)}/hr (60% savings)
-                                </div>
-                            )}
-                        </div>
 
                         {/* Summary. For AWS entries (and any other case
                             where price_per_hour is set on the selected
