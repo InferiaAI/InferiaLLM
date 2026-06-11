@@ -136,5 +136,5 @@ sync_dashboard.sh
 
 chroma_db
 chromadb/chroma.sqlite3
-src/inferia/dashboard
+src/dashboard
 .localhost-dashboard/

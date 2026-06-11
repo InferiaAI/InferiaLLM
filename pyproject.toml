@@ -117,32 +117,42 @@ dev = [
 [tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
+# Top-level single-file modules (not packages) — find_packages does not pick these up.
+py-modules = ["inferiadocs", "startup_events", "startup_ui"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-exclude = ["**/node_modules"]
+# Tests live under src/tests/ for discovery but are NOT shipped in the wheel.
+exclude = ["tests", "tests.*", "**/node_modules"]
 
 [tool.setuptools.package-data]
-inferia = [
-  "dashboard/**/*",
-  "infra/schema/*.sql",
-  "infra/schema/migrations/*.sql",
-  "services/orchestration/services/depin-sidecar/package.json",
-  "services/orchestration/services/depin-sidecar/tsconfig.json",
-  "services/orchestration/services/depin-sidecar/src/**/*",
-  "services/orchestration/services/depin-sidecar/dist/**/*",
+# The flattened layout has no umbrella package, so data is keyed per
+# top-level package. dashboard/ and infra/ are data-only packages
+# (each carries an __init__.py so setuptools discovers them).
+dashboard = ["**/*"]
+infra = ["schema/*.sql", "schema/migrations/*.sql"]
+services = [
+  "orchestration/services/depin-sidecar/package.json",
+  "orchestration/services/depin-sidecar/tsconfig.json",
+  "orchestration/services/depin-sidecar/src/**/*",
+  "orchestration/services/depin-sidecar/dist/**/*",
 ]
 
 [tool.setuptools.exclude-package-data]
-inferia = [
+"*" = [
     "**/node_modules/**/*",
     "**/.env",
     "**/*.pyc",
-    "**/__pycache__/**/*"
+    "**/__pycache__/**/*",
 ]
 
 # -------------------------
 # CLI entrypoint
 # -------------------------
 [project.scripts]
-inferiallm = "inferia.cli:main"
+inferiallm = "cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+pythonpath = ["src"]
+addopts = "-p no:twisted -p no:trio -p no:tornasync"

@@ -46,12 +46,12 @@ jobs:
           cd apps/dashboard
           npm ci
           npm run build
-          rm -rf ../../src/inferia/dashboard
-          cp -r dist ../../src/inferia/dashboard
+          rm -rf ../../src/dashboard
+          cp -r dist ../../src/dashboard
 
       - name: Build Sidecar
         run: |
-          cd src/inferia/services/orchestration/services/depin-sidecar
+          cd src/services/orchestration/services/depin-sidecar
           npm ci
           npm run build
 

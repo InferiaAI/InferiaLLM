@@ -26,11 +26,11 @@ FROM node:20-slim AS node-builder
 WORKDIR /build/depin-sidecar
 
 # Copy package files first for better caching
-COPY src/inferia/services/orchestration/services/depin-sidecar/package*.json ./
+COPY src/services/orchestration/services/depin-sidecar/package*.json ./
 RUN npm install
 
 # Copy source and build
-COPY src/inferia/services/orchestration/services/depin-sidecar/ ./
+COPY src/services/orchestration/services/depin-sidecar/ ./
 RUN npm run build
 
 WORKDIR /build/dashboard
@@ -58,9 +58,11 @@ COPY src /app/src
 
 WORKDIR /app
 
-RUN rm -rf /app/src/inferia/dashboard
-COPY --from=node-builder /build/dashboard/dist /app/src/inferia/dashboard
-COPY --from=node-builder /build/depin-sidecar/dist /app/src/inferia/services/orchestration/services/depin-sidecar/dist
+RUN rm -rf /app/src/dashboard
+COPY --from=node-builder /build/dashboard/dist /app/src/dashboard
+# dashboard/ is a data-only package; restore the package marker after the dist copy
+RUN touch /app/src/dashboard/__init__.py
+COPY --from=node-builder /build/depin-sidecar/dist /app/src/services/orchestration/services/depin-sidecar/dist
 
 # 1. Install CPU-only Torch first to prevent downloading the 2GB CUDA version
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu

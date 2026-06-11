@@ -17,7 +17,7 @@
  * Field-name note: the backend dataclass stores the column as
  * `approx_usd_per_hour`, but T22 renames it to `price_per_hour` at the
  * HTTP boundary to match the existing dashboard contract (see
- * package/src/inferia/services/orchestration/api/providers.py and
+ * src/services/orchestration/api/providers.py and
  * apps/dashboard/src/pages/Compute/NewPool.tsx). We use that wire name
  * here so consumers do not have to remember the rename.
  *

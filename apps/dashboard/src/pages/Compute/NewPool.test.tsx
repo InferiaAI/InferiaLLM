@@ -32,7 +32,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // ---------------------------------------------------------------------------
 //
 // Mirror the shape the backend `/api/v1/providers/aws/instance-catalog`
-// endpoint returns (see package/src/inferia/services/orchestration/api/
+// endpoint returns (see src/services/orchestration/api/
 // providers.py). The data values are a subset of the curated
 // instance_catalog.py module — enough to drive every assertion below.
 
