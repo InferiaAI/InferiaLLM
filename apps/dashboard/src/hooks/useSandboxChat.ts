@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { clearChat, loadChat, saveChat, type ChatMessage } from "@/lib/sandboxChatStore";
 
 export interface UseSandboxChat {
@@ -13,17 +13,17 @@ export interface UseSandboxChat {
  * mount / deployment change and persists every change.
  *
  * Loading uses React's "adjust state during render when a prop changes"
- * pattern (https://react.dev/reference/react/useState#storing-information-from-previous-renders)
- * rather than an effect — so `messages` is already correct on the render where
- * `deploymentId` flips, avoiding both a cascading-render effect and the
- * stale-write race. The persist effect additionally skips its first run after
- * a deployment change (the `prevDeployment` ref) so the previous thread is
- * never written under the new key.
+ * pattern (https://react.dev/reference/react/useState#storing-information-from-previous-renders):
+ * when `deploymentId` flips, `messages` is reloaded synchronously *during
+ * render*, before any effect runs. That is precisely what prevents the
+ * stale-write clobber — by the time the persist effect fires, `messages`
+ * already holds the NEW deployment's thread, so it can never write the previous
+ * thread under the new key. (No effect-based hydration → no cascading-render
+ * effect, and no need for a separate "skip first persist" guard.)
  */
 export function useSandboxChat(deploymentId: string | null): UseSandboxChat {
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat(deploymentId));
   const [loadedFor, setLoadedFor] = useState<string | null>(deploymentId);
-  const prevDeployment = useRef<string | null>(deploymentId);
 
   // Reload synchronously during render when the deployment changes.
   if (deploymentId !== loadedFor) {
@@ -32,11 +32,6 @@ export function useSandboxChat(deploymentId: string | null): UseSandboxChat {
   }
 
   useEffect(() => {
-    // First run after a deployment change carries stale messages — skip it.
-    if (prevDeployment.current !== deploymentId) {
-      prevDeployment.current = deploymentId;
-      return;
-    }
     saveChat(deploymentId, messages);
   }, [messages, deploymentId]);
 

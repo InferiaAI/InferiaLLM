@@ -40,6 +40,11 @@ describe("sandboxChatStore", () => {
     expect(out[0].timestamp.getTime()).toBe(ts.getTime());
   });
 
+  it("round-trips the reasoning field", () => {
+    saveChat(DEP, [msg({ id: "r", content: "answer", reasoning: "chain of thought" })]);
+    expect(loadChat(DEP)[0].reasoning).toBe("chain of thought");
+  });
+
   it("isolates threads per deployment id", () => {
     saveChat("dep-A", [msg({ id: "a", content: "A" })]);
     saveChat("dep-B", [msg({ id: "b", content: "B" })]);

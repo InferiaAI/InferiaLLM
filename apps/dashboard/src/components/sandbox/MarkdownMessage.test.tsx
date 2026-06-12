@@ -50,12 +50,14 @@ describe("MarkdownMessage", () => {
     expect(screen.getByRole("button", { name: /copy code/i })).toBeInTheDocument();
   });
 
-  it("renders links opening safely in a new tab", () => {
+  it("renders links opening safely in a new tab without leaking the node prop", () => {
     render(<MarkdownMessage content={"[site](https://example.com)"} />);
     const link = screen.getByRole("link", { name: "site" });
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
     expect(link).toHaveAttribute("href", "https://example.com");
+    // react-markdown's internal `node` prop must not leak onto the DOM.
+    expect(link).not.toHaveAttribute("node");
   });
 
   it("renders GFM tables", () => {
@@ -64,12 +66,17 @@ describe("MarkdownMessage", () => {
     expect(screen.getByRole("cell", { name: "1" })).toBeInTheDocument();
   });
 
-  it("does not execute raw HTML (XSS-safe)", () => {
+  it("does not render raw HTML as elements (XSS-safe)", () => {
     const { container } = render(
-      <MarkdownMessage content={'<script>window.__x=1</script><img src=x onerror="window.__x=1">'} />,
+      <MarkdownMessage content={'<script>window.__x=1</script><img src=x onerror="alert(1)">'} />,
     );
+    // A rehype-raw regression would create real <script>/<img onerror> elements;
+    // these structural assertions trip if raw HTML is ever enabled.
     expect(container.querySelector("script")).toBeNull();
-    expect((window as unknown as { __x?: number }).__x).toBeUndefined();
+    expect(container.querySelector("img[onerror]")).toBeNull();
+    // The raw markup must appear as escaped text instead.
+    expect(container.textContent).toContain("<script>");
+    expect(container.textContent).toContain("<img");
   });
 
   it("renders a fenced code block with no language label", () => {

@@ -10,9 +10,12 @@ import { extractFencedCode } from "./markdownUtils";
  * default url transform additionally strips dangerous link protocols.
  */
 const components: Components = {
-  a: ({ children, ...props }) => (
+  // Pick only the safe attributes — never spread, so react-markdown's internal
+  // `node` prop can't leak onto the DOM as a junk node="[object Object]" attr.
+  a: ({ href, title, children }) => (
     <a
-      {...props}
+      href={href}
+      title={title}
       target="_blank"
       rel="noopener noreferrer"
       className="text-ember-600 underline underline-offset-2 hover:text-ember-700"
@@ -25,11 +28,9 @@ const components: Components = {
     const { code, language } = extractFencedCode(children);
     return <CodeBlock code={code} language={language} />;
   },
-  // Anything reaching `code` directly is inline code.
-  code: ({ children, ...props }) => (
-    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]" {...props}>
-      {children}
-    </code>
+  // Anything reaching `code` directly is inline code (block code → `pre`).
+  code: ({ children }) => (
+    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]">{children}</code>
   ),
   h1: ({ children }) => <h1 className="mt-1 mb-1.5 text-base font-semibold">{children}</h1>,
   h2: ({ children }) => <h2 className="mt-1 mb-1.5 text-[0.95rem] font-semibold">{children}</h2>,

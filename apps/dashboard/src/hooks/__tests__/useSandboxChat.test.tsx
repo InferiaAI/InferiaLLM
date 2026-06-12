@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSandboxChat } from "../useSandboxChat";
 import { loadChat, saveChat, type ChatMessage } from "@/lib/sandboxChatStore";
 
@@ -8,6 +8,7 @@ function msg(id: string, content: string): ChatMessage {
 }
 
 beforeEach(() => localStorage.clear());
+afterEach(() => vi.restoreAllMocks());
 
 describe("useSandboxChat", () => {
   it("hydrates from the store on mount", () => {
@@ -34,15 +35,31 @@ describe("useSandboxChat", () => {
   it("swaps threads when the deployment id changes, without clobbering", () => {
     saveChat("dep-A", [msg("a", "fromA")]);
     saveChat("dep-B", [msg("b", "fromB")]);
+
+    // Record every write so we can prove no STALE cross-thread write occurs
+    // (the transient an effect-based hydration would produce). Final contents
+    // alone can be self-healed by a later write, so we assert on the writes.
+    const writes: Array<{ key: string; value: string }> = [];
+    const realSet = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, k: string, v: string) {
+      writes.push({ key: k, value: v });
+      realSet.call(this, k, v);
+    });
+
     const { result, rerender } = renderHook(({ id }) => useSandboxChat(id), {
       initialProps: { id: "dep-A" },
     });
     expect(result.current.messages.map((m) => m.content)).toEqual(["fromA"]);
     rerender({ id: "dep-B" });
     expect(result.current.messages.map((m) => m.content)).toEqual(["fromB"]);
-    // A must not have been overwritten with B's (or empty) messages.
+
+    // Final contents intact.
     expect(loadChat("dep-A").map((m) => m.content)).toEqual(["fromA"]);
     expect(loadChat("dep-B").map((m) => m.content)).toEqual(["fromB"]);
+    // And critically: dep-B's key was NEVER written with dep-A's payload, and
+    // dep-A's key was never written with dep-B's payload (no stale clobber).
+    expect(writes.some((w) => w.key.includes("dep-B") && w.value.includes("fromA"))).toBe(false);
+    expect(writes.some((w) => w.key.includes("dep-A") && w.value.includes("fromB"))).toBe(false);
   });
 
   it("does not write to storage for a null deployment", () => {

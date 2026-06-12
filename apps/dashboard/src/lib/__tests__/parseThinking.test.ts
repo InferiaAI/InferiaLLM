@@ -62,6 +62,13 @@ describe("parseThinking", () => {
     expect(parseThinking("   ")).toEqual({ thinking: null, answer: "" });
   });
 
+  it("never leaks literal <think> tags from nested/interleaved blocks", () => {
+    const r = parseThinking("<think>outer <think>inner</think> rest</think>final answer");
+    expect(r.thinking).not.toMatch(/<\/?think>/i);
+    expect(r.answer).not.toMatch(/<\/?think>/i);
+    expect(r.answer).toContain("final answer");
+  });
+
   it("tolerates a non-string content argument", () => {
     expect(parseThinking(undefined as unknown as string)).toEqual({ thinking: null, answer: "" });
     expect(parseThinking(null as unknown as string, "r")).toEqual({ thinking: "r", answer: "" });

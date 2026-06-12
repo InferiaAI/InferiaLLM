@@ -34,6 +34,7 @@ export default defineConfig({
         "src/components/sandbox/CodeBlock.tsx",
         "src/components/sandbox/ThinkingBlock.tsx",
         "src/components/sandbox/markdownUtils.ts",
+        "src/components/sandbox/ChatInterface.tsx",
       ],
       exclude: ["src/main.tsx", "src/setupTests.ts", "**/*.test.{ts,tsx}", "**/__tests__/**"],
       reporter: ["text", "html"],
