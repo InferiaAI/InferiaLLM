@@ -15,3 +15,9 @@ if (jsdomWindow) {
     }
   }
 }
+
+// jsdom does not implement scrollIntoView — stub it so chat auto-scroll is a
+// no-op in tests rather than throwing.
+if (!("scrollIntoView" in Element.prototype)) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
