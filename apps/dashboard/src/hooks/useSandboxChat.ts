@@ -10,21 +10,26 @@ export interface UseSandboxChat {
 
 /**
  * Owns the chat message list for a deployment: loads the stored thread on
- * mount / deployment change and persists every change. Guards against the
- * classic hydration race — when the deployment id flips, the persist effect
- * sees the *old* messages in its closure; the `prevDeployment` ref skips that
- * one run so we never write the previous thread under the new key.
+ * mount / deployment change and persists every change.
+ *
+ * Loading uses React's "adjust state during render when a prop changes"
+ * pattern (https://react.dev/reference/react/useState#storing-information-from-previous-renders)
+ * rather than an effect — so `messages` is already correct on the render where
+ * `deploymentId` flips, avoiding both a cascading-render effect and the
+ * stale-write race. The persist effect additionally skips its first run after
+ * a deployment change (the `prevDeployment` ref) so the previous thread is
+ * never written under the new key.
  */
 export function useSandboxChat(deploymentId: string | null): UseSandboxChat {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-  const prevDeployment = useRef<string | null | undefined>(undefined);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat(deploymentId));
+  const [loadedFor, setLoadedFor] = useState<string | null>(deploymentId);
+  const prevDeployment = useRef<string | null>(deploymentId);
 
-  useEffect(() => {
-    setHydrated(false);
+  // Reload synchronously during render when the deployment changes.
+  if (deploymentId !== loadedFor) {
+    setLoadedFor(deploymentId);
     setMessages(loadChat(deploymentId));
-    setHydrated(true);
-  }, [deploymentId]);
+  }
 
   useEffect(() => {
     // First run after a deployment change carries stale messages — skip it.
@@ -32,14 +37,13 @@ export function useSandboxChat(deploymentId: string | null): UseSandboxChat {
       prevDeployment.current = deploymentId;
       return;
     }
-    if (!hydrated) return;
     saveChat(deploymentId, messages);
-  }, [messages, hydrated, deploymentId]);
+  }, [messages, deploymentId]);
 
   const clear = useCallback(() => {
     setMessages([]);
     clearChat(deploymentId);
   }, [deploymentId]);
 
-  return { messages, setMessages, clear, hydrated };
+  return { messages, setMessages, clear, hydrated: loadedFor === deploymentId };
 }
