@@ -61,4 +61,9 @@ describe("parseThinking", () => {
     expect(parseThinking("")).toEqual({ thinking: null, answer: "" });
     expect(parseThinking("   ")).toEqual({ thinking: null, answer: "" });
   });
+
+  it("tolerates a non-string content argument", () => {
+    expect(parseThinking(undefined as unknown as string)).toEqual({ thinking: null, answer: "" });
+    expect(parseThinking(null as unknown as string, "r")).toEqual({ thinking: "r", answer: "" });
+  });
 });

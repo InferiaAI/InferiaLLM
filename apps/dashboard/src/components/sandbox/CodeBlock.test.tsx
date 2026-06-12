@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CodeBlock } from "./CodeBlock";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("CodeBlock", () => {
   it("renders the code and a language label", () => {
@@ -25,5 +28,20 @@ describe("CodeBlock", () => {
     render(<CodeBlock code="copy me" language="ts" />);
     await user.click(screen.getByRole("button", { name: /copy code/i }));
     expect(writeText).toHaveBeenCalledWith("copy me");
+  });
+
+  it("shows a check icon then reverts after the timeout", () => {
+    // Synchronous fireEvent — userEvent + fake timers deadlock on internal delays.
+    vi.useFakeTimers();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+    });
+    const { container } = render(<CodeBlock code="x" language="ts" />);
+    fireEvent.click(screen.getByRole("button", { name: /copy code/i }));
+    expect(container.querySelector(".lucide-check")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(2100));
+    expect(container.querySelector(".lucide-check")).toBeNull();
+    expect(container.querySelector(".lucide-copy")).not.toBeNull();
   });
 });

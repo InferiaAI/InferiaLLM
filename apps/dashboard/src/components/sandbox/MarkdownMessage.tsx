@@ -1,6 +1,7 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
+import { extractFencedCode } from "./markdownUtils";
 
 /**
  * Renders assistant Markdown with GitHub-flavored extensions (tables, task
@@ -21,15 +22,8 @@ const components: Components = {
   ),
   // Fenced code blocks arrive wrapped in <pre><code>; render them via CodeBlock.
   pre: ({ children }) => {
-    const child = Array.isArray(children) ? children[0] : children;
-    const childProps =
-      child && typeof child === "object" && "props" in child
-        ? (child as { props: { className?: string; children?: unknown } }).props
-        : {};
-    const className = childProps.className || "";
-    const match = /language-(\w+)/.exec(className);
-    const code = String(childProps.children ?? "").replace(/\n$/, "");
-    return <CodeBlock code={code} language={match?.[1]} />;
+    const { code, language } = extractFencedCode(children);
+    return <CodeBlock code={code} language={language} />;
   },
   // Anything reaching `code` directly is inline code.
   code: ({ children, ...props }) => (

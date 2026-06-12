@@ -121,4 +121,40 @@ describe("sandboxChatStore", () => {
     expect(() => saveChat(null, [msg()])).not.toThrow();
     expect(() => clearChat(undefined)).not.toThrow();
   });
+
+  it("serializes a non-Date timestamp via Number()", () => {
+    saveChat(DEP, [{ ...msg(), timestamp: 5000 as unknown as Date }]);
+    expect(loadChat(DEP)[0].timestamp.getTime()).toBe(5000);
+  });
+
+  it("coerces an unparseable timestamp to 0", () => {
+    saveChat(DEP, [{ ...msg(), timestamp: "nope" as unknown as Date }]);
+    expect(loadChat(DEP)[0].timestamp.getTime()).toBe(0);
+  });
+
+  it("applies per-field fallbacks for partially-typed stored fields", () => {
+    localStorage.setItem(
+      "inferia.sandbox.chat.v1::dep-1",
+      JSON.stringify({
+        v: 1,
+        messages: [
+          { role: "user", content: "x", reasoning: 5, tokens: "no", timestamp: "bad" },
+        ],
+      }),
+    );
+    const out = loadChat(DEP);
+    expect(out).toHaveLength(1);
+    expect(typeof out[0].id).toBe("string"); // generated when missing
+    expect(out[0].id.length).toBeGreaterThan(0);
+    expect(out[0].reasoning).toBeUndefined(); // non-string dropped
+    expect(out[0].tokens).toBeUndefined(); // non-number dropped
+    expect(out[0].timestamp.getTime()).toBe(0); // non-number → epoch 0
+  });
+
+  it("clearChat never throws when removeItem throws", () => {
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(() => clearChat(DEP)).not.toThrow();
+  });
 });

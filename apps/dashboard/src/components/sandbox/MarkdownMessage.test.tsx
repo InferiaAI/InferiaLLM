@@ -1,6 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { extractFencedCode } from "./markdownUtils";
+
+describe("extractFencedCode", () => {
+  it("pulls code + language from a code element", () => {
+    const child = { props: { className: "language-python", children: "print(1)\n" } };
+    expect(extractFencedCode(child)).toEqual({ code: "print(1)", language: "python" });
+  });
+
+  it("returns undefined language when there is no language- class", () => {
+    expect(extractFencedCode({ props: { className: "", children: "x" } })).toEqual({
+      code: "x",
+      language: undefined,
+    });
+  });
+
+  it("unwraps an array of children", () => {
+    const child = { props: { className: "language-ts", children: "let a = 1" } };
+    expect(extractFencedCode([child])).toEqual({ code: "let a = 1", language: "ts" });
+  });
+
+  it("falls back to empty code for malformed / non-object children", () => {
+    expect(extractFencedCode(null)).toEqual({ code: "", language: undefined });
+    expect(extractFencedCode("just a string")).toEqual({ code: "", language: undefined });
+    expect(extractFencedCode({ props: {} })).toEqual({ code: "", language: undefined });
+  });
+});
 
 describe("MarkdownMessage", () => {
   it("renders headings, bold, and lists", () => {
@@ -44,6 +70,23 @@ describe("MarkdownMessage", () => {
     );
     expect(container.querySelector("script")).toBeNull();
     expect((window as unknown as { __x?: number }).__x).toBeUndefined();
+  });
+
+  it("renders a fenced code block with no language label", () => {
+    render(<MarkdownMessage content={"```\nplain code\n```"} />);
+    expect(screen.getByText("plain code")).toBeInTheDocument();
+    expect(screen.getByText("code")).toBeInTheDocument(); // CodeBlock's default label
+  });
+
+  it("renders ordered lists, sub-headings, blockquote, and a horizontal rule", () => {
+    const { container } = render(
+      <MarkdownMessage content={"## H2\n\n### H3\n\n1. first\n2. second\n\n> a quote\n\n---"} />,
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "H2" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "H3" })).toBeInTheDocument();
+    expect(container.querySelector("ol")).not.toBeNull();
+    expect(screen.getByText("a quote")).toBeInTheDocument();
+    expect(container.querySelector("hr")).not.toBeNull();
   });
 
   it("sanitizes javascript: links", () => {
