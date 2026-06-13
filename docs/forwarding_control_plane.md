@@ -17,13 +17,13 @@ This guide walks you through creating a Cloudflare Tunnel to securely expose a l
 
 Instead of duplicating the install steps, follow the official Cloudflare documentation to install the `cloudflared` daemon on your system:
 
-➡️ **[Official `cloudflared` Installation Guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)**
+**[Official `cloudflared` Installation Guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)**
 
 Once `cloudflared` is installed and available in your system's PATH, proceed to create your tunnel.
 
 ---
 
-## Step 2 – Create a Tunnel
+## Step 2 - Create a Tunnel
 
 You can create a tunnel using the Cloudflare Dashboard or the `cloudflared` CLI.
 
@@ -52,7 +52,7 @@ If you prefer to manage your tunnel via the command line instead of the dashboar
 
 ---
 
-## Step 3 – Publish your application (localhost:8000)
+## Step 3 - Publish your application (localhost:8000)
 
 ### Option A: Using the Dashboard
 
