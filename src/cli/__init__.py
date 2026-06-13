@@ -364,7 +364,7 @@ def build_dashboard():
 
     # Locate the apps/dashboard source directory
     # base_dir is <repo>/src, walk up to repo root
-    repo_root = os.path.abspath(os.path.join(base_dir, "..", "..", ".."))
+    repo_root = os.path.abspath(os.path.join(base_dir, ".."))
     dashboard_src = os.path.join(repo_root, "apps", "dashboard")
 
     if not os.path.isdir(dashboard_src):

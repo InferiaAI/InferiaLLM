@@ -138,3 +138,7 @@ chroma_db
 chromadb/chroma.sqlite3
 src/dashboard
 .localhost-dashboard/
+
+ollama/
+hf/
+uv.lock

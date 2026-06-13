@@ -7,7 +7,7 @@ otherwise (error/absent) the worker pulls from origin.
 """
 from __future__ import annotations
 
-_HF_RECIPES = ("vllm", "tei", "infinity")
+_HF_RECIPES = ("vllm", "tei", "infinity", "sglang")
 _MIRROR_STATES = ("cached", "downloading", "pending")
 
 
