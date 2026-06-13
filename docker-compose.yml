@@ -77,7 +77,8 @@ services:
       - INFERIA_MODEL_CACHE_DIR=${INFERIA_MODEL_CACHE_DIR:-/var/lib/inferia/models}
       - INFERIA_MODEL_CACHE_MAX_GB=${INFERIA_MODEL_CACHE_MAX_GB:-100}
       - INFERIA_HF_TOKEN=${INFERIA_HF_TOKEN:-}
-      - INFERIA_MODEL_MIRROR_BASE=https://inferiallm.wlan0.in
+      - INFERIA_MODEL_MIRROR_BASE=${INFERIA_MODEL_MIRROR_BASE:-}
+      - APP_PORT=${APP_PORT:-8000}
     volumes:
       - appdata:/data
       - modelcache:/var/lib/inferia/models
@@ -99,9 +100,7 @@ services:
       # Override the host path with INFERIA_SSH_AUTHORIZED_KEYS_FILE.
       - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
-      - "${FILTRATION_GATEWAY_PORT}:8000"   # Filtration Gateway (external API)
-      - "${INFERENCE_GATEWAY_PORT}:8001"   # Inference Gateway (external API)
-      - "${DASHBOARD_PORT}:3001"   # Dashboard (web UI)
+      - "${APP_PORT:-8000}:${APP_PORT:-8000}"   # Unified web: /api gateway, /inf inference, /v2 OCI mirror, / dashboard
     deploy:
       resources:
         limits:

@@ -127,4 +127,4 @@ LABEL service="unified"
 WORKDIR /app
 COPY assets /app/assets
 
-EXPOSE 8000 8001 8080 3000 3001 50051
+EXPOSE 8000  # unified web (APP_PORT)
