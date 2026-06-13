@@ -22,6 +22,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: [
+        "src/lib/api.ts",
         "src/lib/authMode.ts",
         "src/services/authService.ts",
         "src/lib/tokenStore.ts",

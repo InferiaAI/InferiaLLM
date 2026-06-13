@@ -11,7 +11,7 @@ import { isExternalAuthMode } from "@/lib/authMode";
 
 // Runtime config injected via /config.js at container startup.
 // Falls back to VITE_ build-time env vars, then to localhost defaults.
-const rc = (window as any).__RUNTIME_CONFIG__ || {};
+const rc = (window as unknown as { __RUNTIME_CONFIG__?: Record<string, string> }).__RUNTIME_CONFIG__ || {};
 
 // URLs - All through API Gateway
 export const API_GATEWAY_URL = rc.API_GATEWAY_URL || import.meta.env.VITE_API_GATEWAY_URL || "http://localhost:8000";
@@ -20,12 +20,21 @@ export const API_GATEWAY_URL = rc.API_GATEWAY_URL || import.meta.env.VITE_API_GA
 // API Gateway (replaces MANAGEMENT_URL)
 export const MANAGEMENT_URL = API_GATEWAY_URL;
 // Orchestration now accessed through API Gateway proxy
-export const COMPUTE_URL = `${API_GATEWAY_URL}/api/v1`;
+export const COMPUTE_URL = `${API_GATEWAY_URL}/v1`;
 // Inference Gateway - separate public service
 export const INFERENCE_URL = rc.INFERENCE_URL || import.meta.env.VITE_INFERENCE_URL || "http://localhost:8001";
 // WebSocket still goes through sidecar for DePIN
 export const WEB_SOCKET_URL = rc.WEB_SOCKET_URL || import.meta.env.VITE_WEB_SOCKET_URL || "ws://localhost:3000";
-export const SIDECAR_URL = rc.SIDECAR_URL || import.meta.env.VITE_SIDECAR_URL || "http://localhost:3000";
+
+/** Build an absolute ws(s):// URL for a gateway path. API_GATEWAY_URL may be a
+ *  relative same-origin value ("/api") or absolute ("http://host:8000"); resolve
+ *  against the page origin and pick ws/wss from the resolved scheme. */
+export function toWsUrl(path: string): string {
+    const u = new URL(API_GATEWAY_URL || "/", window.location.origin);
+    const proto = u.protocol === "https:" ? "wss:" : "ws:";
+    const base = u.pathname.replace(/\/$/, "");
+    return `${proto}//${u.host}${base}${path}`;
+}
 
 // ── Silent-refresh state (shared across all axios instances) ────────
 let isRefreshing = false;
@@ -153,12 +162,12 @@ export const auditApi = createApiClient(`${API_GATEWAY_URL}/audit`);
 
 // Compute API - uses gateway proxy routes to orchestration service
 // This replaces direct orchestration calls with gateway-proxied requests
-export const computeApi = createApiClient(`${API_GATEWAY_URL}/api/v1`);
+export const computeApi = createApiClient(`${API_GATEWAY_URL}/v1`);
 
 // Deployment API - uses gateway proxy routes to orchestration service
-export const deploymentApi = createApiClient(`${API_GATEWAY_URL}/api/v1/deployments`);
-export const poolApi = createApiClient(`${API_GATEWAY_URL}/api/v1/pools`);
-export const insightApi = createApiClient(`${API_GATEWAY_URL}/api/v1/insights`);
+export const deploymentApi = createApiClient(`${API_GATEWAY_URL}/v1/deployments`);
+export const poolApi = createApiClient(`${API_GATEWAY_URL}/v1/pools`);
+export const insightApi = createApiClient(`${API_GATEWAY_URL}/v1/insights`);
 
 // Default export alias for backward compatibility
 export default api;
