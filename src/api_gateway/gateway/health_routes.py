@@ -4,6 +4,7 @@ Provides a unified health endpoint that checks all downstream services.
 """
 
 import asyncio
+import os
 import time
 from typing import Dict, List, Optional
 import httpx
@@ -108,14 +109,18 @@ async def check_redis() -> DependencyHealth:
 async def services_health_check():
     """
     Check health of all downstream services and infra dependencies.
+
+    In unified mode all services are in-process; probe their mounted HTTP paths
+    on APP_PORT so the check exercises the real route mounts:
+      - API Gateway  → /api/health    (mounted at /api)
+      - Inference    → /inf/health    (mounted at /inf)
+      - Orchestration → separate process on its own port (unchanged)
     """
+    app_port = int(os.environ.get("APP_PORT", "8000"))
     # 1. Check Services
     services_to_check = [
-        ("API Gateway", f"http://localhost:{settings.port}/health"),
-        (
-            "Inference Gateway",
-            f"{settings.inference_url or 'http://localhost:8001'}/health",
-        ),
+        ("API Gateway", f"http://localhost:{app_port}/api/health"),
+        ("Inference Gateway", f"http://localhost:{app_port}/inf/health"),
         ("Orchestration", f"{settings.orchestration_url}/health"),
     ]
 

@@ -24,6 +24,19 @@ logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
+
+def _route_path(request) -> str:
+    """Path relative to the ASGI root_path. Under a sub-app mount Starlette sets
+    scope['root_path'] (e.g. '/api') but leaves request.url.path un-stripped, so
+    middleware path checks must strip root_path to see the gateway-relative path.
+    In standalone (un-mounted) mode root_path is '' and this is a no-op."""
+    path = request.url.path
+    root = request.scope.get("root_path", "")
+    if isinstance(root, str) and root and path.startswith(root):
+        stripped = path[len(root):]
+        return stripped if stripped.startswith("/") else "/" + stripped
+    return path
+
 # Short-TTL cache: (token) → (user, org_id, roles, permissions)
 # 30s TTL avoids stale permissions while eliminating 3 DB queries/request
 _auth_cache: TTLCache = TTLCache(maxsize=2048, ttl=30)
@@ -240,22 +253,30 @@ async def auth_middleware(request: Request, call_next):
     if upgrade_header == "websocket" or "upgrade" in connection_header:
         return await call_next(request)
 
+    # Path relative to the ASGI root_path. Under the unified app the gateway is
+    # mounted at /api, so Starlette sets scope['root_path']='/api' but does NOT
+    # strip it from request.url.path — every routing/skip/public decision below
+    # must compare against the gateway-relative path or it sees '/api/...' and
+    # fails to match (workers 401, /hf 401, login/health/docs 401). In
+    # standalone (un-mounted) mode root_path is '' and route_path == url.path.
+    route_path = _route_path(request)
+
     # Also skip auth for WebSocket endpoint path
-    if request.url.path.startswith("/deployment/ws"):
+    if route_path.startswith("/deployment/ws"):
         return await call_next(request)
 
     # Skip user-auth for the inferia-worker control-plane endpoints. Workers
     # authenticate with their own bootstrap-JWT (POST /v1/workers/register)
     # and worker-JWT (WS /v1/workers/channel), neither of which match the
     # user-token shape this middleware enforces.
-    if request.url.path.startswith("/v1/workers/"):
+    if route_path.startswith("/v1/workers/"):
         return await call_next(request)
 
     # Skip user-auth for model-artifact streaming passthroughs (/hf, /v2).
     # Engine containers (ollama, vLLM, etc.) fetch large model files directly
     # via these paths and carry no dashboard JWT.  The orchestration service's
     # InternalAuthMiddleware provides the trust boundary on the other side.
-    if request.url.path.startswith("/hf/") or request.url.path.startswith("/v2/"):
+    if route_path.startswith("/hf/") or route_path.startswith("/v2/"):
         return await call_next(request)
 
     # Skip auth for public endpoints
@@ -277,14 +298,14 @@ async def auth_middleware(request: Request, call_next):
     # Allow /auth/invitations/{token} (exactly one segment after prefix)
     invitation_prefix = "/auth/invitations/"
     is_invitation_lookup = (
-        request.url.path.startswith(invitation_prefix)
-        and "/" not in request.url.path[len(invitation_prefix):]
-        and len(request.url.path) > len(invitation_prefix)
+        route_path.startswith(invitation_prefix)
+        and "/" not in route_path[len(invitation_prefix):]
+        and len(route_path) > len(invitation_prefix)
     )
 
     if (
-        request.url.path in public_paths
-        or request.url.path.startswith("/internal/")
+        route_path in public_paths
+        or route_path.startswith("/internal/")
         or is_invitation_lookup
         or request.method == "OPTIONS"
     ):

@@ -69,8 +69,14 @@ async def test_stream_falls_back_to_target_node_id_during_deploying():
     assert r.status_code == 200, r.text
     body = r.json()
     assert "error" not in body, body
-    assert target_node in body["ws_url"]
-    assert f"deployment={dep_id}" in body["ws_url"]
+    ws_url = body["ws_url"]
+    # The ws_url must NOT carry a leading /api — the dashboard's toWsUrl helper
+    # prepends /api; a /api prefix here would produce /api/api/... → 404.
+    assert ws_url.startswith("/v1/admin/workers/"), (
+        f"ws_url must start with /v1/admin/workers/, got: {ws_url!r}"
+    )
+    assert target_node in ws_url
+    assert f"deployment={dep_id}" in ws_url
 
 
 async def test_stream_errors_only_when_no_node_at_all():

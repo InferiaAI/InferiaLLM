@@ -11,6 +11,19 @@ from common.http_client import request_id_ctx
 logger = logging.getLogger(__name__)
 
 
+def _route_path(request: Request) -> str:
+    """Path relative to the ASGI root_path. Under a sub-app mount Starlette sets
+    scope['root_path'] (e.g. '/api') but leaves request.url.path un-stripped, so
+    prefix/skip checks must strip root_path to see the mount-relative path.
+    In standalone (un-mounted) mode root_path is '' and this is a no-op."""
+    path = request.url.path
+    root = request.scope.get("root_path", "")
+    if isinstance(root, str) and root and path.startswith(root):
+        stripped = path[len(root):]
+        return stripped if stripped.startswith("/") else "/" + stripped
+    return path
+
+
 def create_internal_auth_middleware(
     internal_api_key: str,
     check_path_prefix: Optional[str] = None,
@@ -30,7 +43,12 @@ def create_internal_auth_middleware(
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         token = request_id_ctx.set(request_id)
 
-        path = request.url.path
+        # Use the mount-relative path for all skip/prefix decisions. Under a
+        # sub-app mount (e.g. orchestration mounted at /api) Starlette leaves
+        # request.url.path un-stripped, so a check_path_prefix of '/internal/'
+        # would never match '/api/internal/...' and internal auth would be
+        # silently bypassed. Standalone (root_path='') behaviour is unchanged.
+        path = _route_path(request)
 
         try:
             # Normalize path for comparison (remove trailing slash)

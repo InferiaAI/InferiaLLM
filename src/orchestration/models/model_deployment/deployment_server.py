@@ -3304,14 +3304,17 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
 
         # 1.5 — Worker short-circuit. Worker pools don't have a sidecar log
         # stream the way Nosana does; we already expose live container logs
-        # via /api/v1/admin/workers/{node_id}/logs?deployment={id}, which is
+        # via /v1/admin/workers/{node_id}/logs?deployment={id}, which is
         # the same WS path the Compute > Nodes > Logs tab uses. Returning
         # the relative URL here lets the dashboard's TerminalLogs component
-        # reuse its existing flow (it appends ?token=<jwt> and opens).
+        # reuse its existing flow (it prepends /api via toWsUrl, then appends
+        # ?token=<jwt> and opens). The /api prefix must NOT be included here
+        # — the dashboard's toWsUrl helper owns it and would produce /api/api/...
+        # if it were also present in this string.
         if (provider == "on_prem") or (node.get("agent_kind") == "worker"):
             return {
                 "ws_url": (
-                    f"/api/v1/admin/workers/{node_id}/logs"
+                    f"/v1/admin/workers/{node_id}/logs"
                     f"?deployment={deployment_id}"
                 ),
                 "subscription": {

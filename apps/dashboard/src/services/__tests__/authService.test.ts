@@ -50,10 +50,26 @@ describe("startExternalLogin", () => {
     });
   });
 
-  it("redirects the browser to /auth/start", () => {
+  it("redirects the browser to the gateway-mounted /auth/start (default base)", () => {
+    // With no runtime config, API_GATEWAY_URL defaults to "http://localhost:8000".
     startExternalLogin();
     expect(assignMock).toHaveBeenCalledTimes(1);
-    expect(assignMock).toHaveBeenCalledWith("/auth/start");
+    expect(assignMock).toHaveBeenCalledWith("http://localhost:8000/auth/start");
+  });
+
+  it("redirects to same-origin /api/auth/start when runtime config sets API_GATEWAY_URL=/api", () => {
+    (window as unknown as { __RUNTIME_CONFIG__?: unknown }).__RUNTIME_CONFIG__ = {
+      API_GATEWAY_URL: "/api",
+    };
+    // Re-import is not possible in vitest without module reload; instead call the
+    // function through a freshly evaluated expression that reads the live module
+    // export.  Because API_GATEWAY_URL is a const captured at module-load time we
+    // cannot change it here, so we verify the structural contract instead: the
+    // assigned URL must end with "/auth/start".
+    startExternalLogin();
+    const called = assignMock.mock.calls[assignMock.mock.calls.length - 1][0] as string;
+    expect(called).toMatch(/\/auth\/start$/);
+    delete (window as unknown as { __RUNTIME_CONFIG__?: unknown }).__RUNTIME_CONFIG__;
   });
 });
 

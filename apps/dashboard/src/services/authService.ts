@@ -1,4 +1,4 @@
-import api from "@/lib/api";
+import api, { API_GATEWAY_URL } from "@/lib/api";
 import * as tokenStore from "@/lib/tokenStore";
 import { isExternalAuthMode } from "@/lib/authMode";
 
@@ -37,7 +37,7 @@ export const MAX_ACCESS_TOKEN_LENGTH = 8192;
  * gateway redirects back to the dashboard with `#access_token=<jwt>`.
  */
 export function startExternalLogin(): void {
-  window.location.assign("/auth/start");
+  window.location.assign(`${API_GATEWAY_URL}/auth/start`);
 }
 
 /**

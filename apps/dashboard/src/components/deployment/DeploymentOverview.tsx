@@ -47,7 +47,7 @@ function calculateP95(values: number[]): number | null {
 
 export default function DeploymentOverview({ deployment }: DeploymentOverviewProps) {
     const [showRawEndpoint, setShowRawEndpoint] = useState(false)
-    const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "")
+    const inferenceBaseUrl = new URL(INFERENCE_URL, window.location.origin).toString().replace(/\/$/, "")
     const publicInferenceEndpoint = `${inferenceBaseUrl}/v1/chat/completions`
     const publicEmbeddingEndpoint = `${inferenceBaseUrl}/v1/embeddings`
     const publicImageGenEndpoint = `${inferenceBaseUrl}/v1/images/generations`

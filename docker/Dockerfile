@@ -127,4 +127,5 @@ LABEL service="unified"
 WORKDIR /app
 COPY assets /app/assets
 
-EXPOSE 8000 8001 8080 3000 3001 50051
+# Unified web (APP_PORT): /api gateway, /inf inference, /v2 OCI mirror, / dashboard
+EXPOSE 8000

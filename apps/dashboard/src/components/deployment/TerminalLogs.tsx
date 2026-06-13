@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { computeApi, WEB_SOCKET_URL, API_GATEWAY_URL } from "@/lib/api"
+import { computeApi, toWsUrl } from "@/lib/api"
 import { getToken } from "@/lib/tokenStore"
 import { Terminal, RefreshCcw, Wifi, WifiOff, Trash2, ChevronDown, Download, Monitor, Database } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -100,32 +100,21 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                 throw new Error("No WebSocket URL provided by the gateway.")
             }
 
-            let socketUrl = ws_url;
-            // Handle cases where the sidecar returns localhost:3000 but we need to use the configured WS URL
-            if (ws_url.includes('localhost:3000') || ws_url.includes('127.0.0.1:3000')) {
-                // If it's a localhost URL from the sidecar, use our configured WEB_SOCKET_URL
-                // but try to preserve any path/params if they exist
-                try {
-                    const sidecarUrl = new URL(ws_url.startsWith('ws') ? ws_url : `ws://${ws_url}`);
-                    const configUrl = new URL(WEB_SOCKET_URL);
-
-                    if (sidecarUrl.pathname && sidecarUrl.pathname !== "/") {
-                        configUrl.pathname = configUrl.pathname.replace(/\/$/, '') + sidecarUrl.pathname;
-                    }
-                    configUrl.search = sidecarUrl.search || configUrl.search;
-                    socketUrl = configUrl.toString();
-                } catch (e) {
-                    socketUrl = WEB_SOCKET_URL;
-                }
-            } else if (socketUrl.startsWith('/')) {
-                // Handle relative WS URL by prepending the API_GATEWAY_URL mapped to ws/wss
-                try {
-                    const gwUrl = new URL(API_GATEWAY_URL);
-                    gwUrl.protocol = gwUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-                    socketUrl = gwUrl.origin + socketUrl;
-                } catch (e) {
-                    console.error("Failed to parse API_GATEWAY_URL", e);
-                }
+            let socketUrl: string;
+            if (ws_url.startsWith('/')) {
+                // Relative path from the gateway — build absolute ws(s):// URL using
+                // the page origin + API base (works whether API_GATEWAY_URL is "/api"
+                // or "http://host:8000").
+                socketUrl = toWsUrl(ws_url);
+            } else if (ws_url.startsWith('ws://') || ws_url.startsWith('wss://')) {
+                // Already an absolute ws(s):// URL — use as-is.
+                socketUrl = ws_url;
+            } else if (ws_url.startsWith('http://') || ws_url.startsWith('https://')) {
+                // Legacy absolute http(s):// URL — convert scheme to ws/wss.
+                socketUrl = ws_url.replace(/^http/, 'ws');
+            } else {
+                // Fallback: treat as a relative path.
+                socketUrl = toWsUrl(ws_url.startsWith('/') ? ws_url : `/${ws_url}`);
             }
 
             // Append JWT token for gateway authentication

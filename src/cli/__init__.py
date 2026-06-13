@@ -275,6 +275,52 @@ def run_skypilot_server(queue=None):
             queue.put(ServiceFailed("SkyPilot API Server", error=str(e)))
 
 
+def run_unified_web(queue=None):
+    """Serve the entire web surface (/api gateway, /inf inference, root /v2 OCI
+    mirror, / dashboard SPA) from ONE uvicorn on APP_PORT. Replaces the separate
+    api-gateway(:8000) + inference(:8001) + dashboard(:3001) processes."""
+    from startup_events import ServiceStarting, ServiceStarted, ServiceFailed
+    import uvicorn
+    from api_gateway.config import settings as gw
+
+    port = int(os.environ.get("APP_PORT", "8000"))
+    try:
+        if queue:
+            queue.put(ServiceStarting("Web (api+inf+dashboard)"))
+        kwargs = dict(
+            host=gw.host,
+            port=port,
+            log_level=gw.log_level.lower(),
+            proxy_headers=gw.proxy_headers,
+        )
+        fwd = getattr(gw, "forwarded_allow_ips", None)
+        if fwd is not None:
+            kwargs["forwarded_allow_ips"] = fwd
+        if queue:
+            queue.put(ServiceStarted("Web", detail=f"http://0.0.0.0:{port} (/api /inf /v2 /)"))
+        uvicorn.run("unified_web.app:app", **kwargs)
+    except Exception as e:
+        print(f"[FATAL] Unified web failed to start: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        if queue:
+            queue.put(ServiceFailed("Web", error=str(e)))
+        raise
+
+
+def _unified_process_specs():
+    """Return the declarative list of (name, target_callable) for the unified
+    start mode. Extract from run_all so the list is testable without spawning
+    any processes. The three separate web processes (api-gateway, inference,
+    dashboard) are collapsed into a single unified-web entry."""
+    return [
+        ("unified-web", run_unified_web),
+        ("orchestration-api", run_orchestration_service),
+        ("orchestration-worker", run_worker),
+        ("nosana-sidecar", run_nosana_sidecar),
+        ("skypilot-api", run_skypilot_server),
+    ]
+
+
 def run_dashboard(queue=None):
     """
     Runs the Dashboard on a separate HTTP server (port 3001).
@@ -438,7 +484,9 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
 
     Dashboard URLs are env-only: DASHBOARD_API_GATEWAY_URL, DASHBOARD_INFERENCE_URL,
     DASHBOARD_WEB_SOCKET_URL, DASHBOARD_SIDECAR_URL. If a var is unset or empty,
-    the field is written as an empty string (matching legacy entrypoint.sh behaviour).
+    API_GATEWAY_URL defaults to "/api" and INFERENCE_URL defaults to "/inf" so the
+    single-port unified image works same-origin without extra config. WEB_SOCKET_URL
+    and SIDECAR_URL default to empty string (callers construct them from the origin).
 
     The --config / config_path argument is accepted for forward-compat with existing
     scripts but is not used — yaml no longer carries dashboard URLs.
@@ -458,8 +506,8 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
         return
 
     config = {
-        "API_GATEWAY_URL": os.environ.get("DASHBOARD_API_GATEWAY_URL", "") or "",
-        "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "",
+        "API_GATEWAY_URL": os.environ.get("DASHBOARD_API_GATEWAY_URL", "") or "/api",
+        "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "/inf",
         "WEB_SOCKET_URL": os.environ.get("DASHBOARD_WEB_SOCKET_URL", "") or "",
         "SIDECAR_URL": os.environ.get("DASHBOARD_SIDECAR_URL", "") or "",
         # Auth mode is runtime-configurable (not baked into the SPA build): the
@@ -551,50 +599,22 @@ def run_orchestration_stack(env: str = "production"):
 
 
 def run_all(env: str = "production"):
-    # Run all services efficiently by spawning them as direct children
+    # Run all services efficiently by spawning them as direct children.
+    # The process list is defined by _unified_process_specs() so it stays
+    # testable without spawning anything.
     queue = multiprocessing.Queue()
-    ui = StartupUI(queue, total=7)
+    specs = _unified_process_specs()
+    ui = StartupUI(queue, total=len(specs))
+
+    def _make_args(name: str) -> tuple:
+        # nosana-sidecar takes (queue, env); all others take (queue,)
+        if name == "nosana-sidecar":
+            return (queue, env)
+        return (queue,)
 
     processes = [
-        # Core Gateway
-        multiprocessing.Process(
-            target=run_api_gateway_service,
-            name="api-gateway",
-            args=(queue,),
-        ),
-        # Microservices
-        multiprocessing.Process(
-            target=run_inference_service,
-            name="inference",
-            args=(queue,),
-        ),
-        # Orchestration Stack
-        multiprocessing.Process(
-            target=run_orchestration_service,
-            name="orchestration-api",
-            args=(queue,),
-        ),
-        multiprocessing.Process(
-            target=run_worker,
-            name="orchestration-worker",
-            args=(queue,),
-        ),
-        multiprocessing.Process(
-            target=run_nosana_sidecar,
-            name="nosana-sidecar",
-            args=(queue, env),
-        ),
-        multiprocessing.Process(
-            target=run_skypilot_server,
-            name="skypilot-api",
-            args=(queue,),
-        ),
-        # Dashboard
-        multiprocessing.Process(
-            target=run_dashboard,
-            name="dashboard",
-            args=(queue,),
-        ),
+        multiprocessing.Process(target=target, name=name, args=_make_args(name))
+        for name, target in specs
     ]
 
     print("[CLI] Starting All Services...")

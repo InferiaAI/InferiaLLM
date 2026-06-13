@@ -1,6 +1,7 @@
-# Plain-HTTP localhost front for InferiaLLM. Unifies the dashboard SPA and the
-# API gateway on a single origin (http://localhost:8081) so the SPA's relative
-# /api, /auth, /oauth calls are same-origin — no TLS, no hostnames.
+# Plain-HTTP localhost front for InferiaLLM. The unified app serves the whole
+# web surface (/api gateway, /inf inference, /v2 OCI mirror, / dashboard SPA) on
+# a single origin, so this is a thin single-upstream proxy — no per-prefix split,
+# no local file_server. http://localhost:8081 → the one app port.
 {
 	admin off
 	auto_https off
@@ -9,17 +10,8 @@
 :8081 {
 	encode gzip
 
-	# Backend (API gateway, gateway-only on :8000) owns these path prefixes.
-	@backend path /api/* /auth/* /oauth/* /health /internal/* /docs /docs/* /openapi.json /redoc /redoc/* /ws /ws/* /metrics
-	handle @backend {
-		reverse_proxy localhost:8000
-	}
-
-	# Everything else is the SPA. try_files falls back to index.html so the
-	# dashboard's client-side routes (/login, /deployments, …) resolve.
-	handle {
-		root * /srv/dashboard
-		try_files {path} /index.html
-		file_server
-	}
+	# Forward everything to the unified app (APP_PORT, default 8000). It serves
+	# the API surfaces AND the dashboard SPA itself; WebSocket upgrades pass
+	# through automatically.
+	reverse_proxy localhost:{$APP_PORT:8000}
 }

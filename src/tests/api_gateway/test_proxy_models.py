@@ -1,18 +1,20 @@
 """Tests for model-cache proxy routes (Phase 7 wiring).
 
 Covers:
-  (a) GET /api/v1/models — forwards to v1/models, enforces MODEL_LIST.
-  (b) POST /api/v1/models — enforces MODEL_ADD.
-  (c) DELETE /api/v1/models/<id> — enforces MODEL_DELETE.
+  (a) GET /v1/models — forwards to v1/models, enforces MODEL_LIST.
+  (b) POST /v1/models — enforces MODEL_ADD.
+  (c) DELETE /v1/models/<id> — enforces MODEL_DELETE.
   (d) GET /hf/org/m/resolve/main/f — reaches orchestration unauthenticated
       (no 401/403), streamed.
-  (e) GET /v2/org/m/blobs/sha — unauthenticated streaming passthrough.
-  (f) 401 returned when MODEL_LIST permission is absent for GET /api/v1/models.
+  (e) GET /v2/org/m/blobs/sha — unauthenticated streaming passthrough
+      (via ollama_registry_router, NOT the gateway app).
+  (f) 401 returned when MODEL_LIST permission is absent for GET /v1/models.
 """
 
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -23,14 +25,35 @@ from fastapi.responses import Response
 # App + fixtures
 # ---------------------------------------------------------------------------
 
+from fastapi import FastAPI
 from api_gateway.app import app
 from api_gateway.rbac.auth import auth_service
 from api_gateway.db.models import User as DBUser
 from api_gateway.db.database import get_db
+from api_gateway.gateway.proxy_routes import ollama_registry_router
 
 # Re-use conftest fixtures via import (pytest discovers them automatically, but
 # we import them here for clarity and IDE resolution).
 # The conftest.py `client` fixture injects full admin permissions.
+
+
+# ---------------------------------------------------------------------------
+# Fixture — minimal app for /v2 OCI mirror tests
+# The /v2 OCI mirror lives on ollama_registry_router, which is NOT part of the
+# gateway app (it will be mounted at the parent-app root in a later task).
+# Tests for /v2 use a lightweight standalone app that includes only that router.
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def v2_client():
+    """Async test client backed by a minimal app serving only ollama_registry_router."""
+    _v2_app = FastAPI()
+    _v2_app.include_router(ollama_registry_router)
+    async with AsyncClient(
+        transport=ASGITransport(app=_v2_app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as ac:
+        yield ac
 
 
 # ---------------------------------------------------------------------------
@@ -70,12 +93,12 @@ def _make_mock_stream_ctx(status_code: int, body: bytes, headers: dict | None = 
 
 
 # ---------------------------------------------------------------------------
-# Tests — authenticated model management proxy (/api/v1/models)
+# Tests — authenticated model management proxy (/v1/models)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_get_models_forwards_to_v1_models(client, admin_token):
-    """GET /api/v1/models → proxy_request to orchestration v1/models."""
+    """GET /v1/models → proxy_request to orchestration v1/models."""
     mock_resp = _make_fastapi_response(200, b'{"models":[]}')
 
     with patch(
@@ -84,7 +107,7 @@ async def test_get_models_forwards_to_v1_models(client, admin_token):
         return_value=mock_resp,
     ) as mock_pr:
         response = await client.get(
-            "/api/v1/models/",
+            "/v1/models/",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
 
@@ -103,7 +126,7 @@ async def test_get_models_forwards_to_v1_models(client, admin_token):
 
 @pytest.mark.asyncio
 async def test_post_models_enforces_model_add(client, admin_token):
-    """POST /api/v1/models → enforces MODEL_ADD permission."""
+    """POST /v1/models → enforces MODEL_ADD permission."""
     mock_resp = _make_fastapi_response(202, b'{"status":"downloading","model_id":"x/y"}')
 
     with patch(
@@ -112,7 +135,7 @@ async def test_post_models_enforces_model_add(client, admin_token):
         return_value=mock_resp,
     ):
         response = await client.post(
-            "/api/v1/models/",
+            "/v1/models/",
             json={"source": "hf", "model_id": "x/y"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
@@ -122,7 +145,7 @@ async def test_post_models_enforces_model_add(client, admin_token):
 
 @pytest.mark.asyncio
 async def test_delete_model_enforces_model_delete(client, admin_token):
-    """DELETE /api/v1/models/<id> → enforces MODEL_DELETE permission."""
+    """DELETE /v1/models/<id> → enforces MODEL_DELETE permission."""
     mock_resp = _make_fastapi_response(204, b"")
 
     with patch(
@@ -131,7 +154,7 @@ async def test_delete_model_enforces_model_delete(client, admin_token):
         return_value=mock_resp,
     ):
         response = await client.delete(
-            "/api/v1/models/some-cache-id",
+            "/v1/models/some-cache-id",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
     assert response.status_code == 204
@@ -139,14 +162,14 @@ async def test_delete_model_enforces_model_delete(client, admin_token):
 
 @pytest.mark.asyncio
 async def test_get_models_requires_auth(client):
-    """GET /api/v1/models without a token → 401 (auth middleware fires before RBAC)."""
-    response = await client.get("/api/v1/models/")
+    """GET /v1/models without a token → 401 (auth middleware fires before RBAC)."""
+    response = await client.get("/v1/models/")
     assert response.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_get_models_requires_model_list_permission():
-    """GET /api/v1/models with a token lacking model:list → 403."""
+    """GET /v1/models with a token lacking model:list → 403."""
     # Create a guest user with no model permissions.
     guest_user = DBUser(id="user_guest_mc", email="guest_mc@com")
     guest_token = auth_service.create_access_token(
@@ -195,7 +218,7 @@ async def test_get_models_requires_model_list_permission():
             base_url="http://test",
         ) as ac:
             response = await ac.get(
-                "/api/v1/models/",
+                "/v1/models/",
                 headers={"Authorization": f"Bearer {guest_token}"},
             )
 
@@ -295,10 +318,11 @@ async def test_hf_passthrough_forwards_hf_metadata_headers(client):
 
 
 @pytest.mark.asyncio
-async def test_v2_blob_location_forwarded(client):
-    """The /v2 ollama blob GET replies 200 + Location (-> ?download=1); the
-    gateway MUST forward the Location header (ollama reads resp.Location() off
-    the 200 to find the download URL, and aborts without it)."""
+async def test_v2_blob_location_forwarded(v2_client):
+    """/v2 ollama blob GET replies 200 + Location (-> ?download=1); the
+    OCI mirror MUST forward the Location header (ollama reads resp.Location()
+    off the 200 to find the download URL, and aborts without it).
+    Uses v2_client — /v2 lives on ollama_registry_router, not the gateway app."""
     with patch(
         "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
@@ -310,14 +334,15 @@ async def test_v2_blob_location_forwarded(client):
             )
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
-        response = await client.get("/v2/library/gemma3/blobs/sha256:m")
+        response = await v2_client.get("/v2/library/gemma3/blobs/sha256:m")
     assert response.status_code == 200
     assert response.headers["location"] == "/v2/library/gemma3/blobs/sha256:m?download=1"
 
 
 @pytest.mark.asyncio
-async def test_v2_passthrough_unauthenticated_no_auth_error(client):
-    """GET /v2/org/m/blobs/sha256:abc — no JWT needed; streams upstream body."""
+async def test_v2_passthrough_unauthenticated_no_auth_error(v2_client):
+    """GET /v2/org/m/blobs/sha256:abc — no JWT needed; streams upstream body.
+    Uses v2_client — /v2 lives on ollama_registry_router, not the gateway app."""
     upstream_body = b"oci-blob-content"
 
     with patch(
@@ -330,7 +355,7 @@ async def test_v2_passthrough_unauthenticated_no_auth_error(client):
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
         # No auth header.
-        response = await client.get("/v2/org/m/blobs/sha256:abc123")
+        response = await v2_client.get("/v2/org/m/blobs/sha256:abc123")
 
     assert response.status_code == 200
     assert response.content == upstream_body
@@ -399,8 +424,9 @@ async def test_hf_path_traversal_percent_encoded_rejected(client):
 
 
 @pytest.mark.asyncio
-async def test_v2_path_traversal_percent_encoded_rejected(client):
-    """GET /v2/%2e%2e/v1/nodes must return 400 — NOT reach orchestration."""
+async def test_v2_path_traversal_percent_encoded_rejected(v2_client):
+    """GET /v2/%2e%2e/v1/nodes must return 400 — NOT reach orchestration.
+    Uses v2_client — /v2 lives on ollama_registry_router, not the gateway app."""
     with patch(
         "api_gateway.gateway.proxy_routes.gateway_http_client"
     ) as mock_client_mgr:
@@ -410,7 +436,7 @@ async def test_v2_path_traversal_percent_encoded_rejected(client):
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
-        response = await client.get("/v2/%2e%2e/v1/nodes")
+        response = await v2_client.get("/v2/%2e%2e/v1/nodes")
 
     assert response.status_code == 400
     mock_proxy.stream.assert_not_called()
@@ -442,8 +468,9 @@ async def test_hf_normal_path_still_forwards(client):
 
 
 @pytest.mark.asyncio
-async def test_v2_normal_path_still_forwards(client):
-    """GET /v2/org/m/blobs/sha256:abc — normal path still forwarded."""
+async def test_v2_normal_path_still_forwards(v2_client):
+    """GET /v2/org/m/blobs/sha256:abc — normal path still forwarded.
+    Uses v2_client — /v2 lives on ollama_registry_router, not the gateway app."""
     upstream_body = b"oci-blob"
 
     with patch(
@@ -455,7 +482,7 @@ async def test_v2_normal_path_still_forwards(client):
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
-        response = await client.get("/v2/org/m/blobs/sha256:abc123def456")
+        response = await v2_client.get("/v2/org/m/blobs/sha256:abc123def456")
 
     assert response.status_code == 200
     assert response.content == upstream_body
@@ -513,11 +540,11 @@ async def test_hf_double_dot_literal_rejected(client):
 
 @pytest.mark.asyncio
 async def test_proxy_models_patch_returns_405(client, admin_token):
-    """PATCH /api/v1/models/<id> — not in the declared methods; route returns 405."""
+    """PATCH /v1/models/<id> — not in the declared methods; route returns 405."""
     # FastAPI itself rejects undeclared methods with 405 before the handler fires,
     # so this also validates the route declaration (GET, POST, DELETE only).
     response = await client.patch(
-        "/api/v1/models/some-id",
+        "/v1/models/some-id",
         json={"key": "val"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )

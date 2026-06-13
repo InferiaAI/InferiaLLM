@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getToken } from "@/lib/tokenStore";
-import { API_GATEWAY_URL } from "@/lib/api";
+import { toWsUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface NodeShellProps {
@@ -103,8 +103,7 @@ function NodeShellWS({ nodeId, deploymentId, containerId, className }: {
     params.set("shell", effectiveShell);
     if (effectiveUser) params.set("user", effectiveUser);
 
-    const base = API_GATEWAY_URL.replace(/^http/, "ws");
-    const url = `${base}/api/v1/admin/workers/${nodeId}/shell?${params.toString()}`;
+    const url = toWsUrl(`/v1/admin/workers/${nodeId}/shell?${params.toString()}`);
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

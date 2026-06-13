@@ -34,12 +34,18 @@ from api_gateway.db.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["Proxy API"])
+router = APIRouter(prefix="/v1", tags=["Proxy API"])
 
 # Separate router (no prefix) for inferia-worker passthrough endpoints. The
 # worker hits the api_gateway at `/v1/workers/...` exactly, so we cannot
-# share the `/api/v1` prefix here. Mounted on the FastAPI app at root.
+# share the `/v1` prefix here. Mounted on the FastAPI app at root.
 worker_passthrough_router = APIRouter(tags=["Worker Passthrough"])
+
+# Dedicated router for the OCI registry mirror (/v2/*). The OCI spec
+# hard-codes <host>/v2, so this must live at the ROOT of the unified port,
+# NOT under /api. A later task registers this on the parent app at root;
+# it is intentionally NOT included in the gateway app.include_router calls.
+ollama_registry_router = APIRouter(tags=["Ollama OCI Mirror"])
 
 ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
 
@@ -735,7 +741,7 @@ async def proxy_hf_mirror(request: Request, path: str):
     return await _streaming_passthrough(request.method, upstream_url, request)
 
 
-@worker_passthrough_router.api_route("/v2/{path:path}", methods=["GET", "HEAD"])
+@ollama_registry_router.api_route("/v2/{path:path}", methods=["GET", "HEAD"])
 async def proxy_v2_registry(request: Request, path: str):
     """Stream OCI/v2 registry responses from the orchestration service.
 
@@ -827,15 +833,21 @@ async def proxy_admin_aws_discovery(
     """Proxy live AWS discovery (regions + instance types) to orchestration.
     GET only → DEPLOYMENT_LIST (any deployer populates the pool form).
 
-    The gateway router prefix is /api/v1, so request.url.path is e.g.
-    /api/v1/admin/aws/regions. Strip the leading /api/ to get the orchestration
-    path: v1/admin/aws/regions.
+    The gateway compute router prefix is /v1. Under the unified app the gateway
+    is mounted at /api: Starlette sets scope['root_path']='/api' but does NOT
+    strip it from request.url.path, so we must subtract root_path to recover the
+    gateway-relative '/v1/admin/aws/...'. In standalone mode root_path is '' and
+    this is a no-op.
     """
     authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
-    # request.url.path = /api/v1/admin/aws/... → strip "/api/" prefix
-    upstream_path = request.url.path.lstrip("/")  # api/v1/admin/aws/...
-    if upstream_path.startswith("api/"):
-        upstream_path = upstream_path[len("api/"):]  # v1/admin/aws/...
+    # Subtract the ASGI root_path (e.g. '/api' under the unified mount) so the
+    # upstream path is the orchestration-relative 'v1/admin/aws/...' — NOT
+    # 'api/v1/admin/aws/...' which would 404 orchestration.
+    _full_path = request.url.path
+    _root = request.scope.get("root_path", "")
+    if isinstance(_root, str) and _root and _full_path.startswith(_root):
+        _full_path = _full_path[len(_root):]
+    upstream_path = _full_path.lstrip("/")  # v1/admin/aws/...
     return await proxy_request(
         method=request.method,
         path=upstream_path,

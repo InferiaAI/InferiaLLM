@@ -51,6 +51,32 @@ def test_apply_mirror_infinity_recipe():
     assert spec["env"]["HF_ENDPOINT"] == "https://cp/hf"
 
 
+def test_apply_mirror_path_suffixed_base_single_port():
+    """When INFERIA_MODEL_MIRROR_BASE carries a path (e.g. https://h.example/api
+    in single-port mode), HF_ENDPOINT must keep the full base+/hf, but the
+    ollama registry host must be the origin (h.example) — NOT h.example/api —
+    so that `ollama pull` hits /v2 at root, not /v2/api/..."""
+    # HF branch: base+/hf preserved (no change expected)
+    spec_hf = {"recipe": "vllm", "model": {"artifact_uri": "hf://org/m"}, "env": {}}
+    apply_mirror_to_spec(spec_hf, recipe="vllm", mirror_base="https://h.example/api")
+    assert spec_hf["env"]["HF_ENDPOINT"] == "https://h.example/api/hf"
+
+    # Ollama branch: artifact_uri host must be h.example (origin netloc), no /api
+    spec_ol = {"recipe": "ollama", "model": {"artifact_uri": "gemma3:4b"}, "env": {}}
+    apply_mirror_to_spec(spec_ol, recipe="ollama", mirror_base="https://h.example/api")
+    uri = spec_ol["model"]["artifact_uri"]
+    # host component must not include the /api path segment
+    assert "h.example/api" not in uri, f"path leaked into ollama host: {uri!r}"
+    assert uri.startswith("http://h.example/"), f"wrong host in ollama uri: {uri!r}"
+    assert "library/gemma3:4b" in uri, f"model ref missing: {uri!r}"
+    assert spec_ol["env"]["INFERIA_OLLAMA_SERVED_NAME"] == "gemma3:4b"
+
+    # Bare base (no path): existing behaviour must be unchanged
+    spec_bare = {"recipe": "ollama", "model": {"artifact_uri": "gemma3:4b"}, "env": {}}
+    apply_mirror_to_spec(spec_bare, recipe="ollama", mirror_base="https://cp.example")
+    assert spec_bare["model"]["artifact_uri"] == "http://cp.example/library/gemma3:4b"
+
+
 class _FakeRepo:
     def __init__(self, row): self._row = row
     async def get_by_key(self, *, source, model_id, revision): return self._row
@@ -85,13 +111,11 @@ async def test_resolve_noop_when_base_blank():
     assert "HF_ENDPOINT" not in spec["env"]
 
 
-def test_resolve_noop_when_cache_repo_none():
-    import asyncio
+@pytest.mark.asyncio
+async def test_resolve_noop_when_cache_repo_none():
     spec = {"recipe": "vllm", "model": {"artifact_uri": "hf://org/m"}, "env": {}}
-    asyncio.get_event_loop().run_until_complete(
-        resolve_and_apply_mirror(spec, recipe="vllm", artifact_uri="hf://org/m",
-                                 mirror_base="https://cp", cache_repo=None)
-    )
+    await resolve_and_apply_mirror(spec, recipe="vllm", artifact_uri="hf://org/m",
+                                   mirror_base="https://cp", cache_repo=None)
     assert "HF_ENDPOINT" not in spec.get("env", {})
 
 

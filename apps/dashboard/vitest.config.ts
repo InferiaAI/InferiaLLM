@@ -22,6 +22,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: [
+        "src/lib/api.ts",
         "src/lib/authMode.ts",
         "src/services/authService.ts",
         "src/lib/tokenStore.ts",
@@ -35,6 +36,10 @@ export default defineConfig({
         "src/components/sandbox/ThinkingBlock.tsx",
         "src/components/sandbox/markdownUtils.ts",
         "src/components/sandbox/ChatInterface.tsx",
+        "src/components/nodes/NodeShell.tsx",
+        "src/components/nodes/NodeLogs.tsx",
+        "src/components/deployment/TerminalLogs.tsx",
+        "src/components/deployment/DeploymentOverview.tsx",
       ],
       exclude: ["src/main.tsx", "src/setupTests.ts", "**/*.test.{ts,tsx}", "**/__tests__/**"],
       reporter: ["text", "html"],

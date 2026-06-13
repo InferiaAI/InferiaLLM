@@ -7,6 +7,8 @@ otherwise (error/absent) the worker pulls from origin.
 """
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 _HF_RECIPES = ("vllm", "tei", "infinity")
 _MIRROR_STATES = ("cached", "downloading", "pending")
 
@@ -39,7 +41,8 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
     if recipe in _HF_RECIPES:
         spec.setdefault("env", {})["HF_ENDPOINT"] = base + "/hf"
     elif recipe == "ollama":
-        host = base.split("://", 1)[-1].rstrip("/")
+        parsed = urlparse(base)
+        host = parsed.netloc or base.split("://", 1)[-1].split("/", 1)[0]
         raw = str(spec["model"]["artifact_uri"]).split("://", 1)[-1]
         ref = f"{host}/{raw}" if "/" in raw else f"{host}/library/{raw}"
         # Keep an http:// scheme: the worker's validateArtifactURI only accepts

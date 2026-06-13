@@ -71,8 +71,8 @@ class TestWriteDashboardConfig:
         assert obj["WEB_SOCKET_URL"] == "ws://gw:8000"
         assert obj["SIDECAR_URL"] == "http://side:3000"
 
-    def test_missing_env_vars_produce_empty_strings(self, tmp_path, monkeypatch):
-        """No DASHBOARD_* env vars → all four fields are empty string."""
+    def test_missing_env_vars_produce_same_origin_defaults(self, tmp_path, monkeypatch):
+        """No DASHBOARD_* env vars → API_GATEWAY_URL defaults to /api, INFERENCE_URL to /inf."""
         monkeypatch.delenv("INFERIA_CONFIG", raising=False)
         for var in (
             "DASHBOARD_API_GATEWAY_URL",
@@ -94,8 +94,8 @@ class TestWriteDashboardConfig:
         )
 
         obj = _read_config_js(dashboard_dir)
-        assert obj["API_GATEWAY_URL"] == ""
-        assert obj["INFERENCE_URL"] == ""
+        assert obj["API_GATEWAY_URL"] == "/api"
+        assert obj["INFERENCE_URL"] == "/inf"
         assert obj["WEB_SOCKET_URL"] == ""
         assert obj["SIDECAR_URL"] == ""
 
@@ -157,7 +157,7 @@ class TestWriteDashboardConfig:
 
         obj = _read_config_js(dashboard_dir)
         assert obj["API_GATEWAY_URL"] == "http://env-gw:8000"
-        assert obj["INFERENCE_URL"] == ""
+        assert obj["INFERENCE_URL"] == "/inf"
         assert obj["WEB_SOCKET_URL"] == ""
         assert obj["SIDECAR_URL"] == ""
 
@@ -254,7 +254,7 @@ class TestWriteDashboardConfig:
         obj = _read_config_js(dashboard_dir)
         # Value comes purely from env, not from yaml
         assert obj["API_GATEWAY_URL"] == "http://env-only:8000"
-        assert obj["INFERENCE_URL"] == ""
+        assert obj["INFERENCE_URL"] == "/inf"
 
     # ─── EXTERNAL_AUTH_URL tests ──────────────────────────────────────────────
 
@@ -322,3 +322,36 @@ class TestWriteDashboardConfig:
         obj = _read_config_js(dashboard_dir)
         assert obj["AUTH_PROVIDER"] == "inferiaauth"
         assert obj["EXTERNAL_AUTH_URL"] == "https://auth.local"
+
+    def test_same_origin_defaults_when_both_url_vars_unset(self, tmp_path, monkeypatch):
+        """With DASHBOARD_API_GATEWAY_URL and DASHBOARD_INFERENCE_URL both unset,
+        the same-origin relative paths /api and /inf are used as defaults."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.delenv("DASHBOARD_API_GATEWAY_URL", raising=False)
+        monkeypatch.delenv("DASHBOARD_INFERENCE_URL", raising=False)
+        monkeypatch.delenv("DASHBOARD_WEB_SOCKET_URL", raising=False)
+        monkeypatch.delenv("DASHBOARD_SIDECAR_URL", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        obj = _read_config_js(dashboard_dir)
+        assert obj["API_GATEWAY_URL"] == "/api"
+        assert obj["INFERENCE_URL"] == "/inf"
+
+    def test_explicit_relative_values_pass_through(self, tmp_path, monkeypatch):
+        """Explicit relative env values /api and /inf pass through unchanged."""
+        monkeypatch.delenv("INFERIA_CONFIG", raising=False)
+        monkeypatch.setenv("DASHBOARD_API_GATEWAY_URL", "/api")
+        monkeypatch.setenv("DASHBOARD_INFERENCE_URL", "/inf")
+        monkeypatch.delenv("DASHBOARD_WEB_SOCKET_URL", raising=False)
+        monkeypatch.delenv("DASHBOARD_SIDECAR_URL", raising=False)
+
+        dashboard_dir = tmp_path / "dashboard"
+        dashboard_dir.mkdir()
+        cli_module.main(["write-dashboard-config", "--dashboard-dir", str(dashboard_dir)])
+
+        obj = _read_config_js(dashboard_dir)
+        assert obj["API_GATEWAY_URL"] == "/api"
+        assert obj["INFERENCE_URL"] == "/inf"
