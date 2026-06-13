@@ -484,7 +484,9 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
 
     Dashboard URLs are env-only: DASHBOARD_API_GATEWAY_URL, DASHBOARD_INFERENCE_URL,
     DASHBOARD_WEB_SOCKET_URL, DASHBOARD_SIDECAR_URL. If a var is unset or empty,
-    the field is written as an empty string (matching legacy entrypoint.sh behaviour).
+    API_GATEWAY_URL defaults to "/api" and INFERENCE_URL defaults to "/inf" so the
+    single-port unified image works same-origin without extra config. WEB_SOCKET_URL
+    and SIDECAR_URL default to empty string (callers construct them from the origin).
 
     The --config / config_path argument is accepted for forward-compat with existing
     scripts but is not used — yaml no longer carries dashboard URLs.
@@ -504,8 +506,8 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
         return
 
     config = {
-        "API_GATEWAY_URL": os.environ.get("DASHBOARD_API_GATEWAY_URL", "") or "",
-        "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "",
+        "API_GATEWAY_URL": os.environ.get("DASHBOARD_API_GATEWAY_URL", "") or "/api",
+        "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "/inf",
         "WEB_SOCKET_URL": os.environ.get("DASHBOARD_WEB_SOCKET_URL", "") or "",
         "SIDECAR_URL": os.environ.get("DASHBOARD_SIDECAR_URL", "") or "",
         # Auth mode is runtime-configurable (not baked into the SPA build): the
