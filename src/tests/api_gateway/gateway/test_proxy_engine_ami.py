@@ -2,7 +2,7 @@
 
 These tests operate at import level — no DB or running server is required.
 They verify:
-  (a) Both the bare path and the sub-path form are mounted under /api/v1.
+  (a) Both the bare path and the sub-path form are mounted under /v1.
   (b) Only GET + POST are allowed (no DELETE).
   (c) The handler body references DEPLOYMENT_CREATE and DEPLOYMENT_LIST.
   (d) The upstream path prefix ``v1/admin/aws/engine-ami`` is present.
@@ -18,11 +18,11 @@ from api_gateway.gateway import proxy_routes
 def test_engine_ami_proxy_route_registered():
     """Both the bare and sub-path routes must be present on the router."""
     paths = {getattr(r, "path", None) for r in proxy_routes.router.routes}
-    assert "/api/v1/admin/aws/engine-ami" in paths, (
-        "Bare path /api/v1/admin/aws/engine-ami not registered"
+    assert "/v1/admin/aws/engine-ami" in paths, (
+        "Bare path /v1/admin/aws/engine-ami not registered"
     )
-    assert "/api/v1/admin/aws/engine-ami/{path:path}" in paths, (
-        "Sub-path /api/v1/admin/aws/engine-ami/{path:path} not registered"
+    assert "/v1/admin/aws/engine-ami/{path:path}" in paths, (
+        "Sub-path /v1/admin/aws/engine-ami/{path:path} not registered"
     )
 
 
@@ -31,7 +31,7 @@ def test_engine_ami_proxy_methods_and_rbac():
     routes = [
         r
         for r in proxy_routes.router.routes
-        if getattr(r, "path", "") == "/api/v1/admin/aws/engine-ami/{path:path}"
+        if getattr(r, "path", "") == "/v1/admin/aws/engine-ami/{path:path}"
     ]
     assert routes, "engine-ami sub-path route missing from router"
 
@@ -57,9 +57,9 @@ def test_engine_ami_bare_route_methods():
     routes = [
         r
         for r in proxy_routes.router.routes
-        if getattr(r, "path", "") == "/api/v1/admin/aws/engine-ami"
+        if getattr(r, "path", "") == "/v1/admin/aws/engine-ami"
     ]
-    assert routes, "bare engine-ami route /api/v1/admin/aws/engine-ami missing from router"
+    assert routes, "bare engine-ami route /v1/admin/aws/engine-ami missing from router"
 
     methods: set[str] = set()
     for r in routes:
