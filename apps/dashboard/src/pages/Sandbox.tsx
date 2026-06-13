@@ -1,14 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { computeApi, INFERENCE_URL } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Send,
   Loader2,
-  Copy,
-  Check,
   Bot,
-  User,
   Video,
   Database,
   Sparkles,
@@ -18,7 +14,6 @@ import {
   FileImage,
   MessageSquare,
   RefreshCw,
-  ChevronDown,
   Upload,
   Layers,
   Maximize2,
@@ -26,6 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/tokenStore";
+import { ChatInterface } from "@/components/sandbox/ChatInterface";
 
 interface Deployment {
   id: string;
@@ -53,13 +49,6 @@ interface DeploymentResponse {
 }
 
 type ModelCategory = "inference" | "embedding" | "image" | "video";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-}
 
 interface ImageParams {
   prompt: string;
@@ -159,8 +148,14 @@ export default function Sandbox() {
     setSelectedDeploymentId(deployment.id);
   };
 
+  // The full-height / internal-scroll treatment only makes sense for the chat
+  // (inference) experience on large screens. Other categories keep their
+  // natural height and let the page scroll; mobile always uses document flow.
+  const fillHeight = !!selectedDeployment && effectiveCategory === "inference";
+
   return (
-    <div className="space-y-4">
+    <div className={cn("flex flex-col gap-4", fillHeight && "lg:h-[calc(100dvh-7rem)] lg:overflow-hidden")}>
+
       <div className="rounded-xl border bg-card p-4 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
@@ -177,8 +172,8 @@ export default function Sandbox() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-3 space-y-4">
+      <div className={cn("grid grid-cols-1 gap-4 lg:grid-cols-12", fillHeight && "lg:min-h-0 lg:flex-1")}>
+        <div className={cn("space-y-4 lg:col-span-3", fillHeight && "lg:overflow-y-auto")}>
           <div className="rounded-xl border bg-card shadow-sm">
             <div className="p-3 border-b bg-muted/30">
               <h3 className="text-sm font-medium flex items-center gap-2">
@@ -245,9 +240,9 @@ export default function Sandbox() {
           </div>
         </div>
 
-        <div className="lg:col-span-9">
+        <div className={cn("flex lg:col-span-9", fillHeight && "lg:min-h-0")}>
           {!selectedDeployment ? (
-            <div className="rounded-xl border bg-card p-12 shadow-sm text-center">
+            <div className="w-full rounded-xl border bg-card p-12 text-center shadow-sm">
               <Sparkles className="w-16 h-16 mx-auto text-muted-foreground/20 mb-4" />
               <h3 className="text-lg font-medium mb-2">Select a Deployment</h3>
               <p className="text-sm text-muted-foreground">
@@ -255,7 +250,12 @@ export default function Sandbox() {
               </p>
             </div>
           ) : (
-            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+            <div
+              className={cn(
+                "w-full overflow-hidden rounded-xl border bg-card shadow-sm",
+                fillHeight && "flex flex-col lg:min-h-0"
+              )}
+            >
               {effectiveCategory === "inference" && <InferencePanel deployment={selectedDeployment} />}
               {effectiveCategory === "embedding" && <EmbeddingPanel deployment={selectedDeployment} />}
               {effectiveCategory === "image" && <ImagePanel deployment={selectedDeployment} />}
@@ -525,7 +525,7 @@ function InferencePanel({ deployment }: { deployment: Deployment }) {
   const [activeTab, setActiveTab] = useState<"chat" | "completions">("chat");
   
   return (
-    <div>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b">
         <div className="flex">
           <button
@@ -550,7 +550,7 @@ function InferencePanel({ deployment }: { deployment: Deployment }) {
           </button>
         </div>
       </div>
-      <div className="p-4">
+      <div className={cn("min-h-0 flex-1", activeTab === "chat" ? "flex flex-col" : "overflow-y-auto p-4")}>
         {activeTab === "chat" && <ChatInterface deployment={deployment} />}
         {activeTab === "completions" && <CompletionsInterface deployment={deployment} />}
       </div>
@@ -662,141 +662,6 @@ function VideoPanel({ deployment }: { deployment: Deployment }) {
   );
 }
 
-function ChatInterface({ deployment }: { deployment: Deployment }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-
-    const fullMessages = systemPrompt.trim()
-      ? [{ role: "system" as const, content: systemPrompt.trim() }, ...messages, { role: "user" as const, content: input.trim() }]
-      : [...messages, { role: "user" as const, content: input.trim() }];
-
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: input.trim(),
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsLoading(true);
-
-    try {
-      const inferenceBaseUrl = INFERENCE_URL.replace(/\/$/, "");
-      const token = getToken();
-      const response = await fetch(`${inferenceBaseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "x-sandbox": "true",
-        },
-        body: JSON.stringify({
-          model: deployment.modelName,
-          messages: fullMessages,
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || `API Error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const assistantMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: data.choices?.[0]?.message?.content || "No response generated",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to generate response");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-[450px]">
-      <div className="border-b">
-        <button
-          onClick={() => setShowSettings(!showSettings)}
-          className="w-full px-4 py-2 text-left text-sm flex items-center justify-between hover:bg-muted/50"
-        >
-          <span className="flex items-center gap-2">
-            <Settings2 className="w-4 h-4" />
-            System Prompt
-          </span>
-          <ChevronDown className={cn("w-4 h-4 transition-transform", showSettings && "rotate-180")} />
-        </button>
-        {showSettings && (
-          <div className="px-4 pb-3">
-            <textarea
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder="Optional system prompt..."
-              className="w-full h-20 px-3 py-2 rounded-lg border bg-background text-sm resize-none"
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <MessageSquare className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <p className="text-sm text-muted-foreground">Send a message to start the conversation</p>
-          </div>
-        ) : (
-          messages.map((message) => (
-            <ChatMessageItem key={message.id} message={message} />
-          ))
-        )}
-        {isLoading && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Generating...
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      <form onSubmit={handleSubmit} className="border-t p-4">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
-            className="flex-1 px-4 py-2 rounded-lg border bg-background focus:ring-1 focus:ring-ember-500 outline-none"
-            disabled={isLoading}
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-ember-600 text-white rounded-lg hover:bg-ember-700 disabled:opacity-50 transition-colors"
-          >
-            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function CompletionsInterface({ deployment }: { deployment: Deployment }) {
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState("");
@@ -852,30 +717,6 @@ function CompletionsInterface({ deployment }: { deployment: Deployment }) {
             {response}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function ChatMessageItem({ message }: { message: ChatMessage }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    navigator.clipboard.writeText(message.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <div className={cn("flex gap-3", message.role === "user" ? "flex-row-reverse" : "flex-row")}>
-      <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0", message.role === "user" ? "bg-ember-100 dark:bg-ember-900/30" : "bg-muted dark:bg-card")}>
-        {message.role === "user" ? <User className="w-4 h-4 text-ember-600" /> : <Bot className="w-4 h-4 text-muted-foreground" />}
-      </div>
-      <div className={cn("flex-1 max-w-[85%] rounded-lg p-3", message.role === "user" ? "bg-ember-500/10 border border-ember-500/20" : "bg-muted border border-border")}>
-        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-        <div className="flex justify-end mt-2">
-          <button onClick={handleCopy} className="p-1 hover:bg-accent rounded">
-            {copied ? <Check className="w-3 h-3 text-ember-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
-          </button>
-        </div>
       </div>
     </div>
   );
