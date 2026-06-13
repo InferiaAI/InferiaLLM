@@ -833,14 +833,21 @@ async def proxy_admin_aws_discovery(
     """Proxy live AWS discovery (regions + instance types) to orchestration.
     GET only → DEPLOYMENT_LIST (any deployer populates the pool form).
 
-    The gateway compute router prefix is /v1 (mounted under /api on the unified
-    app, which strips /api before this handler runs), so request.url.path is
-    already /v1/admin/aws/... — no prefix stripping needed.
+    The gateway compute router prefix is /v1. Under the unified app the gateway
+    is mounted at /api: Starlette sets scope['root_path']='/api' but does NOT
+    strip it from request.url.path, so we must subtract root_path to recover the
+    gateway-relative '/v1/admin/aws/...'. In standalone mode root_path is '' and
+    this is a no-op.
     """
     authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
-    # Gateway compute router prefix is /v1 (mounted under /api on the unified app,
-    # which strips /api before this handler runs), so the path is already /v1/...
-    upstream_path = request.url.path.lstrip("/")  # v1/admin/aws/...
+    # Subtract the ASGI root_path (e.g. '/api' under the unified mount) so the
+    # upstream path is the orchestration-relative 'v1/admin/aws/...' — NOT
+    # 'api/v1/admin/aws/...' which would 404 orchestration.
+    _full_path = request.url.path
+    _root = request.scope.get("root_path", "")
+    if isinstance(_root, str) and _root and _full_path.startswith(_root):
+        _full_path = _full_path[len(_root):]
+    upstream_path = _full_path.lstrip("/")  # v1/admin/aws/...
     return await proxy_request(
         method=request.method,
         path=upstream_path,

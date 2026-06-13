@@ -294,7 +294,7 @@ def run_unified_web(queue=None):
             proxy_headers=gw.proxy_headers,
         )
         fwd = getattr(gw, "forwarded_allow_ips", None)
-        if fwd:
+        if fwd is not None:
             kwargs["forwarded_allow_ips"] = fwd
         if queue:
             queue.put(ServiceStarted("Web", detail=f"http://0.0.0.0:{port} (/api /inf /v2 /)"))
