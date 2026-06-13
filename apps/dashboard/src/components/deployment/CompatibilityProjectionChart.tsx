@@ -12,9 +12,9 @@ import {
 } from "recharts";
 import {
     DEFAULT_CONCURRENCY_LEVELS,
-    projectCompatibilityPerformance,
     type CompatibilityResult,
 } from "@/services/gpuCompatibility";
+import { prepareProjectionData, type ProjectionDataPoint } from "@/services/modelPlanner";
 
 interface CompatibilityProjectionChartProps {
     compatibility: CompatibilityResult;
@@ -23,25 +23,16 @@ interface CompatibilityProjectionChartProps {
     outputTokens?: number;
 }
 
-type ProjectionDatum = {
-    concurrency: number;
-    ttftSeconds: number;
-    referenceTtftSeconds: number;
-    totalTps: number;
-    tpsPerUser: number;
-    tpsPerUserLabel: string;
-};
+function formatSeconds(value: number): string {
+    if (value >= 100) return `${value.toFixed(0)}s`;
+    if (value >= 10) return `${value.toFixed(1)}s`;
+    return `${value.toFixed(2)}s`;
+}
 
 function formatTpsPerUser(value: number): string {
     if (value >= 100) return value.toFixed(0);
     if (value >= 10) return value.toFixed(1);
     return value.toFixed(2);
-}
-
-function formatSeconds(value: number): string {
-    if (value >= 100) return `${value.toFixed(0)}s`;
-    if (value >= 10) return `${value.toFixed(1)}s`;
-    return `${value.toFixed(2)}s`;
 }
 
 export function CompatibilityProjectionChart({
@@ -50,14 +41,8 @@ export function CompatibilityProjectionChart({
     inputTokens = 200,
     outputTokens = 200,
 }: CompatibilityProjectionChartProps) {
-    const chartData = useMemo<ProjectionDatum[]>(() => {
-        return projectCompatibilityPerformance(compatibility, {
-            inputTokens,
-            outputTokens,
-        }).map((point) => ({
-            ...point,
-            tpsPerUserLabel: formatTpsPerUser(point.tpsPerUser),
-        }));
+    const chartData = useMemo<ProjectionDataPoint[]>(() => {
+        return prepareProjectionData(compatibility, inputTokens, outputTokens);
     }, [compatibility, inputTokens, outputTokens]);
 
     if (chartData.length === 0) return null;
@@ -118,7 +103,7 @@ export function CompatibilityProjectionChart({
                         <Tooltip
                             content={({ active, payload }) => {
                                 if (!active || !payload || payload.length === 0) return null;
-                                const point = payload[0].payload as ProjectionDatum;
+                                    const point = payload[0].payload as ProjectionDataPoint;
                                 return (
                                     <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-lg">
                                         <div className="font-semibold text-foreground dark:text-cream mb-1">

@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useReducer } from "react"
+import { useState, useEffect, useReducer, useRef } from "react"
 import {
   Cpu, Server, Check, Zap, Globe, Layers, Terminal, Rocket, Brain,
   Database, Image, Eye, Volume2, Video, Search, X, ChevronDown, ChevronRight, Star, Download, Loader2,
-  MessageSquare, AlertCircle
+  MessageSquare, AlertCircle, Settings2
 } from "lucide-react"
 import { computeApi } from "@/lib/api"
 import { listPools } from "@/services/poolService"
@@ -21,9 +21,10 @@ import {
   type HFModel,
   type ModelTypeKey
 } from "@/services/huggingfaceService"
-import { calculateCompatibility, fetchExternalRegistry, GPU_SPECS, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
+import { fetchExternalRegistry, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
+import { buildJobSpec, computePlannedDefaults, computeCompatibility, computeEffectiveGpuCount, resolveGpuSpecs, type JobSpecInput } from "@/services/modelPlanner"
 import { ConfigService } from "@/services/configService"
 
 // --- Constants ---
@@ -95,6 +96,15 @@ const computeEngines = [
     name: "vLLM",
     desc: "High-throughput and memory-efficient LLM serving engine.",
     image: "docker.io/vllm/vllm-openai:v0.22.1",
+    icon: Cpu,
+    types: ["inference", "multimodal"],
+    modelTypes: ["inference", "multimodal"]
+  },
+  {
+    id: "sglang",
+    name: "SGLang",
+    desc: "High-throughput LLM serving with RadixAttention and structured output support.",
+    image: "lmsysorg/sglang:latest-runtime",
     icon: Cpu,
     types: ["inference", "multimodal"],
     modelTypes: ["inference", "multimodal"]
@@ -228,6 +238,18 @@ type State = {
   selectedAmiId: string;
   selectedHfTokenName: string;
 
+  // Prefill-Decode Split
+  enableDisagg: boolean;
+  prefillReplicas: string;
+  decodeReplicas: string;
+  prefillGpuCount: string;
+  // SGLang-specific config
+  attentionBackend: string;
+  samplingBackend: string;
+  memFractionStatic: string;
+  chunkedPrefillSize: string;
+  maxRunningRequests: string;
+
   preflightStatus: 'idle' | 'checking' | 'passed' | 'failed';
   preflightErrors: Array<{ check: string; message: string; needs_hf_token: boolean }>;
 };
@@ -312,6 +334,18 @@ const initialState: State = {
   // vLLM AMI + HF token dropdowns
   selectedAmiId: "",
   selectedHfTokenName: "",
+
+  // Prefill-Decode Split
+  enableDisagg: false,
+  prefillReplicas: "1",
+  decodeReplicas: "1",
+  prefillGpuCount: "1",
+  // SGLang-specific defaults
+  attentionBackend: "flashinfer",
+  samplingBackend: "flashinfer",
+  memFractionStatic: "0.88",
+  chunkedPrefillSize: "8192",
+  maxRunningRequests: "64",
 
   preflightStatus: 'idle',
   preflightErrors: [],
@@ -617,6 +651,10 @@ export default function NewDeployment() {
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
     // vLLM AMI + HF token dropdowns
     selectedAmiId, selectedHfTokenName,
+    // Prefill-Decode Split
+    enableDisagg, prefillReplicas, decodeReplicas, prefillGpuCount,
+    // SGLang config
+    attentionBackend, samplingBackend, memFractionStatic, chunkedPrefillSize, maxRunningRequests,
   } = state;
 
   const externalModelType = modelType === "embedding" ? "embedding" : modelType === "image_generation" ? "image_generation" : "inference"
@@ -684,98 +722,27 @@ export default function NewDeployment() {
     }
   }, [externalModelType, mode, selectedProvider])
 
-  // Split vLLM Logic into dedicated function to avoid multiple setState calls in one effect
-  const buildJobSpec = useCallback(() => {
-    if (selectedEngine === "vllm" && modelType === "inference") {
-      const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
-      // Image, CUDA requirements, HF_TOKEN, and advanced flags are supplied by
-      // the baked engine AMI and the backend (hf_token_name resolution).
-      const spec = {
-        model_id: finalModelId,
-        engine: "vllm",
-        expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
-        gpu: true,
-      }
-      return JSON.stringify(spec, null, 4)
-    } else if (selectedEngine === "ollama") {
-      const finalModelId = modelId || "llama3:8b";
-      return JSON.stringify({ model_id: finalModelId, engine: "ollama", image: "ollama/ollama:latest", cmd: ["serve"], expose: [{ port: 11434, type: "http" }], gpu: true }, null, 4)
-    } else if (selectedEngine === "infinity") {
-      const finalModelId = modelId || "sentence-transformers/all-MiniLM-L6-v2";
-      const spec = {
-        model_id: finalModelId,
-        engine: "infinity",
-        image: "michaelf34/infinity:latest",
-        port: 7997,
-        batch_size: parseInt(batchSize) || 32,
-        gpu: gpuEnabled,
-        required_cpu: parseInt(requiredCpu) || 2,
-        required_ram: parseInt(requiredRam) || 4096,
-        env: {
-          "INFINITY_MODEL_ID": finalModelId,
-          "INFINITY_PORT": "7997",
-          ...(hfToken ? { "HF_TOKEN": hfToken } : {})
-        },
-        expose: [{
-          port: 7997,
-          type: "http",
-          health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
-        }]
-      }
-      return JSON.stringify(spec, null, 4)
-    } else if (selectedEngine === "tei") {
-      const finalModelId = modelId || "sentence-transformers/all-MiniLM-L6-v2";
-      const spec = {
-        model_id: finalModelId,
-        engine: "tei",
-        image: "ghcr.io/huggingface/text-embeddings-inference:latest",
-        port: 8080,
-        max_batch_tokens: parseInt(maxBatchTokens) || 16384,
-        pooling: pooling || "cls",
-        gpu: gpuEnabled,
-        required_cpu: parseInt(requiredCpu) || 2,
-        required_ram: parseInt(requiredRam) || 4096,
-        env: hfToken ? { "HF_TOKEN": hfToken } : {},
-        expose: [{
-          port: 8080,
-          type: "http",
-          health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
-        }]
-      }
-      return JSON.stringify(spec, null, 4)
-    } else if (selectedEngine === "inferia-diffusion") {
-      const finalModelId = modelId || "segmind/tiny-sd";
-      const spec: any = {
-        model_id: finalModelId,
-        engine: "inferia-diffusion",
-        image: "docker.io/inferiaai/inferiadiffusion:latest",
-        port: 8080,
-        host: "0.0.0.0",
-        min_vram: 8,
-        gpu: true,
-        env: hfToken ? { "HF_TOKEN": hfToken } : {},
-        expose: [{
-          port: 8080,
-          type: "http",
-          health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
-        }]
-      }
-      if (state.trustRemoteCode) spec.trust_remote_code = true
-      if (state.modelOffload) spec.model_offload = true
-      if (state.groupOffload) spec.group_offload = true
-      return JSON.stringify(spec, null, 4)
-    } else if (selectedEngine === "pytorch") {
-      return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
-    }
-    return ""
-  }, [selectedEngine, modelId, modelType, hfToken, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload])
-
+  // Job spec JSON — delegated to modelPlanner.buildJobSpec()
   useEffect(() => {
-    const spec = buildJobSpec()
-    if (spec) {
-      dispatch({ type: 'SET_FIELD', field: 'jobDescription', value: spec });
+    const input: JobSpecInput = {
+      selectedEngine, modelId, modelType, hfToken,
+      batchSize, maxBatchTokens, pooling,
+      requiredCpu, requiredRam, gpuEnabled,
+      trustRemoteCode: state.trustRemoteCode,
+      modelOffload: state.modelOffload,
+      groupOffload: state.groupOffload,
+      enableDisagg: state.enableDisagg,
+      prefillReplicas: state.prefillReplicas,
+      decodeReplicas: state.decodeReplicas,
+      prefillGpuCount,
+      attentionBackend, samplingBackend, memFractionStatic,
+      chunkedPrefillSize, maxRunningRequests,
     }
-  }, [buildJobSpec])
+    const spec = buildJobSpec(input)
+    if (spec) {
+      dispatch({ type: 'SET_FIELD', field: 'jobDescription', value: spec })
+    }
+  }, [selectedEngine, modelId, modelType, hfToken, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload, state.enableDisagg, state.prefillReplicas, state.decodeReplicas, prefillGpuCount, attentionBackend, samplingBackend, memFractionStatic, chunkedPrefillSize, maxRunningRequests])
 
   // --- Mutations ---
 
@@ -827,28 +794,30 @@ export default function NewDeployment() {
   const handleManagedLaunch = async () => {
     if (!instanceName) return toast.error("Please name your deployment")
     if (!selectedPool) return toast.error("Select a compute node")
-    if (selectedEngine === "vllm" && !selectedAmiId) return toast.error("Select an engine AMI")
+    if (selectedEngine === "vllm" && !enableDisagg && !selectedAmiId) return toast.error("Select an engine AMI")
     const targetOrgId = user?.org_id || organizations?.[0]?.id;
     if (!targetOrgId) return toast.error("Organization context missing. Please reload.")
 
     let config = {}
     try { config = JSON.parse(jobDescription) } catch (e) { return toast.error("Invalid Job JSON specification") }
 
-    // Run preflight checks — forward named HF token for vLLM; raw hfToken for other engines
+    // Run preflight checks — forward named HF token for vLLM/SGLang; raw hfToken for other engines
+    const wantsNamedToken = selectedEngine === "vllm" || selectedEngine === "sglang";
     const preflightOk = await runPreflight(
       modelId || (config as any).model_id || "",
       selectedEngine,
-      selectedEngine === "vllm" ? undefined : (hfToken || undefined),
-      selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
+      wantsNamedToken ? undefined : (hfToken || undefined),
+      wantsNamedToken ? (selectedHfTokenName || undefined) : undefined,
     );
     if (!preflightOk) return;
 
+    const effectiveGpuCount = computeEffectiveGpuCount(selectedEngine, enableDisagg, prefillGpuCount, selectedPool?.gpu_count || 1)
     const payload = {
-      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
+      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: effectiveGpuCount, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
-      ami_id: selectedEngine === "vllm" ? selectedAmiId : undefined,
-      hf_token_name: selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
+      ami_id: selectedEngine === "vllm" && !enableDisagg ? selectedAmiId : undefined,
+      hf_token_name: (selectedEngine === "vllm" || selectedEngine === "sglang") ? (selectedHfTokenName || undefined) : undefined,
     }
     createMutation.mutate(payload)
   }
@@ -1048,12 +1017,14 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
     selectedPool, preflightStatus, preflightErrors,
     selectedAmiId, selectedHfTokenName,
+    enableDisagg, prefillReplicas, decodeReplicas, prefillGpuCount,
+    attentionBackend, samplingBackend, memFractionStatic, chunkedPrefillSize, maxRunningRequests,
   } = state;
 
   const { data: hfConfig } = useQuery({
     queryKey: ['modelConfig', modelId],
     queryFn: () => getModelConfig(modelId),
-    enabled: !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
+    enabled: !!modelId && (selectedEngine === "vllm" || selectedEngine === "sglang" || selectedEngine === "ollama"),
     staleTime: 1000 * 60 * 60 // 1 hour
   });
 
@@ -1066,7 +1037,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
   const { data: engineAmis = [], isLoading: amisLoading } = useQuery({
     queryKey: ['engine-amis', amiRegion],
     queryFn: () => ConfigService.listEngineAmis(amiRegion),
-    enabled: selectedEngine === "vllm",
+    enabled: selectedEngine === "vllm" || selectedEngine === "sglang",
     staleTime: 1000 * 60 * 5,
   });
 
@@ -1074,7 +1045,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
   const { data: hfTokenNames = [] } = useQuery({
     queryKey: ['hf-token-names'],
     queryFn: () => ConfigService.listHfTokenNames(),
-    enabled: selectedEngine === "vllm",
+    enabled: selectedEngine === "vllm" || selectedEngine === "sglang",
     staleTime: 1000 * 60 * 5,
   });
 
@@ -1085,42 +1056,13 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
   const hfNumAttentionHeads = hfConfig?.num_attention_heads;
   const hfNumKeyValueHeads = hfConfig?.num_key_value_heads; // GQA: e.g. Llama 3 uses 8 KV heads vs 32 attention heads
 
-  // For multi-GPU pools, resolve GPU specs and aggregate VRAM/bandwidth
-  const poolGpuCount = selectedPool?.gpu_count || 1;
-  const gpuKey = selectedPool?.allowed_gpu_types?.[0]?.toUpperCase().replace(/[\s-]/g, "") || "";
-  const gpuSpecKey = Object.keys(GPU_SPECS).find(k => {
-    const nk = k.toUpperCase().replace(/[\s-]/g, "");
-    return gpuKey.includes(nk) || nk.includes(gpuKey);
-  });
-
-  const singleGpuVram = selectedPool?.gpu_specs?.[0]?.vram || (gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.vram : 0) || 0;
-  // Only pass aggregated vram override when gpu_count > 1 (multi-GPU),
-  // otherwise let calculateCompatibility use its own GPU_SPECS lookup for single GPU
-  const aggregatedVram = poolGpuCount > 1 ? singleGpuVram * poolGpuCount : undefined;
-
-  const baseBandwidth = gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.bandwidth : undefined;
-  // Multi-GPU bandwidth scales ~0.85x per GPU due to interconnect overhead
-  const aggregatedBandwidth = (poolGpuCount > 1 && baseBandwidth)
-    ? baseBandwidth * poolGpuCount * 0.85
-    : undefined;
-
-  const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"))
-    ? calculateCompatibility(
-      modelId,
-      selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
-      quantization || dtype,
-      {
-        vram: aggregatedVram,
-        bandwidth: aggregatedBandwidth,
-        contextLength: hfContextLength,
-        hiddenSize: hfHiddenSize,
-        numLayers: hfNumLayers,
-        numAttentionHeads: hfNumAttentionHeads,
-        numKeyValueHeads: hfNumKeyValueHeads
-      },
-      externalRegistry
-    )
-    : null;
+  // GPU specs + compatibility — delegated to modelPlanner
+  const { poolGpuCount } = resolveGpuSpecs(selectedPool)
+  const compatibility = computeCompatibility(
+    modelId, selectedPool, selectedEngine, quantization, dtype,
+    hfContextLength, hfHiddenSize, hfNumLayers, hfNumAttentionHeads, hfNumKeyValueHeads,
+    externalRegistry,
+  )
 
   const getFitColor = (level: FitLevel) => {
     switch (level) {
@@ -1131,6 +1073,28 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
       default: return "text-muted-foreground bg-muted-foreground/10 border-muted-foreground/20";
     }
   };
+
+  // Intelligent planner — auto-apply optimal defaults when pool+model selected
+  const lastPlannedRef = useRef<{ poolId: string; modelId: string } | null>(null)
+  useEffect(() => {
+    if (!selectedPool || !modelId) return
+    const prev = lastPlannedRef.current
+    if (prev && prev.poolId === selectedPool.pool_id && prev.modelId === modelId) return
+
+    const defaults = computePlannedDefaults(selectedPool, modelId, selectedEngine, compatibility)
+    if (!defaults) return
+
+    if (defaults.maxModelLen) dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: defaults.maxModelLen })
+    if (defaults.gpuUtil) dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: defaults.gpuUtil })
+    if (defaults.enforceEager !== undefined) dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: defaults.enforceEager })
+    if (defaults.dtype) dispatch({ type: 'SET_FIELD', field: 'dtype', value: defaults.dtype })
+    if (defaults.enableDisagg !== undefined) dispatch({ type: 'SET_FIELD', field: 'enableDisagg', value: defaults.enableDisagg })
+    if (defaults.prefillGpuCount) dispatch({ type: 'SET_FIELD', field: 'prefillGpuCount', value: defaults.prefillGpuCount })
+    if (defaults.prefillReplicas) dispatch({ type: 'SET_FIELD', field: 'prefillReplicas', value: defaults.prefillReplicas })
+    if (defaults.decodeReplicas) dispatch({ type: 'SET_FIELD', field: 'decodeReplicas', value: defaults.decodeReplicas })
+
+    lastPlannedRef.current = { poolId: selectedPool.pool_id, modelId }
+  }, [selectedPool, modelId, selectedEngine, compatibility, dispatch])
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -1254,40 +1218,46 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         </div>
       )}
 
-      {selectedEngine === "vllm" && (
+      {/* vLLM or SGLang engine config (non-disagg) */}
+      {(selectedEngine === "vllm" || selectedEngine === "sglang") && !enableDisagg && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
-          <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">vLLM Configuration</h4></div>
-
-          {/* Engine AMI dropdown (required) */}
-          <div>
-            <label htmlFor="engineAmi" className="block text-xs font-medium text-muted-foreground mb-1.5">
-              Engine AMI <span className="text-rose-500">*</span>
-            </label>
-            {amisLoading ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                <Loader2 className="w-3 h-3 animate-spin" /> Loading AMIs for {amiRegion}…
-              </div>
-            ) : engineAmis.length === 0 ? (
-              <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                No engine AMIs in {amiRegion} — bake one first (Settings → Providers → AWS).
-              </div>
-            ) : (
-              <select
-                id="engineAmi"
-                value={selectedAmiId}
-                onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedAmiId', value: e.target.value })}
-                className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
-              >
-                <option value="">— select an AMI —</option>
-                {engineAmis.map(ami => (
-                  <option key={ami.ami_id} value={ami.ami_id}>
-                    {ami.ami_id}{ami.vllm_tag ? ` — vLLM ${ami.vllm_tag}` : ""}
-                  </option>
-                ))}
-              </select>
-            )}
+          <div className="flex items-center gap-2 mb-2">
+            <Cpu className="w-4 h-4 text-primary" />
+            <h4 className="font-medium text-sm">{selectedEngine === "vllm" ? "vLLM" : "SGLang"} Configuration</h4>
           </div>
+
+          {/* Engine AMI dropdown (vLLM only) */}
+          {selectedEngine === "vllm" && (
+            <div>
+              <label htmlFor="engineAmi" className="block text-xs font-medium text-muted-foreground mb-1.5">
+                Engine AMI <span className="text-rose-500">*</span>
+              </label>
+              {amisLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Loading AMIs for {amiRegion}…
+                </div>
+              ) : engineAmis.length === 0 ? (
+                <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  No engine AMIs in {amiRegion} — bake one first (Settings → Providers → AWS).
+                </div>
+              ) : (
+                <select
+                  id="engineAmi"
+                  value={selectedAmiId}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedAmiId', value: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
+                >
+                  <option value="">— select an AMI —</option>
+                  {engineAmis.map(ami => (
+                    <option key={ami.ami_id} value={ami.ami_id}>
+                      {ami.ami_id}{ami.vllm_tag ? ` — vLLM ${ami.vllm_tag}` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
 
           {/* HF token name dropdown (optional) */}
           <div>
@@ -1311,6 +1281,89 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
               </p>
             )}
           </div>
+
+          {/* SGLang-specific advanced config */}
+          {selectedEngine === "sglang" && (
+            <div className="border-t border-border pt-4 mt-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Settings2 className="w-4 h-4 text-primary" />
+                <h5 className="font-medium text-xs uppercase tracking-wider">SGLang Advanced Settings</h5>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="attentionBackend" className="block text-xs font-medium text-muted-foreground mb-1.5">Attention Backend</label>
+                  <select id="attentionBackend" value={attentionBackend} onChange={e => dispatch({ type: 'SET_FIELD', field: 'attentionBackend', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
+                    <option value="flashinfer">flashinfer</option>
+                    <option value="triton">triton</option>
+                    <option value="flash_attn">flash_attn</option>
+                    <option value="no_flash_attn">no_flash_attn</option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="samplingBackend" className="block text-xs font-medium text-muted-foreground mb-1.5">Sampling Backend</label>
+                  <select id="samplingBackend" value={samplingBackend} onChange={e => dispatch({ type: 'SET_FIELD', field: 'samplingBackend', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
+                    <option value="flashinfer">flashinfer</option>
+                    <option value="pytorch">pytorch</option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="memFractionStatic" className="block text-xs font-medium text-muted-foreground mb-1.5">Mem Fraction Static</label>
+                  <input id="memFractionStatic" type="number" step="0.01" min="0" max="1" value={memFractionStatic} onChange={e => dispatch({ type: 'SET_FIELD', field: 'memFractionStatic', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
+                </div>
+                <div>
+                  <label htmlFor="chunkedPrefillSize" className="block text-xs font-medium text-muted-foreground mb-1.5">Chunked Prefill Size</label>
+                  <input id="chunkedPrefillSize" type="number" min="1" value={chunkedPrefillSize} onChange={e => dispatch({ type: 'SET_FIELD', field: 'chunkedPrefillSize', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
+                </div>
+                <div>
+                  <label htmlFor="maxRunningRequests" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Running Requests</label>
+                  <input id="maxRunningRequests" type="number" min="1" value={maxRunningRequests} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxRunningRequests', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Prefill-Decode Split toggle for vLLM and SGLang */}
+      {(selectedEngine === "vllm" || selectedEngine === "sglang") && (
+        <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-primary" />
+              <h4 className="font-medium text-sm">Prefill-Decode Split (Disaggregated)</h4>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={enableDisagg}
+                onChange={e => dispatch({ type: 'SET_FIELD', field: 'enableDisagg', value: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-muted rounded-full peer peer-checked:bg-ember-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" />
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Split prefill and decode across separate GPU groups for better throughput on multi-GPU nodes.
+            Requires {selectedEngine === "vllm" ? "vLLM" : "SGLang"} with Mooncake KV transfer support.
+          </p>
+
+          {enableDisagg && (
+            <div className="grid grid-cols-2 gap-4 pt-2">
+              <div>
+                <label htmlFor="prefillReplicas" className="block text-xs font-medium text-muted-foreground mb-1.5">Prefill Replicas</label>
+                <input id="prefillReplicas" type="number" min="1" value={prefillReplicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'prefillReplicas', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
+              </div>
+              <div>
+                <label htmlFor="decodeReplicas" className="block text-xs font-medium text-muted-foreground mb-1.5">Decode Replicas</label>
+                <input id="decodeReplicas" type="number" min="1" value={decodeReplicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'decodeReplicas', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
+              </div>
+              <div>
+                <label htmlFor="prefillGpuCount" className="block text-xs font-medium text-muted-foreground mb-1.5">GPUs for Prefill</label>
+                <input id="prefillGpuCount" type="number" min="1" value={prefillGpuCount} onChange={e => dispatch({ type: 'SET_FIELD', field: 'prefillGpuCount', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" />
+                <p className="text-[10px] text-muted-foreground mt-1">Decode uses remaining GPUs</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
