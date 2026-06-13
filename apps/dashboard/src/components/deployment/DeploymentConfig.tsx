@@ -15,7 +15,8 @@ import {
     Zap,
     ChevronDown,
     ChevronRight,
-    Image
+    Image,
+    MessageSquare,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion"
@@ -145,6 +146,7 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
 
     const isTraining = deployment?.workload_type === "training"
     const isVllm = deployment?.engine === "vllm"
+    const isSglang = deployment?.engine === "sglang"
     const isEmbedding = deployment?.engine === "tei" || deployment?.engine === "infinity"
     const isVideoGen = deployment?.model_type === "video_generation" || deployment?.workload_type === "video"
     const isImageGen = (deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)) && !isVllm && !isEmbedding
@@ -173,6 +175,14 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updates.nvidiaDisableCudaCompat = c.nvidia_disable_cuda_compat || "1";
                 updates.quantization = c.quantization || "";
                 updates.cudaVersions = c.required_cuda || ["12.9", "13.0", "13.1", "13.2"];
+            }
+            if (isSglang) {
+                updates.maxModelLen = String(c.max_model_len || "");
+                updates.gpuUtil = String(c.gpu_memory_utilization || "");
+                updates.dtype = c.dtype || "auto";
+                updates.enforceEager = c.enforce_eager ?? true;
+                updates.quantization = c.quantization || "";
+                if (c.env?.HF_TOKEN) updates.hfToken = c.env.HF_TOKEN;
             }
             if (isEmbedding) {
                 updates.port = String(c.port || (deployment.engine === "infinity" ? 7997 : 8080));
@@ -257,6 +267,16 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updatedConfig.quantization = quantization || null;
                 updatedConfig.required_cuda = cudaVersions.length > 0 ? cudaVersions : null;
             }
+            if (isSglang) {
+                updatedConfig.max_model_len = parseInt(maxModelLen) || undefined;
+                updatedConfig.gpu_memory_utilization = parseFloat(gpuUtil) || undefined;
+                updatedConfig.dtype = dtype || "auto";
+                updatedConfig.enforce_eager = enforceEager;
+                updatedConfig.quantization = quantization || null;
+                if (hfToken) {
+                    updatedConfig.env = { ...updatedConfig.env, HF_TOKEN: hfToken };
+                }
+            }
             if (isEmbedding) {
                 updatedConfig.port = parseInt(port) || 8080;
                 updatedConfig.batch_size = parseInt(batchSize) || 32;
@@ -318,6 +338,16 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                                 nvidiaDisableCudaCompat={nvidiaDisableCudaCompat}
                                 quantization={quantization}
                                 cudaVersions={cudaVersions}
+                                isAdvancedOpen={isAdvancedOpen}
+                                setIsAdvancedOpen={setIsAdvancedOpen}
+                                dispatch={dispatch}
+                            />}
+                            {isSglang && <SglangSettings
+                                maxModelLen={maxModelLen}
+                                gpuUtil={gpuUtil}
+                                dtype={dtype}
+                                enforceEager={enforceEager}
+                                quantization={quantization}
                                 isAdvancedOpen={isAdvancedOpen}
                                 setIsAdvancedOpen={setIsAdvancedOpen}
                                 dispatch={dispatch}
@@ -535,6 +565,81 @@ function VllmSettings({
                                     className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
                                 />
                                 <label htmlFor="nvidia-disable-cuda-compat" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">NVIDIA Disable CUDA Compat</label>
+                            </div>
+                        </m.div>
+                    )}
+                </div>
+            </div>
+        </m.div>
+    );
+}
+
+function SglangSettings({
+    maxModelLen, gpuUtil,
+    dtype, enforceEager, quantization,
+    isAdvancedOpen, setIsAdvancedOpen, dispatch
+}: {
+    maxModelLen: string; gpuUtil: string;
+    dtype: string; enforceEager: boolean; quantization: string;
+    isAdvancedOpen: boolean; setIsAdvancedOpen: (open: boolean) => void;
+    dispatch: React.Dispatch<Action>
+}) {
+    return (
+        <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-ember-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground"><MessageSquare className="w-4 h-4 text-ember-500 dark:text-ember-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">SGLang Optimization</h3></div>
+            <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2"><label htmlFor="sglang-max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="sglang-max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="sglang-gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="sglang-gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
+                </div>
+
+                {/* Advanced Config Section */}
+                <div className="border-t border-border pt-4">
+                    <button
+                        onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+                        className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider hover:text-ember-500 transition-colors"
+                    >
+                        {isAdvancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                        Advanced Configuration
+                    </button>
+
+                    {isAdvancedOpen && (
+                        <m.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4"
+                        >
+                            <div className="space-y-2">
+                                <label htmlFor="sglang-dtype" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Data Type (dtype)</label>
+                                <select id="sglang-dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm">
+                                    <option value="auto">auto</option>
+                                    <option value="float16">float16</option>
+                                    <option value="bfloat16">bfloat16</option>
+                                    <option value="float32">float32</option>
+                                </select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label htmlFor="sglang-quantization" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Quantization</label>
+                                <select id="sglang-quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm">
+                                    <option value="">None</option>
+                                    <option value="awq">AWQ</option>
+                                    <option value="gptq">GPTQ</option>
+                                    <option value="fp8">FP8</option>
+                                    <option value="smoothquant">SmoothQuant</option>
+                                </select>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                                <input
+                                    id="sglang-enforce-eager"
+                                    type="checkbox"
+                                    checked={enforceEager}
+                                    onChange={e => dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: e.target.checked })}
+                                    className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
+                                />
+                                <label htmlFor="sglang-enforce-eager" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enforce Eager Mode</label>
                             </div>
                         </m.div>
                     )}
