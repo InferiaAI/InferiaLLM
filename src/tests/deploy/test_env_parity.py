@@ -33,8 +33,14 @@ def test_example_invariants():
         assert k not in keys, f"{k} must be dropped from .env.example"
     for k in SECRET_KEYS:
         assert kv.get(k, "") == "", f"{k} must be blank in committed .env.example (no real secret)"
-    # DATABASE_URL must not embed a real-looking secret password
+    # DATABASE_URL in the committed template must not embed a REAL password —
+    # only a blank or obvious placeholder (e.g. CHANGEME) is allowed.
     db = kv.get("DATABASE_URL", "")
+    m = re.search(r"://[^:/@]+:([^@]*)@", db)
+    pw = m.group(1) if m else ""
+    assert pw in ("", "CHANGEME", "changeme", "password", "PASSWORD"), (
+        f"DATABASE_URL in .env.example embeds a non-placeholder password: {pw!r}"
+    )
     assert "wlan0.in" not in "\n".join(f"{k}={v}" for k, v in kv.items())
     # single-port: APP_PORT present, the 3 old port vars gone
     assert "APP_PORT" in keys

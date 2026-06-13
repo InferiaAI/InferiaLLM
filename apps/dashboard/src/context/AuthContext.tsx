@@ -1,6 +1,6 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import api from "@/lib/api";
+import api, { API_GATEWAY_URL } from "@/lib/api";
 import { toast } from "sonner";
 import { authService, type OrganizationBasicInfo } from "@/services/authService";
 import {
@@ -96,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 !window.location.pathname.startsWith("/auth/") &&
                 window.location.pathname !== "/login"
             ) {
-                window.location.assign("/auth/start");
+                window.location.assign(`${API_GATEWAY_URL}/auth/start`);
                 return;
             }
             setIsLoading(false);

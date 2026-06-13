@@ -57,7 +57,7 @@ function forceLogout() {
     // login page. Guard against redirect loops on any /auth/* route.
     if (isExternalAuthMode()) {
         if (!window.location.pathname.startsWith("/auth/")) {
-            window.location.href = "/auth/start";
+            window.location.href = `${API_GATEWAY_URL}/auth/start`;
         }
         return;
     }
