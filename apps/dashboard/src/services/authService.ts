@@ -91,7 +91,7 @@ export function consumeAccessTokenFragment(): string | null {
 export async function logout(): Promise<void> {
   tokenStore.clearToken();
   try {
-    await fetch("/auth/logout", { method: "POST", credentials: "include" });
+    await fetch(`${API_GATEWAY_URL}/auth/logout`, { method: "POST", credentials: "include" });
   } catch {
     // Network failure on the audit POST must not block the redirect.
   }
