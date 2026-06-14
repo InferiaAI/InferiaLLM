@@ -27,6 +27,23 @@ class SPAStaticFiles(StaticFiles):
     handle both the raised-exception path and a returned 404.
     """
 
+    async def __call__(self, scope, receive, send) -> None:
+        # The "/" SPA mount is the catch-all, so a WebSocket whose path matches
+        # none of /api, /inf, /v2 falls through to here. StaticFiles only serves
+        # HTTP and ``assert scope["type"] == "http"`` would raise AssertionError
+        # (an ugly unhandled ASGI exception logged per stray WS). Reject the
+        # websocket cleanly and ignore other non-http scopes instead.
+        if scope["type"] == "websocket":
+            try:
+                await receive()  # consume the websocket.connect event
+            except Exception:
+                pass
+            await send({"type": "websocket.close", "code": 1000})
+            return
+        if scope["type"] != "http":
+            return
+        await super().__call__(scope, receive, send)
+
     def _is_spa_route(self, path: str) -> bool:
         return "." not in path.rsplit("/", 1)[-1]
 
