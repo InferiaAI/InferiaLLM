@@ -275,15 +275,37 @@ def run_skypilot_server(queue=None):
             queue.put(ServiceFailed("SkyPilot API Server", error=str(e)))
 
 
+def _set_unified_loopback_env(port: int) -> None:
+    """Point the co-located services at each other through the unified MOUNT
+    prefixes on the loopback. In unified mode the gateway is mounted at /api and
+    inference at /inf on the SAME port, so a co-located service calling the other
+    must use those prefixes. The inference data plane calls the gateway's
+    ``/internal/*`` (policy, context/resolve, completions, logs) via
+    ``API_GATEWAY_URL``, and the gateway reaches inference via ``INFERENCE_URL``.
+    Left at their split-mode defaults (gateway ``localhost:8000`` bare,
+    inference ``localhost:8001``) the bare ``/internal/...`` path falls through
+    to the ``/`` SPA StaticFiles catch-all → 405 Method Not Allowed on POST
+    (the visible "Method Not Allowed" in the sandbox chat and elsewhere), and
+    ``:8001`` no longer exists. setdefault so an explicit env (e.g. split mode)
+    still wins. MUST run before the service configs are imported — they read
+    these env vars at import time.
+    """
+    os.environ.setdefault("API_GATEWAY_URL", f"http://localhost:{port}/api")
+    os.environ.setdefault("INFERENCE_URL", f"http://localhost:{port}/inf")
+
+
 def run_unified_web(queue=None):
     """Serve the entire web surface (/api gateway, /inf inference, root /v2 OCI
     mirror, / dashboard SPA) from ONE uvicorn on APP_PORT. Replaces the separate
     api-gateway(:8000) + inference(:8001) + dashboard(:3001) processes."""
+    port = int(os.environ.get("APP_PORT", "8000"))
+    # Set inter-service loopback URLs BEFORE importing the configs (read at import).
+    _set_unified_loopback_env(port)
+
     from startup_events import ServiceStarting, ServiceStarted, ServiceFailed
     import uvicorn
     from api_gateway.config import settings as gw
 
-    port = int(os.environ.get("APP_PORT", "8000"))
     try:
         if queue:
             queue.put(ServiceStarting("Web (api+inf+dashboard)"))
