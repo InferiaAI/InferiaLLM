@@ -4,7 +4,7 @@ Orchestration Service Configuration
 
 import os
 from typing import Any, ClassVar, Optional
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 from common.unified_config import UnifiedBaseSettings
 
@@ -85,6 +85,24 @@ class Settings(UnifiedBaseSettings):
     # Pydantic will check DATABASE_URL first.
     # If using POSTGRES_DSN env var, explicit support could be added via alias_priority
     # but Pydantic standardizes on one usually. We'll stick to typical pattern.
+
+    @field_validator("postgres_dsn")
+    @classmethod
+    def _bare_pg_scheme(cls, v: str) -> str:
+        """Normalize a SQLAlchemy-style DSN to the bare driver for asyncpg.
+
+        Orchestration passes ``postgres_dsn`` straight to ``asyncpg.create_pool``,
+        which ONLY accepts ``postgresql://`` / ``postgres://`` and REJECTS a
+        SQLAlchemy scheme like ``postgresql+asyncpg://`` ("invalid DSN: scheme is
+        expected to be either postgresql or postgres"). The api_gateway adds the
+        ``+asyncpg`` suffix itself, so a single shared ``DATABASE_URL`` is written
+        bare; this strips any ``+driver`` so orchestration tolerates either form.
+        """
+        if isinstance(v, str) and "://" in v:
+            scheme, rest = v.split("://", 1)
+            if "+" in scheme:
+                return f"{scheme.split('+', 1)[0]}://{rest}"
+        return v
 
     # Redis
     redis_host: str = Field(default="localhost", validation_alias="REDIS_HOST")
