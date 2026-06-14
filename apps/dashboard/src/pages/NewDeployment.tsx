@@ -100,6 +100,15 @@ const computeEngines = [
     modelTypes: ["inference", "multimodal"]
   },
   {
+    id: "sglang",
+    name: "SGLang",
+    desc: "High-performance serving engine with optimized KV cache management.",
+    image: "docker.io/sglang/sglang:latest",
+    icon: Cpu,
+    types: ["inference"],
+    modelTypes: ["inference"]
+  },
+  {
     id: "ollama",
     name: "Ollama",
     desc: "Run huge models locally with ease.",
@@ -227,8 +236,15 @@ type State = {
   // vLLM AMI + HF token dropdowns
   selectedAmiId: string;
   selectedHfTokenName: string;
-
+  // Prefill-Decode split configuration
+  prefillReplicas: string;
+  decodeReplicas: string;
+  prefillGpuIndices: string;
+  decodeGpuIndices: string;
+  isDisaggOpen: boolean;
+ 
   preflightStatus: 'idle' | 'checking' | 'passed' | 'failed';
+
   preflightErrors: Array<{ check: string; message: string; needs_hf_token: boolean }>;
 };
 
@@ -312,8 +328,15 @@ const initialState: State = {
   // vLLM AMI + HF token dropdowns
   selectedAmiId: "",
   selectedHfTokenName: "",
-
+  // Prefill-Decode split defaults
+  prefillReplicas: "0",
+  decodeReplicas: "0",
+  prefillGpuIndices: "",
+  decodeGpuIndices: "",
+  isDisaggOpen: false,
+ 
   preflightStatus: 'idle',
+
   preflightErrors: [],
 };
 
@@ -686,16 +709,22 @@ export default function NewDeployment() {
 
   // Split vLLM Logic into dedicated function to avoid multiple setState calls in one effect
   const buildJobSpec = useCallback(() => {
-    if (selectedEngine === "vllm" && modelType === "inference") {
+    if ((selectedEngine === "vllm" || selectedEngine === "sglang") && modelType === "inference") {
       const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
-      // Image, CUDA requirements, HF_TOKEN, and advanced flags are supplied by
-      // the baked engine AMI and the backend (hf_token_name resolution).
-      const spec = {
+      const spec: any = {
         model_id: finalModelId,
-        engine: "vllm",
+        engine: selectedEngine,
         expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
         gpu: true,
       }
+      
+      if (state.prefillReplicas !== "0" || state.decodeReplicas !== "0") {
+        spec.prefill_replicas = parseInt(state.prefillReplicas) || 0;
+        spec.decode_replicas = parseInt(state.decodeReplicas) || 0;
+        if (state.prefillGpuIndices) spec.prefill_gpu_indices = state.prefillGpuIndices.split(",").map(Number);
+        if (state.decodeGpuIndices) spec.decode_gpu_indices = state.decodeGpuIndices.split(",").map(Number);
+      }
+
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "ollama") {
       const finalModelId = modelId || "llama3:8b";
@@ -834,22 +863,23 @@ export default function NewDeployment() {
     let config = {}
     try { config = JSON.parse(jobDescription) } catch (e) { return toast.error("Invalid Job JSON specification") }
 
-    // Run preflight checks — forward named HF token for vLLM; raw hfToken for other engines
+    // Run preflight checks — forward named HF token for vLLM/SGLang; raw hfToken for other engines
     const preflightOk = await runPreflight(
       modelId || (config as any).model_id || "",
       selectedEngine,
-      selectedEngine === "vllm" ? undefined : (hfToken || undefined),
-      selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
+      ["vllm", "sglang"].includes(selectedEngine) ? undefined : (hfToken || undefined),
+      ["vllm", "sglang"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
     );
     if (!preflightOk) return;
-
+ 
     const payload = {
       model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
       ami_id: selectedEngine === "vllm" ? selectedAmiId : undefined,
-      hf_token_name: selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
+      hf_token_name: ["vllm", "sglang"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
     }
+
     createMutation.mutate(payload)
   }
 
@@ -1048,12 +1078,13 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
     selectedPool, preflightStatus, preflightErrors,
     selectedAmiId, selectedHfTokenName,
+    prefillReplicas, decodeReplicas, prefillGpuIndices, decodeGpuIndices, isDisaggOpen,
   } = state;
 
   const { data: hfConfig } = useQuery({
     queryKey: ['modelConfig', modelId],
     queryFn: () => getModelConfig(modelId),
-    enabled: !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
+    enabled: !!modelId && (selectedEngine === "vllm" || selectedEngine === "sglang" || selectedEngine === "ollama"),
     staleTime: 1000 * 60 * 60 // 1 hour
   });
 
@@ -1069,12 +1100,12 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     enabled: selectedEngine === "vllm",
     staleTime: 1000 * 60 * 5,
   });
-
+ 
   // HF token names list
   const { data: hfTokenNames = [] } = useQuery({
     queryKey: ['hf-token-names'],
     queryFn: () => ConfigService.listHfTokenNames(),
-    enabled: selectedEngine === "vllm",
+    enabled: selectedEngine === "vllm" || selectedEngine === "sglang",
     staleTime: 1000 * 60 * 5,
   });
 
@@ -1104,7 +1135,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     ? baseBandwidth * poolGpuCount * 0.85
     : undefined;
 
-  const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"))
+  const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "sglang" || selectedEngine === "ollama"))
     ? calculateCompatibility(
       modelId,
       selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
@@ -1254,42 +1285,44 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         </div>
       )}
 
-      {selectedEngine === "vllm" && (
+      {(selectedEngine === "vllm" || selectedEngine === "sglang") && (
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
-          <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">vLLM Configuration</h4></div>
+          <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">{selectedEngine === "sglang" ? "SGLang" : "vLLM"} Configuration</h4></div>
 
-          {/* Engine AMI dropdown (required) */}
-          <div>
-            <label htmlFor="engineAmi" className="block text-xs font-medium text-muted-foreground mb-1.5">
-              Engine AMI <span className="text-rose-500">*</span>
-            </label>
-            {amisLoading ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                <Loader2 className="w-3 h-3 animate-spin" /> Loading AMIs for {amiRegion}…
-              </div>
-            ) : engineAmis.length === 0 ? (
-              <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                No engine AMIs in {amiRegion} — bake one first (Settings → Providers → AWS).
-              </div>
-            ) : (
-              <select
-                id="engineAmi"
-                value={selectedAmiId}
-                onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedAmiId', value: e.target.value })}
-                className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
-              >
-                <option value="">— select an AMI —</option>
-                {engineAmis.map(ami => (
-                  <option key={ami.ami_id} value={ami.ami_id}>
-                    {ami.ami_id}{ami.vllm_tag ? ` — vLLM ${ami.vllm_tag}` : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
+          {/* Engine AMI dropdown (required for vLLM only) */}
+          {selectedEngine === "vllm" && (
+            <div>
+              <label htmlFor="engineAmi" className="block text-xs font-medium text-muted-foreground mb-1.5">
+                Engine AMI <span className="text-rose-500">*</span>
+              </label>
+              {amisLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Loading AMIs for {amiRegion}…
+                </div>
+              ) : engineAmis.length === 0 ? (
+                <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  No engine AMIs in {amiRegion} — bake one first (Settings → Providers → AWS).
+                </div>
+              ) : (
+                <select
+                  id="engineAmi"
+                  value={selectedAmiId}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedAmiId', value: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
+                >
+                  <option value="">— select an AMI —</option>
+                  {engineAmis.map(ami => (
+                    <option key={ami.ami_id} value={ami.ami_id}>
+                      {ami.ami_id}{ami.vllm_tag ? ` — vLLM ${ami.vllm_tag}` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
 
-          {/* HF token name dropdown (optional) */}
+          {/* HF token name dropdown (optional for both) */}
           <div>
             <label htmlFor="hfTokenName" className="block text-xs font-medium text-muted-foreground mb-1.5">
               HuggingFace Token <span className="text-muted-foreground/60">(optional — required for gated models)</span>
@@ -1309,6 +1342,82 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
               <p className="text-xs text-muted-foreground mt-1">
                 No saved tokens — add one at Settings → Providers → HuggingFace.
               </p>
+            )}
+          </div>
+
+          {/* Runtime configuration */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="dtype" className="block text-xs font-medium text-muted-foreground mb-1.5">Data Type</label>
+              <select id="dtype" value={dtype} onChange={e => dispatch({ type: 'SET_FIELD', field: 'dtype', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
+                <option value="auto">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="quantization" className="block text-xs font-medium text-muted-foreground mb-1.5">Quantization</label>
+              <select id="quantization" value={quantization} onChange={e => dispatch({ type: 'SET_FIELD', field: 'quantization', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white">
+                <option value="">None</option>
+                <option value="fp8">FP8</option>
+                <option value="awq">AWQ</option>
+                <option value="gptq">GPTQ</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="maxModelLen" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Model Length</label>
+              <input id="maxModelLen" type="number" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="8192" />
+            </div>
+            <div>
+              <label htmlFor="gpuUtil" className="block text-xs font-medium text-muted-foreground mb-1.5">GPU Memory Util</label>
+              <input id="gpuUtil" type="number" min="0" max="1" step="0.01" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="0.90" />
+            </div>
+            <div className="flex items-center gap-2 pt-6">
+              <input
+                id="enforceEager"
+                type="checkbox"
+                checked={enforceEager}
+                onChange={e => dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: e.target.checked })}
+                className="w-4 h-4 rounded border-border"
+              />
+              <label htmlFor="enforceEager" className="text-xs font-medium text-muted-foreground">Enforce Eager Mode</label>
+            </div>
+          </div>
+
+          {/* Advanced Configuration: Prefill-Decode Split */}
+          <div className="border-t border-border pt-4">
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'SET_FIELD', field: 'isDisaggOpen', value: !isDisaggOpen })}
+              className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-ember-600 dark:hover:text-ember-400 transition-colors"
+            >
+              {isDisaggOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              Advanced Configuration
+            </button>
+
+            {isDisaggOpen && (
+              <div className="mt-4 space-y-4">
+                <p className="text-xs text-muted-foreground">Configure prefill-decode split for disaggregated deployment across separate GPU sets.</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="prefillReplicas" className="block text-xs font-medium text-muted-foreground mb-1.5">Prefill Replicas</label>
+                    <input id="prefillReplicas" type="number" min="0" value={prefillReplicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'prefillReplicas', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="0" />
+                  </div>
+                  <div>
+                    <label htmlFor="decodeReplicas" className="block text-xs font-medium text-muted-foreground mb-1.5">Decode Replicas</label>
+                    <input id="decodeReplicas" type="number" min="0" value={decodeReplicas} onChange={e => dispatch({ type: 'SET_FIELD', field: 'decodeReplicas', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="0" />
+                  </div>
+                  <div>
+                    <label htmlFor="prefillGpuIndices" className="block text-xs font-medium text-muted-foreground mb-1.5">Prefill GPU Indices</label>
+                    <input id="prefillGpuIndices" value={prefillGpuIndices} onChange={e => dispatch({ type: 'SET_FIELD', field: 'prefillGpuIndices', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="0,1 (comma-separated)" />
+                  </div>
+                  <div>
+                    <label htmlFor="decodeGpuIndices" className="block text-xs font-medium text-muted-foreground mb-1.5">Decode GPU Indices</label>
+                    <input id="decodeGpuIndices" value={decodeGpuIndices} onChange={e => dispatch({ type: 'SET_FIELD', field: 'decodeGpuIndices', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="2,3 (comma-separated)" />
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

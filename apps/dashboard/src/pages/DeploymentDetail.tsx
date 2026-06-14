@@ -112,7 +112,7 @@ export default function DeploymentDetail() {
               ...data,
               id: data.deployment_id,
               name: data.model_name || `Compute-${data.deployment_id.slice(0, 8)}`,
-              provider: data.engine === "vllm" ? "vLLM (Compute)" : "Compute",
+                provider: data.engine === "vllm" ? "vLLM (Compute)" : data.engine === "sglang" ? "SGLang (Compute)" : "Compute",
               endpoint_url: data.endpoint,
               model_name: data.model_name,
               workload_type: data.configuration?.workload_type || (data.configuration?.git_repo ? "training" : "inference"),
@@ -152,7 +152,7 @@ export default function DeploymentDetail() {
     staleTime: 5 * 60 * 1000,
   })
 
-  const isCompute = deployment?.engine === "vllm" || providerCapabilities?.is_ephemeral || (deployment?.provider?.toLowerCase() || "").match(/compute|nosana|akash|depin/) !== null
+  const isCompute = deployment?.engine === "vllm" || deployment?.engine === "sglang" || providerCapabilities?.is_ephemeral || (deployment?.provider?.toLowerCase() || "").match(/compute|nosana|akash|depin/) !== null
 
   const deploymentState = (deployment?.state || deployment?.status || "").toUpperCase()
   const isRunning = !["STOPPED", "TERMINATED", "FAILED", "UNKNOWN"].includes(deploymentState)
@@ -197,7 +197,7 @@ export default function DeploymentDetail() {
       else if (action === "stop") await computeApi.post("/deployment/terminate", { deployment_id: id })
       else if (action === "delete") {
         dispatch({ type: 'SET_DELETING', payload: true });
-        if (deployment?.provider?.includes("Compute") || deployment?.engine === "vllm") await computeApi.delete(`/deployment/delete/${id}`)
+        if (deployment?.provider?.includes("Compute") || deployment?.engine === "vllm" || deployment?.engine === "sglang") await computeApi.delete(`/deployment/delete/${id}`)
         else await managementApi.delete(`/deployments/${id}`)
         navigate("/dashboard/deployments")
         return
