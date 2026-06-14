@@ -51,12 +51,23 @@ async def create_deployment(
             detail=f"A deployment with this name already exists. Please try another name.",
         )
 
+    # Merge prefill-decode fields into configuration so they flow to the worker
+    config = dict(deployment_data.credentials_json)
+    if deployment_data.prefill_replicas is not None:
+        config["prefill_replicas"] = deployment_data.prefill_replicas
+    if deployment_data.decode_replicas is not None:
+        config["decode_replicas"] = deployment_data.decode_replicas
+    if deployment_data.prefill_gpu_indices is not None:
+        config["prefill_gpu_indices"] = deployment_data.prefill_gpu_indices
+    if deployment_data.decode_gpu_indices is not None:
+        config["decode_gpu_indices"] = deployment_data.decode_gpu_indices
+
     new_deployment = DBDeployment(
         model_name=deployment_data.name,
         inference_model=deployment_data.model_name,
         engine=deployment_data.provider,
         endpoint=deployment_data.endpoint_url,
-        configuration=deployment_data.credentials_json,
+        configuration=config,
         org_id=user_ctx.org_id,
         model_type=deployment_data.model_type,
     )

@@ -16,6 +16,9 @@ class RuntimeResolver:
         if engine and engine.lower() in ("inferia-diffusion",):
             return "localai"
 
+        if engine and engine.lower() in ("sglang",):
+            return "vllm"
+
         # Model-type based routing
         if model_type and model_type.lower() in (
             "image",

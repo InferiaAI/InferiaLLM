@@ -69,18 +69,42 @@ class WorkerDeploymentStrategy:
             allocated = True
 
             # Build the worker LoadModel spec.
+            model_config = model.get("config") or {}
+            prefill_replicas = model_config.get("prefill_replicas", 0)
+            decode_replicas = model_config.get("decode_replicas", 0)
+            has_disagg = prefill_replicas > 0 or decode_replicas > 0
+
+            recipe = model.get("backend", "vllm")
+            if has_disagg and recipe not in ("vllm-prefill-decode", "sglang-prefill-decode"):
+                disagg_recipe_map = {
+                    "vllm": "vllm-prefill-decode",
+                    "sglang": "sglang-prefill-decode",
+                }
+                recipe = disagg_recipe_map.get(recipe, recipe)
+
             spec = {
                 "deployment_id": str(deployment_id),
-                "recipe": model.get("backend", "vllm"),
+                "recipe": recipe,
                 "model": {
                     "artifact_uri": model["artifact_uri"],
                     "format": model.get("format", "hf"),
                     "backend": model.get("backend", "vllm"),
                 },
-                "config": model.get("config") or {},
+                "config": model_config,
                 "gpu_indices": list(range(gpu_per_replica)),
                 "port": 0,  # let the worker allocate
             }
+
+            # Propagate disagg fields for multi-container deployments
+            if has_disagg:
+                spec["prefill_replicas"] = prefill_replicas
+                spec["decode_replicas"] = decode_replicas or 1
+                spec["prefill_gpu_indices"] = model_config.get(
+                    "prefill_gpu_indices"
+                ) or list(range(gpu_per_replica))
+                spec["decode_gpu_indices"] = model_config.get(
+                    "decode_gpu_indices"
+                ) or list(range(gpu_per_replica))
             result = await self.controller.load_model(
                 node_id=str(node_id), spec=spec,
             )

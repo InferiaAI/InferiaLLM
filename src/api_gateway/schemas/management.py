@@ -83,6 +83,12 @@ class DeploymentCreate(BaseModel):
     credentials_json: Dict[str, Any]  # (maps to configuration)
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
 
+    # Prefill-decode (disaggregated) deployment fields
+    prefill_replicas: Optional[int] = None
+    decode_replicas: Optional[int] = None
+    prefill_gpu_indices: Optional[List[int]] = None
+    decode_gpu_indices: Optional[List[int]] = None
+
 
 class DeploymentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

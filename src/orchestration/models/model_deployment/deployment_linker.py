@@ -71,6 +71,20 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     ) or ""
     recipe = deploy.get("engine") or "vllm"
     gpu_indices = list(range(gpu_required))
+    # Detect disagg (prefill-decode split) — if the config has prefill_replicas,
+    # map the recipe to the -prefill-decode variant so the worker dispatcher
+    # takes the multi-container path.
+    prefill_replicas = cfg.get("prefill_replicas", 0)
+    decode_replicas = cfg.get("decode_replicas", 0)
+    has_disagg = prefill_replicas > 0 or decode_replicas > 0
+
+    if has_disagg and recipe not in ("vllm-prefill-decode", "sglang-prefill-decode"):
+        disagg_recipe_map = {
+            "vllm": "vllm-prefill-decode",
+            "sglang": "sglang-prefill-decode",
+        }
+        recipe = disagg_recipe_map.get(recipe, recipe)
+
     spec: dict = {
         "deployment_id": str(deploy["id"]),
         "recipe": recipe,
@@ -89,6 +103,14 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         "port": 0,
         "env": dict(cfg.get("env") or {}),
     }
+
+    # Propagate disagg fields so the worker's dispatcher launches
+    # the multi-container (prefill/decode) deployment.
+    if has_disagg:
+        spec["prefill_replicas"] = prefill_replicas
+        spec["decode_replicas"] = decode_replicas or 1
+        spec["prefill_gpu_indices"] = cfg.get("prefill_gpu_indices") or gpu_indices
+        spec["decode_gpu_indices"] = cfg.get("decode_gpu_indices") or gpu_indices
 
     return spec
 
