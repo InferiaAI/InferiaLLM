@@ -42,10 +42,14 @@ from orchestration.models.model_cache import deps as _mc_deps
 logger = logging.getLogger(__name__)
 
 
-def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
+def _spec_from_pending(deploy: dict, gpu_required: int, pool_gpu_count: int = 0) -> dict:
     """Build the load_model spec from a list_pending_for_pool row.
 
     asyncpg returns ``configuration`` as a JSON string. Parse it if so.
+    When ``gpu_required > 1`` and the engine supports disaggregated
+    prefill-decode (vllm, sglang), automatically converts to the
+    ``-prefill-decode`` recipe with balanced GPU assignment — unless
+    the user already supplied explicit prefill/decode fields.
     """
     import json as _json
 
@@ -60,10 +64,6 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     model_block = cfg.get("model")
     if not isinstance(model_block, dict):
         model_block = {}
-    # The real model identifier for ollama lives in cfg["model_id"] (a bare
-    # name:tag); resolve_artifact_uri reads it and guarantees a scheme the
-    # worker accepts. Falling back to model_name (the display name) is the
-    # bug this replaces — it shipped e.g. "hjg" instead of "gemma3:4b".
     artifact_uri = resolve_artifact_uri(
         configuration=cfg,
         inference_model=deploy.get("inference_model"),
@@ -71,12 +71,22 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     ) or ""
     recipe = deploy.get("engine") or "vllm"
     gpu_indices = list(range(gpu_required))
-    # Detect disagg (prefill-decode split) — if the config has prefill_replicas,
-    # map the recipe to the -prefill-decode variant so the worker dispatcher
-    # takes the multi-container path.
     prefill_replicas = cfg.get("prefill_replicas", 0)
     decode_replicas = cfg.get("decode_replicas", 0)
     has_disagg = prefill_replicas > 0 or decode_replicas > 0
+
+    # Auto-convert single-engine deployments with >1 GPU to prefill-decode
+    # split (balanced: half GPUs for prefill, half for decode).
+    prefill_gpu_indices: list[int] | None = None
+    decode_gpu_indices: list[int] | None = None
+    supports_disagg = recipe in ("vllm", "sglang")
+    if not has_disagg and gpu_required > 1 and supports_disagg:
+        has_disagg = True
+        prefill_replicas = 1
+        decode_replicas = 1
+        mid = gpu_required // 2
+        prefill_gpu_indices = list(range(mid))
+        decode_gpu_indices = list(range(mid, gpu_required))
 
     if has_disagg and recipe not in ("vllm-prefill-decode", "sglang-prefill-decode"):
         disagg_recipe_map = {
@@ -104,13 +114,11 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         "env": dict(cfg.get("env") or {}),
     }
 
-    # Propagate disagg fields so the worker's dispatcher launches
-    # the multi-container (prefill/decode) deployment.
     if has_disagg:
         spec["prefill_replicas"] = prefill_replicas
         spec["decode_replicas"] = decode_replicas or 1
-        spec["prefill_gpu_indices"] = cfg.get("prefill_gpu_indices") or gpu_indices
-        spec["decode_gpu_indices"] = cfg.get("decode_gpu_indices") or gpu_indices
+        spec["prefill_gpu_indices"] = cfg.get("prefill_gpu_indices") or prefill_gpu_indices or gpu_indices
+        spec["decode_gpu_indices"] = cfg.get("decode_gpu_indices") or decode_gpu_indices or gpu_indices
 
     return spec
 
@@ -130,6 +138,7 @@ class DeploymentLinker:
         self._controller = worker_controller
 
     async def on_worker_ready(self, node_id: UUID) -> None:
+        pool_gpu_count = 0
         async with self._db.acquire() as conn:
             pool_id_row = await conn.fetchrow(
                 "SELECT pool_id FROM compute_inventory WHERE id=$1",
@@ -139,6 +148,13 @@ class DeploymentLinker:
                 logger.warning("on_worker_ready: node %s not found", node_id)
                 return
             pool_id = pool_id_row["pool_id"]
+
+            pool_row = await conn.fetchrow(
+                "SELECT gpu_count FROM compute_pools WHERE id=$1",
+                pool_id,
+            )
+            if pool_row:
+                pool_gpu_count = int(pool_row["gpu_count"])
 
             bound: list[dict] = []
             async with conn.transaction():
@@ -180,7 +196,7 @@ class DeploymentLinker:
         for deploy in bound:
             gpu_required = int(deploy.get("gpu_per_replica") or 1)
             try:
-                spec = _spec_from_pending(deploy, gpu_required)
+                spec = _spec_from_pending(deploy, gpu_required, pool_gpu_count)
                 try:
                     from orchestration.config import settings as _s
                     _mirror_base = getattr(_s, "model_mirror_base", "") or ""
