@@ -119,6 +119,10 @@ class LoadModelBody(BaseModel):
     gpu_indices: list[int] = Field(default_factory=list)
     port: int = 0
     env: dict[str, str] = Field(default_factory=dict)
+    prefill_replicas: int = 0
+    decode_replicas: int = 0
+    prefill_gpu_indices: list[int] = Field(default_factory=list)
+    decode_gpu_indices: list[int] = Field(default_factory=list)
 
 
 class UnloadModelBody(BaseModel):
