@@ -97,7 +97,7 @@ class FakeInventory:
     async def update_heartbeat(self, *, node_id, used, loaded_models):
         self.heartbeats.append({"node_id": node_id, "used": used, "loaded_models": loaded_models})
 
-    async def update_heartbeat_with_telemetry(self, *, node_id, used, loaded_models):
+    async def update_heartbeat_with_telemetry(self, *, node_id, used, loaded_models, deploy_metrics=None):
         self.heartbeats.append({"node_id": node_id, "used": used, "loaded_models": loaded_models})
 
 
@@ -674,3 +674,95 @@ def test_channel_unknown_stream_id_is_dropped_not_fatal(app_and_deps):
         _t.sleep(0.1)
     # If the channel had crashed, the context exit would have raised.
     assert True
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat metrics → registry ring buffer
+# ---------------------------------------------------------------------------
+
+
+def test_channel_heartbeat_with_metrics_recorded_into_registry(app_and_deps):
+    """A Heartbeat envelope with a non-null ``metrics`` field must land in the
+    registry's ring buffer for the sending node so the dashboard Metrics tab
+    can read it back.
+
+    NOTE: registry.detach() is called on WS disconnect and clears the node's
+    buffer, so we must assert INSIDE the websocket_connect context (while the
+    node is still attached)."""
+    app, auth, registry, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-metrics", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        ws.send_json({
+            "type": "Heartbeat",
+            "id": "hb-m1",
+            "body": {
+                "used": {},
+                "loaded_models": [],
+                "metrics": {"ts": "2026-01-01T00:00:00Z", "cpu_pct": 42.0, "gpus": []},
+            },
+        })
+        import time as _t
+        _t.sleep(0.1)
+        # Assert inside the WS context: detach() on disconnect clears the buffer.
+        samples = registry.get_metrics("node-metrics")
+        assert len(samples) == 1
+        assert samples[0]["ts"] == "2026-01-01T00:00:00Z"
+        assert samples[0]["cpu_pct"] == 42.0
+
+
+def test_channel_heartbeat_without_metrics_no_op_for_registry(app_and_deps):
+    """A Heartbeat envelope WITHOUT a ``metrics`` field must NOT append anything
+    to the registry ring buffer (backward-compat with older workers)."""
+    app, auth, registry, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-no-metrics", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        ws.send_json({
+            "type": "Heartbeat",
+            "id": "hb-nm1",
+            "body": {"used": {}, "loaded_models": []},
+        })
+        import time as _t
+        _t.sleep(0.1)
+        # Still inside context: buffer must remain empty when metrics is absent.
+        assert registry.get_metrics("node-no-metrics") == []
+
+
+def test_channel_heartbeat_metrics_accumulate_in_order(app_and_deps):
+    """Multiple Heartbeats with metrics must accumulate in the ring buffer in
+    send order so the dashboard can chart them as a time series.
+
+    NOTE: assert inside the WS context — detach() clears the buffer on close."""
+    app, auth, registry, _inv = app_and_deps
+    token = auth.mint_worker_token(node_id="node-multi-metrics", pool_id=POOL_ID)
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/workers/channel",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ws:
+        _hello = ws.receive_json()
+        for i in range(3):
+            ws.send_json({
+                "type": "Heartbeat",
+                "id": f"hb-seq-{i}",
+                "body": {
+                    "used": {},
+                    "loaded_models": [],
+                    "metrics": {"ts": f"t{i}", "cpu_pct": float(i * 10), "gpus": []},
+                },
+            })
+        import time as _t
+        _t.sleep(0.2)
+        # Assert inside the WS context: detach() on disconnect clears the buffer.
+        samples = registry.get_metrics("node-multi-metrics")
+        assert len(samples) == 3
+        assert [s["ts"] for s in samples] == ["t0", "t1", "t2"]
