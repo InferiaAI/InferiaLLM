@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatBytes, formatBps, toChartRows, gpuSeries } from "./metricsUtils";
+import { formatBytes, formatBps, formatBpsTick, toChartRows, gpuSeries } from "./metricsUtils";
 import type { NodeMetricsSample } from "@/services/workerService";
 
 describe("formatBytes", () => {
@@ -26,6 +26,14 @@ describe("formatBps", () => {
   it("appends /s", () => {
     expect(formatBps(0)).toBe("0 B/s");
     expect(formatBps(1024)).toBe("1.0 KiB/s");
+  });
+});
+
+describe("formatBpsTick", () => {
+  it("coerces number or string to a bps label", () => {
+    expect(formatBpsTick(1024)).toBe("1.0 KiB/s");
+    expect(formatBpsTick("2048")).toBe("2.0 KiB/s");
+    expect(formatBpsTick(0)).toBe("0 B/s");
   });
 });
 

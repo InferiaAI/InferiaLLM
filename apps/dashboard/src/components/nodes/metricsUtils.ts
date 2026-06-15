@@ -17,6 +17,13 @@ export function formatBps(n: number): string {
   return `${formatBytes(n)}/s`;
 }
 
+/** Formats a recharts axis tick / tooltip value (number or string) as a
+ * human-readable per-second byte rate. Centralised so the chart component
+ * carries no inline formatter lambdas. */
+export function formatBpsTick(value: number | string): string {
+  return formatBps(Number(value));
+}
+
 export interface ChartRow {
   label: string;
   cpu_pct: number;
