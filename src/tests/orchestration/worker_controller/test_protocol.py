@@ -251,3 +251,40 @@ def test_envelope_wire_format_round_trip(env_type, body):
     rebuilt = Envelope.model_validate(wire)
     assert rebuilt.type == env_type
     assert rebuilt.body == body
+
+
+# --- HeartbeatBody metrics field ------------------------------------------
+
+
+from orchestration.workers.worker_controller.protocol import HeartbeatBody
+
+
+def test_heartbeat_parses_optional_metrics():
+    body = {
+        "used": {"cpu_pct": "10.0"},
+        "loaded_models": [],
+        "metrics": {
+            "ts": "2026-06-16T00:00:00Z",
+            "cpu_pct": 10.0,
+            "mem_used_bytes": 1024,
+            "mem_total_bytes": 4096,
+            "net_rx_bps": 5.0,
+            "net_tx_bps": 6.0,
+            "disk_read_bps": 7.0,
+            "disk_write_bps": 8.0,
+            "gpus": [
+                {"index": 0, "name": "NVIDIA A100", "util_pct": 42.0,
+                 "mem_used_mib": 100, "mem_total_mib": 81920},
+            ],
+        },
+    }
+    hb = HeartbeatBody.model_validate(body)
+    assert hb.metrics is not None
+    assert hb.metrics.cpu_pct == 10.0
+    assert hb.metrics.gpus[0].util_pct == 42.0
+    assert hb.metrics.gpus[0].mem_total_mib == 81920
+
+
+def test_heartbeat_without_metrics_is_backcompat():
+    hb = HeartbeatBody.model_validate({"used": {}, "loaded_models": []})
+    assert hb.metrics is None
