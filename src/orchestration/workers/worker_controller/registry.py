@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, Union
 
@@ -43,6 +44,12 @@ from .protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Per-node in-memory metrics ring buffer size. Worker heartbeats fire ~every
+# 5s, so 360 samples ≈ 30 minutes of live history. Buffers exist only while a
+# node is connected (dropped on detach) and reset on control-plane restart —
+# this is live operational monitoring, not durable history.
+METRICS_RING_SIZE = 360
 
 
 StreamKind = Literal["shell", "logs"]
@@ -113,6 +120,9 @@ class WorkerRegistry:
         # use dict.get without the lock (atomic in CPython).
         self._streams: dict[str, StreamHandle] = {}
         self._lock = asyncio.Lock()
+        # node_id → deque of telemetry samples (ring buffer, maxlen=METRICS_RING_SIZE).
+        # Dropped on detach; never persisted.
+        self._metrics: dict[str, deque] = {}
 
     async def attach(self, node_id: str, conn: WorkerConn) -> None:
         """Register a new connection for node_id. Closes any existing one."""
@@ -143,6 +153,7 @@ class WorkerRegistry:
                 # alone — they belong to the newer conn.
                 return
             self._conns.pop(node_id, None)
+            self._metrics.pop(node_id, None)
             orphaned = [
                 handle
                 for handle in self._streams.values()
@@ -181,6 +192,7 @@ class WorkerRegistry:
         """
         async with self._lock:
             conn = self._conns.pop(node_id, None)
+            self._metrics.pop(node_id, None)
             orphaned = [
                 handle
                 for handle in self._streams.values()
@@ -250,6 +262,28 @@ class WorkerRegistry:
         if fut is None or fut.done():
             return
         fut.set_result(result)
+
+    # ------------------------------------------------------------------
+    # Per-node in-memory metrics ring buffer.
+    # ------------------------------------------------------------------
+
+    def record_metrics(self, node_id: str, sample: dict) -> None:
+        """Append one telemetry sample to the node's ring buffer.
+
+        Lock-free: dict.get/insert + deque.append are atomic in CPython and the
+        buffer is read by get_metrics the same way, so we avoid taking the async
+        lock on the hot heartbeat path.
+        """
+        buf = self._metrics.get(node_id)
+        if buf is None:
+            buf = deque(maxlen=METRICS_RING_SIZE)
+            self._metrics[node_id] = buf
+        buf.append(sample)
+
+    def get_metrics(self, node_id: str) -> list[dict]:
+        """Snapshot the node's buffered samples, oldest->newest. Empty if none."""
+        buf = self._metrics.get(node_id)
+        return list(buf) if buf is not None else []
 
     # ------------------------------------------------------------------
     # Shell + logs stream multiplexing.
