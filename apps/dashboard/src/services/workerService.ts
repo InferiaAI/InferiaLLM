@@ -58,3 +58,35 @@ export async function listWorkers(poolId: string): Promise<WorkerView[]> {
 export async function revokeWorker(nodeId: string): Promise<void> {
   await computeApi.delete(`/admin/workers/${nodeId}`);
 }
+
+export interface GPUSample {
+  index: number;
+  name: string;
+  util_pct: number;
+  mem_used_mib: number;
+  mem_total_mib: number;
+}
+
+export interface NodeMetricsSample {
+  ts: string;
+  cpu_pct: number;
+  mem_used_bytes: number;
+  mem_total_bytes: number;
+  net_rx_bps: number;
+  net_tx_bps: number;
+  disk_read_bps: number;
+  disk_write_bps: number;
+  gpus: GPUSample[];
+}
+
+export interface NodeMetricsResponse {
+  latest: NodeMetricsSample | null;
+  samples: NodeMetricsSample[];
+}
+
+export async function getNodeMetrics(nodeId: string): Promise<NodeMetricsResponse> {
+  const res = await computeApi.get<NodeMetricsResponse>(
+    `/admin/workers/${nodeId}/metrics`,
+  );
+  return res.data ?? { latest: null, samples: [] };
+}
