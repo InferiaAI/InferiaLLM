@@ -14,11 +14,12 @@ import { AWSMetadataGrid } from "@/components/nodes/AWSMetadataGrid";
 import ProvisioningStatus from "@/components/nodes/ProvisioningStatus";
 import NodeShell from "@/components/nodes/NodeShell";
 import NodeLogs from "@/components/nodes/NodeLogs";
+import NodeMetrics from "@/components/nodes/NodeMetrics";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-type NodeTab = "provisioning" | "ec2" | "shell" | "logs";
+type NodeTab = "provisioning" | "ec2" | "metrics" | "shell" | "logs";
 
 // ---------------------------------------------------------------------------
 // NodeDetail page
@@ -175,6 +176,7 @@ export default function NodeDetail() {
   const tabs: { label: string; value: NodeTab; hidden?: boolean }[] = [
     { label: "Provisioning Status", value: "provisioning" },
     { label: "EC2 Details", value: "ec2", hidden: !isAws },
+    { label: "Metrics", value: "metrics" },
     { label: "Shell", value: "shell" },
     { label: "Logs", value: "logs" },
   ];
@@ -332,6 +334,19 @@ export default function NodeDetail() {
             ) : (
               <Navigate to="../provisioning" replace />
             )
+          }
+        />
+
+        <Route
+          path="metrics"
+          element={
+            <NodeTabLayout tabs={tabs} activeTab="metrics" poolId={poolId} nid={nid}>
+              <NodeMetrics
+                nodeId={node.id}
+                nodeState={node.state}
+                currentPhase={summary?.current_phase}
+              />
+            </NodeTabLayout>
           }
         />
 
