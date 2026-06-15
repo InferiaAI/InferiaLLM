@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # vanishes — bump both together.
 _DEFAULT_VLLM_TAG = "v0.22.1"
 _DEFAULT_INSTANCE_TYPE = "t3.xlarge"  # CPU; standard quota; x86_64
-_DEFAULT_ROOT_GB = 100                # matches the GPU launch root_volume_gb
+_DEFAULT_ROOT_GB = 130                # matches the GPU launch root_volume_gb
 _BUILDER_TAG = "inferia:engine-ami-builder"
 _ENGINE_CACHE_TAG = "inferia:engine-cache"
 _SSM_ONLINE_TIMEOUT_S = 300

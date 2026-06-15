@@ -386,7 +386,7 @@ def cmd_pool_show(args) -> None:
         print(f"  security_group_ids:   {', '.join(sgs) if sgs else '-'}")
         print(f"  ami_id:               {metadata.get('ami_id', '(auto)')}")
         print(f"  iam_instance_profile: {metadata.get('iam_instance_profile', '-')}")
-        print(f"  root_volume_gb:       {metadata.get('root_volume_gb', 100)}")
+        print(f"  root_volume_gb:       {metadata.get('root_volume_gb', 130)}")
         print(f"  worker_image_tag:     {metadata.get('worker_image_tag', '(default)')}")
     elif metadata:
         print("\nMetadata:")

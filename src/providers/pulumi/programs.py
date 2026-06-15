@@ -340,7 +340,7 @@ def build_program(
             subnet_id=spec.get("subnet_id"),
             security_group_ids=sg_ids,
             iam_instance_profile=spec.get("iam_instance_profile"),
-            root_volume_gb=int(spec.get("root_volume_gb") or 50),
+            root_volume_gb=int(spec.get("root_volume_gb") or 130),
             user_data=str(spec.get("user_data") or ""),
             use_spot=bool(spec.get("use_spot") or False),
         )

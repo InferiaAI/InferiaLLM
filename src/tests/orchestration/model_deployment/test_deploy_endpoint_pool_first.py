@@ -373,7 +373,7 @@ async def test_build_provisioning_spec_derives_instance_class_and_region():
     assert spec["instance_class"] == "normal_gpu"  # catalog-derived
     assert spec["region"] == "us-east-1"
     assert spec["gpu_count"] == 1
-    assert spec["root_volume_gb"] == 100  # GPU DLAMI needs >=75GB
+    assert spec["root_volume_gb"] == 130  # GPU DLAMI needs >=75GB
 
 
 async def test_build_provisioning_spec_unknown_instance_type_raises_422():
