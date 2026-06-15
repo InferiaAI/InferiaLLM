@@ -236,6 +236,7 @@ type State = {
   // vLLM AMI + HF token dropdowns
   selectedAmiId: string;
   selectedHfTokenName: string;
+  gpuPerReplica: string;
   // Prefill-Decode split configuration
   prefillReplicas: string;
   decodeReplicas: string;
@@ -328,6 +329,7 @@ const initialState: State = {
   // vLLM AMI + HF token dropdowns
   selectedAmiId: "",
   selectedHfTokenName: "",
+  gpuPerReplica: "1",
   // Prefill-Decode split defaults
   prefillReplicas: "0",
   decodeReplicas: "0",
@@ -797,7 +799,7 @@ export default function NewDeployment() {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, modelType, hfToken, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload])
+  }, [selectedEngine, modelId, modelType, hfToken, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload, state.gpuPerReplica, state.prefillReplicas, state.decodeReplicas, state.prefillGpuIndices, state.decodeGpuIndices])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -873,7 +875,7 @@ export default function NewDeployment() {
     if (!preflightOk) return;
  
     const payload = {
-      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
+      model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: parseInt(state.gpuPerReplica) || 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
       ami_id: selectedEngine === "vllm" ? selectedAmiId : undefined,
@@ -1280,6 +1282,60 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
             <div className="mt-4 p-3 bg-rose-500/15 rounded-lg border-2 border-rose-500/30 text-xs font-bold flex items-start gap-3 text-rose-600 dark:text-rose-400">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <span>Critical: Model memory exceeds pool capacity. Deployment will likely fail or cause Hardware OOM.</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* GPU count slider — only for multi-GPU pools with disagg-capable engines */}
+      {(selectedPool?.gpu_count > 1 && (selectedEngine === "vllm" || selectedEngine === "sglang")) && (
+        <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
+          <div className="flex items-center gap-2 mb-2">
+            <Cpu className="w-4 h-4 text-primary" />
+            <h4 className="font-medium text-sm">GPU Configuration</h4>
+          </div>
+          <div>
+            <label htmlFor="gpuPerReplica" className="block text-xs font-medium text-muted-foreground mb-2">
+              GPUs per Replica: <span className="font-bold text-foreground">{state.gpuPerReplica || "1"}</span>
+              {parseInt(state.gpuPerReplica || "1") > 1 && (
+                <span className="ml-2 text-amber-600 dark:text-amber-400">→ Prefill-Decode split enabled</span>
+              )}
+            </label>
+            <input
+              id="gpuPerReplica"
+              type="range"
+              min="1"
+              max={selectedPool.gpu_count}
+              value={state.gpuPerReplica}
+              onChange={e => {
+                const val = e.target.value;
+                const gpuCount = parseInt(val);
+                dispatch({ type: 'SET_FIELD', field: 'gpuPerReplica', value: val });
+                if (gpuCount > 1) {
+                  const mid = Math.floor(gpuCount / 2);
+                  const prefillIndices = Array.from({ length: mid }, (_, i) => i).join(",");
+                  const decodeIndices = Array.from({ length: gpuCount - mid }, (_, i) => i + mid).join(",");
+                  dispatch({ type: 'SET_FIELD', field: 'prefillReplicas', value: "1" });
+                  dispatch({ type: 'SET_FIELD', field: 'decodeReplicas', value: "1" });
+                  dispatch({ type: 'SET_FIELD', field: 'prefillGpuIndices', value: prefillIndices });
+                  dispatch({ type: 'SET_FIELD', field: 'decodeGpuIndices', value: decodeIndices });
+                } else {
+                  dispatch({ type: 'SET_FIELD', field: 'prefillReplicas', value: "0" });
+                  dispatch({ type: 'SET_FIELD', field: 'decodeReplicas', value: "0" });
+                  dispatch({ type: 'SET_FIELD', field: 'prefillGpuIndices', value: "" });
+                  dispatch({ type: 'SET_FIELD', field: 'decodeGpuIndices', value: "" });
+                }
+              }}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>1</span>
+              <span>{selectedPool.gpu_count} GPUs</span>
+            </div>
+          </div>
+          {parseInt(state.gpuPerReplica || "1") > 1 && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
+              GPUs {state.prefillGpuIndices} → Prefill &nbsp;|&nbsp; GPUs {state.decodeGpuIndices} → Decode
             </div>
           )}
         </div>
