@@ -171,8 +171,11 @@ def run_nosana_sidecar(queue=None, env: str = "production"):
                 subprocess.run(["npm", "install", "--omit=dev"], cwd=sidecar_dir, check=True)
 
         node_env = os.environ.copy()
-        if not node_env.get("API_GATEWAY_URL"):
-            node_env["API_GATEWAY_URL"] = "http://localhost:8000"
+        # Unified single-port deployment mounts the gateway at /api on APP_PORT;
+        # the sidecar must poll /api/internal/config/credentials or it hits the
+        # SPA catch-all and loads no DePIN credentials. See
+        # _sidecar_api_gateway_url. An explicit API_GATEWAY_URL (split mode) wins.
+        node_env["API_GATEWAY_URL"] = _sidecar_api_gateway_url(node_env)
 
         print("[DePIN] Launching sidecar...")
         cmd = ["npm", "run", "dev"] if env == "dev" else ["npm", "start"]
@@ -292,6 +295,26 @@ def _set_unified_loopback_env(port: int) -> None:
     """
     os.environ.setdefault("API_GATEWAY_URL", f"http://localhost:{port}/api")
     os.environ.setdefault("INFERENCE_URL", f"http://localhost:{port}/inf")
+
+
+def _sidecar_api_gateway_url(env: dict) -> str:
+    """Gateway base URL the DePIN sidecar polls for /internal/config/credentials.
+
+    The sidecar runs as its OWN process (it does not inherit
+    _set_unified_loopback_env's os.environ mutations), so it must derive the
+    same unified mount itself. In unified single-port mode the gateway is
+    mounted at ``/api`` on APP_PORT; WITHOUT the ``/api`` prefix the request
+    falls through to the ``/`` SPA StaticFiles catch-all and returns HTML, so
+    ``data.providers`` is undefined, the sidecar loads ZERO credentials, and
+    every DePIN provider (Nosana/Akash) reports ``disabled`` -> deploys 503
+    with "Nosana Service '<name>' not initialized". An explicit API_GATEWAY_URL
+    (split mode, where the gateway is a different host) is preserved.
+    """
+    explicit = env.get("API_GATEWAY_URL")
+    if explicit:
+        return explicit
+    port = env.get("APP_PORT", "8000")
+    return f"http://localhost:{port}/api"
 
 
 def run_unified_web(queue=None):
