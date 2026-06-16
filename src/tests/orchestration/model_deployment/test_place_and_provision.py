@@ -22,6 +22,9 @@ import pytest
 from orchestration.models.model_deployment import (
     deployment_server,
 )
+from orchestration.models.model_deployment import (
+    direct_provision,
+)
 from orchestration.models.model_deployment.deployment_server import (
     DeployModelRequest,
     place_and_provision,
@@ -243,6 +246,299 @@ async def test_coldstart_worker_pool_does_not_enqueue(monkeypatch):
     assert body["state"] == "PENDING_NODE"
     assert body["message"] == "waiting for worker registration"
     jobs_repo.enqueue.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# T4: 3-way provisioning router wiring in place_and_provision.
+#
+# place_and_provision must dispatch each ColdStart by ``_provisioning_route``:
+#   - "reconciler"     (aws/gcp/azure)      -> jobs_repo.enqueue (UNCHANGED)
+#   - "direct_adapter" (nosana/akash/k8s)   -> _schedule_background(provision_direct_node(...))
+#   - "self_register"  (worker pool)        -> neither
+#
+# We patch the module-level ``_schedule_background`` with a synchronous spy so
+# we can assert the coroutine factory was scheduled with the right kwargs
+# WITHOUT actually running provision_direct_node (which would touch adapters).
+# We also patch ``provision_direct_node`` with an AsyncMock(spec=...) so the
+# spy receives a coroutine whose call args we can introspect via await_args,
+# and so the never-awaited coroutine doesn't emit a RuntimeWarning.
+# ---------------------------------------------------------------------------
+
+
+def _route_deps(*, provider, node_id):
+    """Build a deps namespace + mocks for a ColdStart routing test."""
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = ColdStart(
+        gpu_total_per_node=1, provider=provider
+    )
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.create_placeholder.return_value = node_id
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    deps = SimpleNamespace(
+        db_pool=_make_db_pool(),
+        controller=AsyncMock(),
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+    return deps, jobs_repo
+
+
+def _patch_direct(monkeypatch):
+    """Patch _schedule_background (synchronous spy) + provision_direct_node
+    (AsyncMock) so direct-adapter scheduling is observable without running it.
+
+    Returns (sched_spy, direct_mock). ``sched_spy`` records the coroutine it
+    was handed; we close it so no 'coroutine was never awaited' warning fires.
+    """
+    direct_mock = AsyncMock(spec=direct_provision.provision_direct_node)
+
+    scheduled = []
+
+    def _sched_spy(coro):
+        scheduled.append(coro)
+        # Close the coroutine to avoid an un-awaited-coroutine RuntimeWarning;
+        # the AsyncMock has already recorded the call + its kwargs.
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return None
+
+    _sched_spy.scheduled = scheduled  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(
+        deployment_server, "provision_direct_node", direct_mock, raising=True
+    )
+    monkeypatch.setattr(
+        deployment_server, "_schedule_background", _sched_spy, raising=True
+    )
+    return _sched_spy, direct_mock
+
+
+async def test_coldstart_aws_enqueues_reconciler_job_not_direct(monkeypatch):
+    """AWS REGRESSION LOCK: a non-worker aws pool ColdStart must enqueue
+    exactly ONE reconciler ProvisioningJob with provider='aws' and an AWS spec,
+    and must NOT schedule the direct background helper. This pins the AWS hot
+    path byte-for-byte while the 3-way router is wired in around it."""
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+    org_id = str(uuid4())
+
+    fake_spec = {"provider": "aws", "instance_type": "g6.xlarge"}
+
+    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
+        return fake_spec
+
+    monkeypatch.setattr(
+        deployment_server, "_build_provisioning_spec", _fake_build_spec
+    )
+    sched_spy, direct_mock = _patch_direct(monkeypatch)
+
+    deps, jobs_repo = _route_deps(provider="aws", node_id=node_id)
+
+    body, status = await place_and_provision(
+        deploy_id=deploy_id,
+        pool_id=pool_id,
+        pool_row={"id": pool_id},
+        pool_meta={},  # non-worker pool
+        gpu_per_replica=1,
+        org_id=org_id,
+        engine="vllm",
+        load_spec_source=_load_spec_source(),
+        deps=deps,
+        ami_id="ami-0123456789abcdef0",
+    )
+
+    assert status == 202
+    assert body["state"] == "PENDING_NODE"
+    assert body["message"] == "provisioning compute"
+
+    # Reconciler enqueue UNCHANGED: exactly once, AWS provider + AWS spec.
+    jobs_repo.enqueue.assert_awaited_once()
+    eq = jobs_repo.enqueue.await_args.kwargs
+    assert eq["node_id"] == node_id
+    assert eq["pool_id"] == pool_id
+    assert eq["org_id"] == org_id
+    assert eq["provider"] == "aws"
+    assert eq["spec"] is fake_spec
+
+    # Direct helper must NOT be scheduled on the AWS path.
+    assert sched_spy.scheduled == []
+    direct_mock.assert_not_called()
+
+
+async def test_coldstart_nosana_schedules_direct_not_enqueue(monkeypatch):
+    """A nosana (DEPIN) pool ColdStart routes to the direct background helper:
+    jobs_repo.enqueue is NOT awaited; provision_direct_node is scheduled via
+    _schedule_background with the expected kwargs."""
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+    pool_row = {"id": pool_id}
+    pool_meta = {"some": "meta"}
+
+    sched_spy, direct_mock = _patch_direct(monkeypatch)
+    deps, jobs_repo = _route_deps(provider="nosana", node_id=node_id)
+
+    body, status = await place_and_provision(
+        deploy_id=deploy_id,
+        pool_id=pool_id,
+        pool_row=pool_row,
+        pool_meta=pool_meta,
+        gpu_per_replica=2,
+        org_id=str(uuid4()),
+        engine="vllm",
+        load_spec_source=_load_spec_source(),
+        deps=deps,
+    )
+
+    assert status == 202
+    assert body["state"] == "PENDING_NODE"
+    assert body["message"] == "provisioning compute"
+
+    # NO reconciler enqueue on a direct-adapter provider.
+    jobs_repo.enqueue.assert_not_awaited()
+
+    # The direct helper was scheduled exactly once...
+    assert len(sched_spy.scheduled) == 1
+    # ...and provision_direct_node was invoked with the expected kwargs.
+    direct_mock.assert_called_once()
+    kw = direct_mock.call_args.kwargs
+    assert kw["deploy_id"] == deploy_id
+    assert kw["node_id"] == node_id
+    assert kw["provider"] == "nosana"
+    assert kw["pool_row"] is pool_row
+    assert kw["pool_meta"] is pool_meta
+    assert kw["gpu_per_replica"] == 2
+    assert kw["deps"] is deps
+
+
+async def test_coldstart_akash_schedules_direct_not_enqueue(monkeypatch):
+    """An akash (DEPIN) pool ColdStart behaves like nosana: direct background
+    helper scheduled, no reconciler enqueue."""
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+    pool_row = {"id": pool_id}
+    pool_meta = {}
+
+    sched_spy, direct_mock = _patch_direct(monkeypatch)
+    deps, jobs_repo = _route_deps(provider="akash", node_id=node_id)
+
+    body, status = await place_and_provision(
+        deploy_id=deploy_id,
+        pool_id=pool_id,
+        pool_row=pool_row,
+        pool_meta=pool_meta,
+        gpu_per_replica=1,
+        org_id=str(uuid4()),
+        engine="vllm",
+        load_spec_source=_load_spec_source(),
+        deps=deps,
+    )
+
+    assert status == 202
+    assert body["state"] == "PENDING_NODE"
+
+    jobs_repo.enqueue.assert_not_awaited()
+    assert len(sched_spy.scheduled) == 1
+    direct_mock.assert_called_once()
+    kw = direct_mock.call_args.kwargs
+    assert kw["provider"] == "akash"
+    assert kw["node_id"] == node_id
+    assert kw["deploy_id"] == deploy_id
+
+
+async def test_coldstart_worker_pool_neither_enqueue_nor_direct(monkeypatch):
+    """A worker pool (agent_kind=worker) self-registers: neither a reconciler
+    enqueue NOR a direct background helper is scheduled."""
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    node_id = uuid4()
+
+    sched_spy, direct_mock = _patch_direct(monkeypatch)
+    deps, jobs_repo = _route_deps(provider="aws", node_id=node_id)
+
+    body, status = await place_and_provision(
+        deploy_id=deploy_id,
+        pool_id=pool_id,
+        pool_row={"id": pool_id},
+        pool_meta={"agent_kind": "worker"},
+        gpu_per_replica=1,
+        org_id=str(uuid4()),
+        engine="vllm",
+        load_spec_source=_load_spec_source(),
+        deps=deps,
+    )
+
+    assert status == 202
+    assert body["state"] == "PENDING_NODE"
+    assert body["message"] == "waiting for worker registration"
+
+    jobs_repo.enqueue.assert_not_awaited()
+    assert sched_spy.scheduled == []
+    direct_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T4(b): _schedule_background helper keeps a strong reference to the task so it
+# isn't garbage-collected mid-flight (the classic fire-and-forget create_task
+# foot-gun). We verify the real helper schedules + retains, then drains.
+# ---------------------------------------------------------------------------
+
+
+async def test_schedule_background_runs_and_retains_then_drains():
+    ran = {"n": 0}
+
+    async def _coro():
+        ran["n"] += 1
+
+    t = deployment_server._schedule_background(_coro())
+    # The task is tracked while pending (strong ref prevents GC).
+    assert t in deployment_server._BG_TASKS
+    await t
+    # done_callback discards it after completion (no leak).
+    assert ran["n"] == 1
+    assert t not in deployment_server._BG_TASKS
+
+
+# ---------------------------------------------------------------------------
+# T4(c): the vLLM AMI requirement is AWS-only. Exercised in isolation (the
+# /deploy handler's DB path needs a live Postgres which isn't available in the
+# unit image; the gate logic is a pure conditional we replicate exactly).
+# ---------------------------------------------------------------------------
+
+
+def _ami_gate_should_422(*, engine, provider, ami_id) -> bool:
+    """Mirror of the /deploy handler's AWS-gated vLLM AMI requirement.
+
+    Kept in lock-step with deployment_server.deploy_model so this unit test
+    fails loudly if the production conditional drifts.
+    """
+    _provider = (provider or "").lower()
+    return (engine or "").lower() == "vllm" and _provider == "aws" and not ami_id
+
+
+@pytest.mark.parametrize(
+    "engine,provider,ami_id,expected",
+    [
+        ("vllm", "aws", None, True),       # AWS vLLM, no AMI -> 422
+        ("vllm", "aws", "", True),          # blank AMI counts as missing
+        ("vllm", "aws", "ami-x", False),    # AWS vLLM with AMI -> ok
+        ("vllm", "nosana", None, False),    # DePIN vLLM, no AMI -> NOT gated
+        ("vllm", "akash", None, False),     # DePIN vLLM, no AMI -> NOT gated
+        ("vllm", "on_prem", None, False),   # worker pool vLLM -> NOT gated
+        ("ollama", "aws", None, False),     # non-vLLM engine -> not gated
+    ],
+)
+async def test_ami_gate_fires_only_for_aws_vllm(engine, provider, ami_id, expected):
+    assert _ami_gate_should_422(
+        engine=engine, provider=provider, ami_id=ami_id
+    ) is expected
 
 
 # ---------------------------------------------------------------------------

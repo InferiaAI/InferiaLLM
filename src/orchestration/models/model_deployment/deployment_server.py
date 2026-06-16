@@ -35,11 +35,39 @@ from orchestration.models.model_deployment.log_store import (
     DeploymentLogStore,
     DeploymentLogBuffer,
 )
+from orchestration.models.model_deployment.direct_provision import (
+    provision_direct_node,
+)
 from orchestration.config import settings as orch_settings
 from typing import Any, Literal, Optional
 from types import SimpleNamespace
 
 ProvisioningRoute = Literal["self_register", "reconciler", "direct_adapter"]
+
+# Strong references to fire-and-forget background tasks so they aren't
+# garbage-collected mid-flight (asyncio holds only a weak ref to a bare
+# create_task result, so without this set the task can be collected before it
+# runs — the classic fire-and-forget foot-gun). The done-callback discards
+# each task once it finishes so the set doesn't grow unbounded.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _bg_done(t: "asyncio.Task") -> None:
+    _BG_TASKS.discard(t)
+    if not t.cancelled():
+        exc = t.exception()
+        if exc is not None:
+            logger.error("background task failed: %s", exc, exc_info=exc)
+
+
+def _schedule_background(coro):
+    """Schedule ``coro`` as a fire-and-forget background task, retaining a
+    strong reference until it completes. Returns the created Task."""
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_bg_done)
+    return t
+
 
 import os
 
@@ -1118,6 +1146,7 @@ async def place_and_provision(
     # pending_enqueue: set after tx commits; contains kwargs for jobs_repo.enqueue
     bound_for_load: tuple | None = None  # (node_id, deploy_id) for warm path
     pending_enqueue: dict | None = None  # post-tx provisioning job to enqueue
+    pending_direct: dict | None = None  # post-tx direct-adapter background task
     response_body: dict = {}
     response_status = 200
     try:
@@ -1192,16 +1221,16 @@ async def place_and_provision(
                             )
                             await deploys.bind_to_node(deploy_id, node_id, tx=conn)
                             await deploys.set_state(deploy_id, "PENDING_NODE", tx=conn)
-                            is_worker_pool = pool_meta.get("agent_kind") == "worker"
+                            route = _provisioning_route(decision.provider, pool_meta)
                             response_body = {
                                 "deployment_id": str(deploy_id),
                                 "state": "PENDING_NODE",
                                 "target_node_id": str(node_id),
                                 "message": "waiting for worker registration"
-                                if is_worker_pool else "provisioning compute",
+                                if route == "self_register" else "provisioning compute",
                             }
                             response_status = 202
-                            if not is_worker_pool:
+                            if route == "reconciler":
                                 # Collect for post-tx enqueue (FK needs committed node)
                                 pending_enqueue = {
                                     "node_id": node_id,
@@ -1214,6 +1243,18 @@ async def place_and_provision(
                                         ami_id=ami_id,
                                     ),
                                 }
+                            elif route == "direct_adapter":
+                                # DePIN/k8s: provision via the background helper
+                                # post-tx (scheduled after the placeholder commits).
+                                pending_direct = {
+                                    "deploy_id": deploy_id,
+                                    "node_id": node_id,
+                                    "pool_row": pool_row,
+                                    "pool_meta": pool_meta,
+                                    "provider": decision.provider,
+                                    "gpu_per_replica": gpu_per_replica,
+                                }
+                            # route == "self_register": neither (unchanged behavior)
                     else:
                         # first allocate_gpu succeeded — BindToReady warm path
                         await deploys.bind_to_node(deploy_id, decision.node_id, tx=conn)
@@ -1250,16 +1291,16 @@ async def place_and_provision(
                     )
                     await deploys.bind_to_node(deploy_id, node_id, tx=conn)
                     await deploys.set_state(deploy_id, "PENDING_NODE", tx=conn)
-                    is_worker_pool = pool_meta.get("agent_kind") == "worker"
+                    route = _provisioning_route(decision.provider, pool_meta)
                     response_body = {
                         "deployment_id": str(deploy_id),
                         "state": "PENDING_NODE",
                         "target_node_id": str(node_id),
                         "message": "waiting for worker registration"
-                        if is_worker_pool else "provisioning compute",
+                        if route == "self_register" else "provisioning compute",
                     }
                     response_status = 202
-                    if not is_worker_pool:
+                    if route == "reconciler":
                         # Collect for post-tx enqueue (FK needs committed node)
                         pending_enqueue = {
                             "node_id": node_id,
@@ -1272,6 +1313,18 @@ async def place_and_provision(
                                 ami_id=ami_id,
                             ),
                         }
+                    elif route == "direct_adapter":
+                        # DePIN/k8s: provision via the background helper post-tx
+                        # (scheduled after the placeholder commits).
+                        pending_direct = {
+                            "deploy_id": deploy_id,
+                            "node_id": node_id,
+                            "pool_row": pool_row,
+                            "pool_meta": pool_meta,
+                            "provider": decision.provider,
+                            "gpu_per_replica": gpu_per_replica,
+                        }
+                    # route == "self_register": neither (unchanged behavior)
 
     except PoolAtCapacity as e:
         await deploys.set_state(deploy_id, "FAILED")
@@ -1315,6 +1368,13 @@ async def place_and_provision(
                 status_code=502,
                 detail=f"failed to enqueue provisioning job: {e}",
             )
+
+    # 4a'. Post-tx: schedule the direct-adapter provisioning helper as a
+    # fire-and-forget background task. The HTTP 202 (PENDING_NODE) has already
+    # been decided in-tx; provision_direct_node drives the deployment to
+    # RUNNING/FAILED asynchronously and owns its own try/except.
+    if pending_direct is not None:
+        _schedule_background(provision_direct_node(**pending_direct, deps=deps))
 
     # 4b. Post-tx: load_model for the warm path
     if bound_for_load is not None:
@@ -1521,12 +1581,17 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                 ),
             )
 
-    # 1b. vLLM requires an explicit ami_id (the DLAMI to boot); reject early
-    # so the operator sees an actionable 422 instead of a provisioning failure.
-    if (req.engine or "").lower() == "vllm" and not req.ami_id:
+    # 1b. vLLM on AWS requires an explicit ami_id (the DLAMI to boot); reject
+    # early so the operator sees an actionable 422 instead of a provisioning
+    # failure. This is AWS-only: DePIN/direct providers (nosana/akash/k8s) and
+    # worker pools provision their own runtime and never consume an AMI, so the
+    # gate must not fire for them (mirrors _build_provisioning_spec, which only
+    # AWS-scopes ami_id).
+    _provider = (pool_row.get("provider") or "").lower()
+    if (req.engine or "").lower() == "vllm" and _provider == "aws" and not req.ami_id:
         raise HTTPException(
             status_code=422,
-            detail="ami_id is required for vLLM deployments",
+            detail="ami_id is required for vLLM deployments on AWS",
         )
 
     # 1c. Persist ami_id into configuration so the /start resume path can
