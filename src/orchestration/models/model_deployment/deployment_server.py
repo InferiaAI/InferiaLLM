@@ -531,6 +531,8 @@ class DeployModelRequest(BaseModel):
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
     ami_id: str | None = None
     hf_token_name: str | None = None
+    auto_replica_enabled: bool = False
+    tokens_per_second_threshold: float | None = None
 
 
 class PreflightRequest(BaseModel):
@@ -567,6 +569,8 @@ class UpdateDeploymentRequest(BaseModel):
     inference_model: str | None = None
     endpoint: str | None = None
     replicas: int | None = None
+    auto_replica_enabled: bool | None = None
+    tokens_per_second_threshold: float | None = None
 
 
 class CreatePoolRequest(BaseModel):
@@ -1513,6 +1517,8 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         model_type=req.model_type,
         target_pool_id=pool_id_uuid,
         target_node_id=None,
+        auto_replica_enabled=req.auto_replica_enabled,
+        tokens_per_second_threshold=req.tokens_per_second_threshold,
     )
 
     # 2b. Fire-and-forget pre-warm: start downloading weights to the CP cache
@@ -1610,11 +1616,13 @@ async def get_deployment_status(deployment_id: str):
     # Fetch node_ids directly from the DB (not in proto response).
     node_ids: list[str] = []
     target_node_id: str | None = None
+    auto_replica_enabled: bool = False
+    tokens_per_second_threshold: float | None = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         try:
             row = await conn.fetchrow(
-                "SELECT node_ids, target_node_id FROM model_deployments WHERE deployment_id = $1",
+                "SELECT node_ids, target_node_id, auto_replica_enabled, tokens_per_second_threshold FROM model_deployments WHERE deployment_id = $1",
                 deployment_id,
             )
             if row:
@@ -1622,6 +1630,8 @@ async def get_deployment_status(deployment_id: str):
                     node_ids = [str(n) for n in row["node_ids"]]
                 if row["target_node_id"]:
                     target_node_id = str(row["target_node_id"])
+                auto_replica_enabled = row.get("auto_replica_enabled", False)
+                tokens_per_second_threshold = row.get("tokens_per_second_threshold")
         finally:
             await conn.close()
     except Exception:
@@ -1644,11 +1654,30 @@ async def get_deployment_status(deployment_id: str):
         "error_message": resp.error_message or None,
         "node_ids": node_ids,
         "target_node_id": node_ids[0] if node_ids else target_node_id,
+        "auto_replica_enabled": auto_replica_enabled,
+        "tokens_per_second_threshold": tokens_per_second_threshold,
     }
 
 
 @router.patch("/update/{deployment_id}")
 async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
+    # Persist control-plane-only fields (auto_replica) directly to DB
+    # before/after the gRPC call, since gRPC doesn't carry these.
+    if req.auto_replica_enabled is not None or req.tokens_per_second_threshold is not None:
+        from uuid import UUID as _UUID
+        from orchestration.repositories.model_deployment_repo import (
+            ModelDeploymentRepository,
+        )
+        deploys_repo = ModelDeploymentRepository(
+            request.app.state.pool,
+            event_bus=getattr(request.app.state, "event_bus", None),
+        )
+        await deploys_repo.update_auto_replica(
+            _UUID(deployment_id),
+            auto_replica_enabled=req.auto_replica_enabled,
+            tokens_per_second_threshold=req.tokens_per_second_threshold,
+        )
+
     async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 

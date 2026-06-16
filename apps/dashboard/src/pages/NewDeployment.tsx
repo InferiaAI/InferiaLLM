@@ -247,6 +247,9 @@ type State = {
   preflightStatus: 'idle' | 'checking' | 'passed' | 'failed';
 
   preflightErrors: Array<{ check: string; message: string; needs_hf_token: boolean }>;
+  // Auto-replica
+  autoReplicaEnabled: boolean;
+  tokensPerSecondThreshold: string;
 };
 
 type Action =
@@ -340,6 +343,10 @@ const initialState: State = {
   preflightStatus: 'idle',
 
   preflightErrors: [],
+
+  // Auto-replica defaults
+  autoReplicaEnabled: false,
+  tokensPerSecondThreshold: "10",
 };
 
 // --- Components ---
@@ -880,8 +887,9 @@ export default function NewDeployment() {
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
       ami_id: selectedEngine === "vllm" ? selectedAmiId : undefined,
       hf_token_name: ["vllm", "sglang"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
+      auto_replica_enabled: state.autoReplicaEnabled,
+      tokens_per_second_threshold: state.autoReplicaEnabled ? (parseFloat(state.tokensPerSecondThreshold) || undefined) : undefined,
     }
-
     createMutation.mutate(payload)
   }
 
@@ -1282,6 +1290,51 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
             <div className="mt-4 p-3 bg-rose-500/15 rounded-lg border-2 border-rose-500/30 text-xs font-bold flex items-start gap-3 text-rose-600 dark:text-rose-400">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <span>Critical: Model memory exceeds pool capacity. Deployment will likely fail or cause Hardware OOM.</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Auto-Replica Section */}
+      {deploymentType === "inference" && (
+        <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
+          <div className="flex items-center gap-2 mb-2">
+            <Zap className="w-4 h-4 text-amber-500" />
+            <h4 className="font-medium text-sm">Auto-Replica</h4>
+          </div>
+          <div className="flex items-center gap-3 mb-3">
+            <input
+              id="autoReplicaEnabled"
+              type="checkbox"
+              checked={state.autoReplicaEnabled}
+              onChange={e => dispatch({ type: 'SET_FIELD', field: 'autoReplicaEnabled', value: e.target.checked })}
+              className="w-4 h-4 rounded border-border"
+            />
+            <label htmlFor="autoReplicaEnabled" className="text-xs font-medium text-muted-foreground">
+              Automatically provision new nodes when throughput degrades
+            </label>
+          </div>
+          {state.autoReplicaEnabled && (
+            <div>
+              <label htmlFor="tokensPerSecondThreshold" className="block text-xs font-medium text-muted-foreground mb-1.5">
+                Tokens/sec threshold <span className="text-muted-foreground/60">(scale out when average drops below)</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="tokensPerSecondThreshold"
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  value={state.tokensPerSecondThreshold}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'tokensPerSecondThreshold', value: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white pr-12"
+                  placeholder="10"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">tok/s</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Monitors average tokens/sec over 5-minute windows. Provisions a new pool node when the threshold is breached.
+              </p>
             </div>
           )}
         </div>

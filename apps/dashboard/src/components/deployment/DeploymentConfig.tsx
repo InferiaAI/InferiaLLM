@@ -31,6 +31,8 @@ interface DeploymentData {
     inference_model?: string
     endpoint?: string
     configuration?: any
+    auto_replica_enabled?: boolean
+    tokens_per_second_threshold?: number | null
 }
 
 interface DeploymentConfigProps {
@@ -75,6 +77,9 @@ type State = {
     diffusionTrustRemoteCode: boolean;
     diffusionModelOffload: boolean;
     diffusionGroupOffload: boolean;
+    // Auto-replica
+    autoReplicaEnabled: boolean;
+    tokensPerSecondThreshold: string;
 };
 
 type Action =
@@ -119,6 +124,9 @@ const initialState = (deployment: DeploymentData): State => ({
     diffusionTrustRemoteCode: true,
     diffusionModelOffload: false,
     diffusionGroupOffload: false,
+    // Auto-replica defaults
+    autoReplicaEnabled: false,
+    tokensPerSecondThreshold: "10",
 });
 
 function reducer(state: State, action: Action): State {
@@ -199,6 +207,13 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updates.diffusionModelOffload = c.model_offload ?? false;
                 updates.diffusionGroupOffload = c.group_offload ?? false;
                 if (c.env?.HF_TOKEN) updates.hfToken = c.env.HF_TOKEN;
+            }
+            // Auto-replica fields from deployment (top-level columns)
+            if (deployment?.auto_replica_enabled !== undefined) {
+                updates.autoReplicaEnabled = deployment.auto_replica_enabled;
+            }
+            if (deployment?.tokens_per_second_threshold !== undefined && deployment?.tokens_per_second_threshold !== null) {
+                updates.tokensPerSecondThreshold = String(deployment.tokens_per_second_threshold);
             }
             dispatch({ type: 'INIT_CONFIG', payload: updates });
         }
@@ -299,6 +314,14 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
             if (isEmbedding) {
                 payload.inference_model = updatedConfig.model_id || inferenceModel;
             }
+            // Auto-replica fields are sent as top-level properties
+            if (state.autoReplicaEnabled) {
+                payload.auto_replica_enabled = true;
+                payload.tokens_per_second_threshold = parseFloat(state.tokensPerSecondThreshold) || 10;
+            } else {
+                payload.auto_replica_enabled = false;
+                payload.tokens_per_second_threshold = null;
+            }
             await computeApi.patch(`/deployment/update/${deployment.id || deployment.deployment_id}`, payload)
             toast.success("Configuration updated successfully")
             if (onUpdate) onUpdate()
@@ -316,6 +339,16 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
                         <GeneralSettings replicas={replicas} inferenceModel={inferenceModel} dispatch={dispatch} />
+
+                        {/* Auto-Replica Section */}
+                        {isVllmFamily && (
+                            <AutoReplicaSettings
+                                autoReplicaEnabled={state.autoReplicaEnabled}
+                                tokensPerSecondThreshold={state.tokensPerSecondThreshold}
+                                dispatch={dispatch}
+                            />
+                        )}
+
                         <AnimatePresence mode="wait">
                             {isVllmFamily && <VllmSettings
                                 engine={deployment?.engine || ""}
@@ -690,6 +723,54 @@ function DiffusionSettings({
                 </div>
             </div>
         </m.div>
+    );
+}
+
+function AutoReplicaSettings({ autoReplicaEnabled, tokensPerSecondThreshold, dispatch }: { autoReplicaEnabled: boolean; tokensPerSecondThreshold: string; dispatch: React.Dispatch<Action> }) {
+    return (
+        <div className="bg-card border border-border rounded-2xl p-6 hover:border-amber-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground">
+                <Zap className="w-4 h-4 text-amber-500" />
+                <h3 className="text-sm font-bold uppercase tracking-wider font-mono">Auto-Replica</h3>
+            </div>
+            <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                    <input
+                        id="autoReplicaEnabled"
+                        type="checkbox"
+                        checked={autoReplicaEnabled}
+                        onChange={e => dispatch({ type: 'SET_FIELD', field: 'autoReplicaEnabled', value: e.target.checked })}
+                        className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
+                    />
+                    <label htmlFor="autoReplicaEnabled" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">
+                        Automatically provision new nodes when throughput degrades
+                    </label>
+                </div>
+                {autoReplicaEnabled && (
+                    <div className="space-y-2">
+                        <label htmlFor="tpsThreshold" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">
+                            Tokens/sec threshold
+                        </label>
+                        <div className="relative">
+                            <input
+                                id="tpsThreshold"
+                                type="number"
+                                min="0.1"
+                                step="0.1"
+                                value={tokensPerSecondThreshold}
+                                onChange={e => dispatch({ type: 'SET_FIELD', field: 'tokensPerSecondThreshold', value: e.target.value })}
+                                className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono pr-12"
+                                placeholder="10"
+                            />
+                            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">tok/s</span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-mono mt-2">
+                            Monitors average tokens/sec over 5-minute windows. Provisions a new pool node when breached.
+                        </p>
+                    </div>
+                )}
+            </div>
+        </div>
     );
 }
 

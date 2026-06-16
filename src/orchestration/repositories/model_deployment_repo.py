@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 from typing import List, Optional
 from orchestration.repositories.base_repo import BaseRepository
@@ -31,6 +32,8 @@ class ModelDeploymentRepository(BaseRepository):
         model_type: Optional[str] = "inference",
         target_pool_id: Optional[UUID] = None,
         target_node_id: Optional[UUID] = None,
+        auto_replica_enabled: bool = False,
+        tokens_per_second_threshold: Optional[float] = None,
         tx=None,
     ):
         q = """
@@ -51,9 +54,11 @@ class ModelDeploymentRepository(BaseRepository):
             inference_model,
             model_type,
             target_pool_id,
-            target_node_id
+            target_node_id,
+            auto_replica_enabled,
+            tokens_per_second_threshold
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         """
         # Ensure configuration is passed as json
         import json
@@ -88,6 +93,8 @@ class ModelDeploymentRepository(BaseRepository):
                 model_type,
                 target_pool_id,
                 target_node_id,
+                auto_replica_enabled,
+                tokens_per_second_threshold,
             )
         else:
             async with self.db.acquire() as c:
@@ -110,6 +117,8 @@ class ModelDeploymentRepository(BaseRepository):
                     model_type,
                     target_pool_id,
                     target_node_id,
+                    auto_replica_enabled,
+                    tokens_per_second_threshold,
                 )
 
         # await self.event_bus.publish(
@@ -390,6 +399,51 @@ class ModelDeploymentRepository(BaseRepository):
                 "deployment_id": str(deployment_id),
             },
         )
+
+    async def update_auto_replica(
+        self,
+        deployment_id: UUID,
+        *,
+        auto_replica_enabled: bool | None = None,
+        tokens_per_second_threshold: float | None = None,
+        last_scale_at: datetime | None = None,
+    ):
+        updates = []
+        args = [deployment_id]
+        idx = 2
+        if auto_replica_enabled is not None:
+            updates.append(f"auto_replica_enabled=${idx}")
+            args.append(auto_replica_enabled)
+            idx += 1
+        if tokens_per_second_threshold is not None:
+            updates.append(f"tokens_per_second_threshold=${idx}")
+            args.append(tokens_per_second_threshold)
+            idx += 1
+        if last_scale_at is not None:
+            updates.append(f"auto_replica_last_scale_at=${idx}")
+            args.append(last_scale_at)
+            idx += 1
+        if not updates:
+            return
+        q = f"""
+        UPDATE model_deployments
+        SET {', '.join(updates)}, updated_at=now()
+        WHERE deployment_id=$1
+        """
+        async with self.db.acquire() as c:
+            await c.execute(q, *args)
+
+    async def list_auto_replica_deployments(self) -> list[dict]:
+        """List RUNNING deployments with auto_replica_enabled=true."""
+        q = """
+        SELECT * FROM model_deployments
+        WHERE state IN ('RUNNING', 'DEPLOYING')
+          AND auto_replica_enabled = true
+        ORDER BY created_at DESC
+        """
+        async with self.db.acquire() as c:
+            rows = await c.fetch(q)
+            return [dict(r) for r in rows]
 
     async def update_configuration(self, deployment_id: UUID, configuration: dict):
         """Update the configuration JSONB field for a deployment."""

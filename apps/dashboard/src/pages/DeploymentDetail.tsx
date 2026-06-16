@@ -36,6 +36,8 @@ type DeploymentData = {
   inference_model?: string;
   configuration?: any;
   error_message?: string | null;
+  auto_replica_enabled?: boolean;
+  tokens_per_second_threshold?: number | null;
 }
 
 type ProviderCapabilities = {

@@ -310,6 +310,21 @@ async def serve():
     db_pool = await create_db_pool()
     event_bus = RedisEventBus()
 
+    # ---------------- Auto-migrate schema ----------------
+    # Apply pending ALTER TABLE statements for new columns so the code
+    # doesn't crash on UndefinedColumnError when old PG data lacks them.
+    # Uses IF NOT EXISTS so it's idempotent across restarts.
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                ALTER TABLE model_deployments
+                  ADD COLUMN IF NOT EXISTS auto_replica_enabled BOOLEAN NOT NULL DEFAULT false,
+                  ADD COLUMN IF NOT EXISTS tokens_per_second_threshold DOUBLE PRECISION,
+                  ADD COLUMN IF NOT EXISTS auto_replica_last_scale_at TIMESTAMP WITHOUT TIME ZONE
+            """)
+    except Exception:
+        logger.warning("auto-replica schema migration failed (non-fatal)", exc_info=True)
+
     # ---------------- Repositories ----------------
     inventory_repo = InventoryRepository(db_pool)
     pool_repo = ComputePoolRepository(db_pool)
@@ -787,6 +802,42 @@ async def serve():
                 "Failed to start provisioning reconciler: %s", e
             )
 
+    # ---------------- Auto-replica monitor ----------------
+    AUTO_REPLICA_POLL_S = float(os.getenv("INFERIA_AUTO_REPLICA_POLL_S", "60"))
+    if os.getenv("INFERIA_DISABLE_AUTO_REPLICA", "0") != "1":
+
+        async def _auto_replica_loop():
+            from orchestration.repositories.inventory_repo import (
+                InventoryRepository,
+            )
+            from orchestration.repositories.model_deployment_repo import (
+                ModelDeploymentRepository,
+            )
+            from orchestration.scheduling.auto_replica import tick as _ar_tick
+            from orchestration.state_machine.jobs.repository import (
+                ProvisioningJobRepository,
+            )
+
+            _ar_deploys = ModelDeploymentRepository(db_pool, event_bus=event_bus)
+            _ar_jobs = ProvisioningJobRepository(db_pool)
+            _ar_inventory = InventoryRepository(db_pool)
+
+            while True:
+                try:
+                    await _ar_tick(
+                        db_pool=db_pool,
+                        deploys_repo=_ar_deploys,
+                        jobs_repo=_ar_jobs,
+                        inventory_repo=_ar_inventory,
+                    )
+                except Exception:
+                    logger.warning("auto-replica tick failed", exc_info=True)
+                await asyncio.sleep(AUTO_REPLICA_POLL_S)
+
+        _auto_replica_task = asyncio.create_task(_auto_replica_loop())
+        app.state.auto_replica_task = _auto_replica_task
+        logger.info("Auto-replica monitor started (poll=%ss)", AUTO_REPLICA_POLL_S)
+
     # ---------------- Model-cache eviction loop ----------------
     # Runs once per minute; refreshes the in-use snapshot from the DB
     # (async), then invokes a synchronous eviction pass.  Disabled via
@@ -830,7 +881,9 @@ async def serve():
             except (asyncio.CancelledError, Exception):
                 pass
 
-    # Cancel the model-cache eviction loop and close its httpx client.
+    # Cancel background loops and close shared clients.
+    if getattr(app.state, "auto_replica_task", None) is not None:
+        app.state.auto_replica_task.cancel()
     if getattr(app.state, "mc_eviction_task", None) is not None:
         app.state.mc_eviction_task.cancel()
     try:

@@ -89,6 +89,10 @@ class DeploymentCreate(BaseModel):
     prefill_gpu_indices: Optional[List[int]] = None
     decode_gpu_indices: Optional[List[int]] = None
 
+    # Auto-replica settings
+    auto_replica_enabled: bool = False
+    tokens_per_second_threshold: Optional[float] = None
+
 
 class DeploymentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -100,6 +104,9 @@ class DeploymentResponse(BaseModel):
     llmd_resource_name: Optional[str] = None  # Custom deployment name
     inference_model: Optional[str] = None  # Backend model identifier
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
+    auto_replica_enabled: bool = False
+    tokens_per_second_threshold: Optional[float] = None
+    auto_replica_last_scale_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     # Validator to convert UUID to string

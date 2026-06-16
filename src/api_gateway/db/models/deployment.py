@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, func, JSON, Integer, ARRAY
+from sqlalchemy import Column, String, DateTime, ForeignKey, func, JSON, Integer, ARRAY, Boolean, Float
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from ..database import Base
@@ -50,6 +50,9 @@ class Deployment(Base):
     gpu_per_replica = Column(Integer, default=0)
     state = Column(String, default="pending")
     owner_id = Column(String, nullable=True)
+    auto_replica_enabled = Column("auto_replica_enabled", Boolean, default=False)
+    tokens_per_second_threshold = Column("tokens_per_second_threshold", Float, nullable=True)
+    auto_replica_last_scale_at = Column("auto_replica_last_scale_at", DateTime, nullable=True)
 
     allocation_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
     node_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=True)

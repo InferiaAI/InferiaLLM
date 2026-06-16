@@ -147,7 +147,7 @@ class Settings(UnifiedBaseSettings):
         validation_alias="INFERIA_WORKER_IMAGE",
     )
     worker_image_tag: str = Field(
-        default="experimental",
+        default="2.5.0",
         validation_alias="INFERIA_WORKER_IMAGE_TAG",
     )
     bootstrap_token_ttl_seconds: int = Field(
