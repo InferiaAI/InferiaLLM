@@ -317,6 +317,18 @@ const initialState: State = {
   preflightErrors: [],
 };
 
+// --- Pure helpers ---
+
+/**
+ * Returns true when the deploy form must require (and show) an Engine AMI.
+ * AMI selection is only meaningful for AWS pools; non-AWS vLLM deploys
+ * (Nosana, Akash, worker-based) do not provision EC2 instances and therefore
+ * have no AMI to select.
+ */
+export function requiresAmi(engine: string, pool: { provider?: string } | null | undefined): boolean {
+  return engine === "vllm" && pool?.provider === "aws";
+}
+
 // --- Components ---
 
 function StepIndicator({ step, current, label }: { step: number; current: number; label: string }) {
@@ -827,7 +839,7 @@ export default function NewDeployment() {
   const handleManagedLaunch = async () => {
     if (!instanceName) return toast.error("Please name your deployment")
     if (!selectedPool) return toast.error("Select a compute node")
-    if (selectedEngine === "vllm" && !selectedAmiId) return toast.error("Select an engine AMI")
+    if (requiresAmi(selectedEngine, selectedPool) && !selectedAmiId) return toast.error("Select an engine AMI")
     const targetOrgId = user?.org_id || organizations?.[0]?.id;
     if (!targetOrgId) return toast.error("Organization context missing. Please reload.")
 
@@ -847,7 +859,7 @@ export default function NewDeployment() {
       model_name: instanceName, model_version: "latest", replicas: 1, gpu_per_replica: 1, workload_type: deploymentType === "image" ? "inference" : deploymentType, pool_id: selectedPool.pool_id, engine: selectedEngine, model_type: modelType === "image_generation" ? "image_generation" : modelType,
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
-      ami_id: selectedEngine === "vllm" ? selectedAmiId : undefined,
+      ami_id: requiresAmi(selectedEngine, selectedPool) ? selectedAmiId : undefined,
       hf_token_name: selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
     }
     createMutation.mutate(payload)
@@ -1063,10 +1075,13 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     selectedPool?.metadata?.region ||
     "us-east-1";
 
+  // AMI selection is only required/shown for AWS pools
+  const isAwsPool = requiresAmi(selectedEngine, selectedPool);
+
   const { data: engineAmis = [], isLoading: amisLoading } = useQuery({
     queryKey: ['engine-amis', amiRegion],
     queryFn: () => ConfigService.listEngineAmis(amiRegion),
-    enabled: selectedEngine === "vllm",
+    enabled: isAwsPool,
     staleTime: 1000 * 60 * 5,
   });
 
@@ -1258,36 +1273,38 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
         <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
           <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">vLLM Configuration</h4></div>
 
-          {/* Engine AMI dropdown (required) */}
-          <div>
-            <label htmlFor="engineAmi" className="block text-xs font-medium text-muted-foreground mb-1.5">
-              Engine AMI <span className="text-rose-500">*</span>
-            </label>
-            {amisLoading ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                <Loader2 className="w-3 h-3 animate-spin" /> Loading AMIs for {amiRegion}…
-              </div>
-            ) : engineAmis.length === 0 ? (
-              <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                No engine AMIs in {amiRegion} — bake one first (Settings → Providers → AWS).
-              </div>
-            ) : (
-              <select
-                id="engineAmi"
-                value={selectedAmiId}
-                onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedAmiId', value: e.target.value })}
-                className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
-              >
-                <option value="">— select an AMI —</option>
-                {engineAmis.map(ami => (
-                  <option key={ami.ami_id} value={ami.ami_id}>
-                    {ami.ami_id}{ami.vllm_tag ? ` — vLLM ${ami.vllm_tag}` : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
+          {/* Engine AMI dropdown (required for AWS pools only) */}
+          {isAwsPool && (
+            <div>
+              <label htmlFor="engineAmi" className="block text-xs font-medium text-muted-foreground mb-1.5">
+                Engine AMI <span className="text-rose-500">*</span>
+              </label>
+              {amisLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Loading AMIs for {amiRegion}…
+                </div>
+              ) : engineAmis.length === 0 ? (
+                <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  No engine AMIs in {amiRegion} — bake one first (Settings → Providers → AWS).
+                </div>
+              ) : (
+                <select
+                  id="engineAmi"
+                  value={selectedAmiId}
+                  onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedAmiId', value: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
+                >
+                  <option value="">— select an AMI —</option>
+                  {engineAmis.map(ami => (
+                    <option key={ami.ami_id} value={ami.ami_id}>
+                      {ami.ami_id}{ami.vllm_tag ? ` — vLLM ${ami.vllm_tag}` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
 
           {/* HF token name dropdown (optional) */}
           <div>
