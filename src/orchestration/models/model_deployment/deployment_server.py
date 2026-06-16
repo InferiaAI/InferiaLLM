@@ -26,6 +26,8 @@ from orchestration.repositories.provider_repo import (
 from orchestration.provisioning.engine.registry import (
     get_adapter,
     ADAPTER_REGISTRY,
+    is_direct_provision_provider,
+    _deprovision_direct_node,
 )
 from orchestration.provisioning.engine.base import AdapterType
 from orchestration.models.model_deployment.model_ref import (
@@ -556,6 +558,67 @@ async def _initiate_node_destroy(
     it down. The periodic reaper re-arms the real teardown for such a node;
     clearing the flag here just avoids a misleading UI in the interim.
     """
+    # Direct-provision (DePIN: nosana/akash/k8s) teardown. These nodes have NO
+    # reconciler provisioning_job, so force_cancel below would be a no-op and
+    # the EXTERNAL PAID job (e.g. the Nosana job at provider_instance_id) would
+    # keep running and billing. Stop it INLINE (fast sidecar call) here, then
+    # mark the node terminated. This is the shared choke point for every
+    # user-facing deployment delete/terminate path, so wiring it here covers
+    # them all (terminate_deployment_core PENDING_NODE/RUNNING + delete_deployment
+    # C9). Cloud providers (aws/gcp/azure) fall through to the reconciler
+    # force_cancel path below unchanged.
+    if is_direct_provision_provider(provider):
+        async with db_pool.acquire() as conn:
+            node_row = await conn.fetchrow(
+                "SELECT id, provider::text AS provider, provider_instance_id, "
+                "pool_id FROM compute_inventory WHERE id=$1",
+                node_id,
+            )
+            pool_cred = None
+            if pool_id is not None:
+                try:
+                    pool_cred = await conn.fetchval(
+                        "SELECT provider_credential_name FROM compute_pools "
+                        "WHERE id=$1",
+                        pool_id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "_initiate_node_destroy: failed reading pool credential "
+                        "for node=%s pool=%s", node_id, pool_id, exc_info=True,
+                    )
+        node_dict = dict(node_row) if node_row is not None else {
+            "provider": provider, "provider_instance_id": None,
+        }
+        ok, err = await _deprovision_direct_node(
+            node_dict, pool_credential_name=pool_cred,
+        )
+        async with db_pool.acquire() as conn:
+            if ok:
+                await conn.execute(
+                    "UPDATE compute_inventory SET state='terminated', "
+                    "updated_at=now() WHERE id=$1",
+                    node_id,
+                )
+            else:
+                # Surface the failure: a possibly-leaked external job is visible
+                # via the marker (+ the error string) + the ERROR log
+                # _deprovision_direct_node emits. Still mark terminated so the
+                # row isn't wedged.
+                await conn.execute(
+                    "UPDATE compute_inventory SET state='terminated', "
+                    "metadata = COALESCE(metadata,'{}'::jsonb) "
+                    "|| jsonb_build_object("
+                    "'deprovision_failed', true, "
+                    "'deprovision_error', $2::text), "
+                    "updated_at=now() WHERE id=$1",
+                    node_id, err,
+                )
+        # Inline teardown done — do NOT fall through to the async reconciler
+        # path (DePIN has no Pulumi stack). Always report success so the
+        # idempotent delete/terminate completes (the marker carries any leak).
+        return True
+
     async with db_pool.acquire() as conn:
         await conn.execute(
             "UPDATE compute_inventory SET metadata = "
@@ -3069,12 +3132,73 @@ async def delete_pool_rest(pool_id: str):
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         pool = await conn.fetchrow(
-            "SELECT id, lifecycle_state, is_active FROM compute_pools "
+            "SELECT id, lifecycle_state, is_active, provider::text AS provider, "
+            "provider_credential_name FROM compute_pools "
             "WHERE id = $1 AND is_active = TRUE",
             pool_uuid,
         )
         if not pool:
             raise HTTPException(status_code=404, detail="Pool not found")
+
+        # DIRECT-PROVISION (DePIN: nosana/akash/k8s) pool teardown. These pools
+        # have NO reconciler provisioning_jobs, so step 2's force-cancel SQL
+        # below is a no-op and every node's EXTERNAL PAID job (e.g. the Nosana
+        # job at provider_instance_id) would keep running and billing after the
+        # pool row is soft-deleted. Stop each live node's external job INLINE
+        # (fast sidecar calls) BEFORE the cascade, then flip that node to
+        # 'terminated' immediately: DePIN deprovision is synchronous, so the
+        # node is truly gone — terminating it inline lets step 5's count query
+        # return 0 and finalize the pool right here, avoiding the 120s reaper
+        # grace window. (Step 3's terminating-flag UPDATE has
+        # ``WHERE state IS DISTINCT FROM 'terminated'`` so it correctly skips
+        # these now-terminated rows.) Cloud pools (aws/gcp/azure) skip this and
+        # tear down via the reconciler as before.
+        _pool_provider = (
+            pool.get("provider") if hasattr(pool, "get") else pool["provider"]
+        )
+        if is_direct_provision_provider(_pool_provider):
+            _pool_cred = (
+                pool.get("provider_credential_name")
+                if hasattr(pool, "get") else pool["provider_credential_name"]
+            )
+            _depin_nodes = await conn.fetch(
+                "SELECT id, provider::text AS provider, provider_instance_id "
+                "FROM compute_inventory "
+                "WHERE pool_id = $1 AND state IS DISTINCT FROM 'terminated'",
+                pool_uuid,
+            )
+            for _n in _depin_nodes:
+                ok, err = await _deprovision_direct_node(
+                    dict(_n), pool_credential_name=_pool_cred,
+                )
+                # Flip the node terminated inline whether deprovision SUCCEEDED
+                # or FAILED — the job-stop was already attempted+logged and a
+                # stuck external job is surfaced via the marker below rather
+                # than wedging the row (and the pool) forever.
+                if ok:
+                    await conn.execute(
+                        "UPDATE compute_inventory SET state='terminated', "
+                        "updated_at=now() WHERE id=$1",
+                        _n["id"],
+                    )
+                else:
+                    # Surface the possible leak (the helper already logged an
+                    # ERROR) without wedging the pool delete; still terminate.
+                    try:
+                        await conn.execute(
+                            "UPDATE compute_inventory SET state='terminated', "
+                            "metadata = COALESCE(metadata,'{}'::jsonb) "
+                            "|| jsonb_build_object("
+                            "'deprovision_failed', true, "
+                            "'deprovision_error', $2::text), "
+                            "updated_at=now() WHERE id=$1",
+                            _n["id"], err,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "delete_pool_rest: failed to stamp deprovision_failed "
+                            "for node=%s", _n["id"], exc_info=True,
+                        )
 
         # Cascade everything in one transaction so a crash can't leave the
         # pool half-deleted (e.g. jobs cancelled but the pool row still
@@ -3170,7 +3294,8 @@ async def delete_pool_rest(pool_id: str):
         #    were torn down).
         try:
             remaining = await conn.fetchval(
-                "SELECT count(*) FROM compute_inventory WHERE pool_id = $1",
+                "SELECT count(*) FROM compute_inventory "
+                "WHERE pool_id = $1 AND state IS DISTINCT FROM 'terminated'",
                 pool_uuid,
             )
             if int(remaining or 0) == 0:

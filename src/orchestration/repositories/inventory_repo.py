@@ -988,15 +988,50 @@ async def _mark_ready_worker_impl(self, *, node_id):
 
 
 async def _mark_terminated_worker_impl(self, *, node_id):
-    """Transition a worker row to terminated. Idempotent."""
+    """Transition a node row (by id) to terminated. Idempotent.
+
+    Used by the DELETE /v1/admin/workers/{id} revoke path. The row identity
+    (``id``) is already unique and the route verified the row exists, so we
+    terminate by id WITHOUT an ``agent_kind = 'worker'`` filter: a DePIN node
+    registered with agent_kind='nosana'/'akash' must still flip to terminated
+    after its external job is deprovisioned, otherwise the row is stranded
+    'ready' even though its compute is gone.
+    """
     async with self.db.acquire() as conn:
         await conn.execute(
             """
             UPDATE compute_inventory
             SET state = 'terminated', updated_at = now()
-            WHERE id = $1 AND agent_kind = 'worker'
+            WHERE id = $1
             """,
             node_id,
+        )
+
+
+async def _mark_deprovision_failed_worker_impl(self, *, node_id, reason=None):
+    """Stamp ``metadata.deprovision_failed=true`` (+ optional reason) on a node
+    whose DePIN ``adapter.deprovision_node`` raised during revoke.
+
+    Mirrors ``mark_destroy_failed`` (the AWS pulumi-destroy analogue): the
+    external (paid) job may still be running, so ops need a visible marker
+    in addition to the ERROR log ``_deprovision_direct_node`` emits. The
+    SQL ``state`` is left to the caller (which still marks terminated so the
+    row isn't wedged). Idempotent.
+    """
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                           || jsonb_build_object(
+                                  'deprovision_failed', true,
+                                  'deprovision_error', $2::text
+                              ),
+                updated_at = now()
+            WHERE id = $1
+            """,
+            node_id,
+            reason,
         )
 
 
@@ -1009,6 +1044,9 @@ InventoryRepository.update_heartbeat_with_telemetry = (
 InventoryRepository.get_deploy_metrics = _get_deploy_metrics_impl
 InventoryRepository.mark_ready_worker = _mark_ready_worker_impl
 InventoryRepository.mark_terminated_worker = _mark_terminated_worker_impl
+InventoryRepository.mark_deprovision_failed_worker = (
+    _mark_deprovision_failed_worker_impl
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1194,33 @@ async def _soft_delete_node_impl(self, *, node_id):
         )
 
 
+async def _mark_deprovision_failed_node_impl(self, *, node_id, reason=None):
+    """Stamp ``metadata.deprovision_failed=true`` (+ optional reason) on a node
+    whose DePIN ``adapter.deprovision_node`` raised during DELETE /nodes/{id}.
+
+    Node-centric analogue of ``mark_deprovision_failed_worker`` (and of the
+    AWS ``mark_destroy_failed``). The caller still soft-deletes the row; this
+    just surfaces a POSSIBLE LEAKED external job alongside the ERROR log.
+    Idempotent. Accepts node_id as str or UUID.
+    """
+    nid = uuid.UUID(node_id) if isinstance(node_id, str) else node_id
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                           || jsonb_build_object(
+                                  'deprovision_failed', true,
+                                  'deprovision_error', $2::text
+                              ),
+                updated_at = now()
+            WHERE id = $1
+            """,
+            nid,
+            reason,
+        )
+
+
 async def _set_state_impl(self, *, node_id, state):
     """Set compute_inventory.state to an arbitrary node_state enum value.
 
@@ -1238,3 +1303,6 @@ InventoryRepository.soft_delete_node = _soft_delete_node_impl
 InventoryRepository.mark_terminating_node = _mark_terminating_node_impl
 InventoryRepository.clear_terminating_node = _clear_terminating_node_impl
 InventoryRepository.set_state = _set_state_impl
+InventoryRepository.mark_deprovision_failed_node = (
+    _mark_deprovision_failed_node_impl
+)

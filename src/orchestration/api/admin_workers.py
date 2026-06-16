@@ -308,7 +308,51 @@ async def revoke_worker(
                 status_code=status.HTTP_202_ACCEPTED,
             )
 
-    # Legacy path (workers, nosana, akash, gcp/azure for now).
+    # Direct-provision (DePIN: nosana/akash/k8s) path. These nodes record a
+    # provider_instance_id (e.g. the Nosana job address) that keeps an
+    # EXTERNAL PAID job running until the adapter stops it. The legacy branch
+    # below only marks the inventory row terminated — leaking the job. Stop the
+    # external job INLINE (fast sidecar call) BEFORE marking terminated. Cloud
+    # providers (aws/gcp/azure) are NOT direct-provision: aws is handled above
+    # via the reconciler, gcp/azure currently fall through to soft-delete (no
+    # adapter teardown wired yet — same as before).
+    from orchestration.provisioning.engine.registry import (
+        _deprovision_direct_node,
+        is_direct_provision_provider,
+    )
+    if isinstance(node, dict) and is_direct_provision_provider(provider):
+        pool_cred = None
+        pool_id = node.get("pool_id")
+        if pool_id is not None and _deps.pool_repo is not None:
+            try:
+                pool_row = await _pools().get(pool_id)
+                if pool_row is not None:
+                    pool_cred = (
+                        pool_row.get("provider_credential_name")
+                        if hasattr(pool_row, "get")
+                        else pool_row["provider_credential_name"]
+                    )
+            except Exception:
+                logger.warning(
+                    "revoke_worker: failed to read pool credential for "
+                    "node=%s pool=%s; deprovisioning without it",
+                    node_id, pool_id, exc_info=True,
+                )
+        ok, err = await _deprovision_direct_node(
+            node, pool_credential_name=pool_cred,
+        )
+        if not ok and hasattr(_inventory(), "mark_deprovision_failed_worker"):
+            try:
+                await _inventory().mark_deprovision_failed_worker(
+                    node_id=node_id, reason=err,
+                )
+            except Exception:
+                logger.warning(
+                    "revoke_worker: failed to stamp deprovision_failed marker "
+                    "for node=%s", node_id, exc_info=True,
+                )
+
+    # Legacy path (workers, gcp/azure for now) + the DePIN tail above.
     await _inventory().mark_terminated_worker(node_id=node_id)
 
     conn = _registry().get(node_id)

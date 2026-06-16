@@ -843,6 +843,125 @@ class TestDeleteAwsNode:
 
 
 # ---------------------------------------------------------------------------
+# DELETE /v1/nodes/{id} — DePIN (nosana) branch (stops the external job).
+# ---------------------------------------------------------------------------
+#
+# A DePIN node has NO reconciler provisioning_job, so the fall-through
+# soft-delete branch fires. Before this fix it just marked the row terminated,
+# leaking the external (paid) Nosana job. The fix calls
+# adapter.deprovision_node inline (via _deprovision_direct_node) first.
+
+
+from orchestration.provisioning.engine import registry as _engine_registry  # noqa: E402
+from providers.nosana.nosana_adapter import NosanaAdapter  # noqa: E402
+
+
+class DepinPoolRepo:
+    def __init__(self, cred="nosana-cred-1"):
+        self.cred = cred
+
+    async def ensure_default_pool(self, *, org_id):
+        return POOL
+
+    async def get(self, pool_id):
+        return {"id": pool_id, "provider_credential_name": self.cred}
+
+
+class DepinInventory(FakeInventory):
+    def __init__(self):
+        super().__init__()
+        self.deprovision_failed_marks: list[str] = []
+        self.deprovision_failed_reasons: dict[str, str | None] = {}
+
+    async def mark_deprovision_failed_node(self, *, node_id, reason=None):
+        self.deprovision_failed_marks.append(node_id)
+        self.deprovision_failed_reasons[node_id] = reason
+
+
+def _configure_depin(inventory, pool_repo):
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+    )
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    return app
+
+
+class TestDeleteDepinNode:
+    @pytest.mark.asyncio
+    async def test_nosana_node_deprovisions_then_softdeletes_204(self):
+        inventory = DepinInventory()
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-addr-123",
+        }
+        app = _configure_depin(inventory, DepinPoolRepo())
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        with patch.object(
+            _engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_awaited_once_with(
+            provider_instance_id="job-addr-123",
+            provider_credential_name="nosana-cred-1",
+        )
+        assert inventory.nodes[NODE]["state"] == "terminated"
+
+    @pytest.mark.asyncio
+    async def test_nosana_placeholder_skips_deprovision(self):
+        inventory = DepinInventory()
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "placeholder:abc",
+        }
+        app = _configure_depin(inventory, DepinPoolRepo())
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        with patch.object(
+            _engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_not_called()
+        assert inventory.nodes[NODE]["state"] == "terminated"
+
+    @pytest.mark.asyncio
+    async def test_nosana_deprovision_failure_still_softdeletes(self):
+        inventory = DepinInventory()
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-addr-123",
+        }
+        app = _configure_depin(inventory, DepinPoolRepo())
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        fake_adapter.deprovision_node.side_effect = RuntimeError("sidecar down")
+        with patch.object(
+            _engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_awaited_once()
+        assert inventory.nodes[NODE]["state"] == "terminated"
+        assert NODE in inventory.deprovision_failed_marks
+        # The adapter's error string is recorded (-> metadata.deprovision_error).
+        assert inventory.deprovision_failed_reasons[NODE] == "sidecar down"
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/nodes/{id}/provisioning — extended response (T24).
 # ---------------------------------------------------------------------------
 #

@@ -381,6 +381,50 @@ async def delete_node(
             "is unwired; cannot guarantee EC2 teardown via the state machine",
             node_id,
         )
+
+    # Direct-provision (DePIN: nosana/akash/k8s) fall-through. These nodes have
+    # no reconciler job, so they reach this soft-delete branch. They record a
+    # provider_instance_id (e.g. the Nosana job address) that keeps an EXTERNAL
+    # PAID job running until the adapter stops it — soft_delete_node alone leaks
+    # it. Stop the external job INLINE (fast sidecar call) BEFORE soft-deleting.
+    from orchestration.provisioning.engine.registry import (
+        _deprovision_direct_node,
+        is_direct_provision_provider,
+    )
+    if is_direct_provision_provider(provider):
+        pool_cred = None
+        pool_id = existing.get("pool_id")
+        if pool_id is not None and _deps.pool_repo is not None and hasattr(
+            _deps.pool_repo, "get",
+        ):
+            try:
+                pool_row = await _deps.pool_repo.get(pool_id)
+                if pool_row is not None:
+                    pool_cred = (
+                        pool_row.get("provider_credential_name")
+                        if hasattr(pool_row, "get")
+                        else pool_row["provider_credential_name"]
+                    )
+            except Exception:
+                logger.warning(
+                    "delete_node: failed to read pool credential for node=%s "
+                    "pool=%s; deprovisioning without it",
+                    node_id, pool_id, exc_info=True,
+                )
+        ok, err = await _deprovision_direct_node(
+            existing, pool_credential_name=pool_cred,
+        )
+        if not ok and hasattr(_deps.inventory_repo, "mark_deprovision_failed_node"):
+            try:
+                await _deps.inventory_repo.mark_deprovision_failed_node(
+                    node_id=node_id, reason=err,
+                )
+            except Exception:
+                logger.warning(
+                    "delete_node: failed to stamp deprovision_failed marker "
+                    "for node=%s", node_id, exc_info=True,
+                )
+
     await _deps.inventory_repo.soft_delete_node(node_id=node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
