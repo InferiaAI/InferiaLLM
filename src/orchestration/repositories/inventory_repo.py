@@ -324,6 +324,62 @@ class InventoryRepository:
             last_heartbeat,
         )
 
+    async def finalize_direct_node(
+        self,
+        *,
+        node_id: UUID,
+        provider_instance_id: str,
+        hostname: str,
+        gpu_total: int,
+        vcpu_total: int,
+        ram_gb_total: int,
+        node_class: str,
+        metadata: dict | None = None,
+        expose_url: str | None = None,
+        tx=None,
+    ) -> bool:
+        """Fill in a 'provisioning' placeholder with the details of a
+        directly-provisioned (DePIN/k8s) node and mark it 'ready'.
+
+        Only updates rows still in ``state='provisioning'``.  Returns ``True``
+        if the row was updated, ``False`` if no row matched (unknown id, or the
+        placeholder was already finalized/terminated/cancelled).  The caller
+        (T3) should treat ``False`` as a cancellation signal and abort+deprovision
+        rather than falsely marking the deploy RUNNING.
+
+        Updates the row by id (the placeholder's sentinel provider_instance_id
+        is replaced with the real one). Used by the direct-adapter provisioning
+        path; never creates a new row. Pass ``tx`` to run inside a caller's
+        transaction (mirrors ``mark_destroy_failed``).
+        """
+        node_id = uuid.UUID(node_id) if isinstance(node_id, str) else node_id
+        q = """
+            UPDATE compute_inventory
+            SET provider_instance_id=$2, hostname=$3, gpu_total=$4,
+                vcpu_total=$5, ram_gb_total=$6, node_class=$7,
+                metadata=$8::jsonb, expose_url=$9, state='ready',
+                last_heartbeat=now(), updated_at=now()
+            WHERE id=$1 AND state='provisioning'
+            RETURNING id
+        """
+        args = (
+            node_id,
+            provider_instance_id,
+            hostname,
+            gpu_total,
+            vcpu_total,
+            ram_gb_total,
+            node_class,
+            json.dumps(metadata or {}),
+            expose_url,
+        )
+        if tx is not None:
+            row = await tx.fetchval(q, *args)
+        else:
+            async with self.db.acquire() as conn:
+                row = await conn.fetchval(q, *args)
+        return row is not None
+
     async def update_heartbeat(self, *, node_id, last_heartbeat):
         await self.db.execute(
             """
