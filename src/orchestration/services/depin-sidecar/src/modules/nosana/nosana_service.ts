@@ -176,14 +176,49 @@ export class NosanaService {
             fetchOptions.body = JSON.stringify(body);
         }
 
-        const response = await fetch(url, fetchOptions);
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Nosana API Error (${response.status}): ${errorText}`);
+        // Retry transient network/DNS failures (EAI_AGAIN / ETIMEDOUT /
+        // ECONNRESET / "fetch failed") and 429/5xx responses with exponential
+        // backoff. The Nosana API is remote and the create → start → poll
+        // sequence must survive an intermittent DNS/connectivity blip rather
+        // than failing the whole deployment on a single hiccup.
+        const MAX_ATTEMPTS = 5;
+        let lastErr: any;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                const response = await fetch(url, fetchOptions);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    if ((response.status === 429 || response.status >= 500) && attempt < MAX_ATTEMPTS) {
+                        console.warn(`[Nosana API] ${method} ${path} -> ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}); retrying...`);
+                        await new Promise(r => setTimeout(r, Math.min(8000, 500 * 2 ** (attempt - 1))));
+                        continue;
+                    }
+                    throw new Error(`Nosana API Error (${response.status}): ${errorText}`);
+                }
+                return response.json() as Promise<T>;
+            } catch (e: any) {
+                lastErr = e;
+                if (NosanaService.isTransientNetworkError(e) && attempt < MAX_ATTEMPTS) {
+                    const code = e?.cause?.code || e?.code || e?.message;
+                    console.warn(`[Nosana API] ${method} ${path} transient network error (attempt ${attempt}/${MAX_ATTEMPTS}): ${code}; retrying...`);
+                    await new Promise(r => setTimeout(r, Math.min(8000, 500 * 2 ** (attempt - 1))));
+                    continue;
+                }
+                throw e;
+            }
         }
+        throw lastErr;
+    }
 
-        return response.json() as Promise<T>;
+    /** True for transient network/DNS errors that are worth retrying. */
+    private static isTransientNetworkError(e: any): boolean {
+        const code = e?.cause?.code || e?.code;
+        if (code && ['EAI_AGAIN', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED',
+                     'ENOTFOUND', 'EPIPE', 'UND_ERR_CONNECT_TIMEOUT',
+                     'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT'].includes(code)) {
+            return true;
+        }
+        return /fetch failed|network|timeout|socket hang up/i.test(String(e?.message || ''));
     }
 
     /**
