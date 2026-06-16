@@ -117,6 +117,32 @@ def test_no_spa_mount_without_dashboard_dir(monkeypatch, tmp_path):
     assert any("/v2/" in _route_path(r) for r in app.routes)
 
 
+def test_auth_routes_at_root_before_spa(monkeypatch, tmp_path):
+    """/auth/start + /auth/callback are ROOT routes (not Mounts, not under /api),
+    registered before the SPA catch-all.
+
+    These are BROWSER redirect targets — OAUTH_REDIRECT_URI is "<host>/auth/callback"
+    (root) and the IdP redirects the browser straight there. If they lived only
+    under /api the callback would hit the SPA catch-all → 404 after login.
+    """
+    (tmp_path / "index.html").write_text("<!doctype html><html></html>")
+    monkeypatch.setenv("INFERIA_DASHBOARD_DIR", str(tmp_path))
+
+    app = uw.build_unified_app()
+    auth_routes = [
+        r for r in app.routes if _route_path(r) in ("/auth/start", "/auth/callback")
+    ]
+    assert {_route_path(r) for r in auth_routes} == {"/auth/start", "/auth/callback"}
+    for r in auth_routes:
+        assert not isinstance(r, Mount)
+        assert not _route_path(r).startswith("/api")
+        assert not _route_path(r).startswith("/inf")
+
+    spa_index = next(i for i, r in enumerate(app.routes) if _is_root_mount(r))
+    for r in auth_routes:
+        assert app.routes.index(r) < spa_index
+
+
 # ---------------------------------------------------------------------------
 # 2) Request dispatch + SPA — real ASGI round-trip with a neutralised lifespan.
 # ---------------------------------------------------------------------------
@@ -254,6 +280,29 @@ async def test_subapps_reachable(unified_client):
     """/inf and /api dispatch into their sub-apps (route exists, != 404)."""
     assert (await unified_client.get("/inf/v1/models")).status_code != 404
     assert (await unified_client.post("/api/auth/login")).status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_auth_callback_at_root_reaches_handler_not_spa(unified_client):
+    """The 404-after-login regression: /auth/callback (the IdP's browser redirect
+    target) must reach the OAuth handler at the ROOT, never the SPA HTML shell.
+
+    SSO is unconfigured in this test, so the handler short-circuits with a 503
+    JSON error — which still proves the route resolves to the backend handler at
+    root (not index.html, not a 404).
+    """
+    resp = await unified_client.get("/auth/callback?code=abc&state=xyz")
+    assert resp.status_code != 404
+    assert "<!doctype html" not in resp.text.lower()
+    assert "detail" in resp.text  # JSON from the OAuth handler, not the SPA shell
+
+
+@pytest.mark.asyncio
+async def test_auth_start_at_root(unified_client):
+    """/auth/start (the browser entry into the PKCE flow) also resolves at root."""
+    resp = await unified_client.get("/auth/start")
+    assert resp.status_code != 404
+    assert "<!doctype html" not in resp.text.lower()
 
 
 # ---------------------------------------------------------------------------
