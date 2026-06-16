@@ -36,6 +36,8 @@ export default defineConfig({
         "src/components/sandbox/ThinkingBlock.tsx",
         "src/components/sandbox/markdownUtils.ts",
         "src/components/sandbox/ChatInterface.tsx",
+        "src/components/nodes/metricsUtils.ts",
+        "src/components/nodes/NodeMetrics.tsx",
         "src/components/nodes/NodeShell.tsx",
         "src/components/nodes/NodeLogs.tsx",
         "src/components/deployment/TerminalLogs.tsx",

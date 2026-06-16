@@ -533,3 +533,43 @@ class TestRevokeAwsWorker:
         spawn.assert_not_called()
         jobs_repo_cls.assert_not_called()
         assert NODE_ID in inventory.terminated
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/admin/workers/{node_id}/metrics
+# ---------------------------------------------------------------------------
+
+
+class TestNodeMetrics:
+    def test_returns_latest_and_samples(self, app_and_deps):
+        app, _auth, registry, *_ = app_and_deps
+        registry.record_metrics(NODE_ID, {"ts": "a", "cpu_pct": 1.0})
+        registry.record_metrics(NODE_ID, {"ts": "b", "cpu_pct": 2.0})
+        client = TestClient(app)
+        r = client.get(
+            f"/v1/admin/workers/{NODE_ID}/metrics",
+            headers={"Authorization": "Bearer deployment:read"},
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert [s["ts"] for s in data["samples"]] == ["a", "b"]
+        assert data["latest"]["ts"] == "b"
+
+    def test_empty_buffer_returns_null_latest_not_404(self, app_and_deps):
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.get(
+            f"/v1/admin/workers/{NODE_ID}/metrics",
+            headers={"Authorization": "Bearer deployment:read"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json() == {"latest": None, "samples": []}
+
+    def test_requires_permission(self, app_and_deps):
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.get(
+            f"/v1/admin/workers/{NODE_ID}/metrics",
+            headers={"Authorization": "Bearer some:other"},
+        )
+        assert r.status_code == 403

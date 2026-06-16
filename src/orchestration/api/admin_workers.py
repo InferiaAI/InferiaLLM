@@ -179,6 +179,11 @@ class ListResponse(BaseModel):
     workers: list[WorkerView]
 
 
+class NodeMetricsResponse(BaseModel):
+    latest: dict | None = None
+    samples: list[dict] = []
+
+
 # ---------------------------------------------------------------------------
 # Endpoints.
 # ---------------------------------------------------------------------------
@@ -318,6 +323,19 @@ async def revoke_worker(
             pass
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{node_id}/metrics", response_model=NodeMetricsResponse)
+async def get_node_metrics(
+    node_id: str,
+    _granted: bool = Depends(_need_perm("deployment:read")),
+):
+    """Live per-node resource metrics (CPU/mem/GPU/net/disk) from the worker
+    heartbeat ring buffer. Empty buffer (node just connected, never sent
+    metrics, or disconnected) -> {"latest": null, "samples": []} — not a 404."""
+    samples = _registry().get_metrics(node_id)
+    latest = samples[-1] if samples else None
+    return NodeMetricsResponse(latest=latest, samples=samples)
 
 
 # ---------------------------------------------------------------------------

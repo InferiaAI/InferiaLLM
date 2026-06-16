@@ -318,6 +318,10 @@ async def worker_channel(
                     loaded_models=hb.loaded_models,
                     deploy_metrics=[m.model_dump() for m in hb.deploy_metrics],
                 )
+                # Buffer the structured telemetry sample for the dashboard
+                # Metrics tab. Optional field — older workers omit it.
+                if hb.metrics is not None:
+                    registry.record_metrics(claims.sub, hb.metrics.model_dump())
             elif env_type == "CommandResult":
                 registry.deliver_command_result(
                     CommandResultBody(**body),

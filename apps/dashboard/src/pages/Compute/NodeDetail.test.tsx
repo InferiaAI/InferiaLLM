@@ -57,6 +57,18 @@ vi.mock("@/components/nodes/NodeLogs", () => ({
   ),
 }));
 
+// Stub NodeMetrics so its polling/recharts don't run in jsdom
+vi.mock("@/components/nodes/NodeMetrics", () => ({
+  default: ({ nodeId }: { nodeId: string }) => (
+    <div data-testid="node-metrics-stub">NodeMetrics:{nodeId}</div>
+  ),
+}));
+
+// Stub getNodeMetrics so the metrics route resolves cleanly
+vi.mock("@/services/workerService", () => ({
+  getNodeMetrics: vi.fn().mockResolvedValue({ latest: null, samples: [] }),
+}));
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -626,5 +638,24 @@ describe("NodeDetail", () => {
     });
     expect(navigateSpy).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+
+  // ── Tab order: Metrics appears before Shell and Logs ─────────────────────
+  it("has Metrics tab positioned before Shell and Logs tabs", async () => {
+    renderNodeDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+
+    const links = await screen.findAllByRole("link");
+    const labels = links.map((l) => l.textContent ?? "");
+    const m = labels.indexOf("Metrics");
+    const s = labels.indexOf("Shell");
+    const lg = labels.indexOf("Logs");
+
+    expect(m).toBeGreaterThanOrEqual(0);
+    expect(m).toBeLessThan(s);
+    expect(m).toBeLessThan(lg);
   });
 });
