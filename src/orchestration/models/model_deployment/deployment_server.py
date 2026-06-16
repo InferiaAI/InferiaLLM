@@ -27,6 +27,7 @@ from orchestration.provisioning.engine.registry import (
     get_adapter,
     ADAPTER_REGISTRY,
 )
+from orchestration.provisioning.engine.base import AdapterType
 from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
@@ -35,8 +36,10 @@ from orchestration.models.model_deployment.log_store import (
     DeploymentLogBuffer,
 )
 from orchestration.config import settings as orch_settings
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from types import SimpleNamespace
+
+ProvisioningRoute = Literal["self_register", "reconciler", "direct_adapter"]
 
 import os
 
@@ -324,6 +327,66 @@ def _model_spec_from_request(req: "DeployModelRequest") -> dict:
     """Backward-compatible wrapper: build ``spec["model"]`` from a deploy
     request. Delegates to :func:`_model_spec_from_source`."""
     return _model_spec_from_source(req)
+
+
+def _provisioning_route(provider: str, pool_meta: dict | None = None) -> ProvisioningRoute:
+    """Classify a deploy request into one of three provisioning routes.
+
+    Parameters
+    ----------
+    provider : str
+        Provider key that must match an ADAPTER_REGISTRY key exactly (keys are
+        lowercase, e.g. ``"aws"``, ``"nosana"``).  An unrecognised key falls
+        back to ``"reconciler"`` (see Rule 2).
+    pool_meta : dict | None
+        Pool-level metadata dict (e.g. from the ``metadata`` jsonb column).
+        ``None`` is treated as an empty dict.
+
+    Returns
+    -------
+    "self_register"   — inferia-worker agent self-registers (worker/on_prem pools).
+    "reconciler"      — IaC cloud provisioning via the AWS/Pulumi reconciler (aws/gcp/azure).
+    "direct_adapter"  — DePIN/k8s providers provisioned via adapter.provision_node()
+                        (nosana/akash/k8s).
+
+    Rule priority
+    -------------
+    1. pool_meta["agent_kind"] == "worker"  →  "self_register"
+    2. Unknown provider (not in ADAPTER_REGISTRY)  →  "reconciler"
+       (preserves today's enqueue-by-default behaviour)
+    3. CLOUD adapter type  →  "reconciler"
+    4. adapter class CAPABILITIES.supports_direct_provisioning  →  "direct_adapter"
+    5. Fallback  →  "self_register"
+
+    Implementation note: we read ADAPTER_TYPE and CAPABILITIES from the adapter
+    CLASS (via ADAPTER_REGISTRY) rather than instantiating via get_adapter().
+    Instantiation triggers environment-dependent side-effects in some adapters
+    (e.g. KubernetesAdapter loads kube config at __init__ time), which would
+    crash this pure classifier in unit-test environments with no k8s/cloud
+    credentials. Both ADAPTER_TYPE and CAPABILITIES are class-level attributes;
+    get_capabilities() is a @classmethod, so no instance is needed.
+    """
+    pool_meta = pool_meta or {}
+
+    # Rule 1: explicit worker pool override
+    if pool_meta.get("agent_kind") == "worker":
+        return "self_register"
+
+    # Rule 2: unknown provider → preserve existing enqueue-by-default path
+    adapter_cls = ADAPTER_REGISTRY.get(provider)
+    if adapter_cls is None:
+        return "reconciler"
+
+    # Rule 3: cloud providers use the Pulumi/IaC reconciler
+    if adapter_cls.ADAPTER_TYPE == AdapterType.CLOUD:
+        return "reconciler"
+
+    # Rule 4: DePIN / k8s adapters with direct provisioning support
+    if adapter_cls.get_capabilities().supports_direct_provisioning:
+        return "direct_adapter"
+
+    # Rule 5: remaining ON_PREM adapters that rely on agent self-registration
+    return "self_register"
 
 
 async def _build_provisioning_spec(
