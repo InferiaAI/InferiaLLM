@@ -20,6 +20,7 @@ from fastapi import FastAPI
 
 from api_gateway.app import app as gateway_app
 from api_gateway.gateway.proxy_routes import ollama_registry_router
+from api_gateway.rbac.oauth_router import router as oauth_router
 from inference.app import app as inference_app
 from unified_web.spa import SPAStaticFiles
 
@@ -60,6 +61,13 @@ def build_unified_app() -> FastAPI:
     )
     # /v2/{path} at the ROOT — registered FIRST so the SPA catch-all can't shadow it.
     parent.include_router(ollama_registry_router)
+    # /auth/start + /auth/callback at the ROOT. These are BROWSER redirect targets,
+    # not XHR: OAUTH_REDIRECT_URI is configured as "<host>/auth/callback" (root) and
+    # the IdP redirects the browser straight there, so the handler CANNOT live only
+    # under /api (the redirect would hit the SPA catch-all → 404 after login). The
+    # same router is also reachable under /api via gateway_app (the SPA kicks the
+    # flow off at /api/auth/start); both paths share one self-contained handler.
+    parent.include_router(oauth_router)
     parent.mount("/api", gateway_app)
     parent.mount("/inf", inference_app)
     dash = _dashboard_dir()
