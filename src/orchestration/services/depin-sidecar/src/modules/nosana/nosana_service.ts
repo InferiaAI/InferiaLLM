@@ -362,28 +362,6 @@ export class NosanaService {
     }
 
     /**
-     * Best-effort check that a market has online nodes before we submit a
-     * deployment. The /api/markets endpoint is public (no auth) and returns
-     * each market's currently-connected nodes list. Returns true when the
-     * market has at least one online node, false when not, and true (skip
-     * check) when the API call itself fails — we don't want a flaky markets
-     * endpoint to block deploys.
-     */
-    private async marketHasOnlineNodes(marketAddress: string): Promise<boolean> {
-        try {
-            const url = `${NOSANA_API_BASE_URL}/markets`;
-            const r = await fetch(url);
-            if (!r.ok) return true;
-            const markets = await r.json() as any[];
-            const m = markets.find((mm) => mm.address === marketAddress);
-            if (!m) return true;
-            return Array.isArray(m.nodes) && m.nodes.length > 0;
-        } catch {
-            return true;
-        }
-    }
-
-    /**
      * Get jobs for a deployment
      * GET /api/deployments/{deployment}/jobs
      */
@@ -509,16 +487,15 @@ export class NosanaService {
             if (this.authMode === 'api') {
                 console.log(`[Launch] Creating deployment via API in market: ${marketAddress} (confidential: ${isConfidential})`);
 
-                // Preflight: fail fast when the target market has no online
-                // node operators. The deployment would otherwise transition
-                // DRAFT → STARTING → ERROR within a second or two with no
-                // diagnostic detail.
-                if (!(await this.marketHasOnlineNodes(marketAddress))) {
-                    throw new Error(
-                        `Nosana market ${marketAddress} has 0 online nodes. ` +
-                        `Pick a different market or retry when operators come back online.`
-                    );
-                }
+                // NOTE: No client-side "online nodes" preflight. The public
+                // /api/markets `nodes` list is an unreliable availability
+                // signal (it can report 0 for markets that Nosana will happily
+                // schedule into), so gating on it produced false-negative
+                // "0 online nodes" rejections for deployments the web platform
+                // accepts. Per the official create-deployment flow we simply
+                // create + start the deployment and let Nosana's scheduler
+                // assign a node (queuing until one is free). See
+                // https://learn.nosana.com/api/create-deployments.html
 
                 // Step 1: Create deployment (returns in DRAFT state)
                 console.log(`[Launch] Step 1: POST /api/deployments/create...`);

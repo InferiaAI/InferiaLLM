@@ -1163,7 +1163,7 @@ export default function NewPool() {
                             <>
                                 {allZeroNodes && (
                                     <div className="rounded-lg border border-amber-400/40 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
-                                        No {selectedProvider.charAt(0).toUpperCase() + selectedProvider.slice(1)} operators are online in any market right now — deploys will fail until operators return. Try again later.
+                                        Reported idle-operator counts are 0 across all markets right now. These counts are approximate — Nosana queues a deployment until an operator in the chosen market is free, so you can still create the pool and deploy (it may take a little longer to start).
                                     </div>
                                 )}
                                 {/* Scrollable resource grid — bounded height so 46+ markets

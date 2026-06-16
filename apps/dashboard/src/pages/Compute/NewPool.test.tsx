@@ -844,7 +844,7 @@ describe("Nosana market selector UX (T10)", () => {
 
         // The empty-network banner should appear
         expect(
-            screen.getByText(/No .* operators are online.*deploys will fail/i)
+            screen.getByText(/counts are approximate.*Nosana queues a deployment/i)
         ).toBeInTheDocument();
     });
 
@@ -853,7 +853,7 @@ describe("Nosana market selector UX (T10)", () => {
 
         // Banner must NOT appear
         expect(
-            screen.queryByText(/No .* operators are online.*deploys will fail/i)
+            screen.queryByText(/counts are approximate.*Nosana queues a deployment/i)
         ).not.toBeInTheDocument();
     });
 
@@ -862,7 +862,7 @@ describe("Nosana market selector UX (T10)", () => {
 
         // Empty list — not all-zero (list is empty), so no banner
         expect(
-            screen.queryByText(/No .* operators are online.*deploys will fail/i)
+            screen.queryByText(/counts are approximate.*Nosana queues a deployment/i)
         ).not.toBeInTheDocument();
     });
 });
@@ -902,7 +902,7 @@ describe("Nosana market selector UX: empty-network banner non-blocking", () => {
 
         // Banner must be present (all-zero case)
         expect(
-            screen.getByText(/No .* operators are online.*deploys will fail/i)
+            screen.getByText(/counts are approximate.*Nosana queues a deployment/i)
         ).toBeInTheDocument();
 
         // Continue button starts disabled (no resource selected yet)
