@@ -436,6 +436,42 @@ class NosanaAdapter(ProviderAdapter):
 
                 await asyncio.sleep(poll_interval)
 
+    async def get_node_status(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """One-shot poll of the Nosana job's current state (normalized).
+
+        Returns ``RUNNING`` / ``QUEUED`` / ``COMPLETED`` / ``STOPPED`` /
+        ``QUIT`` etc. Returns ``"unknown"`` on any error or non-200 so the
+        liveness reconciler never fails a deployment on a transient hiccup —
+        it acts ONLY on a confirmed terminal state.
+        """
+        try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    params=params,
+                    headers=internal_headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        return "unknown"
+                    job = await resp.json()
+                    return _normalize_job_state(job.get("jobState"))
+        except Exception:
+            logger.warning(
+                "Nosana get_node_status failed for %s",
+                provider_instance_id,
+                exc_info=True,
+            )
+            return "unknown"
+
     async def deprovision_node(
         self,
         *,

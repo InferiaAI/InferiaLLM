@@ -341,3 +341,19 @@ class ProviderAdapter(ABC):
     def get_polling_interval(self) -> int:
         """Get the recommended polling interval in seconds."""
         return self.get_capabilities().polling_interval_seconds
+
+    async def get_node_status(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """Coarse liveness status of an already-provisioned node/job.
+
+        Returns a normalized status string. The default is ``"unknown"`` so a
+        provider that does not implement this is NEVER acted on by liveness
+        reconciliation (callers must only act on a CONFIRMED terminal state).
+        Direct/DePIN adapters override this to return the real job state
+        (e.g. ``RUNNING`` / ``COMPLETED`` / ``STOPPED`` / ``QUIT``).
+        """
+        return "unknown"
