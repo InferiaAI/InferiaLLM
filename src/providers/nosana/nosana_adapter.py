@@ -79,6 +79,13 @@ class NosanaAdapter(ProviderAdapter):
         requires_readiness_poll=True,
         readiness_timeout_seconds=300,
         polling_interval_seconds=20,
+        # Nosana exposes a public node URL (…​.node.k8s.prd.nos.ci) reachable
+        # from the control plane, so gate RUNNING on the endpoint actually
+        # serving — not just on the job being scheduled (avoids the dashboard
+        # showing RUNNING while the model is still pulling/loading and the
+        # endpoint 503s). Cold start = 9GB image pull + model load.
+        endpoint_http_probeable=True,
+        endpoint_ready_timeout_seconds=1800,
         requires_sidecar=True,
         supports_direct_provisioning=True,
         pricing_model=PricingModel.FIXED,

@@ -28,6 +28,10 @@ from orchestration.repositories.model_deployment_repo import (
 )
 from providers.nosana.nosana_adapter import NosanaAdapter
 
+# Capture the real probe before the autouse fixture patches it, so the helper
+# tests below exercise the actual implementation (not the mock).
+_REAL_WAIT_ENDPOINT_SERVING = direct_provision._wait_endpoint_serving
+
 
 # ---------------------------------------------------------------------------
 # Fixtures / builders
@@ -89,6 +93,9 @@ def _make_deps(deploy=None, finalize_ok=True, get_side_effect=None):
     inventory = AsyncMock(spec=InventoryRepository)
     inventory.finalize_direct_node.return_value = finalize_ok
     deploys = AsyncMock(spec=ModelDeploymentRepository)
+    # Guarded transitions (PENDING_NODE->DEPLOYING, DEPLOYING->RUNNING) succeed
+    # by default; cancellation tests override this.
+    deploys.update_state_if.return_value = True
     if get_side_effect is not None:
         deploys.get.side_effect = get_side_effect
     else:
@@ -101,6 +108,19 @@ def _make_deps(deploy=None, finalize_ok=True, get_side_effect=None):
         placer=AsyncMock(),
         jobs_repo=AsyncMock(),
     )
+
+
+@pytest.fixture(autouse=True)
+def _mock_endpoint_probe():
+    """Patch the (HTTP-making) readiness probe so unit tests never hit the
+    network. Defaults to ``"ready"``; tests override ``.return_value`` to
+    exercise crashed/timeout/cancelled outcomes. The Nosana adapter now
+    advertises ``endpoint_http_probeable=True``, so the happy path routes
+    through this probe and marks RUNNING only after it returns."""
+    with patch.object(
+        direct_provision, "_wait_endpoint_serving", new=AsyncMock(return_value="ready")
+    ) as m:
+        yield m
 
 
 async def _run(
@@ -166,12 +186,19 @@ async def test_happy_path_finalizes_and_sets_running():
     assert ue.args[0] == deploy_id
     assert ue.args[1] == "https://endpoint.nosana.io/run"
 
-    # RUNNING must be signalled via update_state (publishes deployment.state_changed),
-    # NOT set_state (which is intentionally event-silent).
-    deps.deploys.update_state.assert_awaited_once_with(deploy_id, "RUNNING")
-    # Regression guard: set_state must NOT have been called with "RUNNING".
+    # For a probeable provider (Nosana), RUNNING is gated on the endpoint probe:
+    # PENDING_NODE -> DEPLOYING, probe ("ready"), then DEPLOYING -> RUNNING — both
+    # via the atomic, event-publishing update_state_if (NOT set_state).
+    transitions = [
+        (c.args[0], c.args[1], c.args[2]) for c in deps.deploys.update_state_if.await_args_list
+    ]
+    assert (deploy_id, "PENDING_NODE", "DEPLOYING") in transitions
+    assert (deploy_id, "DEPLOYING", "RUNNING") in transitions
+    # the readiness probe was actually consulted
+    direct_provision._wait_endpoint_serving.assert_awaited_once()
+    # Regression guard: set_state must NOT have been used for any transition.
     for c in deps.deploys.set_state.await_args_list:
-        assert c.args[1] != "RUNNING", "set_state used for RUNNING — use update_state"
+        assert c.args[1] != "RUNNING", "set_state used for RUNNING — use update_state_if"
     # deprovision lives on the ADAPTER, not the inventory repo; never called
     # on the happy path.
     adapter.deprovision_node.assert_not_awaited()
@@ -543,6 +570,183 @@ async def test_cancellation_path_does_not_release_gpu():
     adapter.deprovision_node.assert_awaited_once()
     dn = adapter.deprovision_node.await_args.kwargs
     assert dn["provider_instance_id"] == "job-abc123"
+
+
+# ---------------------------------------------------------------------------
+# Readiness probe outcomes (the premature-RUNNING gate)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_probe_crashed_marks_failed_and_deprovisions(_mock_endpoint_probe):
+    """If the endpoint never serves because the provider job crashed during
+    model load, mark FAILED + release_gpu + mark_terminated + deprovision."""
+    _mock_endpoint_probe.return_value = "crashed"
+    adapter = _make_adapter()
+    deps = _make_deps(deploy=_deploy())
+
+    node_id, deploy_id = await _run(adapter, deps, gpu=1)
+
+    # FAILED with a clear cause (container crashed on the node)
+    failed = [c for c in deps.deploys.update_state.await_args_list if c.args[1] == "FAILED"]
+    assert failed, "expected a FAILED transition"
+    msg = failed[-1].kwargs.get("error_message", "")
+    assert "crash" in msg.lower() or "exited" in msg.lower()
+    # teardown
+    deps.inventory.release_gpu.assert_awaited_once_with(node_id, 1)
+    deps.inventory.mark_terminated.assert_awaited_once_with(node_id)
+    adapter.deprovision_node.assert_awaited_once()
+    # never reached the RUNNING transition
+    rs = [c for c in deps.deploys.update_state_if.await_args_list if c.args[2] == "RUNNING"]
+    assert not rs, "RUNNING must not be set when the endpoint never served"
+
+
+@pytest.mark.asyncio
+async def test_probe_timeout_still_marks_running(_mock_endpoint_probe):
+    """A slow node that never served within the window is NOT failed (it may
+    still come up) — mark RUNNING and let the liveness worker reconcile."""
+    _mock_endpoint_probe.return_value = "timeout"
+    adapter = _make_adapter()
+    deps = _make_deps(deploy=_deploy())
+
+    node_id, deploy_id = await _run(adapter, deps)
+
+    transitions = [
+        (c.args[1], c.args[2]) for c in deps.deploys.update_state_if.await_args_list
+    ]
+    assert ("DEPLOYING", "RUNNING") in transitions
+    # not failed
+    for c in deps.deploys.update_state.await_args_list:
+        assert c.args[1] != "FAILED"
+    adapter.deprovision_node.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_probe_cancelled_deprovisions_no_running(_mock_endpoint_probe):
+    """If the deploy is cancelled during the probe, deprovision the external
+    instance and do NOT mark RUNNING — and do NOT release_gpu/mark_terminated
+    (owned by the cancel flow)."""
+    _mock_endpoint_probe.return_value = "cancelled"
+    adapter = _make_adapter()
+    deps = _make_deps(deploy=_deploy())
+
+    await _run(adapter, deps)
+
+    adapter.deprovision_node.assert_awaited_once()
+    deps.inventory.release_gpu.assert_not_awaited()
+    deps.inventory.mark_terminated.assert_not_awaited()
+    rs = [c for c in deps.deploys.update_state_if.await_args_list if c.args[2] == "RUNNING"]
+    assert not rs
+
+
+@pytest.mark.asyncio
+async def test_non_probeable_provider_marks_running_unconditionally(_mock_endpoint_probe):
+    """A provider that does NOT advertise endpoint_http_probeable keeps the
+    original behavior: mark RUNNING via update_state once scheduled, no probe."""
+    from dataclasses import replace
+    adapter = _make_adapter()
+    caps = replace(NosanaAdapter.CAPABILITIES, endpoint_http_probeable=False)
+    adapter.get_capabilities = lambda: caps
+    deps = _make_deps(deploy=_deploy())
+
+    node_id, deploy_id = await _run(adapter, deps)
+
+    deps.deploys.update_state.assert_awaited_once_with(deploy_id, "RUNNING")
+    _mock_endpoint_probe.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _wait_endpoint_serving helper (the HTTP probe itself)
+# ---------------------------------------------------------------------------
+class _FakeResp:
+    def __init__(self, status):
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+class _FakeSession:
+    def __init__(self, statuses):
+        self._statuses = list(statuses)
+        self.urls = []
+
+    def get(self, url, **kw):
+        self.urls.append(url)
+        st = self._statuses.pop(0) if self._statuses else 503
+        return _FakeResp(st)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def _probe_adapter(status="RUNNING"):
+    a = AsyncMock(spec=NosanaAdapter)
+    a.get_node_status.return_value = status
+    return a
+
+
+@pytest.mark.asyncio
+async def test_probe_helper_ready_on_200():
+    deps = _make_deps(deploy=_deploy(state="DEPLOYING"))
+    adapter = _probe_adapter("RUNNING")
+    sess = _FakeSession([200])
+    with patch.object(direct_provision.aiohttp, "ClientSession", return_value=sess):
+        res = await _REAL_WAIT_ENDPOINT_SERVING(
+            adapter=adapter, expose_url="https://n.nos.ci/", provider_instance_id="j1",
+            cred_name="c", deploy_id=uuid4(), deps=deps, timeout=60,
+        )
+    assert res == "ready"
+    assert sess.urls[0].endswith("/health")
+
+
+@pytest.mark.asyncio
+async def test_probe_helper_crashed_on_terminal_job():
+    deps = _make_deps(deploy=_deploy(state="DEPLOYING"))
+    adapter = _probe_adapter("STOPPED")  # terminal
+    sess = _FakeSession([503])
+    with patch.object(direct_provision.aiohttp, "ClientSession", return_value=sess):
+        res = await _REAL_WAIT_ENDPOINT_SERVING(
+            adapter=adapter, expose_url="https://n.nos.ci", provider_instance_id="j1",
+            cred_name="c", deploy_id=uuid4(), deps=deps, timeout=60,
+        )
+    assert res == "crashed"
+
+
+@pytest.mark.asyncio
+async def test_probe_helper_cancelled_when_not_deploying():
+    deps = _make_deps(deploy=_deploy(state="TERMINATED"))  # left DEPLOYING
+    adapter = _probe_adapter("RUNNING")
+    sess = _FakeSession([200])
+    with patch.object(direct_provision.aiohttp, "ClientSession", return_value=sess):
+        res = await _REAL_WAIT_ENDPOINT_SERVING(
+            adapter=adapter, expose_url="https://n.nos.ci", provider_instance_id="j1",
+            cred_name="c", deploy_id=uuid4(), deps=deps, timeout=60,
+        )
+    assert res == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_probe_helper_timeout(monkeypatch):
+    deps = _make_deps(deploy=_deploy(state="DEPLOYING"))
+    adapter = _probe_adapter("RUNNING")  # not terminal
+    sess = _FakeSession([503] * 50)  # never 200
+    # jump the clock past the timeout after the first read; inexhaustible so
+    # unrelated time.monotonic() callers don't trip StopIteration; no real sleep
+    import itertools
+    ticks = itertools.chain([0.0], itertools.repeat(1000.0))
+    monkeypatch.setattr(direct_provision.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(direct_provision.asyncio, "sleep", AsyncMock())
+    with patch.object(direct_provision.aiohttp, "ClientSession", return_value=sess):
+        res = await _REAL_WAIT_ENDPOINT_SERVING(
+            adapter=adapter, expose_url="https://n.nos.ci", provider_instance_id="j1",
+            cred_name="c", deploy_id=uuid4(), deps=deps, timeout=60,
+        )
+    assert res == "timeout"
 
 
 @pytest.mark.asyncio

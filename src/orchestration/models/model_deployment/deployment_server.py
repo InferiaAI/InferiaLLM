@@ -3564,7 +3564,16 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
         # ?token=<jwt> and opens). The /api prefix must NOT be included here
         # — the dashboard's toWsUrl helper owns it and would produce /api/api/...
         # if it were also present in this string.
-        if (provider == "on_prem") or (node.get("agent_kind") == "worker"):
+        #
+        # Route by PROVIDER, NOT agent_kind: a DePIN (Nosana/Akash) placeholder
+        # node keeps agent_kind="worker" even though it has no worker channel,
+        # so the old `agent_kind == "worker"` gate sent Nosana deployments down
+        # the worker path → "worker offline" and the Terminal Logs tab showed
+        # nothing. is_direct_provision_provider() is the correct discriminator.
+        from orchestration.provisioning.engine.registry import (
+            is_direct_provision_provider as _is_direct,
+        )
+        if not _is_direct(provider):
             return {
                 "ws_url": (
                     f"/v1/admin/workers/{node_id}/logs"

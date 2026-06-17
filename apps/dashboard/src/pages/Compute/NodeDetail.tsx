@@ -169,6 +169,8 @@ export default function NodeDetail() {
   }
 
   const isAws = node.provider === "aws";
+  // DePIN nodes (nosana/akash) have no worker, so there is no interactive shell.
+  const isDepin = ["nosana", "akash"].includes(node.provider ?? "");
 
   // ---------------------------------------------------------------------------
   // Derive active tab from the current path suffix
@@ -177,7 +179,7 @@ export default function NodeDetail() {
     { label: "Provisioning Status", value: "provisioning" },
     { label: "EC2 Details", value: "ec2", hidden: !isAws },
     { label: "Metrics", value: "metrics" },
-    { label: "Shell", value: "shell" },
+    { label: "Shell", value: "shell", hidden: isDepin },
     { label: "Logs", value: "logs" },
   ];
 
@@ -356,6 +358,7 @@ export default function NodeDetail() {
             <NodeTabLayout tabs={tabs} activeTab="shell" poolId={poolId} nid={nid}>
               <NodeShell
                 nodeId={node.id}
+                nodeProvider={node.provider ?? undefined}
                 nodeState={node.state}
                 currentPhase={summary?.current_phase}
               />

@@ -137,3 +137,23 @@ export async function addProviderNode(
   );
   return res.data;
 }
+
+/**
+ * Log-stream descriptor returned by GET /v1/nodes/{id}/log-stream.
+ *
+ * - Worker nodes resolve to the worker control-channel logs WS.
+ * - DePIN nodes (nosana/akash) resolve to the deployment WS sidecar, whose
+ *   `ws_url` already carries the `/api` prefix.
+ * - Before a provider job is assigned the backend returns `{ error }`.
+ */
+export interface NodeLogStream {
+  ws_url?: string;
+  provider?: string;
+  subscription?: Record<string, unknown>;
+  error?: string;
+}
+
+export async function getNodeLogStream(nodeId: string): Promise<NodeLogStream> {
+  const res = await computeApi.get<NodeLogStream>(`/nodes/${nodeId}/log-stream`);
+  return res.data;
+}

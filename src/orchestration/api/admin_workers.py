@@ -537,6 +537,46 @@ async def proxy_worker_shell(ws: WebSocket, node_id: str):
     """
     await ws.accept()
 
+    # DePIN nodes (Nosana/Akash) run the model in a confidential, externally
+    # managed job — there is no worker control channel and no exec, so an
+    # interactive shell is impossible. Degrade with a CLEAR message + a normal
+    # close (1000, not an error) instead of the misleading "worker offline"
+    # the registry would otherwise return. (The frontend also hides the Shell
+    # tab for DePIN nodes; this backstops a deep-linked /shell URL.)
+    #
+    # Guarded on inventory_repo being wired (always true in production) so this
+    # is a clean no-op for unit harnesses that stub the registry only.
+    _inv = _deps.inventory_repo
+    if _inv is not None:
+        try:
+            from orchestration.provisioning.engine.registry import (
+                is_direct_provision_provider,
+            )
+
+            _node = await _inv.get_node_by_id(node_id)
+            _provider = (
+                (_node.get("provider") if hasattr(_node, "get") else None)
+                if _node
+                else None
+            )
+            if _provider and is_direct_provision_provider(_provider):
+                await ws.send_json({
+                    "type": "error",
+                    "message": (
+                        "Interactive shell is not available for DePIN compute "
+                        "nodes — the model runs in a confidential, isolated "
+                        "job. Use the Logs tab for live container output."
+                    ),
+                })
+                await ws.close(code=1000)
+                return
+        except Exception:
+            logger.warning(
+                "proxy_worker_shell: DePIN gate check failed for node=%s; "
+                "continuing to worker path",
+                node_id,
+            )
+
     stream_id = str(uuid.uuid4())
     deployment_id = ws.query_params.get("deployment", "")
     container_id = ws.query_params.get("container", "")

@@ -274,6 +274,108 @@ async def get_node(
     return _to_view(row)
 
 
+@router.get("/{node_id}/log-stream")
+async def get_node_log_stream(
+    node_id: str = Path(...),
+    request: Request = None,
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    """WS connection info for streaming a node's live container logs.
+
+    The dashboard node ``Logs`` tab is node-scoped. Worker/cloud-worker nodes
+    stream over the worker control channel (the existing
+    ``/v1/admin/workers/{id}/logs`` path). DePIN nodes (Nosana/Akash) have NO
+    worker channel — hitting that path returns ``worker offline`` and the tab
+    shows nothing. For those we reuse the provider's log-streaming info (the
+    exact live path the deployment ``Terminal Logs`` tab already uses), so the
+    node Logs tab shows real container output.
+
+    Returns ``{ws_url, subscription}`` (worker path) or the adapter's streaming
+    info (DePIN), or ``{"error": ...}`` when the job has no node assigned yet —
+    which the dashboard surfaces as a retryable state.
+    """
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+
+    provider = row.get("provider") if hasattr(row, "get") else row["provider"]
+
+    from orchestration.provisioning.engine.registry import (
+        get_adapter,
+        is_direct_provision_provider,
+    )
+
+    # Route by PROVIDER, never agent_kind: a DePIN placeholder node keeps
+    # agent_kind="worker" even though provider="nosana" and it has no worker
+    # channel — gating on agent_kind would send it back to the broken worker
+    # path. Worker-backed providers (worker/aws/on_prem/gcp/azure) keep the
+    # worker-channel logs path byte-identical to today.
+    if not is_direct_provision_provider(provider):
+        return {
+            "ws_url": f"/v1/admin/workers/{node_id}/logs",
+            "subscription": {
+                "type": "subscribe_logs",
+                "provider": "worker",
+                "node_id": str(node_id),
+            },
+        }
+
+    # DePIN: reuse the provider's live log stream (keyed on the provider job
+    # id + node address), same machinery as the deployment Terminal Logs tab.
+    provider_instance_id = (
+        row.get("provider_instance_id") if hasattr(row, "get") else None
+    )
+    if not provider_instance_id or str(provider_instance_id).startswith("placeholder:"):
+        return {"error": "Node has no provider job assigned yet."}
+
+    # Resolve the pool's named credential (multi-credential support).
+    pool_cred = None
+    pool_id = row.get("pool_id") if hasattr(row, "get") else None
+    if pool_id is not None and _deps.pool_repo is not None:
+        try:
+            pool_row = await _deps.pool_repo.get(pool_id)
+            if pool_row is not None:
+                pool_cred = (
+                    pool_row.get("provider_credential_name")
+                    if hasattr(pool_row, "get")
+                    else pool_row["provider_credential_name"]
+                )
+        except Exception:
+            logger.warning(
+                "get_node_log_stream: failed to read pool credential for "
+                "node=%s pool=%s; trying without it",
+                node_id,
+                pool_id,
+                exc_info=True,
+            )
+
+    try:
+        adapter = get_adapter(provider)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Live logs not available: {e}"}
+    if not hasattr(adapter, "get_log_streaming_info"):
+        return {"error": "Live logs not available for this provider"}
+
+    import inspect
+
+    extra: dict[str, Any] = {}
+    sig = inspect.signature(adapter.get_log_streaming_info)
+    via_gateway = (
+        request is not None
+        and request.headers.get("x-gateway-request", "").lower() == "true"
+    )
+    if "base_url" in sig.parameters and via_gateway and request is not None:
+        extra["base_url"] = str(request.base_url)
+    if "provider_credential_name" in sig.parameters and pool_cred:
+        extra["provider_credential_name"] = pool_cred
+    try:
+        return await adapter.get_log_streaming_info(
+            provider_instance_id=provider_instance_id, **extra
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
 @router.get("/{node_id}/deploy-metrics/{deployment_id}")
 async def get_node_deploy_metrics(
     node_id: str = Path(...),

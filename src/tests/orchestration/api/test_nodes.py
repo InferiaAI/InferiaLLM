@@ -231,6 +231,78 @@ class TestListNodes:
 
 
 # ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/log-stream — node Logs tab routing (worker vs DePIN)
+# ---------------------------------------------------------------------------
+class TestNodeLogStream:
+    _REG = "orchestration.provisioning.engine.registry"
+
+    def test_worker_node_returns_worker_ws_path(self, app_and_deps):
+        from unittest.mock import patch
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "on_prem",
+            "agent_kind": "worker", "state": "ready",
+            "provider_instance_id": None,
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=False):
+            r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ws_url"] == f"/v1/admin/workers/{NODE}/logs"
+        assert body["subscription"]["provider"] == "worker"
+
+    def test_depin_node_without_job_returns_retryable_error(self, app_and_deps):
+        from unittest.mock import patch
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "agent_kind": "worker", "state": "provisioning",
+            "provider_instance_id": None,
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True):
+            r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert "error" in r.json()
+
+    def test_depin_node_with_job_returns_adapter_stream(self, app_and_deps):
+        """A DePIN node with a provider job must route to the provider's log
+        stream (NOT the worker path), even though agent_kind is 'worker'."""
+        from unittest.mock import patch, AsyncMock
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "agent_kind": "worker", "state": "ready",
+            "provider_instance_id": "job-xyz",
+        }
+        fake_adapter = AsyncMock()
+        fake_adapter.get_log_streaming_info.return_value = {
+            "ws_url": "/api/v1/deployment/ws",
+            "provider": "nosana",
+            "subscription": {"type": "subscribe_logs", "provider": "nosana",
+                             "jobId": "job-xyz", "nodeAddress": "n1"},
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True), \
+             patch(f"{self._REG}.get_adapter", return_value=fake_adapter):
+            r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ws_url"] == "/api/v1/deployment/ws"
+        assert body["subscription"]["provider"] == "nosana"
+        assert body["subscription"]["jobId"] == "job-xyz"
+        # routed by provider, not agent_kind
+        fake_adapter.get_log_streaming_info.assert_awaited_once()
+
+    def test_missing_node_404(self, app_and_deps):
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/nodes/{id}
 # ---------------------------------------------------------------------------
 

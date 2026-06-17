@@ -15,8 +15,12 @@ implements the coroutine.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
+
+import aiohttp
 
 from orchestration.provisioning.engine.registry import get_adapter
 
@@ -28,6 +32,76 @@ log = logging.getLogger(__name__)
 # (mirrors the legacy DePIN tail sentinel logic plus the Nosana confidential
 # job sentinel).
 _CONFIDENTIAL_SENTINEL = "job-running-confidential"
+
+# Provider job states that mean the container is gone for good (mirrors the
+# DePIN liveness worker). If the job hits one of these while we are waiting for
+# the endpoint to serve, the model crashed — fail fast instead of waiting out
+# the full readiness timeout.
+_TERMINAL_JOB_STATES = {"COMPLETED", "STOPPED", "QUIT", "FAILED"}
+
+# How often to poll the endpoint / job while waiting for it to serve.
+_READY_PROBE_INTERVAL_SECONDS = 15
+
+
+async def _wait_endpoint_serving(
+    *,
+    adapter,
+    expose_url: str,
+    provider_instance_id: str,
+    cred_name,
+    deploy_id,
+    deps,
+    timeout: int,
+) -> str:
+    """Poll a DePIN deployment's public endpoint until it actually serves.
+
+    Returns one of:
+      - ``"ready"``     — the endpoint returned HTTP 200 (model is serving)
+      - ``"crashed"``   — the provider job went terminal before serving
+      - ``"cancelled"`` — the deployment left DEPLOYING (cancelled/deleted)
+      - ``"timeout"``   — neither served nor crashed within ``timeout``
+
+    DePIN cold start is slow (large image pull + model load), so this can run
+    for many minutes; it is invoked from the fire-and-forget provisioning
+    coroutine, which already blocks on ``wait_for_ready``.
+    """
+    base = expose_url.rstrip("/")
+    start = time.monotonic()
+    async with aiohttp.ClientSession() as session:
+        while True:
+            # Cancellation: stop probing a deploy that is no longer DEPLOYING.
+            d = await deps.deploys.get(deploy_id)
+            if not d or d.get("state") != "DEPLOYING":
+                return "cancelled"
+
+            # Fail fast: a terminal job will never serve.
+            try:
+                status = await adapter.get_node_status(
+                    provider_instance_id=provider_instance_id,
+                    provider_credential_name=cred_name,
+                )
+            except Exception:  # noqa: BLE001 — never let a poll error abort
+                status = "unknown"
+            if status in _TERMINAL_JOB_STATES:
+                return "crashed"
+
+            # /health is unauthenticated on the inference engines; /v1/models is
+            # the fallback (may be 401 when an api-key is set, which is not 200,
+            # so it never falsely succeeds).
+            for path in ("/health", "/v1/models"):
+                try:
+                    async with session.get(
+                        base + path,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status == 200:
+                            return "ready"
+                except Exception:  # noqa: BLE001 — endpoint not up yet
+                    pass
+
+            if time.monotonic() - start > timeout:
+                return "timeout"
+            await asyncio.sleep(_READY_PROBE_INTERVAL_SECONDS)
 
 
 def _is_sentinel_endpoint(expose_url) -> bool:
@@ -270,14 +344,104 @@ async def provision_direct_node(
                 deploy_id, expose_url, model_name=d.get("model_name")
             )
 
-        await deps.deploys.update_state(deploy_id, "RUNNING")
+        # ---- Endpoint readiness gate ----
+        # DePIN cold start is slow (large image pull + model load). For providers
+        # whose public endpoint is reachable from the control plane, do NOT mark
+        # RUNNING until the endpoint actually serves — otherwise the dashboard
+        # shows RUNNING while the endpoint 503s and the playground returns
+        # "Upstream provider returned an error". Other providers keep the
+        # original "RUNNING once scheduled" behavior.
+        probeable = (
+            getattr(caps, "endpoint_http_probeable", False)
+            and expose_url
+            and not _is_sentinel_endpoint(expose_url)
+            and str(expose_url).startswith("http")
+        )
+        if not probeable:
+            await deps.deploys.update_state(deploy_id, "RUNNING")
+            log.info(
+                "provision_direct_node: deployment %s provider=%s node %s RUNNING "
+                "(instance=%s)",
+                deploy_id,
+                provider,
+                node_id,
+                provider_instance_id,
+            )
+            return
+
+        # PENDING_NODE -> DEPLOYING (model loading). Guarded so a concurrent
+        # cancel/delete is not clobbered.
+        if not await deps.deploys.update_state_if(
+            deploy_id, "PENDING_NODE", "DEPLOYING"
+        ):
+            log.warning(
+                "provision_direct_node: deployment %s left PENDING_NODE before "
+                "readiness probe (cancelled?); deprovisioning %s",
+                deploy_id,
+                provider_instance_id,
+            )
+            await _best_effort_deprovision(adapter, provider_instance_id, cred_name)
+            return
+
+        timeout = getattr(caps, "endpoint_ready_timeout_seconds", 1800)
+        result = await _wait_endpoint_serving(
+            adapter=adapter,
+            expose_url=expose_url,
+            provider_instance_id=provider_instance_id,
+            cred_name=cred_name,
+            deploy_id=deploy_id,
+            deps=deps,
+            timeout=timeout,
+        )
+        if result == "crashed":
+            # Surface a clear cause; the except block below marks FAILED +
+            # releases the GPU + deprovisions (uniform teardown).
+            raise RuntimeError(
+                f"endpoint never served: the provider job {provider_instance_id} "
+                f"exited during model load (container crashed on the node)"
+            )
+        if result == "cancelled":
+            log.warning(
+                "provision_direct_node: deployment %s cancelled during readiness "
+                "probe; deprovisioning %s",
+                deploy_id,
+                provider_instance_id,
+            )
+            await _best_effort_deprovision(adapter, provider_instance_id, cred_name)
+            return
+        if result == "timeout":
+            # Slow node that never served within the window: do NOT fail it (it
+            # may still come up). Mark RUNNING and let the DePIN liveness
+            # reconciler flip it FAILED if the job later goes terminal.
+            log.warning(
+                "provision_direct_node: deployment %s endpoint %s did not serve "
+                "within %ss; marking RUNNING anyway (liveness worker reconciles "
+                "if the job dies)",
+                deploy_id,
+                expose_url,
+                timeout,
+            )
+
+        # ready or timeout -> RUNNING (guarded against a concurrent cancel).
+        if not await deps.deploys.update_state_if(
+            deploy_id, "DEPLOYING", "RUNNING"
+        ):
+            log.warning(
+                "provision_direct_node: deployment %s left DEPLOYING before "
+                "RUNNING (cancelled?); deprovisioning %s",
+                deploy_id,
+                provider_instance_id,
+            )
+            await _best_effort_deprovision(adapter, provider_instance_id, cred_name)
+            return
         log.info(
             "provision_direct_node: deployment %s provider=%s node %s RUNNING "
-            "(instance=%s)",
+            "(instance=%s, probe=%s)",
             deploy_id,
             provider,
             node_id,
             provider_instance_id,
+            result,
         )
 
     except Exception as e:  # noqa: BLE001 — background task must never escape
