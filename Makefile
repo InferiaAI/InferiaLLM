@@ -24,29 +24,36 @@ clean:
 # Docker Commands
 # ==========================================
 
-DOCKER_COMPOSE = docker compose -f docker/docker-compose.profiles.yml
+# The PRIMARY compose is the root ./docker-compose.yml (project: deploy) — the
+# canonical single-file unified stack (app + postgres + redis + ES/Logstash/
+# Kibana) that we actually run and deploy. Split mode is a dev-only topology
+# kept in the docker/ profiles file.
+DOCKER_COMPOSE = docker compose -f docker-compose.yml
+DOCKER_COMPOSE_SPLIT = docker compose -f docker/docker-compose.profiles.yml
 
 # Build images
 docker-build-unified:
-	$(DOCKER_COMPOSE) --profile unified build
+	$(DOCKER_COMPOSE) build
 
 docker-build-split:
-	$(DOCKER_COMPOSE) --profile split build
+	$(DOCKER_COMPOSE_SPLIT) --profile split build
 
 # Run services
 docker-up-unified:
-	$(DOCKER_COMPOSE) --profile unified up -d
+	$(DOCKER_COMPOSE) up -d
 
 docker-up-split:
-	$(DOCKER_COMPOSE) --profile split up -d
+	$(DOCKER_COMPOSE_SPLIT) --profile split up -d
 
-# Stop services
+# Stop services (tear down whichever topology is up; '-' ignores "not running")
 docker-down:
-	$(DOCKER_COMPOSE) --profile unified --profile split down
+	-$(DOCKER_COMPOSE) down
+	-$(DOCKER_COMPOSE_SPLIT) --profile split down
 
 # Clean up docker (volumes, orphans)
 docker-clean:
-	$(DOCKER_COMPOSE) --profile unified --profile split down -v --remove-orphans
+	-$(DOCKER_COMPOSE) down -v --remove-orphans
+	-$(DOCKER_COMPOSE_SPLIT) --profile split down -v --remove-orphans
 
 # ==========================================
 # SSO Topology (InferiaLLM + inferia-auth + Caddy)
