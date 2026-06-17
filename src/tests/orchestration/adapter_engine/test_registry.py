@@ -6,6 +6,7 @@ import pytest
 from orchestration.provisioning.engine.registry import (
     get_adapter, ADAPTER_REGISTRY,
     is_direct_provision_provider,
+    provider_prefers_origin_model_fetch,
     _deprovision_direct_node,
 )
 from providers.nosana.nosana_adapter import NosanaAdapter
@@ -103,6 +104,69 @@ def test_is_direct_provision_covers_every_registry_key():
     for name in ADAPTER_REGISTRY:
         # Must not raise and must return a bool.
         assert isinstance(is_direct_provision_provider(name), bool)
+
+
+# ---------------------------------------------------------------------------
+# provider_prefers_origin_model_fetch — gates the HF-mirror bypass. True for
+# public-cloud providers (direct internet egress → pull from origin), False
+# for DePIN / self-hosted / air-gapped (keep the cache-first mirror).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "provider,expected",
+    [
+        # Public cloud → fetch from origin, bypass the CP mirror.
+        ("aws", True),
+        ("gcp", True),
+        ("azure", True),
+        # DePIN / self-hosted / k8s → keep the cache-first mirror.
+        ("nosana", False),
+        ("akash", False),
+        ("k8s", False),
+        ("worker", False),
+        ("on_prem", False),
+        # Unknown / unset → never bypass (safe default).
+        ("definitely-not-a-provider", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_provider_prefers_origin_model_fetch(provider, expected):
+    assert provider_prefers_origin_model_fetch(provider) is expected
+
+
+def test_prefers_origin_covers_every_registry_key_without_instantiation():
+    """Classifies every provider via CLASS attributes only (no adapter
+    instantiation — k8s/cloud adapters raise at __init__)."""
+    for name in ADAPTER_REGISTRY:
+        assert isinstance(provider_prefers_origin_model_fetch(name), bool)
+
+
+def test_prefers_origin_matches_cloud_adapter_type():
+    """The bypass set is exactly the CLOUD adapters — keeps the flag and the
+    ADAPTER_TYPE classification from silently diverging."""
+    from orchestration.provisioning.engine.base import AdapterType
+    for name, cls in ADAPTER_REGISTRY.items():
+        is_cloud = getattr(cls, "ADAPTER_TYPE", None) == AdapterType.CLOUD
+        assert provider_prefers_origin_model_fetch(name) is is_cloud, name
+
+
+def test_capabilities_to_dict_includes_prefers_origin():
+    from orchestration.provisioning.engine.base import ProviderCapabilities
+    d = ProviderCapabilities(prefers_origin_model_fetch=True).to_dict()
+    assert d["prefers_origin_model_fetch"] is True
+    assert ProviderCapabilities().to_dict()["prefers_origin_model_fetch"] is False
+
+
+def test_get_provider_info_exposes_prefers_origin():
+    """The capability is surfaced through get_provider_info (the dashboard
+    /inventory/providers payload), True for cloud, False for DePIN/worker."""
+    from orchestration.provisioning.engine.registry import get_provider_info
+    info = get_provider_info()
+    assert info["aws"]["capabilities"]["prefers_origin_model_fetch"] is True
+    assert info["nosana"]["capabilities"]["prefers_origin_model_fetch"] is False
+    assert info["worker"]["capabilities"]["prefers_origin_model_fetch"] is False
 
 
 # ---------------------------------------------------------------------------

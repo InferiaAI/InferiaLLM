@@ -733,6 +733,60 @@ async def test_bind_to_ready_warm_path_fires_load_model(monkeypatch):
             assert call.args[1] != "FAILED"
 
 
+@pytest.mark.parametrize("provider", ["aws", "on_prem", "nosana", None])
+async def test_bind_to_ready_warm_path_threads_provider_to_mirror(provider, monkeypatch):
+    """The warm path must pass the POOL's provider to resolve_and_apply_mirror
+    so the mirror is bypassed for public-cloud providers (the gate lives in
+    resolve_and_apply_mirror). This pins the call-site wiring: a regression that
+    dropped the provider kwarg would silently re-route cloud deploys through the
+    (often unreachable) CP mirror."""
+    captured = {}
+
+    async def _spy_mirror(spec, *, recipe, artifact_uri, mirror_base, cache_repo,
+                          provider=None):
+        captured["provider"] = provider
+        captured["called"] = True
+
+    # The warm path imports resolve_and_apply_mirror LOCALLY (inside
+    # place_and_provision), so patch the source module — the local import
+    # resolves the name from mirror_decision at call time.
+    from orchestration.models.model_deployment import mirror_decision
+    monkeypatch.setattr(
+        mirror_decision, "resolve_and_apply_mirror", _spy_mirror, raising=True
+    )
+
+    deploy_id, pool_id, node_id = uuid4(), uuid4(), uuid4()
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = BindToReady(node_id=node_id)
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.allocate_gpu.return_value = True
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    controller = AsyncMock(spec=WorkerController)
+    controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="", endpoint_url="http://127.0.0.1:9000",
+    )
+    deps = SimpleNamespace(
+        db_pool=_make_db_pool(advertise_url="http://10.0.0.9:8080"),
+        controller=controller, inventory=inventory, deploys=deploys,
+        placer=placer, jobs_repo=jobs_repo,
+    )
+    source = SimpleNamespace(
+        engine="vllm", configuration=_row_configuration(),
+        inference_model=None, model_name="my-model", gpu_per_replica=1,
+    )
+
+    await place_and_provision(
+        deploy_id=deploy_id, pool_id=pool_id,
+        pool_row={"id": pool_id, "provider": provider},
+        pool_meta={}, gpu_per_replica=1, org_id=str(uuid4()),
+        engine="vllm", load_spec_source=source, deps=deps,
+    )
+
+    assert captured.get("called") is True
+    assert captured["provider"] == provider  # exactly the pool's provider
+
+
 async def test_bind_to_ready_warm_path_failed_status_marks_failed(monkeypatch):
     """BindToReady warm path where the worker replies status='failed' WITHOUT
     raising (e.g. vLLM engine init crash, readiness-probe timeout). The

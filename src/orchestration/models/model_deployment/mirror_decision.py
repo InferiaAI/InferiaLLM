@@ -57,12 +57,26 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
 
 
 async def resolve_and_apply_mirror(
-    spec: dict, *, recipe: str, artifact_uri: str, mirror_base: str, cache_repo
+    spec: dict, *, recipe: str, artifact_uri: str, mirror_base: str, cache_repo,
+    provider: str | None = None,
 ) -> None:
     """Look up the CP cache row and inject mirror coords iff the CP has/IS-getting
-    the model. No-op when mirror_base is blank (dormant) or cache_repo is None."""
+    the model. No-op when mirror_base is blank (dormant), cache_repo is None, or
+    ``provider`` is a public-cloud provider that fetches weights from origin
+    directly (its VMs reach huggingface.co, so routing through the CP mirror is
+    pointless and may be unreachable when the CP sits behind a tunnel)."""
     if not mirror_base or cache_repo is None:
         return
+    # Public-cloud providers (aws/gcp/azure) pull from origin directly — never
+    # inject the CP mirror for them. Lazy import: registry pulls in every
+    # provider adapter, so importing it at module load would be heavy and risk
+    # an import cycle through the deployment modules that import this one.
+    if provider is not None:
+        from orchestration.provisioning.engine.registry import (
+            provider_prefers_origin_model_fetch,
+        )
+        if provider_prefers_origin_model_fetch(provider):
+            return
     source, model_id, revision = derive_cache_key(recipe, artifact_uri)
     try:
         row = await cache_repo.get_by_key(source=source, model_id=model_id, revision=revision)

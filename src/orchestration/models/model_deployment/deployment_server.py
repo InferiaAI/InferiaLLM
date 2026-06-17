@@ -1473,6 +1473,7 @@ async def place_and_provision(
                     spec, recipe=spec["recipe"],
                     artifact_uri=spec["model"]["artifact_uri"],
                     mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
+                    provider=pool_row.get("provider"),
                 )
             except Exception:
                 pass  # mirror is best-effort; never block a warm deploy
@@ -1726,7 +1727,15 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             inference_model=req.inference_model,
             model_name=req.model_name,
         )
-        if _dl and _uri and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
+        # Skip the CP cache pre-warm for public-cloud providers: their VMs pull
+        # weights from origin directly (the load spec also bypasses the mirror),
+        # so pre-warming would download to the CP for nothing — and over a
+        # home/tunnel uplink that is slow + wasteful.
+        from orchestration.provisioning.engine.registry import (
+            provider_prefers_origin_model_fetch,
+        )
+        _origin_fetch = provider_prefers_origin_model_fetch(pool_row.get("provider"))
+        if _dl and _uri and not _origin_fetch and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
             _src, _mid, _rev = derive_cache_key(req.engine or "vllm", str(_uri))
             _dl.start(source=_src, model_id=_mid, revision=_rev, engine_hint=req.engine)
     except Exception:
