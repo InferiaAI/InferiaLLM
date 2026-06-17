@@ -54,7 +54,6 @@ dependencies = [
 
   # ML / Filtration Core
   "chromadb",
-  "llm-guard",
   "pypdf",
   "python-docx",
   "groq",
