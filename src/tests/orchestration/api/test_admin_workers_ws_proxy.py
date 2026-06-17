@@ -666,6 +666,58 @@ def test_logs_unexpected_frame_logged_and_ignored():
         assert msg == {"type": "exit", "reason": "eof"}
 
 
+# ---------------------------------------------------------------------------
+# DePIN shell gate — Nosana/Akash nodes have no worker channel / exec, so the
+# shell must degrade with a CLEAR message + normal close, never the misleading
+# "worker offline" (and never reach the registry).
+# ---------------------------------------------------------------------------
+
+
+class _FakeInventory:
+    def __init__(self, node):
+        self._node = node
+
+    async def get_node_by_id(self, node_id):
+        return self._node
+
+
+def test_shell_depin_node_gated_with_clear_message():
+    reg = FakeRegistry()
+    app = _make_app(reg)
+    admin_workers._deps.inventory_repo = _FakeInventory({"provider": "nosana"})
+
+    with TestClient(app).websocket_connect(
+        f"/v1/admin/workers/{NODE_ID}/shell",
+    ) as ws:
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
+        assert "DePIN" in msg["message"]
+        assert "Logs tab" in msg["message"]
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+    # The gate fires BEFORE opening any worker stream.
+    assert reg.opens == []
+    assert reg.closed_streams == []
+
+
+def test_shell_worker_node_not_gated():
+    """A worker-provider node must still reach the worker shell stream — the
+    DePIN gate must not fire for it."""
+    reg = FakeRegistry()
+    app = _make_app(reg)
+    admin_workers._deps.inventory_repo = _FakeInventory({"provider": "worker"})
+
+    with TestClient(app).websocket_connect(
+        f"/v1/admin/workers/{NODE_ID}/shell",
+    ) as ws:
+        sid = _stream_id(reg)
+        reg.push(sid, ShellExitBody(stream_id=sid))
+        ws.receive_json()
+
+    assert len(reg.opens) == 1  # reached the worker shell path
+
+
 def test_shell_malformed_cols_query_param_falls_back_to_default():
     """The dashboard could theoretically send ``cols=lol``; the proxy
     must coerce to the default rather than 500ing on URL parse."""

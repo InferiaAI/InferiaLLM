@@ -1,13 +1,19 @@
 import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ALL_PHASES, type ProvisioningSummary, type ProvisioningPhase } from "@/services/provisioningService";
+import { ALL_PHASES, DEPIN_PHASES, type ProvisioningSummary, type ProvisioningPhase } from "@/services/provisioningService";
 
 const PHASE_LABELS: Record<string, string> = {
   preflight: "Preflight checks",
   provisioning: "Provision EC2 instance",
   bootstrapping: "Bootstrap worker",
   ready: "Ready",
+  // DePIN (nosana/akash) lifecycle phases.
+  scheduling: "Job scheduling",
+  loading: "Pulling image & loading model",
+  serving: "Endpoint serving",
 };
+
+const DEPIN_PHASE_SET: ReadonlySet<string> = new Set(DEPIN_PHASES);
 
 function PhaseIcon({ status }: { status: ProvisioningPhase["status"] | "pending" }) {
   if (status === "running") {
@@ -31,6 +37,15 @@ export default function ProvisioningStatus(
   // Only surface the "Attempt N" badge when we've genuinely retried —
   // a first-attempt job has attempt_count=1 and no badge is helpful.
   const showAttemptBadge = attemptCount > 1;
+
+  // Pick the timeline skeleton. DePIN (nosana/akash) nodes emit
+  // scheduling/loading/serving; everything else uses the AWS 4-step
+  // skeleton. The AWS path is unchanged — when the returned phases don't
+  // match the DePIN set we fall back to ALL_PHASES exactly as before.
+  const isDepinPhases =
+    summary.phases.length > 0 &&
+    summary.phases.every((p) => DEPIN_PHASE_SET.has(p.phase));
+  const phaseSkeleton: readonly string[] = isDepinPhases ? DEPIN_PHASES : ALL_PHASES;
 
   return (
     <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
@@ -56,12 +71,14 @@ export default function ProvisioningStatus(
         </div>
       )}
       <ol className="space-y-2">
-        {ALL_PHASES.map((phase) => {
+        {phaseSkeleton.map((phase) => {
           const p = byPhase.get(phase);
           let status: ProvisioningPhase["status"] | "pending" = p?.status ?? "pending";
-          // The terminal "ready" phase may not emit its own event row; derive
-          // its completed state from the job being terminal without a failure.
-          if (phase === "ready" && status === "pending" && summary.terminal && !failed) {
+          // The terminal phase may not emit its own event row; derive its
+          // completed state from the job being terminal without a failure.
+          // AWS: "ready"; DePIN: "serving".
+          const terminalPhase = isDepinPhases ? "serving" : "ready";
+          if (phase === terminalPhase && status === "pending" && summary.terminal && !failed) {
             status = "succeeded";
           }
           return (

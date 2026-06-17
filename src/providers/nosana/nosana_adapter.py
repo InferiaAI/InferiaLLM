@@ -79,6 +79,13 @@ class NosanaAdapter(ProviderAdapter):
         requires_readiness_poll=True,
         readiness_timeout_seconds=300,
         polling_interval_seconds=20,
+        # Nosana exposes a public node URL (…​.node.k8s.prd.nos.ci) reachable
+        # from the control plane, so gate RUNNING on the endpoint actually
+        # serving — not just on the job being scheduled (avoids the dashboard
+        # showing RUNNING while the model is still pulling/loading and the
+        # endpoint 503s). Cold start = 9GB image pull + model load.
+        endpoint_http_probeable=True,
+        endpoint_ready_timeout_seconds=1800,
         requires_sidecar=True,
         supports_direct_provisioning=True,
         pricing_model=PricingModel.FIXED,
@@ -236,9 +243,12 @@ class NosanaAdapter(ProviderAdapter):
         elif model_id:
             logger.info(f"Using job_builder for engine={engine}, model={model_id}")
 
-            # Extract additional config from metadata
+            # Extract additional config from metadata.
+            # Default 0.80 (not 0.95): community/DePIN GPUs reserve VRAM for the CUDA
+            # context + co-tenants, and vLLM ABORTS at startup if free < gpu_util*total.
+            # 0.95 reliably failed the free-memory check on real nodes. See create_vllm_job.
             job_config = {
-                "gpu_util": metadata.get("gpu_util", 0.95),
+                "gpu_util": metadata.get("gpu_util", 0.80),
                 "dtype": metadata.get("dtype", "auto"),
                 "enforce_eager": metadata.get("enforce_eager", False),
                 "max_model_len": metadata.get("max_model_len", 8192),
@@ -436,6 +446,84 @@ class NosanaAdapter(ProviderAdapter):
 
                 await asyncio.sleep(poll_interval)
 
+    async def get_node_status(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """One-shot poll of the Nosana job's current state (normalized).
+
+        Returns ``RUNNING`` / ``QUEUED`` / ``COMPLETED`` / ``STOPPED`` /
+        ``QUIT`` etc. Returns ``"unknown"`` on any error or non-200 so the
+        liveness reconciler never fails a deployment on a transient hiccup —
+        it acts ONLY on a confirmed terminal state.
+        """
+        try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    params=params,
+                    headers=internal_headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        return "unknown"
+                    job = await resp.json()
+                    return _normalize_job_state(job.get("jobState"))
+        except Exception:
+            logger.warning(
+                "Nosana get_node_status failed for %s",
+                provider_instance_id,
+                exc_info=True,
+            )
+            return "unknown"
+
+    async def get_node_details(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
+        """One-shot poll of the full Nosana job record for the Instance Details
+        tab. Returns the useful live fields (normalized job state + node /
+        deployment / run addresses, service URL, price). Returns ``{}`` on any
+        error or non-200 so the read endpoint degrades gracefully (never raises).
+        """
+        try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    params=params,
+                    headers=internal_headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        return {}
+                    job = await resp.json()
+                    return {
+                        "job_state": _normalize_job_state(job.get("jobState")),
+                        "node_address": job.get("nodeAddress"),
+                        "deployment_address": job.get("deploymentId"),
+                        "run_address": job.get("runAddress"),
+                        "service_url": job.get("serviceUrl"),
+                        "price": job.get("price"),
+                        "market": job.get("market") or job.get("marketAddress"),
+                    }
+        except Exception:
+            logger.warning(
+                "Nosana get_node_details failed for %s",
+                provider_instance_id,
+                exc_info=True,
+            )
+            return {}
+
     async def deprovision_node(
         self,
         *,
@@ -506,7 +594,14 @@ class NosanaAdapter(ProviderAdapter):
 
                         if is_finished:
                             return {
-                                "logs": [f"Job finished with state: {normalized}. Use log streaming for historical logs."],
+                                "logs": [
+                                    f"Job finished with state: {normalized}. "
+                                    "Nosana does not retain a job's container "
+                                    "logs after it ends — open the live Logs "
+                                    "view while a deployment is RUNNING to "
+                                    "capture engine output (model-load progress, "
+                                    "crash/OOM messages, etc.)."
+                                ],
                                 "job_state": normalized,
                                 "source": "job_status",
                             }

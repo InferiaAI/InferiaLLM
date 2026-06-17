@@ -231,6 +231,193 @@ class TestListNodes:
 
 
 # ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/log-stream — node Logs tab routing (worker vs DePIN)
+# ---------------------------------------------------------------------------
+class TestNodeLogStream:
+    _REG = "orchestration.provisioning.engine.registry"
+
+    def test_worker_node_returns_worker_ws_path(self, app_and_deps):
+        from unittest.mock import patch
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "on_prem",
+            "agent_kind": "worker", "state": "ready",
+            "provider_instance_id": None,
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=False):
+            r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ws_url"] == f"/v1/admin/workers/{NODE}/logs"
+        assert body["subscription"]["provider"] == "worker"
+
+    def test_depin_node_without_job_returns_retryable_error(self, app_and_deps):
+        from unittest.mock import patch
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "agent_kind": "worker", "state": "provisioning",
+            "provider_instance_id": None,
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True):
+            r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert "error" in r.json()
+
+    def test_depin_node_with_job_returns_adapter_stream(self, app_and_deps):
+        """A DePIN node with a provider job must route to the provider's log
+        stream (NOT the worker path), even though agent_kind is 'worker'."""
+        from unittest.mock import patch, AsyncMock
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "agent_kind": "worker", "state": "ready",
+            "provider_instance_id": "job-xyz",
+        }
+        fake_adapter = AsyncMock()
+        fake_adapter.get_log_streaming_info.return_value = {
+            "ws_url": "/api/v1/deployment/ws",
+            "provider": "nosana",
+            "subscription": {"type": "subscribe_logs", "provider": "nosana",
+                             "jobId": "job-xyz", "nodeAddress": "n1"},
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True), \
+             patch(f"{self._REG}.get_adapter", return_value=fake_adapter):
+            r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ws_url"] == "/api/v1/deployment/ws"
+        assert body["subscription"]["provider"] == "nosana"
+        assert body["subscription"]["jobId"] == "job-xyz"
+        # routed by provider, not agent_kind
+        fake_adapter.get_log_streaming_info.assert_awaited_once()
+
+    def test_missing_node_404(self, app_and_deps):
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/log-stream", headers=_user_ctx_header())
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/provisioning — Nosana-relevant synthesized timeline
+# ---------------------------------------------------------------------------
+class TestNosanaProvisioning:
+    def test_nosana_shows_relevant_phases_not_aws(self, app_and_deps):
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "state": "ready", "expose_url": "https://x.node.k8s.prd.nos.ci",
+            "agent_kind": "worker",
+        }
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/provisioning", headers=_user_ctx_header())
+        assert r.status_code == 200
+        body = r.json()
+        # Nosana-relevant phases, NOT the AWS preflight/bootstrapping skeleton.
+        assert [p["phase"] for p in body["phases"]] == ["scheduling", "loading", "serving"]
+        # node finalized (ready) + endpoint -> past scheduling
+        assert body["phases"][0]["status"] == "succeeded"
+
+    def test_nosana_provisioning_node_is_scheduling(self, app_and_deps):
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "state": "provisioning", "expose_url": None, "agent_kind": "worker",
+        }
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/provisioning", headers=_user_ctx_header())
+        body = r.json()
+        # not yet scheduled -> scheduling running, later phases pending
+        assert body["current_phase"] == "scheduling"
+        assert body["phases"][0]["status"] == "running"
+        assert body["phases"][1]["status"] == "pending"
+
+    def test_aws_provisioning_unchanged(self, app_and_deps):
+        """AWS nodes must NOT get the Nosana branch (no scheduling/loading/serving)."""
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "aws",
+            "state": "provisioning", "agent_kind": "worker",
+        }
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/provisioning", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert [p["phase"] for p in r.json()["phases"]] != ["scheduling", "loading", "serving"]
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/depin-details — Nosana instance details
+# ---------------------------------------------------------------------------
+class TestDepinDetails:
+    _REG = "orchestration.provisioning.engine.registry"
+
+    def test_merges_metadata_and_live_fields(self, app_and_deps):
+        from unittest.mock import patch, AsyncMock
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-abc", "expose_url": "https://x",
+            "gpu_total": 1, "created_at": None,
+            "metadata": {"image": "vllm/x", "mode": "real", "tx": "sig",
+                         "provider_credential_name": "c"},
+        }
+        fake = AsyncMock()
+        fake.get_node_details.return_value = {
+            "job_state": "RUNNING", "node_address": "nA", "deployment_address": "dA",
+            "run_address": "rA", "service_url": "https://x", "price": 0, "market": None,
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True), \
+             patch(f"{self._REG}.get_adapter", return_value=fake):
+            r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 200
+        b = r.json()
+        assert b["job_address"] == "job-abc"          # from inventory pii
+        assert b["node_address"] == "nA"              # from live poll
+        assert b["job_state"] == "RUNNING"
+        assert b["image"] == "vllm/x"                 # from node metadata
+        assert b["mode"] == "real"
+        assert b["price"] == "0"
+
+    def test_metadata_json_string_parsed(self, app_and_deps):
+        from unittest.mock import patch, AsyncMock
+        import json as _json
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-abc",
+            "metadata": _json.dumps({"image": "img1", "mode": "real"}),
+        }
+        fake = AsyncMock()
+        fake.get_node_details.return_value = {}
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True), \
+             patch(f"{self._REG}.get_adapter", return_value=fake):
+            r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert r.json()["image"] == "img1"  # JSON-string metadata parsed
+
+    def test_non_depin_node_400(self, app_and_deps):
+        from unittest.mock import patch
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {"id": NODE, "pool_id": POOL, "provider": "aws"}
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=False):
+            r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 400
+
+    def test_missing_node_404(self, app_and_deps):
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/nodes/{id}
 # ---------------------------------------------------------------------------
 
@@ -840,6 +1027,125 @@ class TestDeleteAwsNode:
         assert r.status_code == 204
         provisioning_repo.force_cancel.assert_not_called()
         assert inventory.nodes[NODE]["state"] == "terminated"
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/nodes/{id} — DePIN (nosana) branch (stops the external job).
+# ---------------------------------------------------------------------------
+#
+# A DePIN node has NO reconciler provisioning_job, so the fall-through
+# soft-delete branch fires. Before this fix it just marked the row terminated,
+# leaking the external (paid) Nosana job. The fix calls
+# adapter.deprovision_node inline (via _deprovision_direct_node) first.
+
+
+from orchestration.provisioning.engine import registry as _engine_registry  # noqa: E402
+from providers.nosana.nosana_adapter import NosanaAdapter  # noqa: E402
+
+
+class DepinPoolRepo:
+    def __init__(self, cred="nosana-cred-1"):
+        self.cred = cred
+
+    async def ensure_default_pool(self, *, org_id):
+        return POOL
+
+    async def get(self, pool_id):
+        return {"id": pool_id, "provider_credential_name": self.cred}
+
+
+class DepinInventory(FakeInventory):
+    def __init__(self):
+        super().__init__()
+        self.deprovision_failed_marks: list[str] = []
+        self.deprovision_failed_reasons: dict[str, str | None] = {}
+
+    async def mark_deprovision_failed_node(self, *, node_id, reason=None):
+        self.deprovision_failed_marks.append(node_id)
+        self.deprovision_failed_reasons[node_id] = reason
+
+
+def _configure_depin(inventory, pool_repo):
+    nodes_api.configure(
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        worker_auth=FakeWorkerAuth(),
+        control_plane_external_url="https://control.example.com",
+        adapters={},
+        require_permission=_open_require_permission,
+    )
+    app = FastAPI()
+    app.include_router(nodes_api.router)
+    return app
+
+
+class TestDeleteDepinNode:
+    @pytest.mark.asyncio
+    async def test_nosana_node_deprovisions_then_softdeletes_204(self):
+        inventory = DepinInventory()
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-addr-123",
+        }
+        app = _configure_depin(inventory, DepinPoolRepo())
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        with patch.object(
+            _engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_awaited_once_with(
+            provider_instance_id="job-addr-123",
+            provider_credential_name="nosana-cred-1",
+        )
+        assert inventory.nodes[NODE]["state"] == "terminated"
+
+    @pytest.mark.asyncio
+    async def test_nosana_placeholder_skips_deprovision(self):
+        inventory = DepinInventory()
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "placeholder:abc",
+        }
+        app = _configure_depin(inventory, DepinPoolRepo())
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        with patch.object(
+            _engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_not_called()
+        assert inventory.nodes[NODE]["state"] == "terminated"
+
+    @pytest.mark.asyncio
+    async def test_nosana_deprovision_failure_still_softdeletes(self):
+        inventory = DepinInventory()
+        inventory.nodes[NODE] = {
+            "id": NODE, "state": "ready", "labels": {},
+            "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-addr-123",
+        }
+        app = _configure_depin(inventory, DepinPoolRepo())
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        fake_adapter.deprovision_node.side_effect = RuntimeError("sidecar down")
+        with patch.object(
+            _engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_awaited_once()
+        assert inventory.nodes[NODE]["state"] == "terminated"
+        assert NODE in inventory.deprovision_failed_marks
+        # The adapter's error string is recorded (-> metadata.deprovision_error).
+        assert inventory.deprovision_failed_reasons[NODE] == "sidecar down"
 
 
 # ---------------------------------------------------------------------------

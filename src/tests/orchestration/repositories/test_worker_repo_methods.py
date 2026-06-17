@@ -201,6 +201,28 @@ class TestMarkTerminatedWorker:
         sql = conn.execute.await_args.args[0]
         assert "terminated" in sql.lower()
 
+    @pytest.mark.asyncio
+    async def test_terminates_any_agent_kind_not_just_worker(self):
+        """A DePIN node (agent_kind='nosana') must flip terminated after its
+        external job is stopped — the agent_kind='worker' filter is gone."""
+        pool, conn = make_db()
+        repo = InventoryRepository(pool)
+        await repo.mark_terminated_worker(node_id="n")
+        sql = conn.execute.await_args.args[0]
+        assert "agent_kind" not in sql.lower()
+
+
+class TestMarkDeprovisionFailedWorker:
+    @pytest.mark.asyncio
+    async def test_stamps_deprovision_failed_marker(self):
+        pool, conn = make_db()
+        repo = InventoryRepository(pool)
+        await repo.mark_deprovision_failed_worker(node_id="n", reason="boom")
+        sql = conn.execute.await_args.args[0]
+        assert "deprovision_failed" in sql.lower()
+        # reason is passed as the second positional arg.
+        assert conn.execute.await_args.args[2] == "boom"
+
 
 # ---------------------------------------------------------------------------
 # ComputePoolRepository.get_or_generate_inference_token

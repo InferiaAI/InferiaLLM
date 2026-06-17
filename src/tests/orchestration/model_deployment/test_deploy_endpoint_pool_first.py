@@ -558,6 +558,59 @@ async def test_deploy_non_vllm_engine_no_ami_id_allowed(app_and_pool):
     assert r.status_code != 422, r.text
 
 
+async def test_deploy_vllm_nosana_pool_no_ami_id_not_gated(app_and_pool, monkeypatch):
+    """T4: the vLLM AMI requirement is AWS-only. A vLLM deploy to a nosana
+    (DEPIN) pool with NO ami_id must NOT be rejected with 422 — it proceeds to
+    a ColdStart PENDING_NODE and routes to the direct background helper instead
+    of the AWS reconciler (zero provisioning_jobs)."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(
+        pool, provider="nosana",
+        # DEPIN pools advertise a GPU type the direct adapter understands;
+        # _build_provisioning_spec doesn't catalog-validate non-AWS providers.
+        instance_type="nosana-gpu", region="global",
+    )
+    org_id = str(uuid4())
+
+    # Stub the background helper so the fire-and-forget task is a no-op (no real
+    # Nosana adapter call); we only care that the deploy was NOT 422-gated.
+    sched = AsyncMock(spec=deployment_server.provision_direct_node)
+    monkeypatch.setattr(deployment_server, "provision_direct_node", sched)
+
+    body = {
+        "model_name": "vllm-nosana-noami",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "pool_id": str(pool_id),
+        "engine": "vllm",
+        "org_id": org_id,
+        # ami_id intentionally absent — must be ACCEPTED for a non-AWS provider
+        "configuration": {"artifact_uri": "hf://vllm-nosana"},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=body)
+
+    # NOT gated: ColdStart on an empty pool → 202 PENDING_NODE.
+    assert r.status_code == 202, r.text
+    assert r.json()["state"] == "PENDING_NODE"
+
+    # Direct route: zero AWS reconciler jobs enqueued.
+    async with pool.acquire() as c:
+        job_count = await c.fetchval(
+            "SELECT COUNT(*) FROM provisioning_jobs WHERE pool_id=$1", pool_id,
+        )
+    assert job_count == 0, "nosana pool must NOT enqueue a reconciler job"
+
+    # The direct background helper was invoked with the deploy's identifiers.
+    sched.assert_called_once()
+    kw = sched.call_args.kwargs
+    assert kw["provider"] == "nosana"
+    assert kw["pool_meta"] is not None
+
+
 async def test_build_provisioning_spec_ami_id_override():
     """ami_id kwarg takes precedence over pool_meta.ami_id in the spec."""
     pool_row = {

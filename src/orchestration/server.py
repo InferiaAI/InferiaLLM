@@ -807,6 +807,37 @@ async def serve():
         app.state.mc_eviction_task = _mc_eviction_task
         logger.info("Model-cache eviction loop started")
 
+    # ---------------- DePIN liveness reconciler ----------------
+    # Periodically polls the real Nosana/Akash job state for RUNNING
+    # direct-adapter deployments and fails+deprovisions ones whose container
+    # has exited, closing the stale-RUNNING-with-dead-endpoint gap. Disabled
+    # via INFERIA_DISABLE_DEPIN_LIVENESS=1 for local dev / unit tests.
+    if os.getenv("INFERIA_DISABLE_DEPIN_LIVENESS", "0") != "1":
+        try:
+            from orchestration.workers.depin_liveness_worker import (
+                DepinLivenessWorker,
+            )
+
+            _depin_liveness = DepinLivenessWorker(
+                deploys=model_deployment_repo,
+                inventory=inventory_repo,
+                pool_repo=pool_repo,
+                interval_seconds=int(
+                    os.getenv("DEPIN_LIVENESS_INTERVAL_SECONDS", "45")
+                ),
+                deploying_max_seconds=int(
+                    os.getenv("DEPIN_DEPLOYING_MAX_SECONDS", "2100")
+                ),
+                pending_max_seconds=int(
+                    os.getenv("DEPIN_PENDING_MAX_SECONDS", "900")
+                ),
+            )
+            _depin_liveness_task = asyncio.create_task(_depin_liveness.run())
+            app.state.depin_liveness_task = _depin_liveness_task
+            logger.info("DePIN liveness reconciler started")
+        except Exception as e:
+            logger.warning("Failed to start DePIN liveness reconciler: %s", e)
+
     # Start gRPC
     server.add_insecure_port(f"[::]:{settings.grpc_port}")
     await server.start()

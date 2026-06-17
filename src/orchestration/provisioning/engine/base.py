@@ -39,6 +39,17 @@ class ProviderCapabilities:
     requires_readiness_poll: bool = True  # Needs wait_for_ready call
     readiness_timeout_seconds: int = 300
     polling_interval_seconds: int = 20
+    # When True, the deployment's public endpoint can be HTTP-probed from the
+    # control plane, so direct provisioning gates the RUNNING transition on the
+    # endpoint actually serving (HTTP 200) rather than on the provider job merely
+    # being scheduled. Only enable for providers whose endpoint is reachable from
+    # orchestration (e.g. Nosana's public node URL); leave False for providers
+    # whose endpoint may be cluster-internal (k8s) to avoid a needless probe wait.
+    endpoint_http_probeable: bool = False
+    # Max time to wait for the endpoint to start serving after the job is
+    # scheduled (DePIN cold start = large image pull + model load). Only used
+    # when endpoint_http_probeable is True.
+    endpoint_ready_timeout_seconds: int = 1800
 
     # Integration
     requires_sidecar: bool = False
@@ -64,6 +75,8 @@ class ProviderCapabilities:
             "requires_readiness_poll": self.requires_readiness_poll,
             "readiness_timeout_seconds": self.readiness_timeout_seconds,
             "polling_interval_seconds": self.polling_interval_seconds,
+            "endpoint_http_probeable": self.endpoint_http_probeable,
+            "endpoint_ready_timeout_seconds": self.endpoint_ready_timeout_seconds,
             "requires_sidecar": self.requires_sidecar,
             "supports_direct_provisioning": self.supports_direct_provisioning,
             "supports_cluster_mode": self.supports_cluster_mode,
@@ -341,3 +354,19 @@ class ProviderAdapter(ABC):
     def get_polling_interval(self) -> int:
         """Get the recommended polling interval in seconds."""
         return self.get_capabilities().polling_interval_seconds
+
+    async def get_node_status(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """Coarse liveness status of an already-provisioned node/job.
+
+        Returns a normalized status string. The default is ``"unknown"`` so a
+        provider that does not implement this is NEVER acted on by liveness
+        reconciliation (callers must only act on a CONFIRMED terminal state).
+        Direct/DePIN adapters override this to return the real job state
+        (e.g. ``RUNNING`` / ``COMPLETED`` / ``STOPPED`` / ``QUIT``).
+        """
+        return "unknown"

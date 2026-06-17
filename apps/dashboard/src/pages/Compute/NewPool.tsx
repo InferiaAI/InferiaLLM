@@ -142,6 +142,61 @@ function computeHourlyCost(
     return gcpFallback(resource.gpu_type || "A100", isSpot) * safeCount;
 }
 
+// ---------------------------------------------------------------------------
+// DePIN availability helpers (exported for unit tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the number of online nodes (operators) for a resource.
+ * Reads `resource.online_nodes` first, falls back to
+ * `resource.metadata?.online_nodes`, defaults to 0.
+ * Returns 0 for cloud/worker resources that don't carry this field.
+ */
+export function getOnlineNodeCount(resource: any): number {
+    if (typeof resource?.online_nodes === "number") return resource.online_nodes;
+    if (typeof resource?.metadata?.online_nodes === "number") return resource.metadata.online_nodes;
+    return 0;
+}
+
+type SortByValue = "price_asc" | "price_desc" | "memory" | "availability";
+
+/**
+ * Sort resources with two rules applied in order:
+ *  1. Primary: resources with online_nodes > 0 rank before 0-node resources.
+ *  2. Secondary: within each group, apply the user-chosen `sortBy`.
+ *
+ * This ensures a market with 0 online nodes never appears above an available
+ * one regardless of the sort option chosen (a 0-node market can't take a deploy).
+ */
+export function sortResourcesByAvailability(resources: any[], sortBy: SortByValue): any[] {
+    return [...resources].sort((a, b) => {
+        // Primary: availability tier (0 = has nodes, 1 = no nodes)
+        const aTier = getOnlineNodeCount(a) > 0 ? 0 : 1;
+        const bTier = getOnlineNodeCount(b) > 0 ? 0 : 1;
+        if (aTier !== bTier) return aTier - bTier;
+
+        // Secondary: user-chosen sortBy
+        if (sortBy === "price_asc") {
+            const pa = a.price_per_hour ?? Infinity;
+            const pb = b.price_per_hour ?? Infinity;
+            return pa - pb;
+        }
+        if (sortBy === "price_desc") {
+            const pa = a.price_per_hour ?? Infinity;
+            const pb = b.price_per_hour ?? Infinity;
+            return pb - pa;
+        }
+        if (sortBy === "memory") return (b.gpu_memory_gb ?? 0) - (a.gpu_memory_gb ?? 0);
+        // "availability" — availability-first is already applied above;
+        // tie-break by price ascending
+        const pa2 = a.price_per_hour ?? Infinity;
+        const pb2 = b.price_per_hour ?? Infinity;
+        return pa2 - pb2;
+    });
+}
+
+// ---------------------------------------------------------------------------
+
 interface NewPoolState {
     step: number;
     selectedProvider: string;
@@ -152,7 +207,7 @@ interface NewPoolState {
     loadingResources: boolean;
     searchQuery: string;
     minVram: number;
-    sortBy: "price_asc" | "price_desc" | "memory";
+    sortBy: SortByValue;
     // Vendor filter chip group above the resource grid:
     //   "all"     — show everything (GPU + CPU-only)
     //   "nvidia"  — NVIDIA-branded GPUs only (default)
@@ -183,7 +238,7 @@ type NewPoolAction =
     | { type: "SET_LOADING_RESOURCES"; payload: boolean }
     | { type: "SET_SEARCH"; payload: string }
     | { type: "SET_VRAM"; payload: number }
-    | { type: "SET_SORT"; payload: "price_asc" | "price_desc" | "memory" }
+    | { type: "SET_SORT"; payload: SortByValue }
     | { type: "SET_CREDENTIALS"; payload: NosanaApiKeyResponse[] }
     | { type: "SET_SELECTED_CREDENTIAL"; payload: string }
     | { type: "SET_LOADING_CREDENTIALS"; payload: boolean }
@@ -1069,49 +1124,66 @@ export default function NewPool() {
 
                     {loadingResources ? (
                         <div className="text-center py-12 text-muted-foreground">Loading available resources...</div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {availableResources
-                                .filter(res => {
-                                    const matchesSearch = res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase());
-                                    const matchesVram = res.gpu_memory_gb >= minVram;
-                                    // gpu_vendor is set by the AWS adapter; for legacy
-                                    // providers (Nosana/Akash) the field is missing —
-                                    // treat that as "nvidia" so existing flows are
-                                    // unaffected when the chip is on its default.
-                                    const vendor = (res as any).gpu_vendor || "nvidia";
-                                    const matchesVendor =
-                                        gpuVendorFilter === "all" ||
-                                        (gpuVendorFilter === "nvidia" && vendor === "nvidia") ||
-                                        (gpuVendorFilter === "other" && (vendor === "amd" || vendor === "intel" || vendor === "other")) ||
-                                        (gpuVendorFilter === "none" && vendor === "none");
-                                    return matchesSearch && matchesVram && matchesVendor;
-                                })
-                                .sort((a, b) => {
-                                    if (sortBy === "price_asc") {
-                                        const pa = a.price_per_hour ?? Infinity;
-                                        const pb = b.price_per_hour ?? Infinity;
-                                        return pa - pb;
-                                    }
-                                    if (sortBy === "price_desc") {
-                                        const pa = a.price_per_hour ?? Infinity;
-                                        const pb = b.price_per_hour ?? Infinity;
-                                        return pb - pa;
-                                    }
-                                    if (sortBy === "memory") return b.gpu_memory_gb - a.gpu_memory_gb;
-                                    return 0;
-                                })
-                                .map((res: any) => (
-                                    <ResourceCard
-                                        key={res.provider_resource_id}
-                                        resource={res}
-                                        isSelected={selectedResource?.provider_resource_id === res.provider_resource_id}
-                                        onSelect={(r) => dispatch({ type: "SET_RESOURCE", payload: r })}
-                                    />
-                                ))}
-                        </div>
-                    )}
+                    ) : (() => {
+                        // Determine whether this provider is a DePIN provider
+                        // (Nosana/Akash) — used for availability badge and banner.
+                        const providerMeta = providers.find(p => p.id === selectedProvider);
+                        const isDePIN = providerMeta?.category === "depin" || ["nosana", "akash"].includes(selectedProvider);
+
+                        const filteredResources = availableResources
+                            .filter(res => {
+                                const matchesSearch = res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                    res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase());
+                                const matchesVram = res.gpu_memory_gb >= minVram;
+                                // gpu_vendor is set by the AWS adapter; for legacy
+                                // providers (Nosana/Akash) the field is missing —
+                                // treat that as "nvidia" so existing flows are
+                                // unaffected when the chip is on its default.
+                                const vendor = (res as any).gpu_vendor || "nvidia";
+                                const matchesVendor =
+                                    gpuVendorFilter === "all" ||
+                                    (gpuVendorFilter === "nvidia" && vendor === "nvidia") ||
+                                    (gpuVendorFilter === "other" && (vendor === "amd" || vendor === "intel" || vendor === "other")) ||
+                                    (gpuVendorFilter === "none" && vendor === "none");
+                                return matchesSearch && matchesVram && matchesVendor;
+                            });
+
+                        // Availability-first sort: markets with online_nodes > 0
+                        // always rank above 0-node markets (a 0-node market can't
+                        // take a deploy). Within each tier the user's chosen sortBy
+                        // applies.
+                        const sortedResources = sortResourcesByAvailability(filteredResources, sortBy);
+
+                        // Empty-network banner: DePIN provider + non-empty list + all zero
+                        const allZeroNodes = isDePIN &&
+                            availableResources.length > 0 &&
+                            availableResources.every(r => getOnlineNodeCount(r) === 0);
+
+                        return (
+                            <>
+                                {allZeroNodes && (
+                                    <div className="rounded-lg border border-amber-400/40 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+                                        Reported idle-operator counts are 0 across all markets right now. These counts are approximate — Nosana queues a deployment until an operator in the chosen market is free, so you can still create the pool and deploy (it may take a little longer to start).
+                                    </div>
+                                )}
+                                {/* Scrollable resource grid — bounded height so 46+ markets
+                                    don't push the page. Search + vendor chips above scroll. */}
+                                <div className="max-h-[28rem] overflow-y-auto pr-1">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {sortedResources.map((res: any) => (
+                                            <ResourceCard
+                                                key={res.provider_resource_id}
+                                                resource={res}
+                                                isSelected={selectedResource?.provider_resource_id === res.provider_resource_id}
+                                                onSelect={(r) => dispatch({ type: "SET_RESOURCE", payload: r })}
+                                                showOnlineNodes={isDePIN}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </>
+                        );
+                    })()}
 
                     <div className="flex justify-between pt-6">
                         <button
@@ -1378,12 +1450,20 @@ function ResourceFilter({ searchQuery, setSearchQuery, minVram, setMinVram, sort
                 <option value="price_asc">Price: Low to High</option>
                 <option value="price_desc">Price: High to Low</option>
                 <option value="memory">Memory: High to Low</option>
+                <option value="availability">Availability: Online First</option>
             </select>
         </div>
     )
 }
 
-function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, isSelected: boolean, onSelect: (r: any) => void }) {
+function ResourceCard({ resource: res, isSelected, onSelect, showOnlineNodes = false }: {
+    resource: any;
+    isSelected: boolean;
+    onSelect: (r: any) => void;
+    /** When true (DePIN providers) render the online-operators badge. */
+    showOnlineNodes?: boolean;
+}) {
+    const onlineCount = showOnlineNodes ? getOnlineNodeCount(res) : null;
     return (
         <button
             type="button"
@@ -1408,6 +1488,22 @@ function ResourceCard({ resource: res, isSelected, onSelect }: { resource: any, 
                 <span>{res.vcpu} vCPU</span> • <span>{res.ram_gb}GB RAM</span>
             </div>
             {res.pricing_model && res.pricing_model !== 'fixed' && <div className="mt-1"><span className="text-[10px] bg-ember-100 text-ember-700 px-1.5 py-0.5 rounded capitalize">{res.pricing_model}</span></div>}
+            {/* Online-operator badge — only rendered for DePIN providers */}
+            {onlineCount !== null && (
+                <div className="mt-2">
+                    {onlineCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" />
+                            {onlineCount} online
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground dark:bg-muted/40">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
+                            0 online
+                        </span>
+                    )}
+                </div>
+            )}
             {isSelected && <div className="absolute top-4 right-4 w-5 h-5 bg-ember-600 text-white rounded-full flex items-center justify-center"><Check className="w-3 h-3" /></div>}
         </button>
     )

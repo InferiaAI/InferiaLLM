@@ -8,6 +8,7 @@ ComputePoolRepository.ensure_default_pool).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -274,6 +275,108 @@ async def get_node(
     return _to_view(row)
 
 
+@router.get("/{node_id}/log-stream")
+async def get_node_log_stream(
+    node_id: str = Path(...),
+    request: Request = None,
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    """WS connection info for streaming a node's live container logs.
+
+    The dashboard node ``Logs`` tab is node-scoped. Worker/cloud-worker nodes
+    stream over the worker control channel (the existing
+    ``/v1/admin/workers/{id}/logs`` path). DePIN nodes (Nosana/Akash) have NO
+    worker channel — hitting that path returns ``worker offline`` and the tab
+    shows nothing. For those we reuse the provider's log-streaming info (the
+    exact live path the deployment ``Terminal Logs`` tab already uses), so the
+    node Logs tab shows real container output.
+
+    Returns ``{ws_url, subscription}`` (worker path) or the adapter's streaming
+    info (DePIN), or ``{"error": ...}`` when the job has no node assigned yet —
+    which the dashboard surfaces as a retryable state.
+    """
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+
+    provider = row.get("provider") if hasattr(row, "get") else row["provider"]
+
+    from orchestration.provisioning.engine.registry import (
+        get_adapter,
+        is_direct_provision_provider,
+    )
+
+    # Route by PROVIDER, never agent_kind: a DePIN placeholder node keeps
+    # agent_kind="worker" even though provider="nosana" and it has no worker
+    # channel — gating on agent_kind would send it back to the broken worker
+    # path. Worker-backed providers (worker/aws/on_prem/gcp/azure) keep the
+    # worker-channel logs path byte-identical to today.
+    if not is_direct_provision_provider(provider):
+        return {
+            "ws_url": f"/v1/admin/workers/{node_id}/logs",
+            "subscription": {
+                "type": "subscribe_logs",
+                "provider": "worker",
+                "node_id": str(node_id),
+            },
+        }
+
+    # DePIN: reuse the provider's live log stream (keyed on the provider job
+    # id + node address), same machinery as the deployment Terminal Logs tab.
+    provider_instance_id = (
+        row.get("provider_instance_id") if hasattr(row, "get") else None
+    )
+    if not provider_instance_id or str(provider_instance_id).startswith("placeholder:"):
+        return {"error": "Node has no provider job assigned yet."}
+
+    # Resolve the pool's named credential (multi-credential support).
+    pool_cred = None
+    pool_id = row.get("pool_id") if hasattr(row, "get") else None
+    if pool_id is not None and _deps.pool_repo is not None:
+        try:
+            pool_row = await _deps.pool_repo.get(pool_id)
+            if pool_row is not None:
+                pool_cred = (
+                    pool_row.get("provider_credential_name")
+                    if hasattr(pool_row, "get")
+                    else pool_row["provider_credential_name"]
+                )
+        except Exception:
+            logger.warning(
+                "get_node_log_stream: failed to read pool credential for "
+                "node=%s pool=%s; trying without it",
+                node_id,
+                pool_id,
+                exc_info=True,
+            )
+
+    try:
+        adapter = get_adapter(provider)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Live logs not available: {e}"}
+    if not hasattr(adapter, "get_log_streaming_info"):
+        return {"error": "Live logs not available for this provider"}
+
+    import inspect
+
+    extra: dict[str, Any] = {}
+    sig = inspect.signature(adapter.get_log_streaming_info)
+    via_gateway = (
+        request is not None
+        and request.headers.get("x-gateway-request", "").lower() == "true"
+    )
+    if "base_url" in sig.parameters and via_gateway and request is not None:
+        extra["base_url"] = str(request.base_url)
+    if "provider_credential_name" in sig.parameters and pool_cred:
+        extra["provider_credential_name"] = pool_cred
+    try:
+        return await adapter.get_log_streaming_info(
+            provider_instance_id=provider_instance_id, **extra
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
 @router.get("/{node_id}/deploy-metrics/{deployment_id}")
 async def get_node_deploy_metrics(
     node_id: str = Path(...),
@@ -381,6 +484,50 @@ async def delete_node(
             "is unwired; cannot guarantee EC2 teardown via the state machine",
             node_id,
         )
+
+    # Direct-provision (DePIN: nosana/akash/k8s) fall-through. These nodes have
+    # no reconciler job, so they reach this soft-delete branch. They record a
+    # provider_instance_id (e.g. the Nosana job address) that keeps an EXTERNAL
+    # PAID job running until the adapter stops it — soft_delete_node alone leaks
+    # it. Stop the external job INLINE (fast sidecar call) BEFORE soft-deleting.
+    from orchestration.provisioning.engine.registry import (
+        _deprovision_direct_node,
+        is_direct_provision_provider,
+    )
+    if is_direct_provision_provider(provider):
+        pool_cred = None
+        pool_id = existing.get("pool_id")
+        if pool_id is not None and _deps.pool_repo is not None and hasattr(
+            _deps.pool_repo, "get",
+        ):
+            try:
+                pool_row = await _deps.pool_repo.get(pool_id)
+                if pool_row is not None:
+                    pool_cred = (
+                        pool_row.get("provider_credential_name")
+                        if hasattr(pool_row, "get")
+                        else pool_row["provider_credential_name"]
+                    )
+            except Exception:
+                logger.warning(
+                    "delete_node: failed to read pool credential for node=%s "
+                    "pool=%s; deprovisioning without it",
+                    node_id, pool_id, exc_info=True,
+                )
+        ok, err = await _deprovision_direct_node(
+            existing, pool_credential_name=pool_cred,
+        )
+        if not ok and hasattr(_deps.inventory_repo, "mark_deprovision_failed_node"):
+            try:
+                await _deps.inventory_repo.mark_deprovision_failed_node(
+                    node_id=node_id, reason=err,
+                )
+            except Exception:
+                logger.warning(
+                    "delete_node: failed to stamp deprovision_failed marker "
+                    "for node=%s", node_id, exc_info=True,
+                )
+
     await _deps.inventory_repo.soft_delete_node(node_id=node_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -432,6 +579,222 @@ async def retry_provisioning(
 # ---------------------------------------------------------------------------
 # Provisioning / EC2 console endpoints.
 # ---------------------------------------------------------------------------
+
+
+async def _lookup_deployment_for_node(node_id):
+    """Best-effort (state, error_message) of the deployment bound to a node,
+    via the wired db_pool. Returns (None, None) if unavailable."""
+    db = _deps.db_pool
+    if db is None:
+        return None, None
+    try:
+        nuuid = uuid.UUID(str(node_id))
+    except (ValueError, TypeError):
+        return None, None
+    try:
+        async with db.acquire() as c:
+            drow = await c.fetchrow(
+                """
+                SELECT state, error_message FROM model_deployments
+                WHERE target_node_id = $1 OR $1 = ANY(node_ids)
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                nuuid,
+            )
+        if drow:
+            return drow["state"], drow["error_message"]
+    except Exception:
+        logger.warning(
+            "nosana provisioning: deployment lookup failed for node %s",
+            node_id, exc_info=True,
+        )
+    return None, None
+
+
+async def _nosana_provisioning_summary(row, node_id) -> "ProvisioningSummary":
+    """Synthesize a Nosana-relevant provisioning timeline from the deployment
+    lifecycle + node state (DePIN emits no node_provisioning_events):
+
+        Job scheduling -> Pulling image & loading model -> Endpoint serving
+
+    Coarse but accurate: PENDING_NODE→scheduling, DEPLOYING→loading,
+    RUNNING→serving, FAILED→failed at the load step (with the deploy's error)."""
+    node_state = (row.get("state") or "").lower()
+    expose_url = row.get("expose_url")
+    dep_state, dep_error = await _lookup_deployment_for_node(node_id)
+    ds = (dep_state or "").upper()
+
+    scheduled = (
+        node_state in ("ready", "terminated")
+        or ds in ("DEPLOYING", "RUNNING", "FAILED")
+        or bool(expose_url)
+    )
+
+    if ds == "RUNNING":
+        load_status, ready_status = "succeeded", "succeeded"
+    elif ds == "FAILED":
+        load_status, ready_status = "failed", "failed"
+    elif ds == "DEPLOYING" or scheduled:
+        load_status, ready_status = "running", "pending"
+    else:
+        load_status, ready_status = "pending", "pending"
+
+    def _ph(phase, status, msg):
+        return ProvisioningPhase(
+            phase=phase, status=status, started_at=None, ended_at=None,
+            last_message=msg,
+        )
+
+    phases = [
+        _ph(
+            "scheduling",
+            "succeeded" if scheduled else "running",
+            "Scheduled on a Nosana node" if scheduled
+            else "Scheduling the job on a Nosana node…",
+        ),
+        _ph(
+            "loading", load_status,
+            {
+                "succeeded": "Model server is ready",
+                "failed": "Container exited during model load",
+                "running": "Pulling image & loading the model…",
+                "pending": "Waiting for the node to be scheduled",
+            }[load_status],
+        ),
+        _ph(
+            "serving", ready_status,
+            {
+                "succeeded": "Endpoint is serving",
+                "failed": "Deployment failed",
+                "pending": "Waiting for the endpoint to serve…",
+            }[ready_status],
+        ),
+    ]
+
+    current_phase = "serving"
+    for p in phases:
+        if p.status != "succeeded":
+            current_phase = p.phase
+            break
+    terminal = ds in ("RUNNING", "FAILED") or node_state == "terminated"
+    error_block = None
+    if ds == "FAILED":
+        error_block = {
+            "code": "DEPLOY_FAILED",
+            "message": dep_error or "the deployment failed",
+            "hint": None,
+            "class": "PERMANENT",
+        }
+    return ProvisioningSummary(
+        current_phase=current_phase,
+        terminal=terminal,
+        phases=phases,
+        attempt_count=0,
+        error=error_block,
+        aws_metadata=None,
+        job_id=None,
+    )
+
+
+class DepinDetails(BaseModel):
+    provider: str
+    job_address: str | None = None
+    node_address: str | None = None
+    deployment_address: str | None = None
+    run_address: str | None = None
+    market: str | None = None
+    service_url: str | None = None
+    image: str | None = None
+    mode: str | None = None
+    tx: str | None = None
+    provider_credential_name: str | None = None
+    gpu_total: int | None = None
+    price: str | None = None
+    job_state: str | None = None
+    created_at: str | None = None
+
+
+@router.get("/{node_id}/depin-details", response_model=DepinDetails)
+async def get_depin_details(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    """Per-node instance details for a DePIN (Nosana/Akash) node — the Instance
+    Details tab. Reads the node's stored metadata (which ``NodeView`` drops)
+    plus a one-shot live job poll for node/deployment addresses, service URL,
+    price and current job state. The live poll degrades to ``None`` on error."""
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    provider = row.get("provider")
+    from orchestration.provisioning.engine.registry import (
+        get_adapter,
+        is_direct_provision_provider,
+    )
+    if not is_direct_provision_provider(provider):
+        raise HTTPException(400, "node is not a DePIN instance")
+
+    meta = row.get("metadata")
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (ValueError, TypeError):
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+
+    pii = row.get("provider_instance_id")
+    created = row.get("created_at")
+
+    # Live fields (best-effort): node/deployment addresses, service URL, price,
+    # current job state. Never raises — returns {} on any error.
+    live: dict = {}
+    if pii and not str(pii).startswith("placeholder:"):
+        cred = None
+        pool_id = row.get("pool_id")
+        if pool_id is not None and _deps.pool_repo is not None:
+            try:
+                pool_row = await _deps.pool_repo.get(pool_id)
+                if pool_row is not None:
+                    cred = (
+                        pool_row.get("provider_credential_name")
+                        if hasattr(pool_row, "get")
+                        else pool_row["provider_credential_name"]
+                    )
+            except Exception:
+                logger.warning(
+                    "get_depin_details: pool credential lookup failed for %s",
+                    node_id, exc_info=True,
+                )
+        try:
+            adapter = get_adapter(provider)
+            if hasattr(adapter, "get_node_details"):
+                live = await adapter.get_node_details(
+                    provider_instance_id=pii, provider_credential_name=cred,
+                )
+        except Exception:
+            logger.warning(
+                "get_depin_details: live poll failed for %s", node_id,
+                exc_info=True,
+            )
+
+    return DepinDetails(
+        provider=provider,
+        job_address=pii if pii and not str(pii).startswith("placeholder:") else meta.get("job_address"),
+        node_address=live.get("node_address"),
+        deployment_address=live.get("deployment_address"),
+        run_address=live.get("run_address"),
+        market=live.get("market"),
+        service_url=live.get("service_url") or row.get("expose_url"),
+        image=meta.get("image"),
+        mode=meta.get("mode"),
+        tx=meta.get("tx"),
+        provider_credential_name=meta.get("provider_credential_name"),
+        gpu_total=row.get("gpu_total"),
+        price=str(live["price"]) if live.get("price") is not None else None,
+        job_state=live.get("job_state"),
+        created_at=created.isoformat() if hasattr(created, "isoformat") else (str(created) if created else None),
+    )
 
 
 @router.get("/{node_id}/provisioning", response_model=ProvisioningSummary)
@@ -496,6 +859,14 @@ async def get_provisioning(
             "instance_id":    outs.get("instance_id"),
             "public_dns":     outs.get("public_dns"),
         }
+
+    # Nosana (DePIN) emits NO node_provisioning_events (direct_provision drives
+    # the deploy via deployment-state transitions only), so the generic phase
+    # summary below is empty and the provisioning tab would be blank. Synthesize
+    # a Nosana-relevant 3-step timeline from the deployment lifecycle + node
+    # state instead. Guarded on provider so AWS/worker paths are untouched.
+    if row.get("provider") == "nosana":
+        return await _nosana_provisioning_summary(row, node_id)
 
     # Phases summary via the legacy node_provisioning_events log. Repo
     # may be None for nodes that predate the event log entirely
