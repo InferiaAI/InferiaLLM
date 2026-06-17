@@ -88,6 +88,27 @@ async def consume_terminate_requests(worker, event_bus, semaphore):
         asyncio.create_task(process_terminate(msg_id, event))
 
 
+async def consume_reload_requests(worker, event_bus, semaphore):
+    async def process_reload(msg_id, event):
+        async with semaphore:
+            try:
+                log.info(f"Processing reload event: {event}")
+                deployment_id = UUID(event["deployment_id"])
+                await worker.handle_reload_requested(deployment_id)
+                await event_bus.redis.xack("model.deployment.reload", "deployment-workers", msg_id)
+                log.info(f"Successfully processed reload event for {deployment_id}")
+            except Exception:
+                log.exception("Failed to process reload event")
+
+    async for msg_id, event in event_bus.consume(
+        stream="model.deployment.reload",
+        group="deployment-workers",
+        consumer="worker-1",
+    ):
+        log.info(f"Received reload event: {event}. Spawning task.")
+        asyncio.create_task(process_reload(msg_id, event))
+
+
 async def health_check_loop(inventory_repo, deployment_repo):
     log.info("Starting health check loop")
     while True:
@@ -196,6 +217,7 @@ async def main():
     await asyncio.gather(
         consume_deploy_requests(worker, event_bus, deploy_semaphore),
         consume_terminate_requests(worker, event_bus, deploy_semaphore),
+        consume_reload_requests(worker, event_bus, deploy_semaphore),
         health_check_loop(inventory_repo, deployment_repo),
     )
     

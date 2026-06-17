@@ -292,15 +292,30 @@ class ModelDeploymentController:
         if not d:
             raise ValueError("Deployment not found")
 
-        await self.deployments.update(
-            deployment_id=deployment_id,
-            configuration=configuration,
-            inference_model=inference_model,
-            endpoint=endpoint,
-            replicas=replicas,
-        )
+        async with self.deployments.transaction() as tx:
+            await self.deployments.update(
+                deployment_id=deployment_id,
+                configuration=configuration,
+                inference_model=inference_model,
+                endpoint=endpoint,
+                replicas=replicas,
+                tx=tx,
+            )
 
-        # Emit event for tracking
+            await self.outbox.enqueue(
+                aggregate_type="model_deployment",
+                aggregate_id=deployment_id,
+                event_type="model.deployment.reload",
+                payload={
+                    "deployment_id": str(deployment_id),
+                    "configuration": configuration,
+                    "inference_model": inference_model,
+                    "replicas": replicas,
+                },
+                tx=tx,
+            )
+
+        # Emit event for tracking (outside transaction)
         await self.event_bus.publish(
             "model.deployment.updated",
             {

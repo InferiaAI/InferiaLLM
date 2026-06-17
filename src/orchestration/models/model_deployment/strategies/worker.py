@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import uuid
 
+from orchestration.models.model_deployment.deployment_linker import (
+    _build_disagg_spec,
+    _resolve_recipe,
+)
+
 
 class WorkerDeploymentStrategy:
     """
@@ -72,15 +77,10 @@ class WorkerDeploymentStrategy:
             model_config = model.get("config") or {}
             prefill_replicas = model_config.get("prefill_replicas", 0)
             decode_replicas = model_config.get("decode_replicas", 0)
-            has_disagg = prefill_replicas > 0 or decode_replicas > 0
 
-            recipe = model.get("backend", "vllm")
-            if has_disagg and recipe not in ("vllm-prefill-decode", "sglang-prefill-decode"):
-                disagg_recipe_map = {
-                    "vllm": "vllm-prefill-decode",
-                    "sglang": "sglang-prefill-decode",
-                }
-                recipe = disagg_recipe_map.get(recipe, recipe)
+            recipe = _resolve_recipe(
+                model.get("backend", "vllm"), prefill_replicas, decode_replicas
+            )
 
             spec = {
                 "deployment_id": str(deployment_id),
@@ -95,16 +95,8 @@ class WorkerDeploymentStrategy:
                 "port": 0,  # let the worker allocate
             }
 
-            # Propagate disagg fields for multi-container deployments
-            if has_disagg:
-                spec["prefill_replicas"] = prefill_replicas
-                spec["decode_replicas"] = decode_replicas or 1
-                spec["prefill_gpu_indices"] = model_config.get(
-                    "prefill_gpu_indices"
-                ) or list(range(gpu_per_replica))
-                spec["decode_gpu_indices"] = model_config.get(
-                    "decode_gpu_indices"
-                ) or list(range(gpu_per_replica))
+            if prefill_replicas > 0 or decode_replicas > 0:
+                _build_disagg_spec(spec, model_config, prefill_replicas, decode_replicas, list(range(gpu_per_replica)))
             result = await self.controller.load_model(
                 node_id=str(node_id), spec=spec,
             )

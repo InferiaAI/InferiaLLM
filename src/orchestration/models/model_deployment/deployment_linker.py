@@ -42,6 +42,30 @@ from orchestration.models.model_cache import deps as _mc_deps
 logger = logging.getLogger(__name__)
 
 
+DISAGG_RECIPE_MAP = {
+    "vllm": "vllm-prefill-decode",
+    "sglang": "sglang-prefill-decode",
+}
+
+
+def _resolve_recipe(engine: str, prefill_replicas: int, decode_replicas: int) -> str:
+    """Upgrade recipe to prefill-decode variant when disagg is active."""
+    if (prefill_replicas > 0 or decode_replicas > 0) and engine not in (
+        "vllm-prefill-decode", "sglang-prefill-decode",
+    ):
+        return DISAGG_RECIPE_MAP.get(engine, engine)
+    return engine
+
+
+def _build_disagg_spec(spec: dict, cfg: dict, prefill_replicas: int, decode_replicas: int, gpu_indices: list[int]) -> None:
+    """Mutate spec in-place with disagg fields."""
+    spec["prefill_replicas"] = prefill_replicas
+    spec["decode_replicas"] = decode_replicas or 1
+    # GPU index assignment is owned by the worker's GPUAllocator.
+    # Omit prefill_gpu_indices / decode_gpu_indices so the worker
+    # defaults both to GPUIndices and partitions via its allocator.
+
+
 def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     """Build the load_model spec from a list_pending_for_pool row.
 
@@ -73,14 +97,7 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     gpu_indices = list(range(gpu_required))
     prefill_replicas = cfg.get("prefill_replicas", 0)
     decode_replicas = cfg.get("decode_replicas", 0)
-    has_disagg = prefill_replicas > 0 or decode_replicas > 0
-
-    if has_disagg and recipe not in ("vllm-prefill-decode", "sglang-prefill-decode"):
-        disagg_recipe_map = {
-            "vllm": "vllm-prefill-decode",
-            "sglang": "sglang-prefill-decode",
-        }
-        recipe = disagg_recipe_map.get(recipe, recipe)
+    recipe = _resolve_recipe(deploy.get("engine") or "vllm", prefill_replicas, decode_replicas)
 
     spec: dict = {
         "deployment_id": str(deploy["id"]),
@@ -101,11 +118,8 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         "env": dict(cfg.get("env") or {}),
     }
 
-    if has_disagg:
-        spec["prefill_replicas"] = prefill_replicas
-        spec["decode_replicas"] = decode_replicas or 1
-        spec["prefill_gpu_indices"] = cfg.get("prefill_gpu_indices") or gpu_indices
-        spec["decode_gpu_indices"] = cfg.get("decode_gpu_indices") or gpu_indices
+    if prefill_replicas > 0 or decode_replicas > 0:
+        _build_disagg_spec(spec, cfg, prefill_replicas, decode_replicas, gpu_indices)
 
     return spec
 

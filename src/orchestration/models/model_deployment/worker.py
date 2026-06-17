@@ -808,3 +808,50 @@ class ModelDeploymentWorker:
                 "Reconciler-managed teardown failed for deployment %s",
                 deployment_id,
             )
+
+    # -------------------------------------------------
+    # RELOAD HANDLER (config update)
+    # -------------------------------------------------
+    async def handle_reload_requested(self, deployment_id: UUID):
+        """Re-send load_model to the worker when configuration changes.
+
+        This ensures the worker picks up updated config (e.g., prefill/decode
+        settings, engine changes) without requiring a full redeploy cycle.
+        """
+        from orchestration.models.model_deployment.deployment_linker import (
+            _spec_from_pending,
+        )
+
+        d = await self.deployments.get(deployment_id)
+        if not d:
+            log.warning("Reload: deployment %s not found", deployment_id)
+            return
+
+        state = d.get("state")
+        if state != "RUNNING":
+            log.info(
+                "Reload: skipping deployment %s (state=%s, not RUNNING)",
+                deployment_id, state,
+            )
+            return
+
+        node_id = d.get("target_node_id")
+        if not node_id:
+            log.warning("Reload: deployment %s has no bound node", deployment_id)
+            return
+
+        try:
+            gpu_per_replica = d.get("gpu_per_replica") or 1
+            spec = _spec_from_pending(d, gpu_required=gpu_per_replica)
+            result = await self.worker_controller.load_model(
+                node_id=str(node_id), spec=spec,
+            )
+            if result.status == "ok":
+                log.info("Reload: deployment %s config reloaded on node %s", deployment_id, node_id)
+            else:
+                log.warning(
+                    "Reload: deployment %s load_model returned %s: %s",
+                    deployment_id, result.status, result.detail,
+                )
+        except Exception:
+            log.exception("Reload: failed to reload deployment %s", deployment_id)
