@@ -861,6 +861,27 @@ async def proxy_admin_aws_discovery(
 LLMFIT_SKIP_PREFIXES = frozenset({"/health"})
 
 
+@router.api_route("/llmfit/health", methods=["GET"])
+async def proxy_llmfit_health(request: Request):
+    """Unauthenticated health check for llmfit sidecar."""
+    url = f"{LLMFIT_URL}/health"
+    headers = dict(request.headers)
+    headers.pop("X-Internal-API-Key", None)
+    headers["X-Internal-API-Key"] = settings.internal_api_key
+    headers["X-Gateway-Request"] = "true"
+    content = await request.body()
+    try:
+        client = gateway_http_client.get_proxy_client()
+        response = await client.get(url, headers=headers, params=request.query_params)
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail=f"llmfit unavailable: {e}")
+
+
 @router.api_route("/llmfit/{path:path}", methods=["GET"])
 async def proxy_llmfit(
     request: Request,
@@ -868,11 +889,10 @@ async def proxy_llmfit(
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
     """Proxy model-fit queries to the llmfit sidecar (read-only).
-    Requires DEPLOYMENT_LIST. Skips RBAC for health checks."""
-    if path not in LLMFIT_SKIP_PREFIXES:
-        authz_service.require_permission(
-            user_context, PermissionEnum.DEPLOYMENT_LIST
-        )
+    Requires DEPLOYMENT_LIST."""
+    authz_service.require_permission(
+        user_context, PermissionEnum.DEPLOYMENT_LIST
+    )
     return await proxy_request(
         method=request.method,
         path=path,
