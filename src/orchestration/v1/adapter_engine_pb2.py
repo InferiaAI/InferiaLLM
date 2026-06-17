@@ -22,6 +22,7 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14\x61\x64\x61pter_engine.proto\x12\x10orchestration.v1\x1a\x1bgoogle/protobuf/empty.proto\"#\n\x0f\x44iscoverRequest\x12\x10\n\x08provider\x18\x01 \x01(\t\"\x94\x02\n\x14ProvisionNodeRequest\x12\x10\n\x08provider\x18\x01 \x01(\t\x12\x1c\n\x14provider_resource_id\x18\x02 \x01(\t\x12\x0f\n\x07pool_id\x18\x03 \x01(\t\x12\x0e\n\x06region\x18\x04 \x01(\t\x12\x10\n\x08use_spot\x18\x05 \x01(\x08\x12\x46\n\x08metadata\x18\x06 \x03(\x0b\x32\x34.orchestration.v1.ProvisionNodeRequest.MetadataEntry\x12 \n\x18provider_credential_name\x18\x07 \x01(\t\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"(\n\x15ProvisionNodeResponse\x12\x0f\n\x07node_id\x18\x01 \x01(\t\"\x0e\n\x0c\x45mptyMessage2\xc9\x01\n\rAdapterEngine\x12V\n\x19\x44iscoverProviderResources\x12!.orchestration.v1.DiscoverRequest\x1a\x16.google.protobuf.Empty\x12`\n\rProvisionNode\x12&.orchestration.v1.ProvisionNodeRequest\x1a\'.orchestration.v1.ProvisionNodeResponseb\x06proto3')

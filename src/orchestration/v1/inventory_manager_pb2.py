@@ -22,6 +22,7 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17inventory_manager.proto\x12\x10orchestration.v1\x1a\x1bgoogle/protobuf/empty.proto\"\xaa\x01\n\x18InvenRegisterNodeRequest\x12\x0f\n\x07pool_id\x18\x01 \x01(\t\x12\x10\n\x08provider\x18\x02 \x01(\t\x12\x1c\n\x14provider_instance_id\x18\x03 \x01(\t\x12\x11\n\tgpu_total\x18\x04 \x01(\x05\x12\x12\n\nvcpu_total\x18\x05 \x01(\x05\x12\x14\n\x0cram_gb_total\x18\x06 \x01(\x05\x12\x10\n\x08hostname\x18\x07 \x01(\t\"\xa6\x01\n\x15InvenHeartbeatRequest\x12\x10\n\x08provider\x18\x01 \x01(\t\x12\x1c\n\x14provider_instance_id\x18\x02 \x01(\t\x12\x15\n\rgpu_allocated\x18\x03 \x01(\x05\x12\x16\n\x0evcpu_allocated\x18\x04 \x01(\x05\x12\x18\n\x10ram_gb_allocated\x18\x05 \x01(\x05\x12\x14\n\x0chealth_score\x18\x06 \x01(\x05\"\x0c\n\nInvenEmpty2\xbe\x01\n\x10InventoryManager\x12W\n\x11InvenRegisterNode\x12*.orchestration.v1.InvenRegisterNodeRequest\x1a\x16.google.protobuf.Empty\x12Q\n\x0eInvenHeartbeat\x12\'.orchestration.v1.InvenHeartbeatRequest\x1a\x16.google.protobuf.Emptyb\x06proto3')
