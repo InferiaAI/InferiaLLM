@@ -11,8 +11,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from orchestration.workers.worker_controller.auth import (
     InvalidBootstrapToken,
@@ -219,6 +218,7 @@ async def register_worker(
             advertise_url=body.advertise_url,
             allocatable=body.allocatable,
             labels=labels if labels else None,
+            group_id=body.group_id,
         )
     except DuplicateNodeError as e:
         raise HTTPException(409, str(e))

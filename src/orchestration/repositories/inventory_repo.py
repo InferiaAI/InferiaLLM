@@ -715,10 +715,16 @@ class InventoryRepository:
         gpu_total: int,
         initial_alloc: int,
         agent_kind: str = "worker",
+        group_id: str | None = None,
         tx=None,
     ) -> UUID:
         """Insert a state='provisioning' placeholder for a pool whose
         node hasn't booted yet.
+
+        Pass ``group_id`` to assign the node to an Envoy proxy group.
+        Nodes sharing the same group_id are load-balanced together.
+        When set to ``str(pool_id)`` and every node in the pool carries
+        it, the front Envoy collapses them into one cluster.
 
         Pass `tx` so this insert lands in the caller's transaction (T7's
         deploy_model uses this to atomically pair ColdStart + placeholder
@@ -730,17 +736,19 @@ class InventoryRepository:
               id, pool_id, provider, provider_instance_id, hostname,
               node_name, agent_kind, gpu_total, gpu_allocated,
               vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
-              state, metadata
+              state, metadata, group_id
             )
             VALUES (
               $1, $2,
               (SELECT provider FROM compute_pools WHERE id=$2),
               $3, '', $4, $5,
-              $6, $7, 0, 0, 0, 0, 'provisioning', '{}'::jsonb
+              $6, $7, 0, 0, 0, 0, 'provisioning', '{}'::jsonb,
+              $8
             )
             """
         args = (node_id, pool_id, f"placeholder:{node_id}",
-                f"node-{node_id}", agent_kind, gpu_total, initial_alloc)
+                f"node-{node_id}", agent_kind, gpu_total, initial_alloc,
+                group_id)
         if tx is not None:
             await tx.execute(q, *args)
         else:
@@ -760,7 +768,7 @@ class DuplicateNodeError(Exception):
 
 
 async def _upsert_worker_impl(
-    self, *, pool_id, node_name, advertise_url, allocatable, labels=None,
+    self, *, pool_id, node_name, advertise_url, allocatable, labels=None, group_id=None,
 ):
     """Upsert a (pool_id, node_name) row with agent_kind='worker'.
 
@@ -797,19 +805,22 @@ async def _upsert_worker_impl(
             INSERT INTO compute_inventory (
                 pool_id, node_name, agent_kind, state,
                 advertise_url, gpu_total, vcpu_total, ram_gb_total,
-                provider, provider_instance_id, metadata, labels
+                provider, provider_instance_id, metadata, labels,
+                group_id
             )
             VALUES ($1, $2, 'worker', 'provisioning', $3,
                     COALESCE(($4::jsonb ->> 'gpu')::int, 0),
                     COALESCE(($4::jsonb ->> 'cpu')::int, 0),
                     COALESCE(($4::jsonb ->> 'memory_gb')::int, 0),
-                    'on_prem', $5, $4, $6::jsonb)
+                    'on_prem', $5, $4, $6::jsonb,
+                    $7)
             ON CONFLICT (pool_id, node_name)
                 WHERE agent_kind = 'worker' AND node_name IS NOT NULL
             DO UPDATE SET
                 advertise_url = EXCLUDED.advertise_url,
                 metadata = EXCLUDED.metadata,
                 labels = compute_inventory.labels || EXCLUDED.labels,
+                group_id = COALESCE(EXCLUDED.group_id, compute_inventory.group_id),
                 -- Resource totals are refreshed only when the incoming
                 -- payload actually reports a non-zero value. The
                 -- /api/v1/nodes/add/worker route pre-creates a placeholder
@@ -830,12 +841,13 @@ async def _upsert_worker_impl(
                                     THEN EXCLUDED.ram_gb_total
                                     ELSE compute_inventory.ram_gb_total END,
                 updated_at = now()
-            RETURNING id, pool_id, node_name, agent_kind, state, advertise_url
+            RETURNING id, pool_id, node_name, agent_kind, state, advertise_url, group_id
             """,
             pool_id, node_name, advertise_url,
             __import__("json").dumps(allocatable),
             f"worker-{pool_id}-{node_name}",
             labels_json,
+            group_id,
         )
         return dict(row) if row else {}
 
@@ -1009,7 +1021,8 @@ async def _list_nodes_impl(self, *, org_id, selector=None):
         "       i.vcpu_total, i.vcpu_allocated, i.ram_gb_total,"
         "       i.ram_gb_allocated, i.last_heartbeat, i.labels,"
         "       i.metadata, i.provider, i.provider_instance_id,"
-        "       i.hostname, i.created_at, i.updated_at "
+        "       i.hostname, i.created_at, i.updated_at,"
+        "       i.group_id "
         "FROM compute_inventory i "
         "JOIN compute_pools p ON p.id = i.pool_id "
         # Match owner_id OR org_id: the legacy createpool path stores a user
@@ -1037,7 +1050,8 @@ async def _get_node_impl(self, *, node_id):
                    advertise_url, expose_url, gpu_total, gpu_allocated,
                    vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
                    last_heartbeat, labels, metadata,
-                   provider, provider_instance_id, created_at, updated_at
+                   provider, provider_instance_id, created_at, updated_at,
+                   group_id
             FROM compute_inventory
             WHERE id = $1
             """,

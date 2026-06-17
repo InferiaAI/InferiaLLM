@@ -35,6 +35,7 @@ class RegisterRequest(BaseModel):
     instance_id: Optional[str] = Field(default=None, max_length=128)
     region: Optional[str] = Field(default=None, max_length=64)
     availability_zone: Optional[str] = Field(default=None, max_length=64)
+    group_id: Optional[str] = Field(default=None, max_length=256)
 
 
 class RegisterResponse(BaseModel):

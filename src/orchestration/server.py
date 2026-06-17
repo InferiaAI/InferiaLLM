@@ -8,12 +8,10 @@ This is the main entry point for the orchestration layer that includes:
 """
 
 import asyncio
-import logging
 import os
 import asyncpg
 import grpc
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from common.exception_handlers import register_exception_handlers
@@ -322,8 +320,12 @@ async def serve():
                   ADD COLUMN IF NOT EXISTS tokens_per_second_threshold DOUBLE PRECISION,
                   ADD COLUMN IF NOT EXISTS auto_replica_last_scale_at TIMESTAMP WITHOUT TIME ZONE
             """)
+            await conn.execute("""
+                ALTER TABLE compute_inventory
+                  ADD COLUMN IF NOT EXISTS group_id TEXT
+            """)
     except Exception:
-        logger.warning("auto-replica schema migration failed (non-fatal)", exc_info=True)
+        logger.warning("auto-replica / envoy schema migration failed (non-fatal)", exc_info=True)
 
     # ---------------- Repositories ----------------
     inventory_repo = InventoryRepository(db_pool)

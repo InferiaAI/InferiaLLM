@@ -8,6 +8,11 @@ That proxy:
   * routes to the correct model container via the ``X-Inferia-Deployment-Id``
     header (inferia-worker ``inference.PathResolver``).
 
+When an ``envoy_url`` is configured, worker-hosted deploys are routed through
+the front Envoy proxy instead of directly to the worker.  The Envoy uses the
+``X-Inferia-Route-Cluster`` header to decide which upstream cluster to forward
+to (see docs/specs/2026-06-17-envoy-xds-proxy.md).
+
 These helpers compute the bearer + extra headers + upstream model so the
 completion handler treats worker-hosted and external-provider deploys
 correctly. They are pure (no I/O) for straightforward unit testing.
@@ -18,9 +23,10 @@ from typing import Any, Dict, Optional, Tuple
 
 from .providers import is_external_engine
 
-__all__ = ["provider_auth", "upstream_model"]
+__all__ = ["provider_auth", "upstream_model", "envoy_route_headers"]
 
 DEPLOYMENT_ID_HEADER = "X-Inferia-Deployment-Id"
+ROUTE_CLUSTER_HEADER = "X-Inferia-Route-Cluster"
 
 
 def _credentials(deployment: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,3 +82,36 @@ def upstream_model(deployment: Dict[str, Any]) -> Optional[str]:
         or creds.get("model_id")
         or deployment.get("model_name")
     )
+
+
+def envoy_route_headers(
+    deployment: Dict[str, Any],
+    envoy_url: str | None,
+) -> Tuple[Optional[str], Dict[str, str]]:
+    """Compute (envoy_url_or_None, extra_headers) for Envoy-based routing.
+
+    When ``envoy_url`` is set AND the deployment is worker-hosted (carries
+    an ``inference_token``), the caller should replace the worker's direct
+    ``advertise_url`` with the returned Envoy URL and add the returned
+    headers (which include the ``X-Inferia-Route-Cluster`` header).
+
+    The cluster name is derived from the deployment's ``pool_id``:
+    ``grp-<pool_id>``.  Nodes in the same pool share this cluster and are
+    load-balanced together by the front Envoy.  If no ``pool_id`` is
+    available the cluster defaults to ``inferia-workers`` (a flat cluster
+    containing all healthy workers).
+
+    When the deployment is NOT worker-hosted or ``envoy_url`` is not set,
+    returns (None, {}) — no routing change needed.
+    """
+    inference_token = deployment.get("inference_token")
+    if not inference_token or not envoy_url:
+        return None, {}
+
+    pool_id = deployment.get("pool_id")
+    if pool_id:
+        cluster = f"grp-{pool_id.replace('-', '')}"
+    else:
+        cluster = "inferia-workers"
+
+    return envoy_url, {ROUTE_CLUSTER_HEADER: cluster}
