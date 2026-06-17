@@ -203,14 +203,16 @@ def build_resources(nodes: list[Node]) -> ResourceSet:
         else:
             singletons.append(n)
 
-    # Per-pool engine-filtered clusters.
+    # Per-pool engine-filtered clusters — only for engines with active nodes.
     for pool_id, members in pools.items():
-        for engine in KNOWN_ENGINES:
+        engines_in_pool = {n.engine for n in members if n.engine}
+        for engine in engines_in_pool:
+            engine_members = [n for n in members if n.engine == engine]
             cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}"
-            rs.clusters[cluster_name] = build_cluster(cluster_name, members)
-            rs.endpoints[cluster_name] = build_endpoints(cluster_name, members)
+            rs.clusters[cluster_name] = build_cluster(cluster_name, engine_members)
+            rs.endpoints[cluster_name] = build_endpoints(cluster_name, engine_members)
             rs.eds_version[cluster_name] = _hash(rs.endpoints[cluster_name])
-            for n in members:
+            for n in engine_members:
                 rs.route_table[n.node_id] = cluster_name
 
     # Nodes without a pool_id get their own cluster.
@@ -239,12 +241,23 @@ SOURCE: FileNodeSource | HTTPNodeSource = (
 
 _state_lock = threading.Lock()
 _state = build_resources(SOURCE.nodes())
+_state_fingerprint = ""
+
+
+def _nodes_fingerprint(nodes: list[Node]) -> str:
+    """Fast fingerprint to detect node set changes without deep comparison."""
+    blob = tuple(sorted((n.node_id, n.pool_id, n.engine, n.healthy) for n in nodes))
+    return hashlib.sha1(str(blob).encode()).hexdigest()[:12]
 
 
 def current_state() -> ResourceSet:
-    global _state
+    global _state, _state_fingerprint
     with _state_lock:
-        _state = build_resources(SOURCE.nodes())
+        nodes = SOURCE.nodes()
+        fp = _nodes_fingerprint(nodes)
+        if fp != _state_fingerprint:
+            _state = build_resources(nodes)
+            _state_fingerprint = fp
         return _state
 
 
