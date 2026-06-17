@@ -476,6 +476,28 @@ async def test_get_node_status_error_is_unknown(monkeypatch):
     assert out == "unknown"
 
 
+async def test_get_node_details_returns_live_fields(monkeypatch):
+    import providers.nosana.nosana_adapter as na
+    payload = {"jobState": 1, "nodeAddress": "nA", "serviceUrl": "https://s",
+               "deploymentId": "dA", "runAddress": "rA", "price": "0"}
+    monkeypatch.setattr(na.aiohttp, "ClientSession",
+                        lambda *a, **k: _FakeSession(_FakeResp(200, payload)))
+    out = await NosanaAdapter().get_node_details(provider_instance_id="job1")
+    assert out["job_state"] == "RUNNING"
+    assert out["node_address"] == "nA"
+    assert out["deployment_address"] == "dA"
+    assert out["run_address"] == "rA"
+    assert out["service_url"] == "https://s"
+
+
+async def test_get_node_details_empty_on_error(monkeypatch):
+    import providers.nosana.nosana_adapter as na
+    monkeypatch.setattr(na.aiohttp, "ClientSession",
+                        lambda *a, **k: _FakeSession(_FakeResp(503, {})))
+    out = await NosanaAdapter().get_node_details(provider_instance_id="job1")
+    assert out == {}  # non-200 -> {} (read endpoint degrades gracefully)
+
+
 async def test_base_adapter_get_node_status_default_unknown():
     # WorkerAdapter doesn't override -> base default "unknown" (never acted on)
     from providers.worker.worker_adapter import WorkerAdapter

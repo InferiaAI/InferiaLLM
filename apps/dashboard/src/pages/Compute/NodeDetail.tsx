@@ -4,13 +4,20 @@ import { ChevronRight, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
-import { getNode, deleteNode, type NodeView } from "@/services/nodeService";
+import {
+  getNode,
+  deleteNode,
+  getDepinDetails,
+  type NodeView,
+  type DepinDetails,
+} from "@/services/nodeService";
 import {
   getProvisioning,
   retryProvisioning,
   type ProvisioningSummary,
 } from "@/services/provisioningService";
 import { AWSMetadataGrid } from "@/components/nodes/AWSMetadataGrid";
+import { NosanaMetadataGrid } from "@/components/nodes/NosanaMetadataGrid";
 import ProvisioningStatus from "@/components/nodes/ProvisioningStatus";
 import NodeShell from "@/components/nodes/NodeShell";
 import NodeLogs from "@/components/nodes/NodeLogs";
@@ -19,7 +26,7 @@ import NodeMetrics from "@/components/nodes/NodeMetrics";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-type NodeTab = "provisioning" | "ec2" | "metrics" | "shell" | "logs";
+type NodeTab = "provisioning" | "instance-details" | "ec2" | "metrics" | "shell" | "logs";
 
 // ---------------------------------------------------------------------------
 // NodeDetail page
@@ -169,6 +176,7 @@ export default function NodeDetail() {
   }
 
   const isAws = node.provider === "aws";
+  const isNosana = node.provider === "nosana";
   // DePIN nodes (nosana/akash) have no worker, so there is no interactive shell.
   const isDepin = ["nosana", "akash"].includes(node.provider ?? "");
 
@@ -177,6 +185,7 @@ export default function NodeDetail() {
   // ---------------------------------------------------------------------------
   const tabs: { label: string; value: NodeTab; hidden?: boolean }[] = [
     { label: "Provisioning Status", value: "provisioning" },
+    { label: "Instance Details", value: "instance-details", hidden: !isNosana },
     { label: "EC2 Details", value: "ec2", hidden: !isAws },
     { label: "Metrics", value: "metrics" },
     { label: "Shell", value: "shell", hidden: isDepin },
@@ -316,6 +325,19 @@ export default function NodeDetail() {
         />
 
         <Route
+          path="instance-details"
+          element={
+            isNosana ? (
+              <NodeTabLayout tabs={tabs} activeTab="instance-details" poolId={poolId} nid={nid}>
+                <NosanaDetailsContent nid={nid} />
+              </NodeTabLayout>
+            ) : (
+              <Navigate to="../provisioning" replace />
+            )
+          }
+        />
+
+        <Route
           path="ec2"
           element={
             isAws ? (
@@ -424,6 +446,59 @@ function NodeTabLayout({
           ))}
       </div>
       <div>{children}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Nosana (DePIN) instance-details content — fetches depin-details on mount
+// ---------------------------------------------------------------------------
+function NosanaDetailsContent({ nid }: { nid: string | undefined }) {
+  const [details, setDetails] = useState<DepinDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!nid) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getDepinDetails(nid)
+      .then((d) => {
+        if (!cancelled) setDetails(d);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Failed to load instance details.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [nid]);
+
+  if (loading) {
+    return (
+      <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
+        <p className="text-sm text-muted-foreground">Loading instance details…</p>
+      </div>
+    );
+  }
+  if (error || !details) {
+    return (
+      <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
+        <p className="text-sm text-muted-foreground">
+          {error || "Instance details not available yet. The job may still be scheduling."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-6">
+      <h3 className="font-mono text-sm font-semibold mb-4">Instance Details</h3>
+      <NosanaMetadataGrid details={details} />
     </div>
   );
 }

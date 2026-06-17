@@ -44,6 +44,26 @@ describe("ProvisioningStatus", () => {
     expect(row.querySelector('[data-icon="pending"]')).not.toBeNull();
   });
 
+  it("renders the Nosana phase skeleton (scheduling/loading/serving) for DePIN phases", () => {
+    const nosana: ProvisioningSummary = {
+      current_phase: "loading",
+      terminal: false,
+      phases: [
+        { phase: "scheduling", status: "succeeded", started_at: null, ended_at: null, last_message: "Scheduled on a Nosana node" },
+        { phase: "loading", status: "running", started_at: null, ended_at: null, last_message: "Pulling image & loading the model…" },
+        { phase: "serving", status: "pending", started_at: null, ended_at: null, last_message: "Waiting for the endpoint to serve…" },
+      ],
+    };
+    render(<ProvisioningStatus summary={nosana} />);
+    const rows = screen.getAllByTestId(/^phase-row-/);
+    expect(rows.map((r) => r.getAttribute("data-testid"))).toEqual([
+      "phase-row-scheduling", "phase-row-loading", "phase-row-serving",
+    ]);
+    // no AWS phases leak in
+    expect(screen.queryByTestId("phase-row-preflight")).toBeNull();
+    expect(screen.queryByTestId("phase-row-bootstrapping")).toBeNull();
+  });
+
   it("derives the ready phase as succeeded when terminal without failure", () => {
     const done: ProvisioningSummary = {
       current_phase: "ready",

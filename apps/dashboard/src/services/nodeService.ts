@@ -157,3 +157,31 @@ export async function getNodeLogStream(nodeId: string): Promise<NodeLogStream> {
   const res = await computeApi.get<NodeLogStream>(`/nodes/${nodeId}/log-stream`);
   return res.data;
 }
+
+/**
+ * DePIN (nosana/akash) instance details returned by
+ * GET /v1/nodes/{id}/depin-details. Any field may be null until the
+ * provider job has been scheduled and its addresses resolved.
+ */
+export interface DepinDetails {
+  provider: string | null;
+  job_address: string | null;
+  node_address: string | null;
+  deployment_address: string | null;
+  run_address: string | null;
+  market: string | null;
+  service_url: string | null;
+  image: string | null;
+  mode: string | null;
+  tx: string | null;
+  provider_credential_name: string | null;
+  gpu_total: number | null;
+  price: string | null;
+  job_state: string | null;
+  created_at: string | null;
+}
+
+export async function getDepinDetails(nodeId: string): Promise<DepinDetails> {
+  const res = await computeApi.get<DepinDetails>(`/nodes/${nodeId}/depin-details`);
+  return res.data;
+}

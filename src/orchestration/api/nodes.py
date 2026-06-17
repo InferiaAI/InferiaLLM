@@ -8,6 +8,7 @@ ComputePoolRepository.ensure_default_pool).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -580,6 +581,222 @@ async def retry_provisioning(
 # ---------------------------------------------------------------------------
 
 
+async def _lookup_deployment_for_node(node_id):
+    """Best-effort (state, error_message) of the deployment bound to a node,
+    via the wired db_pool. Returns (None, None) if unavailable."""
+    db = _deps.db_pool
+    if db is None:
+        return None, None
+    try:
+        nuuid = uuid.UUID(str(node_id))
+    except (ValueError, TypeError):
+        return None, None
+    try:
+        async with db.acquire() as c:
+            drow = await c.fetchrow(
+                """
+                SELECT state, error_message FROM model_deployments
+                WHERE target_node_id = $1 OR $1 = ANY(node_ids)
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                nuuid,
+            )
+        if drow:
+            return drow["state"], drow["error_message"]
+    except Exception:
+        logger.warning(
+            "nosana provisioning: deployment lookup failed for node %s",
+            node_id, exc_info=True,
+        )
+    return None, None
+
+
+async def _nosana_provisioning_summary(row, node_id) -> "ProvisioningSummary":
+    """Synthesize a Nosana-relevant provisioning timeline from the deployment
+    lifecycle + node state (DePIN emits no node_provisioning_events):
+
+        Job scheduling -> Pulling image & loading model -> Endpoint serving
+
+    Coarse but accurate: PENDING_NODE→scheduling, DEPLOYING→loading,
+    RUNNING→serving, FAILED→failed at the load step (with the deploy's error)."""
+    node_state = (row.get("state") or "").lower()
+    expose_url = row.get("expose_url")
+    dep_state, dep_error = await _lookup_deployment_for_node(node_id)
+    ds = (dep_state or "").upper()
+
+    scheduled = (
+        node_state in ("ready", "terminated")
+        or ds in ("DEPLOYING", "RUNNING", "FAILED")
+        or bool(expose_url)
+    )
+
+    if ds == "RUNNING":
+        load_status, ready_status = "succeeded", "succeeded"
+    elif ds == "FAILED":
+        load_status, ready_status = "failed", "failed"
+    elif ds == "DEPLOYING" or scheduled:
+        load_status, ready_status = "running", "pending"
+    else:
+        load_status, ready_status = "pending", "pending"
+
+    def _ph(phase, status, msg):
+        return ProvisioningPhase(
+            phase=phase, status=status, started_at=None, ended_at=None,
+            last_message=msg,
+        )
+
+    phases = [
+        _ph(
+            "scheduling",
+            "succeeded" if scheduled else "running",
+            "Scheduled on a Nosana node" if scheduled
+            else "Scheduling the job on a Nosana node…",
+        ),
+        _ph(
+            "loading", load_status,
+            {
+                "succeeded": "Model server is ready",
+                "failed": "Container exited during model load",
+                "running": "Pulling image & loading the model…",
+                "pending": "Waiting for the node to be scheduled",
+            }[load_status],
+        ),
+        _ph(
+            "serving", ready_status,
+            {
+                "succeeded": "Endpoint is serving",
+                "failed": "Deployment failed",
+                "pending": "Waiting for the endpoint to serve…",
+            }[ready_status],
+        ),
+    ]
+
+    current_phase = "serving"
+    for p in phases:
+        if p.status != "succeeded":
+            current_phase = p.phase
+            break
+    terminal = ds in ("RUNNING", "FAILED") or node_state == "terminated"
+    error_block = None
+    if ds == "FAILED":
+        error_block = {
+            "code": "DEPLOY_FAILED",
+            "message": dep_error or "the deployment failed",
+            "hint": None,
+            "class": "PERMANENT",
+        }
+    return ProvisioningSummary(
+        current_phase=current_phase,
+        terminal=terminal,
+        phases=phases,
+        attempt_count=0,
+        error=error_block,
+        aws_metadata=None,
+        job_id=None,
+    )
+
+
+class DepinDetails(BaseModel):
+    provider: str
+    job_address: str | None = None
+    node_address: str | None = None
+    deployment_address: str | None = None
+    run_address: str | None = None
+    market: str | None = None
+    service_url: str | None = None
+    image: str | None = None
+    mode: str | None = None
+    tx: str | None = None
+    provider_credential_name: str | None = None
+    gpu_total: int | None = None
+    price: str | None = None
+    job_state: str | None = None
+    created_at: str | None = None
+
+
+@router.get("/{node_id}/depin-details", response_model=DepinDetails)
+async def get_depin_details(
+    node_id: str = Path(...),
+    _granted: bool = Depends(_need_perm("deployment:list")),
+):
+    """Per-node instance details for a DePIN (Nosana/Akash) node — the Instance
+    Details tab. Reads the node's stored metadata (which ``NodeView`` drops)
+    plus a one-shot live job poll for node/deployment addresses, service URL,
+    price and current job state. The live poll degrades to ``None`` on error."""
+    row = await _deps.inventory_repo.get_node(node_id=node_id)
+    if not row:
+        raise HTTPException(404, "node not found")
+    provider = row.get("provider")
+    from orchestration.provisioning.engine.registry import (
+        get_adapter,
+        is_direct_provision_provider,
+    )
+    if not is_direct_provision_provider(provider):
+        raise HTTPException(400, "node is not a DePIN instance")
+
+    meta = row.get("metadata")
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (ValueError, TypeError):
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+
+    pii = row.get("provider_instance_id")
+    created = row.get("created_at")
+
+    # Live fields (best-effort): node/deployment addresses, service URL, price,
+    # current job state. Never raises — returns {} on any error.
+    live: dict = {}
+    if pii and not str(pii).startswith("placeholder:"):
+        cred = None
+        pool_id = row.get("pool_id")
+        if pool_id is not None and _deps.pool_repo is not None:
+            try:
+                pool_row = await _deps.pool_repo.get(pool_id)
+                if pool_row is not None:
+                    cred = (
+                        pool_row.get("provider_credential_name")
+                        if hasattr(pool_row, "get")
+                        else pool_row["provider_credential_name"]
+                    )
+            except Exception:
+                logger.warning(
+                    "get_depin_details: pool credential lookup failed for %s",
+                    node_id, exc_info=True,
+                )
+        try:
+            adapter = get_adapter(provider)
+            if hasattr(adapter, "get_node_details"):
+                live = await adapter.get_node_details(
+                    provider_instance_id=pii, provider_credential_name=cred,
+                )
+        except Exception:
+            logger.warning(
+                "get_depin_details: live poll failed for %s", node_id,
+                exc_info=True,
+            )
+
+    return DepinDetails(
+        provider=provider,
+        job_address=pii if pii and not str(pii).startswith("placeholder:") else meta.get("job_address"),
+        node_address=live.get("node_address"),
+        deployment_address=live.get("deployment_address"),
+        run_address=live.get("run_address"),
+        market=live.get("market"),
+        service_url=live.get("service_url") or row.get("expose_url"),
+        image=meta.get("image"),
+        mode=meta.get("mode"),
+        tx=meta.get("tx"),
+        provider_credential_name=meta.get("provider_credential_name"),
+        gpu_total=row.get("gpu_total"),
+        price=str(live["price"]) if live.get("price") is not None else None,
+        job_state=live.get("job_state"),
+        created_at=created.isoformat() if hasattr(created, "isoformat") else (str(created) if created else None),
+    )
+
+
 @router.get("/{node_id}/provisioning", response_model=ProvisioningSummary)
 async def get_provisioning(
     node_id: str = Path(...),
@@ -642,6 +859,14 @@ async def get_provisioning(
             "instance_id":    outs.get("instance_id"),
             "public_dns":     outs.get("public_dns"),
         }
+
+    # Nosana (DePIN) emits NO node_provisioning_events (direct_provision drives
+    # the deploy via deployment-state transitions only), so the generic phase
+    # summary below is empty and the provisioning tab would be blank. Synthesize
+    # a Nosana-relevant 3-step timeline from the deployment lifecycle + node
+    # state instead. Guarded on provider so AWS/worker paths are untouched.
+    if row.get("provider") == "nosana":
+        return await _nosana_provisioning_summary(row, node_id)
 
     # Phases summary via the legacy node_provisioning_events log. Repo
     # may be None for nodes that predate the event log entirely

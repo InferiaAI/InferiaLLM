@@ -482,6 +482,48 @@ class NosanaAdapter(ProviderAdapter):
             )
             return "unknown"
 
+    async def get_node_details(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> Dict:
+        """One-shot poll of the full Nosana job record for the Instance Details
+        tab. Returns the useful live fields (normalized job state + node /
+        deployment / run addresses, service URL, price). Returns ``{}`` on any
+        error or non-200 so the read endpoint degrades gracefully (never raises).
+        """
+        try:
+            params = {}
+            if provider_credential_name:
+                params["credentialName"] = provider_credential_name
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{NOSANA_SIDECAR_URL}/nosana/jobs/{provider_instance_id}",
+                    params=params,
+                    headers=internal_headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        return {}
+                    job = await resp.json()
+                    return {
+                        "job_state": _normalize_job_state(job.get("jobState")),
+                        "node_address": job.get("nodeAddress"),
+                        "deployment_address": job.get("deploymentId"),
+                        "run_address": job.get("runAddress"),
+                        "service_url": job.get("serviceUrl"),
+                        "price": job.get("price"),
+                        "market": job.get("market") or job.get("marketAddress"),
+                    }
+        except Exception:
+            logger.warning(
+                "Nosana get_node_details failed for %s",
+                provider_instance_id,
+                exc_info=True,
+            )
+            return {}
+
     async def deprovision_node(
         self,
         *,

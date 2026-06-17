@@ -303,6 +303,121 @@ class TestNodeLogStream:
 
 
 # ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/provisioning — Nosana-relevant synthesized timeline
+# ---------------------------------------------------------------------------
+class TestNosanaProvisioning:
+    def test_nosana_shows_relevant_phases_not_aws(self, app_and_deps):
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "state": "ready", "expose_url": "https://x.node.k8s.prd.nos.ci",
+            "agent_kind": "worker",
+        }
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/provisioning", headers=_user_ctx_header())
+        assert r.status_code == 200
+        body = r.json()
+        # Nosana-relevant phases, NOT the AWS preflight/bootstrapping skeleton.
+        assert [p["phase"] for p in body["phases"]] == ["scheduling", "loading", "serving"]
+        # node finalized (ready) + endpoint -> past scheduling
+        assert body["phases"][0]["status"] == "succeeded"
+
+    def test_nosana_provisioning_node_is_scheduling(self, app_and_deps):
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "state": "provisioning", "expose_url": None, "agent_kind": "worker",
+        }
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/provisioning", headers=_user_ctx_header())
+        body = r.json()
+        # not yet scheduled -> scheduling running, later phases pending
+        assert body["current_phase"] == "scheduling"
+        assert body["phases"][0]["status"] == "running"
+        assert body["phases"][1]["status"] == "pending"
+
+    def test_aws_provisioning_unchanged(self, app_and_deps):
+        """AWS nodes must NOT get the Nosana branch (no scheduling/loading/serving)."""
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "aws",
+            "state": "provisioning", "agent_kind": "worker",
+        }
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/provisioning", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert [p["phase"] for p in r.json()["phases"]] != ["scheduling", "loading", "serving"]
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/nodes/{id}/depin-details — Nosana instance details
+# ---------------------------------------------------------------------------
+class TestDepinDetails:
+    _REG = "orchestration.provisioning.engine.registry"
+
+    def test_merges_metadata_and_live_fields(self, app_and_deps):
+        from unittest.mock import patch, AsyncMock
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-abc", "expose_url": "https://x",
+            "gpu_total": 1, "created_at": None,
+            "metadata": {"image": "vllm/x", "mode": "real", "tx": "sig",
+                         "provider_credential_name": "c"},
+        }
+        fake = AsyncMock()
+        fake.get_node_details.return_value = {
+            "job_state": "RUNNING", "node_address": "nA", "deployment_address": "dA",
+            "run_address": "rA", "service_url": "https://x", "price": 0, "market": None,
+        }
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True), \
+             patch(f"{self._REG}.get_adapter", return_value=fake):
+            r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 200
+        b = r.json()
+        assert b["job_address"] == "job-abc"          # from inventory pii
+        assert b["node_address"] == "nA"              # from live poll
+        assert b["job_state"] == "RUNNING"
+        assert b["image"] == "vllm/x"                 # from node metadata
+        assert b["mode"] == "real"
+        assert b["price"] == "0"
+
+    def test_metadata_json_string_parsed(self, app_and_deps):
+        from unittest.mock import patch, AsyncMock
+        import json as _json
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {
+            "id": NODE, "pool_id": POOL, "provider": "nosana",
+            "provider_instance_id": "job-abc",
+            "metadata": _json.dumps({"image": "img1", "mode": "real"}),
+        }
+        fake = AsyncMock()
+        fake.get_node_details.return_value = {}
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=True), \
+             patch(f"{self._REG}.get_adapter", return_value=fake):
+            r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 200
+        assert r.json()["image"] == "img1"  # JSON-string metadata parsed
+
+    def test_non_depin_node_400(self, app_and_deps):
+        from unittest.mock import patch
+        app, inventory, *_ = app_and_deps
+        inventory.nodes[NODE] = {"id": NODE, "pool_id": POOL, "provider": "aws"}
+        client = TestClient(app)
+        with patch(f"{self._REG}.is_direct_provision_provider", return_value=False):
+            r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 400
+
+    def test_missing_node_404(self, app_and_deps):
+        app, *_ = app_and_deps
+        client = TestClient(app)
+        r = client.get(f"/v1/nodes/{NODE}/depin-details", headers=_user_ctx_header())
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /v1/nodes/{id}
 # ---------------------------------------------------------------------------
 
