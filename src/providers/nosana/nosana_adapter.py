@@ -542,7 +542,14 @@ class NosanaAdapter(ProviderAdapter):
 
                         if is_finished:
                             return {
-                                "logs": [f"Job finished with state: {normalized}. Use log streaming for historical logs."],
+                                "logs": [
+                                    f"Job finished with state: {normalized}. "
+                                    "Nosana does not retain a job's container "
+                                    "logs after it ends — open the live Logs "
+                                    "view while a deployment is RUNNING to "
+                                    "capture engine output (model-load progress, "
+                                    "crash/OOM messages, etc.)."
+                                ],
                                 "job_state": normalized,
                                 "source": "job_status",
                             }

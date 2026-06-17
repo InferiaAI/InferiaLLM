@@ -302,3 +302,41 @@ async def test_base_adapter_get_node_status_default_unknown():
     from providers.worker.worker_adapter import WorkerAdapter
     out = await WorkerAdapter().get_node_status(provider_instance_id="x")
     assert out == "unknown"
+
+
+# ---- NosanaAdapter.get_logs messaging (T14) ----
+
+class _FakeSeqSession:
+    """ClientSession whose .get() yields a queued response per call."""
+
+    def __init__(self, responses):
+        self._r = list(responses)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def get(self, *a, **k):
+        return self._r.pop(0)
+
+
+async def test_get_logs_terminal_message_is_accurate(monkeypatch):
+    import providers.nosana.nosana_adapter as na
+    # /logs -> non-200 (skip), then /{addr} -> terminal jobState=2 (COMPLETED)
+    seq = [_FakeResp(503, {}), _FakeResp(200, {"jobState": 2})]
+    monkeypatch.setattr(na.aiohttp, "ClientSession", lambda *a, **k: _FakeSeqSession(seq))
+    out = await NosanaAdapter().get_logs(provider_instance_id="job1")
+    text = " ".join(str(x) for x in out["logs"]).lower()
+    assert "does not retain" in text
+    assert "historical logs" not in text  # the old misleading claim is gone
+    assert out["job_state"] == "COMPLETED"
+
+
+async def test_get_logs_pending_returns_running(monkeypatch):
+    import providers.nosana.nosana_adapter as na
+    seq = [_FakeResp(200, {"status": "pending", "logs": ["Job is running..."]})]
+    monkeypatch.setattr(na.aiohttp, "ClientSession", lambda *a, **k: _FakeSeqSession(seq))
+    out = await NosanaAdapter().get_logs(provider_instance_id="job1")
+    assert any("running" in str(x).lower() for x in out["logs"])
