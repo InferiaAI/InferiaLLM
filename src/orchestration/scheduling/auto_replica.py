@@ -257,7 +257,6 @@ async def tick(
             pool_id=pool_id_uuid,
             gpu_total=spec.get("gpu_count", 1),
             initial_alloc=0,
-            group_id=str(pool_id_uuid),
         )
 
         job_id = await jobs_repo.enqueue(

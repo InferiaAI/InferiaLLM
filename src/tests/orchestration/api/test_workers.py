@@ -53,7 +53,7 @@ class FakeInventory:
         self.duplicate_kind: bool = False  # toggles to force a conflict
 
     async def upsert_worker(self, *, pool_id, node_name, advertise_url, allocatable,
-                            labels=None, group_id=None):
+                            labels=None):
         if self.duplicate_kind:
             raise workers.DuplicateNodeError(
                 f"{pool_id}/{node_name} taken by a non-worker node"

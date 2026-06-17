@@ -95,11 +95,16 @@ def envoy_route_headers(
     ``advertise_url`` with the returned Envoy URL and add the returned
     headers (which include the ``X-Inferia-Route-Cluster`` header).
 
-    The cluster name is derived from the deployment's ``pool_id``:
-    ``grp-<pool_id>``.  Nodes in the same pool share this cluster and are
-    load-balanced together by the front Envoy.  If no ``pool_id`` is
-    available the cluster defaults to ``inferia-workers`` (a flat cluster
-    containing all healthy workers).
+    The cluster name is ``grp-<pool_id>-<engine>`` so the front Envoy
+    load-balances across every node in the pool while the engine suffix
+    acts as a routing-level filter (preparing for future engine-specific
+    node affinity).  The worker's proxy still uses the
+    ``X-Inferia-Deployment-Id`` header (set by ``provider_auth``) to
+    route to the correct model container, so all pool nodes are
+    interchangeable from Envoy's perspective.
+
+    If no ``pool_id`` is available the cluster defaults to
+    ``inferia-workers`` (a flat cluster containing all healthy workers).
 
     When the deployment is NOT worker-hosted or ``envoy_url`` is not set,
     returns (None, {}) — no routing change needed.
@@ -109,9 +114,16 @@ def envoy_route_headers(
         return None, {}
 
     pool_id = deployment.get("pool_id")
+    engine = deployment.get("engine", "vllm")
     if pool_id:
-        cluster = f"grp-{pool_id.replace('-', '')}"
+        cluster = f"grp-{_safe_cluster(pool_id)}-{_safe_cluster(engine)}"
     else:
         cluster = "inferia-workers"
 
     return envoy_url, {ROUTE_CLUSTER_HEADER: cluster}
+
+
+def _safe_cluster(value: str) -> str:
+    """Sanitize a pool_id / group_id for use in an Envoy cluster name.
+    Keeps alphanumeric, dash, underscore, and dot — same as the xDS shim."""
+    return "".join(c if c.isalnum() or c in "-_." else "-" for c in value)

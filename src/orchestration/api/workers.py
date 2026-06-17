@@ -218,7 +218,6 @@ async def register_worker(
             advertise_url=body.advertise_url,
             allocatable=body.allocatable,
             labels=labels if labels else None,
-            group_id=body.group_id,
         )
     except DuplicateNodeError as e:
         raise HTTPException(409, str(e))

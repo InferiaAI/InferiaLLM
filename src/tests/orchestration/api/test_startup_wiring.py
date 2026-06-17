@@ -42,7 +42,7 @@ class FakeInventory:
         return []
 
     async def upsert_worker(self, *, pool_id, node_name, advertise_url, allocatable,
-                            labels=None, group_id=None):
+                            labels=None):
         return {"id": "node-x"}
 
     async def mark_ready(self, *, node_id):

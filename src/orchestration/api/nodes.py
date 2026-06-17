@@ -165,7 +165,6 @@ class NodeView(BaseModel):
     health_score: int | None = None
     last_heartbeat: str | None = None
     provider_instance_id: str | None = None
-    group_id: str | None = None
 
 
 class ListResponse(BaseModel):
@@ -718,7 +717,6 @@ def _to_view(row: dict) -> NodeView:
         health_score=row.get("health_score"),
         last_heartbeat=last_hb,
         provider_instance_id=row.get("provider_instance_id"),
-        group_id=row.get("group_id") or None,
     )
 
 

@@ -25,20 +25,23 @@ XDS_CLUSTER_NAME = os.environ.get("XDS_CLUSTER_NAME", "xds_cluster")
 REFRESH_DELAY = os.environ.get("XDS_REFRESH_DELAY", "5s")
 XDS_PORT = int(os.environ.get("PORT", "18000"))
 
+# Engine types for per-engine cluster generation. Each pool with healthy
+# nodes gets one cluster per engine so the inference gateway can route
+# by engine type (X-Inferia-Route-Cluster: grp-<pool_id>-<engine>).
+# All engine clusters within a pool share the same node endpoints;
+# the worker's proxy handles engine-specific routing via
+# X-Inferia-Deployment-Id.
+KNOWN_ENGINES = {"vllm", "ollama", "worker", "localai"}
+
 
 @dataclass
 class Node:
     node_id: str
     host: str
     port: int
-    group_id: Optional[str] = None
+    pool_id: Optional[str] = None
+    engine: Optional[str] = None
     healthy: bool = True
-
-    @property
-    def cluster_name(self) -> str:
-        if self.group_id:
-            return f"grp-{_safe(self.group_id)}"
-        return _safe(self.node_id)
 
 
 def _safe(value: str) -> str:
@@ -85,7 +88,8 @@ class FileNodeSource:
                     node_id=entry["id"],
                     host=host,
                     port=port,
-                    group_id=entry.get("group_id") or None,
+                    pool_id=entry.get("pool_id") or None,
+                    engine=entry.get("engine") or None,
                     healthy=entry.get("healthy", True),
                 )
             )
@@ -117,7 +121,8 @@ class HTTPNodeSource:
                             node_id=entry["id"],
                             host=host,
                             port=port,
-                            group_id=entry.get("group_id") or entry.get("pool_id") or None,
+                            pool_id=entry.get("pool_id") or None,
+                            engine=entry.get("engine") or None,
                             healthy=entry.get("healthy", True),
                         )
                     )
@@ -141,55 +146,80 @@ class ResourceSet:
     eds_version: dict = field(default_factory=dict)
 
 
-def build_resources(nodes: list[Node]) -> ResourceSet:
-    rs = ResourceSet()
-    groups: dict[str, list[Node]] = {}
-    for n in nodes:
-        if not n.healthy:
-            continue
-        groups.setdefault(n.cluster_name, []).append(n)
-        rs.route_table[n.node_id] = n.cluster_name
-
-    for cluster_name, members in groups.items():
-        rs.clusters[cluster_name] = {
-            "@type": CLUSTER_TYPE_URL,
-            "name": cluster_name,
-            "connect_timeout": "0.25s",
-            "lb_policy": "ROUND_ROBIN",
-            "type": "EDS",
-            "eds_cluster_config": {
-                "eds_config": {
-                    "api_config_source": {
-                        "api_type": "REST",
-                        "transport_api_version": "V3",
-                        "cluster_names": [XDS_CLUSTER_NAME],
-                        "refresh_delay": REFRESH_DELAY,
-                    }
+def build_cluster(cluster_name: str, members: list[Node]):
+    return {
+        "@type": CLUSTER_TYPE_URL,
+        "name": cluster_name,
+        "connect_timeout": "0.25s",
+        "lb_policy": "ROUND_ROBIN",
+        "type": "EDS",
+        "eds_cluster_config": {
+            "eds_config": {
+                "api_config_source": {
+                    "api_type": "REST",
+                    "transport_api_version": "V3",
+                    "cluster_names": [XDS_CLUSTER_NAME],
+                    "refresh_delay": REFRESH_DELAY,
                 }
-            },
-        }
-        rs.endpoints[cluster_name] = {
-            "@type": ENDPOINT_TYPE_URL,
-            "cluster_name": cluster_name,
-            "endpoints": [
-                {
-                    "lb_endpoints": [
-                        {
-                            "endpoint": {
-                                "address": {
-                                    "socket_address": {
-                                        "address": m.host,
-                                        "port_value": m.port,
-                                    }
+            }
+        },
+    }
+
+
+def build_endpoints(cluster_name: str, members: list[Node]):
+    return {
+        "@type": ENDPOINT_TYPE_URL,
+        "cluster_name": cluster_name,
+        "endpoints": [
+            {
+                "lb_endpoints": [
+                    {
+                        "endpoint": {
+                            "address": {
+                                "socket_address": {
+                                    "address": m.host,
+                                    "port_value": m.port,
                                 }
                             }
                         }
-                        for m in members
-                    ]
-                }
-            ],
-        }
+                    }
+                    for m in members
+                ]
+            }
+        ],
+    }
+
+
+def build_resources(nodes: list[Node]) -> ResourceSet:
+    rs = ResourceSet()
+    healthy = [n for n in nodes if n.healthy]
+
+    # Group by pool_id.
+    pools: dict[str, list[Node]] = {}
+    singletons: list[Node] = []
+    for n in healthy:
+        if n.pool_id:
+            pools.setdefault(n.pool_id, []).append(n)
+        else:
+            singletons.append(n)
+
+    # Per-pool engine-filtered clusters.
+    for pool_id, members in pools.items():
+        for engine in KNOWN_ENGINES:
+            cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}"
+            rs.clusters[cluster_name] = build_cluster(cluster_name, members)
+            rs.endpoints[cluster_name] = build_endpoints(cluster_name, members)
+            rs.eds_version[cluster_name] = _hash(rs.endpoints[cluster_name])
+            for n in members:
+                rs.route_table[n.node_id] = cluster_name
+
+    # Nodes without a pool_id get their own cluster.
+    for n in singletons:
+        cluster_name = _safe(n.node_id)
+        rs.clusters[cluster_name] = build_cluster(cluster_name, [n])
+        rs.endpoints[cluster_name] = build_endpoints(cluster_name, [n])
         rs.eds_version[cluster_name] = _hash(rs.endpoints[cluster_name])
+        rs.route_table[n.node_id] = cluster_name
 
     rs.cds_version = _hash(sorted(rs.clusters.keys()))
     return rs
