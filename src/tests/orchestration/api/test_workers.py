@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -36,9 +35,6 @@ from orchestration.workers.worker_controller.auth import (
 from orchestration.workers.worker_controller.registry import (
     WorkerRegistry,
 )
-from orchestration.workers.worker_controller.protocol import (
-    Envelope,
-)
 
 
 SECRET = "test-secret-key-at-least-32-chars-long!"
@@ -57,7 +53,7 @@ class FakeInventory:
         self.duplicate_kind: bool = False  # toggles to force a conflict
 
     async def upsert_worker(self, *, pool_id, node_name, advertise_url, allocatable,
-                            labels=None):
+                            labels=None, group_id=None):
         if self.duplicate_kind:
             raise workers.DuplicateNodeError(
                 f"{pool_id}/{node_name} taken by a non-worker node"
