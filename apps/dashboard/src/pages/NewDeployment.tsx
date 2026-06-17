@@ -21,7 +21,8 @@ import {
   type HFModel,
   type ModelTypeKey
 } from "@/services/huggingfaceService"
-import { calculateCompatibility, fetchExternalRegistry, GPU_SPECS, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
+import { calculateCompatibility, fetchExternalRegistry, type ExternalModel } from "@/services/gpuCompatibility"
+import { resolvePoolGpuResources, extractHfArchitecture, getFitColor } from "@/services/modelPlanner"
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 import { ConfigService } from "@/services/configService"
@@ -1093,31 +1094,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     staleTime: 1000 * 60 * 5,
   });
 
-  // Extract full architecture details from HF config
-  const hfContextLength = hfConfig?.max_position_embeddings || hfConfig?.seq_length || hfConfig?.max_sequence_length;
-  const hfHiddenSize = hfConfig?.hidden_size;
-  const hfNumLayers = hfConfig?.num_hidden_layers;
-  const hfNumAttentionHeads = hfConfig?.num_attention_heads;
-  const hfNumKeyValueHeads = hfConfig?.num_key_value_heads; // GQA: e.g. Llama 3 uses 8 KV heads vs 32 attention heads
-
-  // For multi-GPU pools, resolve GPU specs and aggregate VRAM/bandwidth
-  const poolGpuCount = selectedPool?.gpu_count || 1;
-  const gpuKey = selectedPool?.allowed_gpu_types?.[0]?.toUpperCase().replace(/[\s-]/g, "") || "";
-  const gpuSpecKey = Object.keys(GPU_SPECS).find(k => {
-    const nk = k.toUpperCase().replace(/[\s-]/g, "");
-    return gpuKey.includes(nk) || nk.includes(gpuKey);
-  });
-
-  const singleGpuVram = selectedPool?.gpu_specs?.[0]?.vram || (gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.vram : 0) || 0;
-  // Only pass aggregated vram override when gpu_count > 1 (multi-GPU),
-  // otherwise let calculateCompatibility use its own GPU_SPECS lookup for single GPU
-  const aggregatedVram = poolGpuCount > 1 ? singleGpuVram * poolGpuCount : undefined;
-
-  const baseBandwidth = gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.bandwidth : undefined;
-  // Multi-GPU bandwidth scales ~0.85x per GPU due to interconnect overhead
-  const aggregatedBandwidth = (poolGpuCount > 1 && baseBandwidth)
-    ? baseBandwidth * poolGpuCount * 0.85
-    : undefined;
+  // Extract architecture and GPU resources for compatibility planning
+  const arch = extractHfArchitecture(hfConfig);
+  const resources = resolvePoolGpuResources(selectedPool);
 
   const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"))
     ? calculateCompatibility(
@@ -1125,27 +1104,17 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
       selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
       quantization || dtype,
       {
-        vram: aggregatedVram,
-        bandwidth: aggregatedBandwidth,
-        contextLength: hfContextLength,
-        hiddenSize: hfHiddenSize,
-        numLayers: hfNumLayers,
-        numAttentionHeads: hfNumAttentionHeads,
-        numKeyValueHeads: hfNumKeyValueHeads
+        vram: resources.aggregatedVram,
+        bandwidth: resources.aggregatedBandwidth,
+        contextLength: arch.contextLength,
+        hiddenSize: arch.hiddenSize,
+        numLayers: arch.numLayers,
+        numAttentionHeads: arch.numAttentionHeads,
+        numKeyValueHeads: arch.numKeyValueHeads,
       },
       externalRegistry
     )
     : null;
-
-  const getFitColor = (level: FitLevel) => {
-    switch (level) {
-      case "Perfect": return "text-ember-500 bg-ember-500/10 border-ember-500/20";
-      case "Good": return "text-blue-500 bg-blue-500/10 border-blue-500/20";
-      case "Marginal": return "text-amber-500 bg-amber-500/10 border-amber-500/20";
-      case "TooTight": return "text-rose-500 bg-rose-500/10 border-rose-500/20";
-      default: return "text-muted-foreground bg-muted-foreground/10 border-muted-foreground/20";
-    }
-  };
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
