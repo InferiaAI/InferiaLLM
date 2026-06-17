@@ -116,6 +116,14 @@ services:
     networks:
       - inferia-net
 
+  llmfit:
+    image: ghcr.io/alexsjones/llmfit
+    container_name: inferia-llmfit
+    restart: unless-stopped
+    command: serve --host 0.0.0.0 --port ${LLMFIT_PORT:-8787}
+    networks:
+      - inferia-net
+
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     container_name: inferia-elasticsearch
