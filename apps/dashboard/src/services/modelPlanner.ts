@@ -174,18 +174,20 @@ export async function queryLlmfitModelFit(
   engineType?: string,
 ): Promise<LlmfitModelFit | null> {
   try {
-    const modelName = extractModelName(modelId);
+    const searchTerm = extractModelName(modelId);
     const params = new URLSearchParams({
       ram_gb: String(Math.max(ramGb, 8)),
       vram_gb: String(Math.max(vramGb, 1)),
       cpu_cores: String(Math.max(cpuCores, 1)),
-      limit: "1",
+      search: searchTerm,
+      limit: "10",
+      sort: "score",
     });
     const llmfitRuntime = mapRuntimeToEngine(engineType || "");
     if (llmfitRuntime) params.set("force_runtime", llmfitRuntime);
 
     const response = await fetch(
-      `${LLMFIT_SERVER_URL}/api/v1/models/${encodeURIComponent(modelName)}?${params}`,
+      `${LLMFIT_SERVER_URL}/api/v1/models?${params}`,
       { signal: AbortSignal.timeout(5000) },
     );
     if (!response.ok) return null;

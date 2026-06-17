@@ -21,8 +21,8 @@ import {
   type HFModel,
   type ModelTypeKey
 } from "@/services/huggingfaceService"
-import { calculateCompatibility, fetchExternalRegistry, type ExternalModel } from "@/services/gpuCompatibility"
-import { resolvePoolGpuResources, extractHfArchitecture, getFitColor } from "@/services/modelPlanner"
+import { fetchExternalRegistry, type ExternalModel } from "@/services/gpuCompatibility"
+import { resolvePoolGpuResources, extractHfArchitecture, getFitColor, calculatePoolCompatibilityWithFit } from "@/services/modelPlanner"
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 import { ConfigService } from "@/services/configService"
@@ -1094,27 +1094,21 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     staleTime: 1000 * 60 * 5,
   });
 
-  // Extract architecture and GPU resources for compatibility planning
-  const arch = extractHfArchitecture(hfConfig);
-  const resources = resolvePoolGpuResources(selectedPool);
-
-  const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"))
-    ? calculateCompatibility(
+  // Compatibility planning (uses llmfit server when available, falls back to local calculation)
+  const { data: compatibility } = useQuery({
+    queryKey: ['compat', modelId, selectedPool?.pool_id || selectedPool?.pool_name, quantization, dtype, selectedEngine],
+    queryFn: () => calculatePoolCompatibilityWithFit(
       modelId,
-      selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
-      quantization || dtype,
-      {
-        vram: resources.aggregatedVram,
-        bandwidth: resources.aggregatedBandwidth,
-        contextLength: arch.contextLength,
-        hiddenSize: arch.hiddenSize,
-        numLayers: arch.numLayers,
-        numAttentionHeads: arch.numAttentionHeads,
-        numKeyValueHeads: arch.numKeyValueHeads,
-      },
-      externalRegistry
-    )
-    : null;
+      selectedPool,
+      hfConfig,
+      quantization,
+      dtype,
+      externalRegistry,
+      selectedEngine,
+    ),
+    enabled: !!selectedPool && !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
+    staleTime: 1000 * 60 * 5,
+  });
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">

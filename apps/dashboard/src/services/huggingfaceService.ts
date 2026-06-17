@@ -175,6 +175,8 @@ export async function getModelDetails(modelId: string): Promise<HFModel> {
  * Get model native config.json
  */
 export async function getModelConfig(modelId: string): Promise<any> {
+  // Skip non-HuggingFace model IDs (e.g. Ollama "name:tag", bare names without org/)
+  if (!modelId.includes('/') || modelId.includes(':')) return null;
   try {
     const res = await fetch(`https://huggingface.co/${modelId}/raw/main/config.json`);
     if (!res.ok) return null;
