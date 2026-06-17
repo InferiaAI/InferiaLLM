@@ -7,6 +7,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+
+// Pool name lookup for the clickable Pool row (avoids a real network call).
+vi.mock("@/services/poolService", () => ({
+  getPool: vi.fn(async () => ({ pool_name: "my-pool" })),
+}));
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -153,5 +159,44 @@ describe("DeploymentOverview — embedding endpoint display with relative INFERE
     const displayedUrl = endpointEl.textContent ?? "";
     expect(displayedUrl).toMatch(/^https?:\/\//);
     expect(displayedUrl).toContain("/inf/v1/embeddings");
+  });
+});
+
+describe("DeploymentOverview — clickable pool & node links", () => {
+  it("renders Pool and Node links pointing at the compute pages", async () => {
+    const { default: DeploymentOverview } = await import("./DeploymentOverview");
+    const dep = {
+      ...baseDeployment,
+      pool_id: "pool-123",
+      node_ids: ["node-abc"],
+    };
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <DeploymentOverview deployment={dep} />
+        </QueryClientProvider>
+      </MemoryRouter>
+    );
+    // Pool link (label is the id until the name query resolves; href is stable)
+    const poolLink = await screen.findByRole("link", { name: /my-pool|pool-123/ });
+    expect(poolLink).toHaveAttribute("href", "/dashboard/compute/pools/pool-123");
+    // Node link to the canonical node detail route
+    const nodeLink = screen.getByRole("link", { name: "node-abc" });
+    expect(nodeLink).toHaveAttribute(
+      "href",
+      "/dashboard/compute/pools/pool-123/nodes/node-abc"
+    );
+  });
+
+  it("hides Pool and Node rows for external deployments (no pool_id)", async () => {
+    const { default: DeploymentOverview } = await import("./DeploymentOverview");
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <DeploymentOverview deployment={baseDeployment} />
+        </QueryClientProvider>
+      </MemoryRouter>
+    );
+    expect(screen.queryByText("Pool")).toBeNull();
   });
 });
