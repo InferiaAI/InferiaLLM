@@ -98,11 +98,32 @@ class DeployMetric(BaseModel):
     engine_metrics: EngineMetrics = Field(default_factory=EngineMetrics)
 
 
+class GPUSample(BaseModel):
+    index: int = 0
+    name: str = ""
+    util_pct: float = 0.0
+    mem_used_mib: int = 0
+    mem_total_mib: int = 0
+
+
+class MetricsSample(BaseModel):
+    ts: str = ""
+    cpu_pct: float = 0.0
+    mem_used_bytes: int = 0
+    mem_total_bytes: int = 0
+    net_rx_bps: float = 0.0
+    net_tx_bps: float = 0.0
+    disk_read_bps: float = 0.0
+    disk_write_bps: float = 0.0
+    gpus: list[GPUSample] = Field(default_factory=list)
+
+
 class HeartbeatBody(BaseModel):
     used: dict[str, str] = Field(default_factory=dict)
     loaded_models: list[str] = Field(default_factory=list)
     events: list[HeartbeatEvent] = Field(default_factory=list)
     deploy_metrics: list[DeployMetric] = Field(default_factory=list)
+    metrics: Optional[MetricsSample] = None
 
 
 class ModelRef(BaseModel):
@@ -263,6 +284,8 @@ __all__ = [
     "HeartbeatEvent",
     "DeployMetric",
     "EngineMetrics",
+    "GPUSample",
+    "MetricsSample",
     "LoadModelBody",
     "UnloadModelBody",
     "CommandResultBody",

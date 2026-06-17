@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from orchestration.workers.worker_controller.registry import (
+    METRICS_RING_SIZE,
     WorkerConn,
     WorkerRegistry,
 )
@@ -159,3 +160,56 @@ async def test_list_nodes():
     await reg.attach("b", WorkerConn(ws=FakeWS(), pool_id="p"))
     nodes = reg.list_nodes()
     assert set(nodes) == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# Metrics ring buffer tests
+# ---------------------------------------------------------------------------
+
+
+class _MetricsFakeWS:
+    async def send_json(self, payload): ...
+    async def close(self, code: int = 1000, reason: str = ""): ...
+
+
+def test_record_and_get_metrics_orders_oldest_to_newest():
+    reg = WorkerRegistry()
+    reg.record_metrics("n1", {"ts": "a"})
+    reg.record_metrics("n1", {"ts": "b"})
+    samples = reg.get_metrics("n1")
+    assert [s["ts"] for s in samples] == ["a", "b"]
+
+
+def test_get_metrics_unknown_node_is_empty():
+    reg = WorkerRegistry()
+    assert reg.get_metrics("nope") == []
+
+
+def test_metrics_ring_trims_to_maxlen():
+    reg = WorkerRegistry()
+    for i in range(METRICS_RING_SIZE + 50):
+        reg.record_metrics("n1", {"ts": str(i)})
+    samples = reg.get_metrics("n1")
+    assert len(samples) == METRICS_RING_SIZE
+    assert samples[0]["ts"] == "50"
+    assert samples[-1]["ts"] == str(METRICS_RING_SIZE + 49)
+
+
+@pytest.mark.asyncio
+async def test_detach_drops_metrics_buffer():
+    reg = WorkerRegistry()
+    ws = _MetricsFakeWS()
+    await reg.attach("n1", WorkerConn(ws=ws, pool_id="p"))
+    reg.record_metrics("n1", {"ts": "a"})
+    await reg.detach("n1", ws)
+    assert reg.get_metrics("n1") == []
+
+
+@pytest.mark.asyncio
+async def test_detach_node_drops_metrics_buffer():
+    reg = WorkerRegistry()
+    ws = _MetricsFakeWS()
+    await reg.attach("n1", WorkerConn(ws=ws, pool_id="p"))
+    reg.record_metrics("n1", {"ts": "a"})
+    await reg.detach_node("n1")
+    assert reg.get_metrics("n1") == []

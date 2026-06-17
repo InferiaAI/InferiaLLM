@@ -147,7 +147,9 @@ class Settings(UnifiedBaseSettings):
         validation_alias="INFERIA_WORKER_IMAGE",
     )
     worker_image_tag: str = Field(
-        default="2.5.0",
+        # docker/metadata-action's semver pattern strips the leading "v"
+        # from git tags, so the GHCR tag for git tag v0.2.7 is 0.2.7.
+        default="0.2.7",
         validation_alias="INFERIA_WORKER_IMAGE_TAG",
     )
     bootstrap_token_ttl_seconds: int = Field(

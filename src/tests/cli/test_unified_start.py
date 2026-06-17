@@ -82,3 +82,46 @@ def test_unified_process_specs_returns_list_of_tuples():
         name, target = item
         assert isinstance(name, str), f"Name must be a string, got: {type(name)}"
         assert callable(target), f"Target must be callable, got: {type(target)}"
+
+
+def test_loopback_env_points_services_at_mount_prefixes(monkeypatch):
+    """In unified mode the co-located services must call each other via the
+    mount prefixes (/api, /inf) on the loopback, or bare /internal POSTs fall
+    through to the SPA catch-all and 405."""
+    from cli import _set_unified_loopback_env
+
+    monkeypatch.delenv("API_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("INFERENCE_URL", raising=False)
+
+    _set_unified_loopback_env(8000)
+
+    import os
+    assert os.environ["API_GATEWAY_URL"] == "http://localhost:8000/api"
+    assert os.environ["INFERENCE_URL"] == "http://localhost:8000/inf"
+
+
+def test_loopback_env_honors_app_port(monkeypatch):
+    from cli import _set_unified_loopback_env
+
+    monkeypatch.delenv("API_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("INFERENCE_URL", raising=False)
+
+    _set_unified_loopback_env(9100)
+
+    import os
+    assert os.environ["API_GATEWAY_URL"] == "http://localhost:9100/api"
+    assert os.environ["INFERENCE_URL"] == "http://localhost:9100/inf"
+
+
+def test_loopback_env_does_not_override_explicit(monkeypatch):
+    """setdefault: an explicit env (e.g. split mode) must win."""
+    from cli import _set_unified_loopback_env
+
+    monkeypatch.setenv("API_GATEWAY_URL", "http://gw.internal:8000")
+    monkeypatch.setenv("INFERENCE_URL", "http://inf.internal:8001")
+
+    _set_unified_loopback_env(8000)
+
+    import os
+    assert os.environ["API_GATEWAY_URL"] == "http://gw.internal:8000"
+    assert os.environ["INFERENCE_URL"] == "http://inf.internal:8001"

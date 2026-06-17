@@ -172,14 +172,16 @@ describe("logout", () => {
     vi.unstubAllEnvs();
   });
 
-  it("local mode: clears the token store, POSTs /auth/logout, then redirects to /login", async () => {
+  it("local mode: clears the token store, POSTs the gateway-mounted /auth/logout, then redirects to /login", async () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "local");
     await logout();
     expect(clearSpy).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    });
+    // Must hit the gateway under its mount prefix (default base http://localhost:8000),
+    // NOT a bare /auth/logout which falls through to the SPA catch-all → 405.
+    const [calledUrl, calledOpts] = fetchMock.mock.calls[0];
+    expect(calledUrl).toMatch(/\/auth\/logout$/);
+    expect(calledUrl).not.toBe("/auth/logout");
+    expect(calledOpts).toMatchObject({ method: "POST", credentials: "include" });
     expect(assignMock).toHaveBeenCalledWith("/login");
   });
 
@@ -188,10 +190,10 @@ describe("logout", () => {
     vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "https://auth.inferia.local");
     await logout();
     expect(clearSpy).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    });
+    const [logoutUrl, logoutOpts] = fetchMock.mock.calls[0];
+    expect(logoutUrl).toMatch(/\/auth\/logout$/);
+    expect(logoutUrl).not.toBe("/auth/logout");
+    expect(logoutOpts).toMatchObject({ method: "POST", credentials: "include" });
     expect(assignMock).toHaveBeenCalledTimes(1);
     const dest = assignMock.mock.calls[0][0] as string;
     expect(dest).toMatch(/^https:\/\/auth\.inferia\.local\/api\/v1\/auth\/sso-logout\?/);
