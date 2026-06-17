@@ -236,9 +236,12 @@ class NosanaAdapter(ProviderAdapter):
         elif model_id:
             logger.info(f"Using job_builder for engine={engine}, model={model_id}")
 
-            # Extract additional config from metadata
+            # Extract additional config from metadata.
+            # Default 0.80 (not 0.95): community/DePIN GPUs reserve VRAM for the CUDA
+            # context + co-tenants, and vLLM ABORTS at startup if free < gpu_util*total.
+            # 0.95 reliably failed the free-memory check on real nodes. See create_vllm_job.
             job_config = {
-                "gpu_util": metadata.get("gpu_util", 0.95),
+                "gpu_util": metadata.get("gpu_util", 0.80),
                 "dtype": metadata.get("dtype", "auto"),
                 "enforce_eager": metadata.get("enforce_eager", False),
                 "max_model_len": metadata.get("max_model_len", 8192),
