@@ -1,6 +1,5 @@
 """Tests for find_config_path and load_yaml (Sections 7.1 and 7.2 of the spec)."""
 import pytest
-from pathlib import Path
 
 from common.unified_config.loader import find_config_path, load_yaml
 from common.unified_config.errors import (

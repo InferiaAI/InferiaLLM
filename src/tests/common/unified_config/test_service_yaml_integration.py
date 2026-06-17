@@ -10,7 +10,6 @@ Split rule: yaml carries app behavior only; hosting/port/URL/connection fields
 live in env vars. Accordingly, the tests below no longer assert on port/host/
 api_gateway_url/redis_url fields from yaml — those come from env.
 """
-import os
 from pathlib import Path
 import pytest
 

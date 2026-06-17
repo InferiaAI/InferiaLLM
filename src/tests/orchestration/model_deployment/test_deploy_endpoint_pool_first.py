@@ -622,7 +622,6 @@ async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
     )
 
     # Patch resolve_hf_token so no real provider config is needed.
-    import orchestration.models.model_deployment.deployment_server as ds
     from unittest.mock import patch
 
     from unittest.mock import AsyncMock as _AsyncMock

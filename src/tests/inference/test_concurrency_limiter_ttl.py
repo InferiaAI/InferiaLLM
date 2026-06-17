@@ -2,7 +2,6 @@
 
 import asyncio
 import pytest
-from unittest.mock import patch, MagicMock
 from cachetools import TTLCache
 
 from inference.core.concurrency_limiter import UpstreamConcurrencyLimiter

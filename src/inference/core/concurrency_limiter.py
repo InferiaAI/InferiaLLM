@@ -4,7 +4,7 @@ Concurrency limiter for upstream inference calls.
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator, Optional
 
 from cachetools import TTLCache
 from fastapi import HTTPException

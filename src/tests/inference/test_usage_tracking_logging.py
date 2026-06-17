@@ -1,7 +1,7 @@
 """Tests that usage-tracking errors are routed through the logger, not print()."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 
 @pytest.fixture

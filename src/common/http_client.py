@@ -4,7 +4,7 @@ Standardized HTTP client for internal microservice communication.
 
 import httpx
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)

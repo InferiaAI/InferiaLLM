@@ -5,9 +5,7 @@ fields must all be present (EXTERNAL_AUTH_URL, EXTERNAL_AUTH_ISSUER,
 OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI). Local mode should leave them all optional.
 """
 
-import os
 import types
-from typing import Iterator
 import pytest
 
 from api_gateway.config import Settings, httpx_verify

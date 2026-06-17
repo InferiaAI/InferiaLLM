@@ -1,7 +1,5 @@
 """Tests for UnifiedBaseSettings + the env > yaml > defaults precedence chain."""
-import os
 from typing import ClassVar, Optional
-import pytest
 
 from common.unified_config import UnifiedBaseSettings
 from common.unified_config.loader import _clear_cache

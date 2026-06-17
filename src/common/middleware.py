@@ -5,7 +5,7 @@ Shared middleware for the InferiaLLM ecosystem.
 import logging
 import uuid
 from typing import List, Optional
-from fastapi import Request, HTTPException, status
+from fastapi import Request, status
 from common.http_client import request_id_ctx
 
 logger = logging.getLogger(__name__)

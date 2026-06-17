@@ -2,7 +2,7 @@
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 
 class FakeAdapter:
@@ -92,7 +92,6 @@ class TestNosanaAdapterErrors:
 
     def test_provision_node_missing_metadata_raises(self):
         """Nosana provision without required metadata raises ValueError."""
-        from unittest.mock import patch
 
         mock_settings = type("S", (), {
             "internal_api_key": "test",
@@ -122,7 +121,6 @@ class TestNosanaAdapterErrors:
 
     def test_provision_node_missing_image_raises(self):
         """Training provision without image raises ValueError."""
-        from unittest.mock import patch
 
         mock_settings = type("S", (), {
             "internal_api_key": "test",

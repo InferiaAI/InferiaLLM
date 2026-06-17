@@ -1,7 +1,7 @@
 """Tests for exception handlers — error handling layer."""
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from httpx import AsyncClient, ASGITransport
@@ -126,7 +126,6 @@ class TestUnhandledExceptionHandler:
     async def test_includes_class_name_when_debug_true(self):
         """In debug mode, Starlette's ServerErrorMiddleware intercepts first,
         so we test the handler function directly instead."""
-        from unittest.mock import MagicMock
         from common.exception_handlers import unhandled_exception_handler
 
         mock_request = MagicMock()

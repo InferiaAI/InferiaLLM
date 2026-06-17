@@ -1,7 +1,7 @@
 """Security tests for audit internal endpoint API key handling."""
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 from datetime import datetime
 import uuid
 

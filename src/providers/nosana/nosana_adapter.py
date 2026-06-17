@@ -1,4 +1,3 @@
-import os
 import secrets
 import logging
 import asyncio
@@ -536,7 +535,7 @@ class NosanaAdapter(ProviderAdapter):
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
-                        raise RuntimeError(f"Failed to fetch job details")
+                        raise RuntimeError("Failed to fetch job details")
                     job_data = await resp.json()
                     node_address = job_data.get("nodeAddress")
                     raw_state = job_data.get("jobState")

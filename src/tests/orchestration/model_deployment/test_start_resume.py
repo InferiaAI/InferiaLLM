@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import os
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4, UUID
 

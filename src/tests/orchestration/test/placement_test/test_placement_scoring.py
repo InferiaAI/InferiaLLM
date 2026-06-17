@@ -2,7 +2,6 @@
 
 import math
 
-import pytest
 
 from orchestration.scheduling.placement_scoring import score_node
 

@@ -1,9 +1,7 @@
 """Tests for deployment log persistence."""
 
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from collections import deque
+from unittest.mock import AsyncMock, patch
 from datetime import datetime, timezone
 
 from orchestration.config import Settings

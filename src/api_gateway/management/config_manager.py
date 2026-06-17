@@ -2,7 +2,6 @@ import logging
 from typing import Dict, Any, Optional, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
 
 from api_gateway.config import settings
 from api_gateway.db.models import SystemSetting

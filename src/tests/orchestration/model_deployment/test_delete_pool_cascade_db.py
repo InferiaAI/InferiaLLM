@@ -17,7 +17,6 @@ Run with:
 """
 from __future__ import annotations
 
-import json
 import os
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4

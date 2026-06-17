@@ -8,7 +8,6 @@ file.
 
 These tests load the schema and the example file and assert the contract holds.
 """
-import os
 from pathlib import Path
 import pytest
 from pydantic import ValidationError
@@ -18,7 +17,6 @@ from common.unified_config.schema import (
     ApiGatewayService,
     InferenceService,
     OrchestrationService,
-    ServicesConfig,
 )
 
 REPO_ROOT = Path(__file__).parents[6]  # …/InferiaLLM

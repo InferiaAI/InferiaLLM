@@ -4,7 +4,6 @@ import pytest
 from unittest.mock import patch
 
 from common.errors import (
-    APIError,
     BadRequestError,
     UnauthorizedError,
     ForbiddenError,

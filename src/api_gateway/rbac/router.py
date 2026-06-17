@@ -6,7 +6,6 @@ from api_gateway.models import (
     AuthToken,
     LoginRequest,
     UserInfoResponse,
-    PermissionEnum,
     RegisterRequest,
     RegisterInviteRequest,
     InviteResponse,
@@ -29,8 +28,6 @@ from api_gateway.rbac.local_identity_guard import require_local_identity
 from api_gateway.config import settings
 from sqlalchemy.future import select
 from sqlalchemy import func
-import uuid
-import secrets
 import os
 from datetime import datetime, timezone
 import pyotp

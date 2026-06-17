@@ -1,6 +1,5 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, func, JSON, Integer, ARRAY, Boolean, Float
+from sqlalchemy import Column, String, DateTime, func, JSON, Integer, ARRAY, Boolean, Float
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 from ..database import Base
 import uuid
 from api_gateway.db.security import EncryptedJSON

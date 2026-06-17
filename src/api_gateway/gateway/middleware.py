@@ -4,7 +4,7 @@ API Gateway middleware for request processing and validation.
 
 import uuid
 import time
-from fastapi import Request, Response
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
 

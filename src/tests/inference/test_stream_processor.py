@@ -1,6 +1,5 @@
 """Tests for stream processor — complex logic layer."""
 
-import pytest
 
 from inference.core.stream_processor import StreamProcessor
 

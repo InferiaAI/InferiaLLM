@@ -10,7 +10,6 @@ from api_gateway.models import (
     RoleCreate,
     RoleUpdate,
     RoleResponse,
-    PermissionResponse,
 )
 from .middleware import get_current_user_from_request
 from .authorization import authz_service

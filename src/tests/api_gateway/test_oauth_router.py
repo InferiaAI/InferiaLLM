@@ -7,7 +7,7 @@ isolated and avoid colliding with the main gateway app's auth middleware.
 import hashlib
 import base64
 from typing import AsyncIterator
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest

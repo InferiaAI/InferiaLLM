@@ -4,12 +4,10 @@ Proxies requests to the Filtration service for security and policy enforcement,
 then routes to the actual model provider.
 """
 
-import logging
 import json
 from typing import Optional
 from jose import JWTError, jwt
 
-from common.schemas.common import HealthCheckResponse
 from inference.client import api_gateway_client
 from inference.config import settings
 from inference.core.http_client import http_client

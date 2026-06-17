@@ -10,7 +10,6 @@ from orchestration.workers.worker_controller.controller import (
 )
 from orchestration.workers.worker_controller.protocol import (
     CommandResultBody,
-    Envelope,
 )
 from orchestration.workers.worker_controller.registry import (
     WorkerConn,

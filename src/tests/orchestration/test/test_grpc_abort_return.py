@@ -5,7 +5,6 @@ must return explicitly. These tests use a non-raising mock to verify
 that execution stops after abort (no invalid DB writes, no crashes).
 """
 
-import json
 import pytest
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock

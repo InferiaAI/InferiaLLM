@@ -1,4 +1,6 @@
-import os, re, pytest
+import os
+import re
+import pytest
 
 REPO = "/host"
 ENV = os.path.join(REPO, ".env")

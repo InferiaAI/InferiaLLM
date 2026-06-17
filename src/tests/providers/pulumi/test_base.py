@@ -1,7 +1,4 @@
 """Tests for PulumiProvisioningBase — state-dir lifecycle and stack naming."""
-import os
-import pathlib
-import tempfile
 
 import pytest
 

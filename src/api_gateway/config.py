@@ -3,7 +3,7 @@ Configuration management for the API Gateway.
 Uses Pydantic Settings for environment-based configuration.
 """
 
-from typing import ClassVar, Literal, Optional, Any, Dict, List
+from typing import ClassVar, Literal, Optional, Any
 import logging
 import warnings
 from pydantic import Field, BaseModel, field_validator, model_validator

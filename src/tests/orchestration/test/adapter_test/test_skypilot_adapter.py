@@ -1,6 +1,5 @@
 import asyncio
 import grpc
-from uuid import UUID
 
 from orchestration.v1 import (
     model_registry_pb2,

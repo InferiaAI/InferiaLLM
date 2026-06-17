@@ -1,6 +1,5 @@
 """Tests for YamlConfigSettingsSource (Section 8.2 of the spec)."""
 from typing import ClassVar, Optional
-import pytest
 from pydantic_settings import BaseSettings
 
 from common.unified_config.source import YamlConfigSettingsSource

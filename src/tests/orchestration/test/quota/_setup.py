@@ -1,6 +1,5 @@
 import uuid
 import grpc
-import asyncpg
 
 from orchestration.v1 import scheduler_pb2_grpc
 

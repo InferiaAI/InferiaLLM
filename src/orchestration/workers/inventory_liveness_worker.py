@@ -1,7 +1,6 @@
 # app/workers/inventory_liveness_worker.py
 import asyncio
 import logging
-from datetime import timedelta
 
 logger = logging.getLogger("inventory-liveness-worker")
 

@@ -9,7 +9,6 @@ needs to start/stop, the deployment worker calls
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 from orchestration.messaging.uri_validation import (

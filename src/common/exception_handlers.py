@@ -6,7 +6,7 @@ import logging
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from common.errors import APIError, InternalServerError
+from common.errors import APIError
 from common.http_client import request_id_ctx
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,6 @@ These tests run the actual entrypoint.sh config generation block
 via subprocess to verify real behavior.
 """
 
-import json
 import os
 import subprocess
 import tempfile

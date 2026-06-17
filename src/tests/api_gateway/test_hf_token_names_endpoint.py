@@ -8,7 +8,6 @@ Verifies:
 - An unauthenticated request returns 401.
 """
 import pytest
-import pytest_asyncio
 from unittest.mock import patch
 
 from api_gateway.config import HuggingFaceConfig, HFTokenEntry

@@ -20,9 +20,6 @@ from orchestration.v1 import (
     compute_pool_pb2_grpc,
 )
 
-from orchestration.repositories.provider_repo import (
-    ProviderResourceRepository,
-)
 from orchestration.provisioning.engine.registry import (
     get_adapter,
     ADAPTER_REGISTRY,
@@ -2387,7 +2384,7 @@ async def create_pool(req: CreatePoolRequest, request: Request):
     other provisioning. All provisioning happens at /deploy time via
     PoolPlacer when an actual model deploy arrives (T7).
     """
-    from uuid import UUID, uuid4
+    from uuid import uuid4
     from orchestration.repositories.pool_repo import (
         ComputePoolRepository,
     )
@@ -3483,9 +3480,6 @@ async def list_provider_resources(provider: str | None = None):
     Returns:
         Dict with "resources" key containing list of available resources.
     """
-    from orchestration.provisioning.engine.registry import (
-        ADAPTER_REGISTRY,
-    )
 
     try:
         if provider:

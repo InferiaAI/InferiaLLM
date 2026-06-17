@@ -2,7 +2,6 @@
 the worker on the EC2 instance to register and transition to 'ready'."""
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -10,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from orchestration.state_machine.errors import (
-    NetworkError, TransientError,
+    TransientError,
 )
 from orchestration.state_machine.jobs.model import (
     Phase, ProvisioningJob,

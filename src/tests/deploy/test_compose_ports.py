@@ -1,4 +1,5 @@
-import os, yaml
+import os
+import yaml
 
 REPO = os.environ.get("INFERIA_REPO", "/host")
 COMPOSE = os.path.join(REPO, "docker-compose.yml")

@@ -7,10 +7,8 @@ Length caps per plan C3:
   refresh_token: 512
 """
 
-import asyncio
 
 import pytest
-from pytest_httpserver import HTTPServer
 
 from api_gateway.rbac.oauth_client import (
     OAuthClient,

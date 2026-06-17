@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from cachetools import TTLCache
 import logging
 
-from api_gateway.models import UserContext, PermissionEnum
+from api_gateway.models import UserContext
 from api_gateway.rbac.auth import auth_service
 from api_gateway.config import httpx_verify, settings
 from api_gateway.db.database import AsyncSessionLocal

@@ -1,7 +1,6 @@
 import asyncio
 import grpc
 import uuid
-import time
 
 from orchestration.v1 import (
     compute_pool_pb2,

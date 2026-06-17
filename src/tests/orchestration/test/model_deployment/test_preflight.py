@@ -9,12 +9,9 @@ from orchestration.models.model_deployment.preflight import (
     check_ollama_model_exists,
     check_vram_fit,
     check_pipeline_compatibility,
-    check_docker_image_exists,
     check_duplicate_deployment,
     check_context_length,
     ENGINES_WITH_OWN_REGISTRY,
-    PreflightResult,
-    FormatCheckResult,
 )
 
 

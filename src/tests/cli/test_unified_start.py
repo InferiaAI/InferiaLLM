@@ -5,7 +5,6 @@ processes (api-gateway, inference, dashboard) into a single unified-web
 process, while keeping non-web services exactly as before.
 """
 
-import pytest
 
 
 def test_unified_process_specs_collapses_web_into_one():

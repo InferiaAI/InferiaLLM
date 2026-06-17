@@ -48,7 +48,7 @@ async def create_deployment(
     if existing.scalars().first():
         raise HTTPException(
             status_code=409,
-            detail=f"A deployment with this name already exists. Please try another name.",
+            detail="A deployment with this name already exists. Please try another name.",
         )
 
     # Merge prefill-decode fields into configuration so they flow to the worker

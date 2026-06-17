@@ -2,7 +2,6 @@ import boto3
 import grpc
 import asyncio
 import functools
-import datetime as dt
 import os
 from adapters.base.adapter import ProviderAdapter
 from orchestration.v1 import (

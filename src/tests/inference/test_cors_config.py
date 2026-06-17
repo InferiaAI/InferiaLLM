@@ -7,7 +7,6 @@ Verifies that:
 3. Development mode allows wildcard origins
 """
 
-import pytest
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

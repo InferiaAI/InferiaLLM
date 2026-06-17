@@ -2,7 +2,7 @@ from fastapi import HTTPException
 from inference.client import api_gateway_client
 from inference.config import settings
 from common.circuit_breaker import circuit_breaker_registry
-from typing import Dict, Any, List, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator
 import logging
 import httpx
 from .http_client import http_client

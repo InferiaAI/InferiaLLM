@@ -2,7 +2,7 @@
 
 import pytest
 import httpx
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 
 from common.http_client import InternalHttpClient, request_id_ctx
 
