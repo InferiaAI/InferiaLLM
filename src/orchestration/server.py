@@ -825,6 +825,12 @@ async def serve():
                 interval_seconds=int(
                     os.getenv("DEPIN_LIVENESS_INTERVAL_SECONDS", "45")
                 ),
+                deploying_max_seconds=int(
+                    os.getenv("DEPIN_DEPLOYING_MAX_SECONDS", "2100")
+                ),
+                pending_max_seconds=int(
+                    os.getenv("DEPIN_PENDING_MAX_SECONDS", "900")
+                ),
             )
             _depin_liveness_task = asyncio.create_task(_depin_liveness.run())
             app.state.depin_liveness_task = _depin_liveness_task

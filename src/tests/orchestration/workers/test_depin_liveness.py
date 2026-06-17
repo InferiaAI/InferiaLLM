@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+
+def _now():
+    return datetime.now(timezone.utc)
 
 from orchestration.workers import depin_liveness_worker as mod
 from orchestration.repositories.model_deployment_repo import (
@@ -15,15 +20,25 @@ from providers.nosana.nosana_adapter import NosanaAdapter
 pytestmark = pytest.mark.asyncio
 
 
-def _mocks(*, deploy_rows, node, pool):
+def _mocks(*, deploy_rows, node, pool, state="RUNNING"):
+    """deploy_rows are returned ONLY for ``state`` (RUNNING by default); the
+    reconciler now sweeps RUNNING + DEPLOYING + PENDING_NODE, so a fixed
+    return_value would feed the same rows to every handler."""
     deploys = AsyncMock(spec=ModelDeploymentRepository)
-    deploys.list_by_state.return_value = deploy_rows
+    deploys.list_by_state.side_effect = (
+        lambda s: list(deploy_rows) if s == state else []
+    )
     deploys.update_state_if.return_value = True
     inventory = AsyncMock(spec=InventoryRepository)
     inventory.get_node_by_id.return_value = node
     pool_repo = AsyncMock(spec=ComputePoolRepository)
     pool_repo.get.return_value = pool
     return deploys, inventory, pool_repo
+
+
+def _by_state(rows, state):
+    """list_by_state side_effect that returns ``rows`` only for ``state``."""
+    return lambda s: list(rows) if s == state else []
 
 
 def _adapter(status):
@@ -62,12 +77,12 @@ async def test_redeploy_swap_skips_fail(monkeypatch):
     # Read-after-confirm: the node's job changed (SIMPLE-EXTEND redeploy) between
     # the status check and the action -> deployment is recovering -> do NOT fail.
     deploys = AsyncMock(spec=ModelDeploymentRepository)
-    deploys.list_by_state.return_value = [
-        {"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1"}
-    ]
+    deploys.list_by_state.side_effect = _by_state(
+        [{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1"}], "RUNNING"
+    )
     deploys.update_state_if.return_value = True
     inventory = AsyncMock(spec=InventoryRepository)
-    # first read (in _check_one): old job; re-read (after terminal): NEW job id
+    # first read (in _check_running): old job; re-read (after terminal): NEW job id
     inventory.get_node_by_id.side_effect = [
         {"provider_instance_id": "job-old", "provider": "nosana"},
         {"provider_instance_id": "job-new", "provider": "nosana"},
@@ -206,10 +221,13 @@ async def test_uses_node_ids_when_no_target_node(monkeypatch):
 async def test_one_bad_deployment_does_not_stop_others(monkeypatch):
     # First row blows up (pool_repo.get raises); second is a healthy terminal one.
     deploys = AsyncMock(spec=ModelDeploymentRepository)
-    deploys.list_by_state.return_value = [
-        {"deployment_id": "bad", "pool_id": "pbad", "target_node_id": "nbad"},
-        {"deployment_id": "d2", "pool_id": "p2", "target_node_id": "n2"},
-    ]
+    deploys.list_by_state.side_effect = _by_state(
+        [
+            {"deployment_id": "bad", "pool_id": "pbad", "target_node_id": "nbad"},
+            {"deployment_id": "d2", "pool_id": "p2", "target_node_id": "n2"},
+        ],
+        "RUNNING",
+    )
     inventory = AsyncMock(spec=InventoryRepository)
     inventory.get_node_by_id.return_value = {"provider_instance_id": "job2", "provider": "nosana"}
     pool_repo = AsyncMock(spec=ComputePoolRepository)
@@ -230,6 +248,167 @@ async def test_one_bad_deployment_does_not_stop_others(monkeypatch):
     # the good one still got reconciled despite the bad one raising
     deploys.update_state_if.assert_awaited_once()
     assert deploys.update_state_if.await_args.args[0] == "d2"
+
+
+# ---- resume sweep: DEPLOYING reconciliation ----
+
+def _depl_worker(deploys, inventory, pool_repo, status, *, serving=None):
+    monkey_dep = AsyncMock()
+    w = mod.DepinLivenessWorker(
+        deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+        get_adapter_fn=lambda p: _adapter(status),
+    )
+    if serving is not None:
+        w._endpoint_serving = AsyncMock(return_value=serving)
+    return w, monkey_dep
+
+
+async def test_deploying_endpoint_serving_flips_running(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1",
+                      "endpoint": "https://x.node.k8s.prd.nos.ci", "updated_at": _now()}],
+        node={"provider_instance_id": "job-abc", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "c"},
+        state="DEPLOYING",
+    )
+    monkeypatch.setattr(mod, "_deprovision_direct_node", AsyncMock())
+    w, _ = _depl_worker(deploys, inventory, pool_repo, "RUNNING", serving=True)
+    await w.reconcile_once()
+    deploys.update_state_if.assert_awaited_once()
+    assert deploys.update_state_if.await_args.args[:3] == ("d1", "DEPLOYING", "RUNNING")
+
+
+async def test_deploying_job_terminal_fails_and_deprovisions(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1",
+                      "endpoint": "https://x", "updated_at": _now()}],
+        node={"provider_instance_id": "job-abc", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "c"},
+        state="DEPLOYING",
+    )
+    dep = AsyncMock()
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w, _ = _depl_worker(deploys, inventory, pool_repo, "STOPPED", serving=False)
+    await w.reconcile_once()
+    assert deploys.update_state_if.await_args.args[:3] == ("d1", "DEPLOYING", "FAILED")
+    dep.assert_awaited_once()
+    inventory.mark_terminated.assert_awaited_once_with("n1")
+
+
+async def test_deploying_still_loading_left_alone(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1",
+                      "endpoint": "https://x", "updated_at": _now()}],
+        node={"provider_instance_id": "job-abc", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "c"},
+        state="DEPLOYING",
+    )
+    monkeypatch.setattr(mod, "_deprovision_direct_node", AsyncMock())
+    w, _ = _depl_worker(deploys, inventory, pool_repo, "RUNNING", serving=False)
+    await w.reconcile_once()
+    deploys.update_state_if.assert_not_awaited()  # young + not serving -> leave
+
+
+async def test_deploying_stuck_too_long_fails(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1",
+                      "endpoint": "https://x",
+                      "updated_at": _now() - timedelta(seconds=3000)}],  # > 2100
+        node={"provider_instance_id": "job-abc", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "c"},
+        state="DEPLOYING",
+    )
+    dep = AsyncMock()
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w, _ = _depl_worker(deploys, inventory, pool_repo, "RUNNING", serving=False)
+    await w.reconcile_once()
+    assert deploys.update_state_if.await_args.args[:3] == ("d1", "DEPLOYING", "FAILED")
+    dep.assert_awaited_once()
+
+
+# ---- resume sweep: PENDING_NODE reconciliation ----
+
+async def test_pending_fresh_left_alone(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1",
+                      "updated_at": _now()}],  # young -> coroutine likely still working
+        node={"provider_instance_id": "placeholder:x", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "c"},
+        state="PENDING_NODE",
+    )
+    monkeypatch.setattr(mod, "_deprovision_direct_node", AsyncMock())
+    w = mod.DepinLivenessWorker(
+        deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+        get_adapter_fn=lambda p: _adapter("unknown"),
+    )
+    await w.reconcile_once()
+    deploys.update_state_if.assert_not_awaited()
+
+
+async def test_pending_stale_fails_and_deprovisions(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1",
+                      "updated_at": _now() - timedelta(seconds=1200)}],  # > 900
+        node={"provider_instance_id": "job-real", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "c"},
+        state="PENDING_NODE",
+    )
+    dep = AsyncMock()
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w = mod.DepinLivenessWorker(
+        deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+        get_adapter_fn=lambda p: _adapter("unknown"),
+    )
+    await w.reconcile_once()
+    assert deploys.update_state_if.await_args.args[:3] == ("d1", "PENDING_NODE", "FAILED")
+    dep.assert_awaited_once()  # had a real provider job -> deprovision it
+    inventory.mark_terminated.assert_awaited_once_with("n1")
+
+
+async def test_pending_stale_placeholder_no_deprovision(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1",
+                      "updated_at": _now() - timedelta(seconds=1200)}],
+        node={"provider_instance_id": "placeholder:x", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "c"},
+        state="PENDING_NODE",
+    )
+    dep = AsyncMock()
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w = mod.DepinLivenessWorker(
+        deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+        get_adapter_fn=lambda p: _adapter("unknown"),
+    )
+    await w.reconcile_once()
+    assert deploys.update_state_if.await_args.args[:3] == ("d1", "PENDING_NODE", "FAILED")
+    dep.assert_not_awaited()  # placeholder: no external job to deprovision
+    inventory.mark_terminated.assert_awaited_once_with("n1")  # still clean up the placeholder
+
+
+# ---- _endpoint_serving probe ----
+
+async def test_endpoint_serving_true_on_200(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(deploy_rows=[], node=None, pool=None)
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo)
+    monkeypatch.setattr(mod.aiohttp, "ClientSession",
+                        lambda *a, **k: _FakeSession(_FakeResp(200, {})))
+    assert await w._endpoint_serving("https://x.node.k8s.prd.nos.ci") is True
+
+
+async def test_endpoint_serving_false_on_503(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(deploy_rows=[], node=None, pool=None)
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo)
+    monkeypatch.setattr(mod.aiohttp, "ClientSession",
+                        lambda *a, **k: _FakeSession(_FakeResp(503, {})))
+    assert await w._endpoint_serving("https://x.node.k8s.prd.nos.ci") is False
+
+
+async def test_endpoint_serving_false_on_empty_or_nonhttp():
+    deploys, inventory, pool_repo = _mocks(deploy_rows=[], node=None, pool=None)
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo)
+    assert await w._endpoint_serving("") is False
+    assert await w._endpoint_serving(None) is False
+    assert await w._endpoint_serving("job-running-confidential") is False
 
 
 # ---- NosanaAdapter.get_node_status ----
