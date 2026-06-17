@@ -32,7 +32,7 @@ async def pool():
 
 
 async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready",
-                              advertise_url=None):
+                              advertise_url=None, provider="aws"):
     org_id, pool_id, node_id = uuid4(), uuid4(), uuid4()
     async with p.acquire() as c:
         await c.execute("INSERT INTO organizations(id,name) VALUES($1,$2) "
@@ -42,10 +42,10 @@ async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready",
                  provider, pool_type, allowed_gpu_types, max_cost_per_hour,
                  scheduling_policy, provider_pool_id, is_active, lifecycle_state,
                  gpu_count)
-               VALUES ($1, $2, 'organization', $3::text, 'aws', 'cluster',
+               VALUES ($1, $2, 'organization', $3::text, $6, 'cluster',
                        ARRAY['none'], 0, '{}', $4, true, 'running', $5)""",
             pool_id, f"p-{pool_id}", str(org_id),
-            f"placeholder:{pool_id}", gpu_total,
+            f"placeholder:{pool_id}", gpu_total, provider,
         )
         await c.execute(
             """INSERT INTO compute_inventory(id, pool_id, provider,
@@ -53,11 +53,11 @@ async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready",
                  advertise_url,
                  gpu_total, gpu_allocated, vcpu_total, vcpu_allocated,
                  ram_gb_total, ram_gb_allocated, state)
-               VALUES ($1, $2, 'aws', $3, 'h', $4, 'worker',
+               VALUES ($1, $2, $9, $3, 'h', $4, 'worker',
                        $8,
                        $5, $6, 0, 0, 0, 0, $7)""",
             node_id, pool_id, f"p-{node_id}", f"n-{node_id}",
-            gpu_total, gpu_allocated, state, advertise_url,
+            gpu_total, gpu_allocated, state, advertise_url, provider,
         )
     return pool_id, node_id
 
@@ -276,6 +276,37 @@ async def _seed_deploying_deploy(p, pool_id, node_id, *, gpu_required=1,
             node_id, engine,
         )
     return deploy_id
+
+
+@pytest.mark.parametrize("provider", ["aws", "on_prem", "nosana"])
+async def test_on_worker_ready_threads_node_provider_to_mirror(pool, monkeypatch, provider):
+    """on_worker_ready must read the node's provider and thread it into
+    resolve_and_apply_mirror, so the mirror is bypassed for public-cloud nodes
+    (the gate lives in resolve_and_apply_mirror). Pins the call-site wiring: a
+    regression dropping the provider would route cloud deploys through the CP
+    mirror again."""
+    from orchestration.models.model_deployment import deployment_linker as _dl_mod
+    captured = {}
+
+    async def _spy(spec, *, recipe, artifact_uri, mirror_base, cache_repo,
+                   provider=None):
+        captured["provider"] = provider
+
+    monkeypatch.setattr(_dl_mod, "resolve_and_apply_mirror", _spy)
+
+    pool_id, node_id = await _seed_pool_and_node(pool, provider=provider)
+    await _seed_pending_deploy(pool, pool_id)
+    controller = AsyncMock(spec=WorkerController)
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    assert captured.get("provider") == provider  # node's provider, verbatim
 
 
 async def test_orphaned_deploying_is_redriven_on_worker_ready(pool):
