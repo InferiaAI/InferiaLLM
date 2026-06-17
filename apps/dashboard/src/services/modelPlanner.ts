@@ -33,8 +33,13 @@ export interface PoolCompatibilityWithFit extends CompatibilityResult {
 
 // ---- LLMFit Server Config ----
 
-export const LLMFIT_SERVER_URL = (typeof window !== 'undefined' && (window as any).__ENV?.LLMFIT_SERVER_URL)
-  || 'http://llmfit:8787';
+export function getLlmfitBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const rc = (window as unknown as { __RUNTIME_CONFIG__?: { LLMFIT_SERVER_URL?: string } }).__RUNTIME_CONFIG__;
+    if (rc?.LLMFIT_SERVER_URL) return rc.LLMFIT_SERVER_URL;
+  }
+  return '/api/v1/llmfit';
+}
 
 interface LlmfitModelFit {
   name: string;
@@ -159,7 +164,7 @@ function mapRuntimeToEngine(runtime: string): string | undefined {
 
 export async function checkLlmfitHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${LLMFIT_SERVER_URL}/health`, { signal: AbortSignal.timeout(2000) });
+    const response = await fetch(`${getLlmfitBaseUrl()}/health`, { signal: AbortSignal.timeout(2000) });
     return response.ok;
   } catch {
     return false;
@@ -187,7 +192,7 @@ export async function queryLlmfitModelFit(
     if (llmfitRuntime) params.set("force_runtime", llmfitRuntime);
 
     const response = await fetch(
-      `${LLMFIT_SERVER_URL}/api/v1/models?${params}`,
+      `${getLlmfitBaseUrl()}/api/v1/models?${params}`,
       { signal: AbortSignal.timeout(5000) },
     );
     if (!response.ok) return null;

@@ -48,6 +48,7 @@ worker_passthrough_router = APIRouter(tags=["Worker Passthrough"])
 ollama_registry_router = APIRouter(tags=["Ollama OCI Mirror"])
 
 ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
+LLMFIT_URL = "http://llmfit:8787"
 
 
 def _require_proxy_permission(
@@ -853,5 +854,29 @@ async def proxy_admin_aws_discovery(
         path=upstream_path,
         request=request,
         target_url=ORCHESTRATION_URL,
+        user_context=user_context,
+    )
+
+
+LLMFIT_SKIP_PREFIXES = frozenset({"/health"})
+
+
+@router.api_route("/llmfit/{path:path}", methods=["GET"])
+async def proxy_llmfit(
+    request: Request,
+    path: str,
+    user_context: UserContext = Depends(get_current_user_from_request),
+):
+    """Proxy model-fit queries to the llmfit sidecar (read-only).
+    Requires DEPLOYMENT_LIST. Skips RBAC for health checks."""
+    if path not in LLMFIT_SKIP_PREFIXES:
+        authz_service.require_permission(
+            user_context, PermissionEnum.DEPLOYMENT_LIST
+        )
+    return await proxy_request(
+        method=request.method,
+        path=path,
+        request=request,
+        target_url=LLMFIT_URL,
         user_context=user_context,
     )

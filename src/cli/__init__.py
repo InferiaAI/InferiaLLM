@@ -555,6 +555,9 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
         "INFERENCE_URL": os.environ.get("DASHBOARD_INFERENCE_URL", "") or "/inf",
         "WEB_SOCKET_URL": os.environ.get("DASHBOARD_WEB_SOCKET_URL", "") or "",
         "SIDECAR_URL": os.environ.get("DASHBOARD_SIDECAR_URL", "") or "",
+        "LLMFIT_SERVER_URL": (
+            os.environ.get("DASHBOARD_LLMFIT_SERVER_URL", "") or "/api/v1/llmfit"
+        ),
         # Auth mode is runtime-configurable (not baked into the SPA build): the
         # dashboard reads AUTH_PROVIDER from this runtime config so a single image
         # serves local / oidc / inferiaauth. Falls back to VITE_AUTH_PROVIDER, then
@@ -584,7 +587,8 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
         f"(api_gateway_url={config['API_GATEWAY_URL']!r}, "
         f"inference_url={config['INFERENCE_URL']!r}, "
         f"web_socket_url={config['WEB_SOCKET_URL']!r}, "
-        f"sidecar_url={config['SIDECAR_URL']!r})"
+        f"sidecar_url={config['SIDECAR_URL']!r}, "
+        f"llmfit_url={config['LLMFIT_SERVER_URL']!r})"
     )
 
 
