@@ -469,10 +469,18 @@ class InventoryRepository:
             return data
 
     async def mark_terminated(self, node_id: UUID):
+        # Zero the stored resource counters on terminate so the scheduler's
+        # capacity gate (allocate_gpu reads gpu_allocated) doesn't stay falsely
+        # full if a teardown path flipped the bound deployment terminal without
+        # an explicit release_gpu. (The dashboard now derives gpu_allocated live,
+        # but the scheduler still reads this stored counter.)
         query = """
         UPDATE compute_inventory
         SET
             state = 'terminated',
+            gpu_allocated = 0,
+            vcpu_allocated = 0,
+            ram_gb_allocated = 0,
             updated_at = now()
         WHERE id = $1
         """
@@ -1001,7 +1009,11 @@ async def _mark_terminated_worker_impl(self, *, node_id):
         await conn.execute(
             """
             UPDATE compute_inventory
-            SET state = 'terminated', updated_at = now()
+            SET state = 'terminated',
+                gpu_allocated = 0,
+                vcpu_allocated = 0,
+                ram_gb_allocated = 0,
+                updated_at = now()
             WHERE id = $1
             """,
             node_id,
@@ -1097,9 +1109,23 @@ async def _list_nodes_impl(self, *, org_id, selector=None):
     # Filter on owner_id only so we catch both canonical
     # owner_type='organization' rows and the legacy createpool path which
     # writes owner_type='user' with owner_id set to the org's UUID anyway.
+    # gpu_allocated is DERIVED LIVE from the active deployments bound to the
+    # node, NOT the stored compute_inventory.gpu_allocated counter. That stored
+    # counter drifts upward whenever a teardown path marks a deployment FAILED /
+    # a node terminated without calling release_gpu, which made the dashboard
+    # under-report free GPUs (and falsely report a pool "at capacity"). Deriving
+    # at read time is self-healing regardless of which path forgot to release.
+    # (The stored counter is still the scheduler's atomic capacity gate in
+    # allocate_gpu — untouched here; this only changes what the dashboard reads.)
     sql = (
         "SELECT i.id, i.pool_id, i.node_name, i.agent_kind, i.state,"
-        "       i.advertise_url, i.expose_url, i.gpu_total, i.gpu_allocated,"
+        "       i.advertise_url, i.expose_url, i.gpu_total,"
+        "       COALESCE(("
+        "         SELECT SUM(d.gpu_per_replica * d.replicas)"
+        "           FROM model_deployments d"
+        "          WHERE d.target_node_id = i.id"
+        "            AND d.state IN ('PENDING_NODE','DEPLOYING','RUNNING')"
+        "       ), 0) AS gpu_allocated,"
         "       i.vcpu_total, i.vcpu_allocated, i.ram_gb_total,"
         "       i.ram_gb_allocated, i.last_heartbeat, i.labels,"
         "       i.metadata, i.provider, i.provider_instance_id,"
@@ -1128,7 +1154,13 @@ async def _get_node_impl(self, *, node_id):
         row = await conn.fetchrow(
             """
             SELECT id, pool_id, node_name, agent_kind, state,
-                   advertise_url, expose_url, gpu_total, gpu_allocated,
+                   advertise_url, expose_url, gpu_total,
+                   COALESCE((
+                     SELECT SUM(d.gpu_per_replica * d.replicas)
+                       FROM model_deployments d
+                      WHERE d.target_node_id = compute_inventory.id
+                        AND d.state IN ('PENDING_NODE','DEPLOYING','RUNNING')
+                   ), 0) AS gpu_allocated,
                    vcpu_total, vcpu_allocated, ram_gb_total, ram_gb_allocated,
                    last_heartbeat, labels, metadata,
                    provider, provider_instance_id, created_at, updated_at
