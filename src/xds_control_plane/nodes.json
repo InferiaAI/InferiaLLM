@@ -1,0 +1,5 @@
+[
+  { "id": "node-1", "advertise_url": "http://worker-a:8080", "group_id": "groupA", "pool_id": "pool-default", "provider": "aws" },
+  { "id": "node-2", "advertise_url": "http://worker-b:8080", "group_id": "groupA", "pool_id": "pool-default", "provider": "aws" },
+  { "id": "node-3", "advertise_url": "http://worker-c:8080", "group_id": null,     "pool_id": "pool-default", "provider": "aws" }
+]

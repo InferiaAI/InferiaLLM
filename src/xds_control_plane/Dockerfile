@@ -11,4 +11,4 @@ ENV PORT=18000 \
     CONTROL_PLANE_URL=
 
 EXPOSE 18000
-CMD ["python3", "xds_shim.py"]
+CMD ["python3", "-m", "uvicorn", "xds_shim:app", "--host", "0.0.0.0", "--port", "18000"]

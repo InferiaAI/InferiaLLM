@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
@@ -12,9 +13,10 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import requests
-from flask import Flask, jsonify, request
+from fastapi import FastAPI, Request, Response
 
-app = Flask(__name__)
+logger = logging.getLogger("xds_shim")
+app = FastAPI(title="InferiaLLM xDS Control Plane", version="0.1.0")
 
 CLUSTER_TYPE_URL = "type.googleapis.com/envoy.config.cluster.v3.Cluster"
 ENDPOINT_TYPE_URL = "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment"
@@ -122,7 +124,7 @@ class HTTPNodeSource:
                 with self._lock:
                     self._nodes = parsed
             except Exception as exc:
-                app.logger.warning("HTTPNodeSource poll failed: %s", exc)
+                logger.warning("HTTPNodeSource poll failed: %s", exc)
             time.sleep(self.interval)
 
     def nodes(self) -> list[Node]:
@@ -217,67 +219,63 @@ def current_state() -> ResourceSet:
 
 
 def _discovery_response(version: str, resources: list, type_url: str):
-    return jsonify(
-        {
-            "version_info": version,
-            "resources": resources,
-            "type_url": type_url,
-            "nonce": uuid.uuid4().hex,
-        }
-    )
+    return {
+        "version_info": version,
+        "resources": resources,
+        "type_url": type_url,
+        "nonce": uuid.uuid4().hex,
+    }
 
 
 @app.post("/v3/discovery:clusters")
-def discovery_clusters():
-    req = request.get_json(silent=True) or {}
-    client_version = req.get("version_info", "")
+async def discovery_clusters(request: Request):
+    body = await request.json() or {}
+    client_version = body.get("version_info", "")
     state = current_state()
     if client_version == state.cds_version:
-        return "", 304
+        return Response(status_code=304)
     return _discovery_response(
         state.cds_version, list(state.clusters.values()), CLUSTER_TYPE_URL
     )
 
 
 @app.post("/v3/discovery:endpoints")
-def discovery_endpoints():
-    req = request.get_json(silent=True) or {}
-    client_version = req.get("version_info", "")
-    names = req.get("resource_names") or []
+async def discovery_endpoints(request: Request):
+    body = await request.json() or {}
+    client_version = body.get("version_info", "")
+    names = body.get("resource_names") or []
     state = current_state()
 
     wanted = names or list(state.endpoints.keys())
     combined_version = _hash(sorted((n, state.eds_version.get(n, "")) for n in wanted))
     if client_version == combined_version:
-        return "", 304
+        return Response(status_code=304)
 
     resources = [state.endpoints[n] for n in wanted if n in state.endpoints]
     return _discovery_response(combined_version, resources, ENDPOINT_TYPE_URL)
 
 
 @app.get("/route-table")
-def route_table():
-    state = current_state()
-    return jsonify(state.route_table)
+async def route_table():
+    return current_state().route_table
 
 
 @app.get("/healthz")
-def healthz():
-    return jsonify({"status": "ok"})
+async def healthz():
+    return {"status": "ok"}
 
 
 @app.get("/debug/resources")
-def debug_resources():
+async def debug_resources():
     state = current_state()
-    return jsonify(
-        {
-            "cds_version": state.cds_version,
-            "clusters": state.clusters,
-            "endpoints": state.endpoints,
-            "route_table": state.route_table,
-        }
-    )
+    return {
+        "cds_version": state.cds_version,
+        "clusters": state.clusters,
+        "endpoints": state.endpoints,
+        "route_table": state.route_table,
+    }
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=XDS_PORT)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=XDS_PORT)
