@@ -66,6 +66,7 @@ jobs:
             src/tests/common/test_http_client.py \
             src/tests/common/test_middleware.py \
             src/tests/common/test_rate_limit.py \
+            src/tests/common/test_service_ports.py \
             src/tests/inference/test_circuit_breaker_wiring.py \
             src/tests/inference/test_concurrency_limiter_lazy_init.py \
             src/tests/inference/test_cors_config.py \
@@ -102,6 +103,7 @@ jobs:
             src/tests/orchestration/test/test_outbox_transaction.py \
             src/tests/orchestration/test/test_skypilot_terminate.py \
             src/tests/orchestration/test/test_traffic_router.py \
+            src/tests/cli/test_sidecar_launch.py \
             src/tests/test_cli_init_sql_injection.py \
             -p no:twisted -p no:trio -p no:tornasync \
             --junitxml=junit/test-results.xml \

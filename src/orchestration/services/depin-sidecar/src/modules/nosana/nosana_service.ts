@@ -1393,7 +1393,7 @@ export class NosanaService {
                             // Recover the watchdog
                             // Use created_at if available to avoid the "tooShort" redeploy failure logic
                             const startTime = dep.created_at ? new Date(dep.created_at).getTime() : Date.now();
-                            const orchestratorUrl = process.env.ORCHESTRATOR_URL || "http://localhost:8080";
+                            const orchestratorUrl = process.env.ORCHESTRATOR_URL || `http://localhost:${process.env.HTTP_PORT || "8080"}`;
                             let recoveredJobDefinition = dep.job_definition || null;
 
                             // If job definition is missing, try to fetch it from the internal Orchestrator database
@@ -1466,7 +1466,7 @@ export class NosanaService {
                 const state = job.state;
                 if (((state as any) === JobState.RUNNING || (state as any) === 1) && !this.isJobWatched(jobAddress)) {
                     console.log(`Recovering watchdog for running job: ${jobAddress}`);
-                    this.watchJob(jobAddress, process.env.ORCHESTRATOR_URL || "http://localhost:8080", {
+                    this.watchJob(jobAddress, process.env.ORCHESTRATOR_URL || `http://localhost:${process.env.HTTP_PORT || "8080"}`, {
                         isConfidential: true,
                         resources_allocated: { gpu_allocated: 1, vcpu_allocated: 8, ram_gb_allocated: 32 }
                     });

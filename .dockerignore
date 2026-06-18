@@ -22,7 +22,7 @@ build
 **/out
 .npm
 
-# Docker - IMPORTANT: Do not ignore the docker/ directory itself
+# Docker - IMPORTANT: Do not ignore the deploy/ directory itself
 docker-compose.yml
 
 # Environment & Secrets

@@ -24,6 +24,7 @@ from orchestration.models.model_deployment.strategies.localai import LocalAIDepl
 from orchestration.models.model_deployment.strategies.worker import WorkerDeploymentStrategy
 from orchestration.workers.worker_controller.registry import WorkerRegistry
 from orchestration.workers.worker_controller.controller import WorkerController
+from common.service_ports import depin_sidecar_url
 # from services.vllm_runtime.runtime import VLLMRuntime
 # from services.nosana_runtime.client import NosanaRuntimeClient
 
@@ -39,7 +40,7 @@ def _resolve_postgres_dsn() -> str:
 
 
 POSTGRES_DSN = _resolve_postgres_dsn()
-NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000/nosana")
+NOSANA_SIDECAR_URL = depin_sidecar_url("/nosana", env_var="NOSANA_SIDECAR_URL")
 POLL_INTERVAL = 30  # seconds
 MAX_CONCURRENT_DEPLOYS = int(os.getenv("MAX_CONCURRENT_DEPLOYS", "8"))
 

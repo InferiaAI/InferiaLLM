@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 from common.unified_config import UnifiedBaseSettings
+from common.service_ports import depin_sidecar_url
 
 
 class ProviderSettings(BaseSettings):
@@ -14,7 +15,8 @@ class ProviderSettings(BaseSettings):
 
     # Nosana Configuration
     nosana_sidecar_url: str = Field(
-        default="http://localhost:3000", validation_alias="NOSANA_SIDECAR_URL"
+        default_factory=lambda: depin_sidecar_url(env_var="NOSANA_SIDECAR_URL"),
+        validation_alias="NOSANA_SIDECAR_URL",
     )
     nosana_discovery_url: str = Field(
         default="https://dashboard.k8s.prd.nos.ci/api/markets",
@@ -26,7 +28,8 @@ class ProviderSettings(BaseSettings):
 
     # Akash Configuration
     akash_sidecar_url: str = Field(
-        default="http://localhost:3000/akash", validation_alias="AKASH_SIDECAR_URL"
+        default_factory=lambda: depin_sidecar_url("/akash", env_var="AKASH_SIDECAR_URL"),
+        validation_alias="AKASH_SIDECAR_URL",
     )
     akash_rpc_url: str = Field(
         default="https://rpc.akash.forbole.com:443", validation_alias="AKASH_NODE"
@@ -117,7 +120,8 @@ class Settings(UnifiedBaseSettings):
 
     # Provider Settings (backward compatibility)
     nosana_sidecar_url: str = Field(
-        default="http://localhost:3000", validation_alias="NOSANA_SIDECAR_URL"
+        default_factory=lambda: depin_sidecar_url(env_var="NOSANA_SIDECAR_URL"),
+        validation_alias="NOSANA_SIDECAR_URL",
     )
 
     internal_api_key: str = Field(default="", validation_alias="INTERNAL_API_KEY")
@@ -225,7 +229,8 @@ class Settings(UnifiedBaseSettings):
             },
             "akash": {
                 "sidecar_url": getattr(
-                    self, "akash_sidecar_url", "http://localhost:3000/akash"
+                    self, "akash_sidecar_url",
+                    depin_sidecar_url("/akash", env_var="AKASH_SIDECAR_URL"),
                 ),
                 "rpc_url": getattr(
                     self, "akash_rpc_url", "https://rpc.akash.forbole.com:443"

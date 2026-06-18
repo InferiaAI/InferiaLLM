@@ -7,6 +7,7 @@ import multiprocessing
 import traceback
 from startup_ui import StartupUI
 from dotenv import load_dotenv, find_dotenv
+from common.service_ports import orchestration_http_url, depin_sidecar_port
 from inferiadocs import (
     show_inferia,
     show_api_gateway_docs,
@@ -176,6 +177,14 @@ def run_nosana_sidecar(queue=None, env: str = "production"):
         # SPA catch-all and loads no DePIN credentials. See
         # _sidecar_api_gateway_url. An explicit API_GATEWAY_URL (split mode) wins.
         node_env["API_GATEWAY_URL"] = _sidecar_api_gateway_url(node_env)
+        # The sidecar also calls BACK to the orchestration control plane
+        # (watchdog + job monitoring) via ORCHESTRATOR_URL, and binds its own
+        # HTTP/WS port. Derive both from the same env knobs the Python side uses
+        # so a host-network port remap reaches the right place and the sidecar's
+        # bind matches the URL the control plane dials. setdefault → an explicit
+        # ORCHESTRATOR_URL / DEPIN_SIDECAR_PORT (split mode) still wins.
+        node_env.setdefault("ORCHESTRATOR_URL", orchestration_http_url())
+        node_env.setdefault("DEPIN_SIDECAR_PORT", depin_sidecar_port())
 
         print("[DePIN] Launching sidecar...")
         cmd = ["npm", "run", "dev"] if env == "dev" else ["npm", "start"]
