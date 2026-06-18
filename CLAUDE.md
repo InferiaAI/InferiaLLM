@@ -22,7 +22,7 @@ pytest -k "test_name"         # Run specific test by name
 
 # Docker
 make docker-build-unified     # Build unified Docker image
-make docker-up-unified        # Start unified stack (app + postgres + redis + ES + logstash)
+make docker-up-unified        # Start unified stack (app + postgres + redis)
 make docker-down              # Stop all services
 make docker-clean             # Stop + remove volumes
 
@@ -79,7 +79,7 @@ Each service follows: `main.py` → `start_api()` → `uvicorn.run("app:app")`. 
 - **Config**: Pydantic `BaseSettings` with env var injection (per-service `config.py`)
 - **Auth**: Stateless JWT + RBAC middleware; API keys for service-to-service
 - **Errors**: Standardized `ErrorResponse` model + `APIError` exception class
-- **Logging**: JSON structured logging with request ID tracking; optional Logstash integration (`[logstash]` extra)
+- **Logging**: JSON structured logging with request ID tracking (stdout; collect with your platform's log driver)
 - **Database migrations**: Raw SQL files in `infra/schema/migrations/`
 - **Tests**: pytest + pytest-asyncio; fixtures in `conftest.py` provide mock DB sessions and httpx `AsyncClient`
 - **Frontend**: React 19 + Vite + TailwindCSS + Shadcn/UI components; TanStack Query for server state

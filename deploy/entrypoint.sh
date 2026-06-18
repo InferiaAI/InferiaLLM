@@ -1,10 +1,9 @@
 #!/bin/bash
 set -e
 
-# Generate runtime config for the dashboard. Reads inferia.yaml's
-# services.api_gateway.dashboard.* first, falls back to DASHBOARD_* env vars
-# for any field the yaml leaves null. Safe to call when no dashboard is
-# bundled in the image — exits 0 cleanly.
+# Generate runtime config for the dashboard from DASHBOARD_* / AUTH_PROVIDER /
+# EXTERNAL_AUTH_URL env vars. Safe to call when no dashboard is bundled in the
+# image — exits 0 cleanly.
 inferiallm write-dashboard-config
 
 # SERVICE_TYPE can be: filtration, inference, orchestration, unified

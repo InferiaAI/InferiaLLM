@@ -1,6 +1,0 @@
-version: 1
-services:
-  api_gateway:
-    enabled: true
-    port: 8000
-    typo_field_should_fail: oops

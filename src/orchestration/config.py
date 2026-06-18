@@ -3,10 +3,9 @@ Orchestration Service Configuration
 """
 
 import os
-from typing import Any, ClassVar, Optional
+from typing import Any, Optional
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
-from common.unified_config import UnifiedBaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from common.service_ports import depin_sidecar_url
 
 
@@ -59,21 +58,23 @@ class ProviderSettings(BaseSettings):
     )
 
 
-class Settings(UnifiedBaseSettings):
+class Settings(BaseSettings):
     """Application settings.
 
-    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
-    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    Source precedence (highest → lowest): init/CLI > env > .env > pydantic defaults.
     """
 
-    _yaml_path: ClassVar[str] = "services.orchestration"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # App info
     app_name: str = "Orchestration Service"
     app_version: str = "0.1.0"
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
-    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
-    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # Server settings
     host: str = Field(default="0.0.0.0", validation_alias="HOST")
@@ -188,17 +189,6 @@ class Settings(UnifiedBaseSettings):
     hf_token: str = Field(default="", validation_alias="INFERIA_HF_TOKEN")
     model_mirror_base: str = Field(
         default="", validation_alias="INFERIA_MODEL_MIRROR_BASE"
-    )
-
-    # Deployment Log Persistence (Elasticsearch)
-    elasticsearch_url: Optional[str] = Field(
-        default=None, validation_alias="ELASTICSEARCH_URL"
-    )
-    deployment_log_buffer_size: int = Field(
-        default=10000, validation_alias="DEPLOYMENT_LOG_BUFFER_SIZE"
-    )
-    deployment_log_flush_interval: int = Field(
-        default=10, validation_alias="DEPLOYMENT_LOG_FLUSH_INTERVAL"
     )
 
     @property

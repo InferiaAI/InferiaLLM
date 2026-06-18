@@ -242,7 +242,7 @@ The fastest way to a running stack is **Docker Compose** (below). You can also i
 
 ### Self-Hosting with Docker Compose
 
-The repository ships a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis + Elasticsearch/Logstash/Kibana for logs).
+The repository ships a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis).
 
 ```bash
 # 1. Clone
@@ -327,8 +327,6 @@ The whole web surface runs on a single port, `APP_PORT` (default `8000`) — the
 | DePIN sidecar | `3000` | `DEPIN_SIDECAR_PORT` | Nosana/Akash coordination (loopback Node service) |
 | PostgreSQL | `5432` | `DATABASE_URL` | Primary datastore (external) |
 | Redis | `6379` | `REDIS_PORT` | Rate limiting, pub/sub, streams (external) |
-| Logstash | `5959` | `LOGSTASH_PORT` | Structured logging (optional) |
-| Kibana | `5601` | — | Log exploration (ELK, optional) |
 | inferia-worker | `8080` | — | Inference port advertised by each GPU node (on the worker host) |
 
 The in-process clients derive their target from the same env var, so changing e.g. `HTTP_PORT` moves both the orchestration listener and every caller together. An explicit `ORCHESTRATION_URL` / `ORCHESTRATION_GRPC_ADDR` / `NOSANA_SIDECAR_URL` / `AKASH_SIDECAR_URL` still wins (split / remote deployments).
@@ -417,7 +415,7 @@ inferiallm worker list    --pool-id <id>
 | **Auth** | Stateless JWT; optional external SSO (InferiaAuth / OIDC) |
 | **Encryption** | Fernet symmetric encryption for credentials at rest |
 | **Provisioning** | Pulumi (AWS/GCP/Azure) + cloud-init |
-| **Observability** | Prometheus-compatible metrics; optional ELK (Elasticsearch/Logstash/Kibana) |
+| **Observability** | Prometheus-compatible metrics; JSON structured logs to stdout |
 | **Vector** | pgvector / ChromaDB compatible |
 
 ---
@@ -472,7 +470,7 @@ InferiaLLM/
 │  ├─ infra/            # SQL schemas + migrations
 │  └─ dashboard/        # Built React SPA (source in apps/dashboard)
 ├─ apps/dashboard/      # Dashboard source (React 19 + Vite)
-├─ deploy/              # Dockerfile, entrypoint, nginx, logstash pipeline
+├─ deploy/              # Dockerfile, entrypoint, nginx
 ├─ docker-compose.yml   # The single canonical deployment (project name: deploy)
 └─ .env.example         # Configuration template
 ```

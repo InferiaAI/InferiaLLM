@@ -51,18 +51,6 @@ class TracingFormatter(logging.Formatter):
         return super().format(record)
 
 
-class _ServiceNameFilter(logging.Filter):
-    """Injects service_name into every log record (used by Logstash handler)."""
-
-    def __init__(self, service_name: str):
-        super().__init__()
-        self.service_name = service_name
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.service_name = self.service_name
-        return True
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -72,9 +60,6 @@ def setup_logging(
     service_name: Optional[str] = None,
     use_json: bool = False,
     log_file: Optional[str] = None,
-    logstash_host: Optional[str] = None,
-    logstash_port: int = 5959,
-    logstash_tags: Optional[list] = None,
     logger_name: Optional[str] = None,
 ) -> logging.Logger:
     """
@@ -94,9 +79,6 @@ def setup_logging(
         service_name: Human-readable service label used in log output
         use_json: Whether to use JSON formatting for production
         log_file: Optional path to a file to write logs to
-        logstash_host: Hostname of the Logstash server (enables handler when set)
-        logstash_port: TCP port Logstash is listening on (default: 5959)
-        logstash_tags: Optional list of tags to attach to every Logstash record
         logger_name: Python package path to use as the logger namespace
                      (e.g. ``"services.api_gateway"``).  Falls back to
                      ``service_name`` if not provided.
@@ -142,28 +124,6 @@ def setup_logging(
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         service_logger.addHandler(file_handler)
-
-    # --- Optional Logstash handler ---
-    if logstash_host:
-        try:
-            import logstash
-            logstash_handler = logstash.TCPLogstashHandler(
-                logstash_host,
-                logstash_port,
-                version=1,
-                tags=logstash_tags or [],
-            )
-            if service_name:
-                logstash_handler.addFilter(_ServiceNameFilter(service_name))
-            service_logger.addHandler(logstash_handler)
-            service_logger.info(
-                "Logstash handler enabled (%s:%s)", logstash_host, logstash_port
-            )
-        except ImportError:
-            service_logger.warning(
-                "python-logstash is not installed. "
-                "Install it with: pip install 'inferiallm[logstash]'"
-            )
 
     service_logger.info(
         "Logging initialized for %s (level=%s, json=%s)", namespace, level, use_json

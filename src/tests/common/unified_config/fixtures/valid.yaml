@@ -1,9 +1,0 @@
-version: 1
-environment: development
-log_level: INFO
-security:
-  jwt_secret_key: this-is-a-thirty-two-byte-test-secret-key
-  internal_api_key: this-is-another-thirty-two-byte-secret-k
-services:
-  api_gateway:
-    enabled: true

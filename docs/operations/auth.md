@@ -23,15 +23,20 @@ works regardless of mode — see [Superadmin recovery](#superadmin-recovery).
 
 ## Switching to external mode
 
+> **Note — the bundled SSO dev topology was removed.** InferiaLLM now ships a
+> single root `docker-compose.yml`; the old `make docker-up-sso` /
+> `deploy/docker-compose.sso.yml` / `scripts/sso_smoke.sh` local stack (which
+> also ran inferia-auth + Caddy) no longer exists. External auth is configured
+> entirely through the `.env` `AUTH_PROVIDER` + `EXTERNAL_AUTH_*` / `OAUTH_*` /
+> `OIDC_*` / `SSL_CA_BUNDLE` block (see `.env.example`), pointed at an IdP you
+> deploy separately. The steps below describe the InferiaLLM-side configuration;
+> the `make docker-up-sso` / `docker-compose.sso.yml` commands quoted in this doc
+> are historical.
+
 ### 1. Stand up inferia-auth
 
-The bundled `make docker-up-sso` brings up a complete topology for local
-development: postgres, redis, inferia-auth (with an embedded OpenFGA
-authorizer), inferia-app, and a Caddy reverse proxy with self-signed certs.
-
-```bash
-make docker-up-sso
-```
+Deploy inferia-auth (with its OpenFGA authorizer) and a reverse proxy via your
+own deployment, then point InferiaLLM at it through the `.env` auth block.
 
 For production: deploy inferia-auth standalone (its own Dockerfile and
 compose file live at `inferia-auth/`); point InferiaLLM at it via the env

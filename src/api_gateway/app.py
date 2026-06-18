@@ -50,8 +50,6 @@ logger = setup_logging(
     service_name="api-gateway",
     use_json=not settings.is_development,
     log_file="debug.log",
-    logstash_host=settings.logstash_host,
-    logstash_port=settings.logstash_port,
     logger_name="services.api_gateway",
 )
 

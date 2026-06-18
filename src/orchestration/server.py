@@ -26,8 +26,6 @@ logger = setup_logging(
     level="INFO",
     service_name="orchestration-service",
     use_json=not settings.is_development,
-    logstash_host=settings.logstash_host,
-    logstash_port=settings.logstash_port,
     logger_name="services.orchestration",
 )
 
