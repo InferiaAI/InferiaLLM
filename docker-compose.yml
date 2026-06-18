@@ -76,19 +76,8 @@ services:
     volumes:
       - appdata:/data
       - modelcache:/var/lib/inferia/models
-      # Pulumi local-backend state. MUST be a persistent volume: it is the only
-      # record of which AWS resources each node stack owns. If the container is
-      # recreated (rebuild/redeploy/crash) between `pulumi up` and the later
-      # `pulumi destroy`, an ephemeral state dir is wiped → destroy finds an
-      # empty stack, silently "succeeds", and the EC2 leaks (DB flips the job to
-      # terminated, so no retry ever fires). Persisting it keeps delete able to
-      # actually tear the instance down.
       - pulumistate:/var/lib/inferia/pulumi-state
       # SSH authorized_keys to install on every provisioned EC2 worker.
-      # Operator drops one or more public keys (one per line) into the
-      # host file; Pulumi reads it at provision time and bakes it into
-      # the cloud-init user-data for the ubuntu + root users.
-      # Override the host path with INFERIA_SSH_AUTHORIZED_KEYS_FILE.
       - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
       - "${APP_PORT:-8000}:${APP_PORT:-8000}"   # Unified web: /api gateway, /inf inference, /v2 OCI mirror, / dashboard
