@@ -533,7 +533,7 @@ def build_sidecar():
         print(f"[inferia:init] Error building sidecar: {e}")
 
 
-def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: str | None = None) -> None:
+def run_write_dashboard_config(dashboard_dir: str | None = None) -> None:
     """Write window.__RUNTIME_CONFIG__ = {...}; to the installed dashboard's config.js.
 
     Dashboard URLs are env-only: DASHBOARD_API_GATEWAY_URL, DASHBOARD_INFERENCE_URL,
@@ -541,9 +541,6 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
     API_GATEWAY_URL defaults to "/api" and INFERENCE_URL defaults to "/inf" so the
     single-port unified image works same-origin without extra config. WEB_SOCKET_URL
     and SIDECAR_URL default to empty string (callers construct them from the origin).
-
-    The --config / config_path argument is accepted for forward-compat with existing
-    scripts but is not used — yaml no longer carries dashboard URLs.
 
     The function is intentionally import-light and DB-free so it can be called
     from entrypoint.sh before the database is available.
@@ -742,24 +739,11 @@ def main(argv=None):
         default="production",
         help="Environment to run in (default: production)",
     )
-    start_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to unified YAML config file (default: auto-discover via "
-             "INFERIA_CONFIG, ./inferia.yaml, or /etc/inferia/inferia.yaml)",
-    )
 
     # --- write-dashboard-config ---
     wdc_parser = sub.add_parser(
         "write-dashboard-config",
         help="Write dashboard runtime config.js from DASHBOARD_* env vars",
-    )
-    wdc_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Accepted for forward-compat but unused; dashboard URLs are env-only",
     )
     wdc_parser.add_argument(
         "--dashboard-dir",
@@ -1030,10 +1014,6 @@ def main(argv=None):
             service = getattr(args, "service", "all")
             env = getattr(args, "env", "production")
 
-            config_path = getattr(args, "config", None)
-            if config_path is not None:
-                os.environ["INFERIA_CONFIG"] = config_path
-
             if service == "all":
                 if wants_help(flags):
                     show_inferia()
@@ -1069,14 +1049,8 @@ def main(argv=None):
             run_migrate()
 
         elif cmd == "write-dashboard-config":
-            config_path = getattr(args, "config", None)
             dashboard_dir = getattr(args, "dashboard_dir", None)
-            if config_path is not None:
-                os.environ["INFERIA_CONFIG"] = config_path
-            run_write_dashboard_config(
-                config_path=config_path,
-                dashboard_dir=dashboard_dir,
-            )
+            run_write_dashboard_config(dashboard_dir=dashboard_dir)
 
         elif cmd == "providers":
             from cli.providers import run_providers_command

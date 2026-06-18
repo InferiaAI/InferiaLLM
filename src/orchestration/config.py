@@ -3,10 +3,9 @@ Orchestration Service Configuration
 """
 
 import os
-from typing import Any, ClassVar, Optional
+from typing import Any, Optional
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
-from common.unified_config import UnifiedBaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from common.service_ports import depin_sidecar_url
 
 
@@ -59,14 +58,18 @@ class ProviderSettings(BaseSettings):
     )
 
 
-class Settings(UnifiedBaseSettings):
+class Settings(BaseSettings):
     """Application settings.
 
-    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
-    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    Source precedence (highest → lowest): init/CLI > env > .env > pydantic defaults.
     """
 
-    _yaml_path: ClassVar[str] = "services.orchestration"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # App info
     app_name: str = "Orchestration Service"

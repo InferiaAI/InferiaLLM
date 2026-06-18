@@ -3,12 +3,11 @@ Configuration management for the API Gateway.
 Uses Pydantic Settings for environment-based configuration.
 """
 
-from typing import ClassVar, Literal, Optional, Any, Dict, List
+from typing import Literal, Optional, Any, Dict, List
 import logging
 import warnings
 from pydantic import Field, BaseModel, field_validator, model_validator
-from pydantic_settings import SettingsConfigDict
-from common.unified_config import UnifiedBaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from common.service_ports import orchestration_http_url
 
 logger = logging.getLogger(__name__)
@@ -115,15 +114,11 @@ class ProviderCredential(BaseModel):
 # --- Main Settings ---
 
 
-class Settings(UnifiedBaseSettings):
-    """Application settings loaded from yaml, env, or defaults.
+class Settings(BaseSettings):
+    """Application settings loaded from env / .env / defaults.
 
-    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
-    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    Source precedence (highest → lowest): init/CLI > env > .env > pydantic defaults.
     """
-
-    _yaml_path: ClassVar[str] = "services.api_gateway"
-
 
     # Application Settings
     app_name: str = "InferiaLLM API Gateway"

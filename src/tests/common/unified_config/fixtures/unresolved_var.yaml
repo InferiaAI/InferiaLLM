@@ -1,3 +1,0 @@
-version: 1
-security:
-  jwt_secret_key: ${SOME_UNSET_REQUIRED_SECRET}

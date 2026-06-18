@@ -61,10 +61,6 @@ services:
     env_file: .env
     environment:
       - SERVICE_TYPE=unified
-      # Unified config — when the inferia.yaml below is mounted, this points
-      # the loader at it. If the file is absent the loader falls back to env
-      # + pydantic defaults, so the stack still boots on env-only deployments.
-      - INFERIA_CONFIG=/etc/inferia/inferia.yaml
       # Dashboard frontend URLs (DASHBOARD_ prefix avoids colliding with
       # backend service URL env vars like INFERENCE_URL used by Pydantic config)
       - DASHBOARD_API_GATEWAY_URL=${DASHBOARD_API_GATEWAY_URL:-}
@@ -88,9 +84,6 @@ services:
       # terminated, so no retry ever fires). Persisting it keeps delete able to
       # actually tear the instance down.
       - pulumistate:/var/lib/inferia/pulumi-state
-      # Unified config yaml — mounted read-only. Edit the host file to change
-      # operational parameters; restart the container to apply.
-      - ./inferia.yaml.example:/etc/inferia/inferia.yaml:ro
       # SSH authorized_keys to install on every provisioned EC2 worker.
       # Operator drops one or more public keys (one per line) into the
       # host file; Pulumi reads it at provision time and bakes it into
