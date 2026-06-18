@@ -72,8 +72,6 @@ class Settings(UnifiedBaseSettings):
     app_name: str = "Orchestration Service"
     app_version: str = "0.1.0"
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
-    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
-    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # Server settings
     host: str = Field(default="0.0.0.0", validation_alias="HOST")
@@ -188,17 +186,6 @@ class Settings(UnifiedBaseSettings):
     hf_token: str = Field(default="", validation_alias="INFERIA_HF_TOKEN")
     model_mirror_base: str = Field(
         default="", validation_alias="INFERIA_MODEL_MIRROR_BASE"
-    )
-
-    # Deployment Log Persistence (Elasticsearch)
-    elasticsearch_url: Optional[str] = Field(
-        default=None, validation_alias="ELASTICSEARCH_URL"
-    )
-    deployment_log_buffer_size: int = Field(
-        default=10000, validation_alias="DEPLOYMENT_LOG_BUFFER_SIZE"
-    )
-    deployment_log_flush_interval: int = Field(
-        default=10, validation_alias="DEPLOYMENT_LOG_FLUSH_INTERVAL"
     )
 
     @property

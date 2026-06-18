@@ -91,9 +91,6 @@ services:
       default_readiness_timeout: 300
       default_polling_interval: 20
       ephemeral_failure_threshold_minutes: 10
-    deployment_logs:
-      deployment_log_buffer_size: 10000
-      deployment_log_flush_interval: 10
 
 # ─── Providers ──────────────────────────────────────────────────────────
 # Compute providers (aws, gcp, azure, ibm, nosana) are NOT configured here.

@@ -25,7 +25,7 @@ clean:
 # ==========================================
 
 # There is ONE canonical compose: the root ./docker-compose.yml (project:
-# deploy) — app + postgres + redis + ES/Logstash/Kibana. Topology and port
+# deploy) — app + postgres + redis. Topology and port
 # variants are env-driven on this single file (see .env: APP_PORT, HTTP_PORT,
 # GRPC_PORT, DEPIN_SIDECAR_PORT, and the AUTH_PROVIDER / EXTERNAL_AUTH_* block
 # for external SSO). There is no separate split / localhost / SSO compose.

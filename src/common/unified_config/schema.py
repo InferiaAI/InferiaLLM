@@ -154,21 +154,12 @@ class OrchestrationReadinessSection(BaseModel):
     ephemeral_failure_threshold_minutes: int = Field(default=10, gt=0)
 
 
-class OrchestrationDeploymentLogsSection(BaseModel):
-    # NOTE: leaf names match orchestration/config.py Settings field names.
-    model_config = ConfigDict(extra="forbid")
-    # elasticsearch_url → env only (URL)
-    deployment_log_buffer_size: int = Field(default=10000, gt=0)
-    deployment_log_flush_interval: int = Field(default=10, gt=0)
-
-
 class OrchestrationService(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     # host, http_port, grpc_port → env only
     # api_gateway_database_url, nosana_sidecar_url → env only (URLs)
     readiness: OrchestrationReadinessSection = Field(default_factory=OrchestrationReadinessSection)
-    deployment_logs: OrchestrationDeploymentLogsSection = Field(default_factory=OrchestrationDeploymentLogsSection)
 
 
 class ServicesConfig(BaseModel):
@@ -192,7 +183,7 @@ class InferiaConfig(BaseModel):
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
-    # infra (database, redis, logstash) → env only; no longer in yaml schema
+    # infra (database, redis) → env only; no longer in yaml schema
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     # providers are NOT in yaml — manage via `inferiallm providers` CLI or the dashboard

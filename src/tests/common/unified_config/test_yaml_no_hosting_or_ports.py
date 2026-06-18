@@ -65,7 +65,7 @@ class TestSchemaHasNoHostingFields:
         )
 
     def test_inferia_config_has_no_infra_field(self):
-        """InfraConfig (database, redis, logstash) entirely removed from yaml schema."""
+        """InfraConfig (database, redis) entirely removed from yaml schema."""
         assert "infra" not in InferiaConfig.model_fields, (
             "InferiaConfig.infra must not be in yaml schema (all infra → env only)"
         )

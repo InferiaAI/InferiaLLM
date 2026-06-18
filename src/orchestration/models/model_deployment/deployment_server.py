@@ -35,14 +35,9 @@ from orchestration.provisioning.engine.base import AdapterType
 from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
-from orchestration.models.model_deployment.log_store import (
-    DeploymentLogStore,
-    DeploymentLogBuffer,
-)
 from orchestration.models.model_deployment.direct_provision import (
     provision_direct_node,
 )
-from orchestration.config import settings as orch_settings
 from typing import Any, Literal, Optional
 from types import SimpleNamespace
 
@@ -99,34 +94,6 @@ NOSANA_CLIENT_MANAGER_URL = os.getenv(
     "NOSANA_CLIENT_MANAGER_URL", "https://client-manager.k8s.prd.nosana.com"
 )
 NOSANA_INGRESS_DOMAIN = os.getenv("NOSANA_INGRESS_DOMAIN", "node.k8s.prd.nos.ci")
-
-# Singleton log store — initialized lazily on first use
-_log_store: Optional[DeploymentLogStore] = None
-
-
-async def _get_log_store() -> DeploymentLogStore:
-    """Get or initialize the deployment log store singleton."""
-    global _log_store
-    if _log_store is None:
-        _log_store = DeploymentLogStore(
-            elasticsearch_url=orch_settings.elasticsearch_url
-        )
-        await _log_store.initialize()
-    return _log_store
-
-
-async def _create_log_buffer(deployment_id: str, org_id: str) -> DeploymentLogBuffer:
-    """Create a log buffer for a WebSocket session, seeded with ES line count."""
-    store = await _get_log_store()
-    start_line = await store.get_max_line_number(deployment_id)
-    return DeploymentLogBuffer(
-        store=store,
-        deployment_id=deployment_id,
-        org_id=org_id,
-        max_lines=orch_settings.deployment_log_buffer_size,
-        flush_interval=orch_settings.deployment_log_flush_interval,
-        start_line_number=start_line,
-    )
 
 
 async def _get_nosana_signature(api_key: str) -> str:
@@ -3459,7 +3426,7 @@ async def get_deployment_logs(deployment_id: str):
 
         provider_instance_id = node["provider_instance_id"]
 
-        # 3. Try adapter first, fall back to ES
+        # 3. Fetch live logs from the provider adapter.
         try:
             adapter = get_adapter(provider)
             if hasattr(adapter, "get_logs"):
@@ -3470,17 +3437,10 @@ async def get_deployment_logs(deployment_id: str):
                 if logs_data and logs_data.get("logs"):
                     return logs_data
         except Exception as e:
-            logger.warning(f"Adapter log fetch failed, trying ES fallback: {e}")
+            logger.warning(f"Adapter log fetch failed: {e}")
 
-        # 4. Fallback: try Elasticsearch persisted logs
-        try:
-            store = await _get_log_store()
-            es_logs = await store.get_logs(deployment_id)
-            if es_logs:
-                return {"logs": es_logs, "source": "persisted"}
-        except Exception as e:
-            logger.warning(f"ES log fallback also failed: {e}")
-
+        # Persisted terminal logs (captured on failure/stop) are available via
+        # GET /logs/{deployment_id}/persisted (Postgres-backed).
         return {"logs": [f"No logs available for provider: {provider}"], "source": "none"}
 
     finally:
@@ -3930,10 +3890,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
             )
 
-            # Create log buffer for persistence
-            log_buffer = await _create_log_buffer(deployment_id=data.get("deployment_id", "unknown"), org_id=data.get("org_id", ""))
-            await log_buffer.start_periodic_flush()
-
             async def read_logs():
                 try:
                     while True:
@@ -3941,7 +3897,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         if not line:
                             break
                         decoded = line.decode().strip()
-                        log_buffer.append(decoded)
                         await websocket.send_json(
                             {"type": "log", "data": decoded}
                         )
@@ -3960,7 +3915,7 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                     except WebSocketDisconnect:
                         break
             finally:
-                await log_buffer.stop()
+                stream_task.cancel()
 
         elif provider == "nosana":
             job_id = data.get("jobId")
@@ -4021,13 +3976,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
                     logger.info("Connected to Nosana node, relaying logs...")
 
-                    # Create log buffer for persistence
-                    log_buffer = await _create_log_buffer(
-                        deployment_id=data.get("deployment_id", job_id),
-                        org_id=data.get("org_id", ""),
-                    )
-                    await log_buffer.start_periodic_flush()
-
                     async def client_to_sidecar():
                         while True:
                             payload = await websocket.receive()
@@ -4041,7 +3989,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         async for msg in sidecar_ws:
                             if isinstance(msg, bytes):
                                 decoded = msg.decode("utf-8", errors="replace")
-                                log_buffer.append(decoded)
                                 await websocket.send_json(
                                     {"type": "log", "data": decoded}
                                 )
@@ -4054,7 +4001,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                                         log_data = msg
                                 except json.JSONDecodeError:
                                     log_data = msg
-                                log_buffer.append(str(log_data))
                                 await websocket.send_json(
                                     {"type": "log", "data": log_data}
                                 )
@@ -4064,17 +4010,17 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         asyncio.create_task(sidecar_to_client()),
                     }
                     try:
-                        done, pending = await asyncio.wait(
+                        done, _pending = await asyncio.wait(
                             tasks, return_when=asyncio.FIRST_COMPLETED
                         )
-                        for task in pending:
-                            task.cancel()
                         for task in done:
                             exc = task.exception()
                             if exc:
                                 logger.error(f"Nosana WS task error: {exc}")
                     finally:
-                        await log_buffer.stop()
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
 
             except Exception as e:
                 logger.error(f"Nosana WebSocket error: {e}")

@@ -94,20 +94,10 @@ class TestOrchestrationSettingsFromYaml:
         s = Settings(_env_file=None)
         assert s.default_readiness_timeout == 300
 
-    def test_deployment_log_buffer_size_from_yaml(self):
-        from orchestration.config import Settings
-        s = Settings(_env_file=None)
-        assert s.deployment_log_buffer_size == 10000
-
     def test_ephemeral_failure_threshold_from_yaml(self):
         from orchestration.config import Settings
         s = Settings(_env_file=None)
         assert s.ephemeral_failure_threshold_minutes == 10
-
-    def test_deployment_log_flush_interval_from_yaml(self):
-        from orchestration.config import Settings
-        s = Settings(_env_file=None)
-        assert s.deployment_log_flush_interval == 10
 
     def test_default_polling_interval_from_yaml(self):
         from orchestration.config import Settings

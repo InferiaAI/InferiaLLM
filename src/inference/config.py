@@ -38,8 +38,6 @@ class Settings(UnifiedBaseSettings):
         validation_alias="INFERENCE_WORKERS",
     )
     log_level: str = "INFO"
-    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
-    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # API Gateway Settings
     # In production, use HTTPS URLs with valid SSL certificates
