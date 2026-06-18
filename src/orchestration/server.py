@@ -801,18 +801,18 @@ async def serve():
                 "Failed to start provisioning reconciler: %s", e
             )
 
-    # ---------------- Auto-replica monitor ----------------
-    AUTO_REPLICA_POLL_S = float(os.getenv("INFERIA_AUTO_REPLICA_POLL_S", "60"))
-    if os.getenv("INFERIA_DISABLE_AUTO_REPLICA", "0") != "1":
+    # ---------------- Autoscaler (pool + deployment TPS scaling) ----------------
+    _AUTOSCALER_POLL_S = float(os.getenv("INFERIA_AUTOSCALER_POLL_S", "10"))
+    if os.getenv("INFERIA_DISABLE_AUTOSCALER", "0") != "1":
 
-        async def _auto_replica_loop():
+        async def _autoscaler_loop():
             from orchestration.repositories.inventory_repo import (
                 InventoryRepository,
             )
             from orchestration.repositories.model_deployment_repo import (
                 ModelDeploymentRepository,
             )
-            from orchestration.scheduling.auto_replica import tick as _ar_tick
+            from orchestration.scheduling.autoscaler import Autoscaler
             from orchestration.state_machine.jobs.repository import (
                 ProvisioningJobRepository,
             )
@@ -821,21 +821,26 @@ async def serve():
             _ar_jobs = ProvisioningJobRepository(db_pool)
             _ar_inventory = InventoryRepository(db_pool)
 
+            autoscaler = Autoscaler(
+                repo=None,
+                adapter_engine=None,
+                db_pool=db_pool,
+                deploys_repo=_ar_deploys,
+                jobs_repo=_ar_jobs,
+                inventory_repo=_ar_inventory,
+                auto_replica_interval=60.0,
+            )
+
             while True:
                 try:
-                    await _ar_tick(
-                        db_pool=db_pool,
-                        deploys_repo=_ar_deploys,
-                        jobs_repo=_ar_jobs,
-                        inventory_repo=_ar_inventory,
-                    )
+                    await autoscaler.tick()
                 except Exception:
-                    logger.warning("auto-replica tick failed", exc_info=True)
-                await asyncio.sleep(AUTO_REPLICA_POLL_S)
+                    logger.warning("autoscaler tick failed", exc_info=True)
+                await asyncio.sleep(_AUTOSCALER_POLL_S)
 
-        _auto_replica_task = asyncio.create_task(_auto_replica_loop())
-        app.state.auto_replica_task = _auto_replica_task
-        logger.info("Auto-replica monitor started (poll=%ss)", AUTO_REPLICA_POLL_S)
+        _autoscaler_task = asyncio.create_task(_autoscaler_loop())
+        app.state.autoscaler_task = _autoscaler_task
+        logger.info("Autoscaler started (poll=%ss)", _AUTOSCALER_POLL_S)
 
     # ---------------- Model-cache eviction loop ----------------
     # Runs once per minute; refreshes the in-use snapshot from the DB
@@ -881,8 +886,8 @@ async def serve():
                 pass
 
     # Cancel background loops and close shared clients.
-    if getattr(app.state, "auto_replica_task", None) is not None:
-        app.state.auto_replica_task.cancel()
+    if getattr(app.state, "autoscaler_task", None) is not None:
+        app.state.autoscaler_task.cancel()
     if getattr(app.state, "mc_eviction_task", None) is not None:
         app.state.mc_eviction_task.cancel()
     try:
