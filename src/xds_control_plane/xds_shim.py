@@ -101,6 +101,7 @@ class HTTPNodeSource:
         self.url = url
         self.interval = interval_seconds
         self.timeout = timeout
+        self._api_key = os.environ.get("INTERNAL_API_KEY", "")
         self._nodes: list[Node] = []
         self._lock = threading.Lock()
         self._stop = False
@@ -109,7 +110,10 @@ class HTTPNodeSource:
     def _poll_loop(self):
         while not self._stop:
             try:
-                resp = requests.get(self.url, timeout=self.timeout)
+                headers = {}
+                if self._api_key:
+                    headers["X-Internal-API-Key"] = self._api_key
+                resp = requests.get(self.url, timeout=self.timeout, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
                 nodes = payload.get("nodes", payload if isinstance(payload, list) else [])

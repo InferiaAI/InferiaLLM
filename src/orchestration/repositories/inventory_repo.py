@@ -479,6 +479,50 @@ class InventoryRepository:
             rows = await conn.fetch(query, node_id)
             return [row["deployment_id"] for row in rows]
 
+    async def list_xds_nodes(self) -> list[dict]:
+        """All non-terminated compute_inventory rows with their engines.
+
+        Returns entries in the format the xDS control plane expects:
+          {id, advertise_url, pool_id, engine, healthy}
+        One entry per (node, engine) pair — if a node has multiple
+        deployments with different engines it will appear for each one.
+        Nodes with no deployments get engine ``"vllm"`` (the default).
+        """
+        query = """
+            SELECT i.id, i.pool_id, i.advertise_url, i.state,
+                   i.health_score, COALESCE(d.engines, ARRAY[]::text[]) AS engines
+              FROM compute_inventory i
+              LEFT JOIN LATERAL (
+                SELECT ARRAY_AGG(DISTINCT md.engine)
+                       FILTER (WHERE md.engine IS NOT NULL) AS engines
+                  FROM model_deployments md
+                 WHERE md.node_ids @> ARRAY[i.id]
+                   AND md.state IN ('RUNNING','DEPLOYING','PENDING_NODE')
+              ) d ON true
+             WHERE i.state IS DISTINCT FROM 'terminated'
+             ORDER BY i.id
+        """
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(query)
+        result = []
+        for r in rows:
+            node_id = str(r["id"])
+            pool_id = str(r["pool_id"]) if r.get("pool_id") else None
+            advertise_url = r.get("advertise_url")
+            if not advertise_url:
+                continue
+            healthy = r["state"] == "ready" and (r.get("health_score", 0) or 0) >= 50
+            engines = r.get("engines") or ["vllm"]
+            for engine in engines:
+                result.append({
+                    "id": node_id,
+                    "advertise_url": advertise_url,
+                    "pool_id": pool_id,
+                    "engine": engine,
+                    "healthy": healthy,
+                })
+        return result
+
     async def list_nodes_by_provider(
         self, provider: str, *, limit: int = 200, offset: int = 0
     ) -> list[dict]:

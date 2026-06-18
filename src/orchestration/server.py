@@ -456,6 +456,7 @@ async def serve():
             "/deployment/ws",
             "/v1/workers/register",
             "/v1/workers/channel",
+            "/v1/nodes/xds-status",
         ],
     )
 

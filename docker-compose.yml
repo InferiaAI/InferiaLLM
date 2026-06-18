@@ -121,7 +121,8 @@ services:
     container_name: inferia-xds
     restart: unless-stopped
     environment:
-      CONTROL_PLANE_URL: http://app:8000/api/v1/nodes
+      CONTROL_PLANE_URL: http://orchestration:8080/v1/nodes/xds-status
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-key-change-in-prod}
       XDS_CLUSTER_NAME: xds_cluster
       PORT: "18000"
     ports:
