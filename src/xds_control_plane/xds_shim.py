@@ -31,7 +31,6 @@ XDS_PORT = int(os.environ.get("PORT", "18000"))
 # All engine clusters within a pool share the same node endpoints;
 # the worker's proxy handles engine-specific routing via
 # X-Inferia-Deployment-Id.
-KNOWN_ENGINES = {"vllm", "ollama", "worker", "localai"}
 
 
 @dataclass

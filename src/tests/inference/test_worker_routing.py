@@ -12,6 +12,7 @@ from __future__ import annotations
 from inference.core.worker_routing import (
     provider_auth,
     upstream_model,
+    envoy_route_headers,
 )
 
 
@@ -66,3 +67,32 @@ def test_upstream_model_resolution_order():
     assert upstream_model(_dep(inference_model=None)) == "gemma3:4b"
     # neither → model_name display fallback
     assert upstream_model(_dep(inference_model=None, configuration={})) == "gemma-e2e"
+
+
+def test_envoy_route_headers_with_valid_pool_and_engine():
+    deployment = _dep(pool_id="pool-123_abc.xyz", engine="vllm", inference_token="tok-123")
+    url, headers = envoy_route_headers(deployment, "http://front-envoy:10000")
+    assert url == "http://front-envoy:10000"
+    assert headers["X-Inferia-Route-Cluster"] == "grp-pool-123_abc.xyz-vllm"
+
+
+def test_envoy_route_headers_missing_pool_id_falls_back():
+    deployment = _dep(pool_id=None, engine="vllm", inference_token="tok-123")
+    url, headers = envoy_route_headers(deployment, "http://front-envoy:10000")
+    assert url == "http://front-envoy:10000"
+    assert headers["X-Inferia-Route-Cluster"] == "inferia-workers"
+
+
+def test_envoy_route_headers_no_envoy_url_returns_none():
+    deployment = _dep(pool_id="pool-123", engine="vllm", inference_token="tok-123")
+    url, headers = envoy_route_headers(deployment, None)
+    assert url is None
+    assert headers == {}
+
+
+def test_envoy_route_headers_non_worker_hosted_returns_none():
+    deployment = _dep(pool_id="pool-123", engine="vllm", inference_token=None)
+    url, headers = envoy_route_headers(deployment, "http://front-envoy:10000")
+    assert url is None
+    assert headers == {}
+

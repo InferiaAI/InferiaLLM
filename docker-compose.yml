@@ -101,6 +101,7 @@ services:
       - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
       - "${APP_PORT:-8000}:${APP_PORT:-8000}"   # Unified web: /api gateway, /inf inference, /v2 OCI mirror, / dashboard
+      - "8080:8080"                                 # Orchestration service internal port
     deploy:
       resources:
         limits:
@@ -121,7 +122,7 @@ services:
     container_name: inferia-xds
     restart: unless-stopped
     environment:
-      CONTROL_PLANE_URL: http://orchestration:8080/v1/nodes/xds-status
+      CONTROL_PLANE_URL: http://app:8080/v1/nodes/xds-status
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-key-change-in-prod}
       XDS_CLUSTER_NAME: xds_cluster
       PORT: "18000"

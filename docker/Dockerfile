@@ -123,4 +123,4 @@ WORKDIR /app
 COPY assets /app/assets
 
 # Unified web (APP_PORT): /api gateway, /inf inference, /v2 OCI mirror, / dashboard
-EXPOSE 8000
+EXPOSE 8000 8080
