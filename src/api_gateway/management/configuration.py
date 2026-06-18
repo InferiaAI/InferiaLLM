@@ -39,6 +39,7 @@ from pathlib import Path
 import json
 import os
 from api_gateway.config import settings
+from common.service_ports import orchestration_http_url
 from api_gateway.config import (
     ProvidersConfig,
     ProviderCredential,
@@ -1039,7 +1040,7 @@ async def _cleanup_provider_resources(
     2. Terminate all deployments in those pools.
     3. Delete those compute pools.
     """
-    orch_url = settings.orchestration_url or "http://localhost:8080"
+    orch_url = settings.orchestration_url or orchestration_http_url()
     client = gateway_http_client.get_service_client()
 
     logger.info(

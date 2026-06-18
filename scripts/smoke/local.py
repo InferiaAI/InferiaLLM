@@ -32,7 +32,6 @@ from scripts.smoke.lib import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_FILE = REPO_ROOT / "compose.worker-local.yml"
 
 GATEWAY_URL = os.environ.get("SMOKE_GATEWAY_URL", "http://localhost:8000")
 INFERENCE_URL = os.environ.get("SMOKE_INFERENCE_URL", "http://localhost:8001")
@@ -169,7 +168,25 @@ def main() -> int:
 
     fail = False
     try:
-        run(["docker", "compose", "-f", str(COMPOSE_FILE), "up", "-d"], env=env)
+        # Launch the smoke worker directly (the platform ships a single root
+        # compose now; this one-off worker container is run inline). Secrets +
+        # node-specific values pass through from `env` via bare `-e KEY` so they
+        # never appear on the argv (ps); static values are set inline. Joins the
+        # control-plane network so CONTROL_PLANE_URL (inferia-app:8000) resolves.
+        run([
+            "docker", "run", "-d",
+            "--name", "inferia-worker", "--restart", "unless-stopped",
+            "--network", "deploy_inferia-net", "--gpus", "all",
+            "-v", "/var/run/docker.sock:/var/run/docker.sock:rw",
+            "-v", "worker-state-local:/var/lib/inferia-worker",
+            "-e", "CONTROL_PLANE_URL", "-e", "BOOTSTRAP_TOKEN", "-e", "POOL_ID",
+            "-e", "NODE_NAME", "-e", "INFERENCE_TOKEN",
+            "-e", "WORKER_ADVERTISE_URL=http://inferia-worker:8080",
+            "-e", "MODELS_NETWORK=inferia-models",
+            "-e", "ALLOCATABLE_GPU_OVERRIDE=1",
+            "-e", "ALLOCATABLE_GPU_MODELS_OVERRIDE=NVIDIA",
+            "inferia-worker:smoke",
+        ], env=env)
 
         print("waiting for worker to register as ready...")
         wait_until(
@@ -196,11 +213,9 @@ def main() -> int:
         print("--keep-on-fail set; leaving stack up", file=sys.stderr)
         return 1
 
-    print("tearing down worker compose and node...")
-    subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "down", "-v"],
-        check=False, env=env,
-    )
+    print("tearing down worker container and node...")
+    subprocess.run(["docker", "rm", "-f", "inferia-worker"], check=False, env=env)
+    subprocess.run(["docker", "volume", "rm", "worker-state-local"], check=False, env=env)
     api.delete_node(node.node_id)
     api.close()
     return 1 if fail else 0

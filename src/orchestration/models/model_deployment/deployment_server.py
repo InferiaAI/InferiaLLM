@@ -20,6 +20,8 @@ from orchestration.v1 import (
     compute_pool_pb2_grpc,
 )
 
+from common.service_ports import orchestration_grpc_addr, depin_sidecar_url
+
 from orchestration.repositories.provider_repo import (
     ProviderResourceRepository,
 )
@@ -91,8 +93,8 @@ def _resolve_postgres_dsn() -> str:
 
 
 POSTGRES_DSN = _resolve_postgres_dsn()
-GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
-NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000")
+GRPC_ADDR = orchestration_grpc_addr("127.0.0.1")
+NOSANA_SIDECAR_URL = depin_sidecar_url(env_var="NOSANA_SIDECAR_URL")
 NOSANA_CLIENT_MANAGER_URL = os.getenv(
     "NOSANA_CLIENT_MANAGER_URL", "https://client-manager.k8s.prd.nosana.com"
 )

@@ -9,6 +9,7 @@ import warnings
 from pydantic import Field, BaseModel, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 from common.unified_config import UnifiedBaseSettings
+from common.service_ports import orchestration_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -311,8 +312,10 @@ class Settings(UnifiedBaseSettings):
 
     # Service URLs (Microservices)
     # In production, these should use HTTPS with valid certificates
+    # Co-located default derives from HTTP_PORT (orchestration REST). An
+    # explicit ORCHESTRATION_URL (split mode) wins via the alias.
     orchestration_url: str = Field(
-        default="http://localhost:8080", validation_alias="ORCHESTRATION_URL"
+        default_factory=orchestration_http_url, validation_alias="ORCHESTRATION_URL"
     )
     inference_url: str = Field(
         default="http://localhost:8001", validation_alias="INFERENCE_URL"

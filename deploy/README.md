@@ -76,10 +76,7 @@ No TLS, no host routing. Fine for local dev or a private network.
 ## Option 2 — Caddy (simplest TLS)
 
 Caddy's `reverse_proxy` streams responses and handles WebSocket upgrades
-**automatically** — no buffering/upgrade directives needed. Files provided:
-
-- `Caddyfile.localhost` — plain HTTP on `:8081` (used by `docker-compose.localhost.yml`).
-- `Caddyfile.sso` — internal-CA TLS for `inferia.local` + `auth.inferia.local` (used by `docker-compose.sso.yml`).
+**automatically** — no buffering/upgrade directives needed.
 
 For a **public domain with automatic Let's Encrypt**, a whole Caddyfile is two lines:
 
@@ -97,7 +94,7 @@ the app's public `ports:` mapping once Caddy fronts it.
 
 ## Option 3 — nginx (hand-rolled)
 
-Use the provided **`docker/nginx.conf`** (already written for the single
+Use the provided **`deploy/nginx.conf`** (already written for the single
 upstream). Add this service to your compose file:
 
 ```yaml
@@ -110,9 +107,9 @@ upstream). Add this service to your compose file:
       - "80:80"
       - "443:443"
     volumes:
-      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/certs:/etc/nginx/certs:ro       # fullchain.pem + privkey.pem
-      - ./docker/certbot-www:/var/www/certbot    # only for certbot http-01
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro       # fullchain.pem + privkey.pem
+      - ./deploy/certbot-www:/var/www/certbot    # only for certbot http-01
     networks:
       - inferia-net
 ```

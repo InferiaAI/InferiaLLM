@@ -64,7 +64,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./docker/Dockerfile
+          file: ./deploy/Dockerfile
           target: unified
           push: true
           tags: ${{ steps.meta.outputs.tags }}
