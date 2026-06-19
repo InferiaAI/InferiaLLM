@@ -46,11 +46,13 @@ def test_build_endpoints_format():
 @pytest.mark.asyncio
 async def test_build_resources_grouping():
     fake_nodes = [
-        {"id": "n1", "advertise_url": "h1:8080", "pool_id": "p1", "engine": "vllm", "healthy": True},
-        {"id": "n2", "advertise_url": "h2:8080", "pool_id": "p1", "engine": "vllm", "healthy": True},
-        {"id": "n3", "advertise_url": "h3:8080", "pool_id": "p1", "engine": "ollama", "healthy": True},
-        {"id": "n4", "advertise_url": "h4:8080", "pool_id": None, "engine": "vllm", "healthy": True},
-        {"id": "n5", "advertise_url": "h5:8080", "pool_id": "p1", "engine": "vllm", "healthy": False},
+        {"id": "n1", "advertise_url": "h1:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": True},
+        {"id": "n2", "advertise_url": "h2:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": True},
+        {"id": "n3", "advertise_url": "h3:8080", "pool_id": "p1", "engine": "ollama", "model": "llama", "healthy": True},
+        {"id": "n4", "advertise_url": "h4:8080", "pool_id": None, "engine": "vllm", "model": "gemma", "healthy": True},
+        {"id": "n5", "advertise_url": "h5:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": False},
+        {"id": "n6", "advertise_url": "h6:8080", "pool_id": "p1", "engine": "vllm", "model": "__default__", "healthy": True},
+        {"id": "n7", "advertise_url": "h7:8080", "pool_id": None, "engine": "vllm", "model": "__default__", "healthy": True},
     ]
 
     mock_repo = AsyncMock()
@@ -59,20 +61,36 @@ async def test_build_resources_grouping():
 
     rs = await build_resources()
 
-    # n1 through n3 should appear in clusters but may use engine-tagged names
-    assert "n1" not in rs["route_table"]  # n1 is in a pool cluster, not singleton
-    assert rs["route_table"]["n1"] is not None
+    # Every node appears in route_table, pooled nodes map to their cluster
+    assert rs["route_table"]["n1"] == "grp-p1-vllm-gemma"
 
-    # n4 is a singleton
-    assert "n4" in rs["clusters"]
-    assert rs["route_table"]["n4"] == "n4"
+    # n4 is a singleton with a known model → gets its own model-specific cluster
+    assert rs["route_table"]["n4"] == "grp-vllm-gemma"
+    assert "grp-vllm-gemma" in rs["clusters"]
 
-    # n5 is unhealthy (healthy=False), list_xds_nodes still returns it but
-    # the xds layer doesn't filter by healthy — the DB query does that
+    # n5 is unhealthy — list_xds_nodes still returns it; xDS doesn't filter
+    assert "grp-p1-vllm-gemma" in rs["clusters"]
+    # n5 sits in the same pool+engine+model group as n1/n2
+    endpoints = rs["endpoints"]["grp-p1-vllm-gemma"]
+    lb = endpoints["endpoints"][0]["lb_endpoints"]
+    hosts_in = {e["endpoint"]["address"]["socket_address"]["address"] for e in lb}
+    assert "h5" in hosts_in  # unhealthy nodes are NOT filtered by xDS
+
+    # n6 has model=__default__ → old-style cluster name (no model suffix)
     assert "grp-p1-vllm" in rs["clusters"]
+    assert rs["route_table"]["n6"] == "grp-p1-vllm"
+
+    # n7 has model=__default__ with no pool → falls back to inferia-workers
+    assert "inferia-workers" in rs["clusters"]
+    assert rs["route_table"]["n7"] == "inferia-workers"
 
     # Check structure
     assert len(rs["clusters"]) > 0
     assert len(rs["endpoints"]) > 0
     assert len(rs["route_table"]) > 0
     assert rs["cds_version"]
+
+    # Verify debug endpoint contains route_table
+    from orchestration.api.xds import debug_resources
+    debug = await debug_resources()
+    assert "route_table" in debug

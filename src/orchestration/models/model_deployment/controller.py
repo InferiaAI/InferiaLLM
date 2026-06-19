@@ -129,6 +129,7 @@ class ModelDeploymentController:
 
         # --- transactional intent creation ---
         async with self.deployments.transaction() as tx:
+            logger.info(f"Creating deployment {deployment_id}: engine={engine}, model_name={model_name}")
             await self.deployments.create(
                 deployment_id=deployment_id,
                 model_id=model_id,

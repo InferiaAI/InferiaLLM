@@ -95,16 +95,19 @@ def envoy_route_headers(
     ``advertise_url`` with the returned Envoy URL and add the returned
     headers (which include the ``X-Inferia-Route-Cluster`` header).
 
-    The cluster name is ``grp-<pool_id>-<engine>`` so the front Envoy
-    load-balances across every node in the pool while the engine suffix
-    acts as a routing-level filter (preparing for future engine-specific
-    node affinity).  The worker's proxy still uses the
-    ``X-Inferia-Deployment-Id`` header (set by ``provider_auth``) to
-    route to the correct model container, so all pool nodes are
-    interchangeable from Envoy's perspective.
+    Cluster naming follows the xDS control plane's grouping by
+    (pool, engine, model) so the front Envoy load-balances across every
+    node serving the same model in the same pool:
 
-    If no ``pool_id`` is available the cluster defaults to
-    ``inferia-workers`` (a flat cluster containing all healthy workers).
+      * ``grp-<pool_id>-<engine>-<model>`` — pooled node with a known model
+      * ``grp-<pool_id>-<engine>`` — pooled node with no specific model
+      * ``grp-<engine>-<model>`` — singleton node with a known model
+      * ``inferia-workers`` — singleton node with no specific model
+
+    The ``model`` value is taken from the deployment's ``inference_model``
+    (preferred) or ``model_name``.  The worker's proxy still uses the
+    ``X-Inferia-Deployment-Id`` header (set by ``provider_auth``) to
+    route to the correct model container on the chosen node.
 
     When the deployment is NOT worker-hosted or ``envoy_url`` is not set,
     returns (None, {}) — no routing change needed.
@@ -115,10 +118,17 @@ def envoy_route_headers(
 
     pool_id = deployment.get("pool_id")
     engine = deployment.get("engine", "vllm")
+    model = deployment.get("inference_model") or deployment.get("model_name") or "__default__"
     if pool_id:
-        cluster = f"grp-{_safe_cluster(pool_id)}-{_safe_cluster(engine)}"
+        if model != "__default__":
+            cluster = f"grp-{_safe_cluster(pool_id)}-{_safe_cluster(engine)}-{_safe_cluster(model)}"
+        else:
+            cluster = f"grp-{_safe_cluster(pool_id)}-{_safe_cluster(engine)}"
     else:
-        cluster = "inferia-workers"
+        if model != "__default__":
+            cluster = f"grp-{_safe_cluster(engine)}-{_safe_cluster(model)}"
+        else:
+            cluster = "inferia-workers"
 
     return envoy_url, {ROUTE_CLUSTER_HEADER: cluster}
 

@@ -544,27 +544,31 @@ class InventoryRepository:
             return [row["deployment_id"] for row in rows]
 
     async def list_xds_nodes(self) -> list[dict]:
-        """All non-terminated compute_inventory rows with their engines.
+        """All non-terminated compute_inventory rows with their engines
+        and models.
 
         Returns entries in the format the xDS control plane expects:
-          {id, advertise_url, pool_id, engine, healthy}
-        One entry per (node, engine) pair — if a node has multiple
-        deployments with different engines it will appear for each one.
-        Nodes with no deployments get engine ``"vllm"`` (the default).
+          {id, advertise_url, pool_id, engine, model, healthy}
+        One entry per (node, engine, model) triple — if a node has multiple
+        deployments with different engines or models it will appear for
+        each distinct combination.  Nodes with no deployments get engine
+        ``"vllm"`` and model ``"__default__"``.
         """
         query = """
             SELECT i.id, i.pool_id, i.advertise_url, i.state,
-                   i.health_score, COALESCE(d.engines, ARRAY[]::text[]) AS engines
+                   i.health_score, d.engine, d.model
               FROM compute_inventory i
               LEFT JOIN LATERAL (
-                SELECT ARRAY_AGG(DISTINCT md.engine)
-                       FILTER (WHERE md.engine IS NOT NULL) AS engines
+                SELECT DISTINCT md.engine,
+                       COALESCE(NULLIF(md.inference_model, ''),
+                                NULLIF(md.model_name, ''),
+                                '__default__') AS model
                   FROM model_deployments md
                  WHERE md.node_ids @> ARRAY[i.id]
                    AND md.state IN ('RUNNING','DEPLOYING','PENDING_NODE')
               ) d ON true
              WHERE i.state IS DISTINCT FROM 'terminated'
-             ORDER BY i.id
+             ORDER BY i.id, d.engine, d.model
         """
         async with self.db.acquire() as conn:
             rows = await conn.fetch(query)
@@ -576,15 +580,16 @@ class InventoryRepository:
             if not advertise_url:
                 continue
             healthy = r["state"] == "ready" and (r.get("health_score", 0) or 0) >= 50
-            engines = r.get("engines") or ["vllm"]
-            for engine in engines:
-                result.append({
-                    "id": node_id,
-                    "advertise_url": advertise_url,
-                    "pool_id": pool_id,
-                    "engine": engine,
-                    "healthy": healthy,
-                })
+            engine = r.get("engine") or "vllm"
+            model = r.get("model") or "__default__"
+            result.append({
+                "id": node_id,
+                "advertise_url": advertise_url,
+                "pool_id": pool_id,
+                "engine": engine,
+                "model": model,
+                "healthy": healthy,
+            })
         return result
 
     async def list_nodes_by_provider(

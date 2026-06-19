@@ -85,7 +85,7 @@ def _build_cluster(cluster_name: str) -> dict:
         "name": cluster_name,
         "connect_timeout": "0.25s",
         "lb_policy": "ROUND_ROBIN",
-        "type": "STRICT_DNS",
+        "type": "EDS",
         "eds_cluster_config": {
             "eds_config": {
                 "api_config_source": {
@@ -148,30 +148,46 @@ async def build_resources() -> dict:
         host, port = _parse_advertise_url(n["advertise_url"])
         if not host:
             continue
-        entry = {"host": host, "port": port, "id": n["id"], "engine": n.get("engine")}
+        entry = {
+            "host": host, "port": port,
+            "id": n["id"],
+            "engine": n.get("engine"),
+            "model": n.get("model", "__default__"),
+        }
         if n.get("pool_id"):
             pools.setdefault(n["pool_id"], []).append(entry)
         else:
             singletons.append(entry)
 
     for pool_id, members in pools.items():
-        engines = {m.get("engine") for m in members}
-        for engine in engines:
-            engine_members = [m for m in members if m.get("engine") == engine]
-            cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}" if engine else f"grp-{_safe(pool_id)}"
+        groups: set[tuple[str | None, str]] = {(m["engine"], m["model"]) for m in members}
+        for engine, model in groups:
+            group_members = [m for m in members if m["engine"] == engine and m["model"] == model]
+            if model and model != "__default__":
+                cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}-{_safe(model)}"
+            else:
+                cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}" if engine else f"grp-{_safe(pool_id)}"
             clusters[cluster_name] = _build_cluster(cluster_name)
-            endpoints[cluster_name] = _build_endpoints(cluster_name, engine_members)
+            endpoints[cluster_name] = _build_endpoints(cluster_name, group_members)
             eds_version[cluster_name] = _hash(endpoints[cluster_name])
-            for m in engine_members:
+            for m in group_members:
                 route_table[m["id"]] = cluster_name
 
     if singletons:
-        cluster_name = "inferia-workers"
-        clusters[cluster_name] = _build_cluster(cluster_name)
-        endpoints[cluster_name] = _build_endpoints(cluster_name, singletons)
-        eds_version[cluster_name] = _hash(endpoints[cluster_name])
-        for n in singletons:
-            route_table[n["id"]] = cluster_name
+        singleton_groups: dict[tuple[str | None, str], list[dict]] = {}
+        for m in singletons:
+            key = (m["engine"], m["model"])
+            singleton_groups.setdefault(key, []).append(m)
+        for (engine, model), members in singleton_groups.items():
+            if model and model != "__default__":
+                cluster_name = f"grp-{_safe(engine)}-{_safe(model)}"
+            else:
+                cluster_name = "inferia-workers"
+            clusters[cluster_name] = _build_cluster(cluster_name)
+            endpoints[cluster_name] = _build_endpoints(cluster_name, members)
+            eds_version[cluster_name] = _hash(endpoints[cluster_name])
+            for m in members:
+                route_table[m["id"]] = cluster_name
 
     return {
         "clusters": clusters,
