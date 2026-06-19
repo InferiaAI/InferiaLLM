@@ -117,23 +117,6 @@ services:
     networks:
       - inferia-net
 
-  xds-control-plane:
-    build: ./src/xds_control_plane
-    container_name: inferia-xds
-    restart: unless-stopped
-    environment:
-      CONTROL_PLANE_URL: http://app:8080/v1/nodes/xds-status
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-key-change-in-prod}
-      XDS_CLUSTER_NAME: xds_cluster
-      PORT: "18000"
-    ports:
-      - "18000:18000"
-    depends_on:
-      app:
-        condition: service_started
-    networks:
-      - inferia-net
-
   front-envoy:
     image: envoyproxy/envoy:v1.38.2
     container_name: inferia-envoy
@@ -144,7 +127,7 @@ services:
     volumes:
       - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
-      - xds-control-plane
+      - app
     networks:
       - inferia-net
 

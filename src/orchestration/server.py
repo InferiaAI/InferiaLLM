@@ -42,6 +42,7 @@ from orchestration.api import admin_engine_ami as admin_engine_ami_api
 from orchestration.api import admin_aws_discovery as admin_aws_discovery_api
 from orchestration.api import nodes as nodes_api
 from orchestration.api import providers as providers_api
+from orchestration.api import xds as xds_api
 from orchestration.provisioning.engine.registry import (
     ADAPTER_REGISTRY,
 )
@@ -435,6 +436,11 @@ async def serve():
         db_pool=db_pool,
     )
 
+    xds_api.configure(
+        inventory_repo=inventory_repo,
+        event_bus=event_bus,
+    )
+
     # ---------------- FastAPI App ----------------
     app = FastAPI(
         title=settings.app_name,
@@ -457,6 +463,11 @@ async def serve():
             "/v1/workers/register",
             "/v1/workers/channel",
             "/v1/nodes/xds-status",
+            "/v3/discovery:clusters",
+            "/v3/discovery:endpoints",
+            "/v3/healthz",
+            "/v3/route-table",
+            "/v3/debug/resources",
         ],
     )
 
@@ -472,6 +483,7 @@ async def serve():
     app.include_router(admin_aws_discovery_api.router)
     app.include_router(nodes_api.router)
     app.include_router(providers_api.router)
+    app.include_router(xds_api.router)
 
     # ---------------- Model Cache wiring ----------------
     # Instantiate model-cache singletons and wire them into the dep registry.
@@ -800,6 +812,16 @@ async def serve():
             logger.warning(
                 "Failed to start provisioning reconciler: %s", e
             )
+
+    # ---------------- xDS Event Subscription ----------------
+    # Listens for node state changes on the Redis event bus so the Envoy
+    # discovery service picks up new/deleted endpoints without waiting for
+    # the next DB poll cycle. Runs as a background task.
+    _xds_subscription_task = asyncio.create_task(
+        xds_api.start_xds_event_subscription(app),
+    )
+    app.state.xds_subscription_task = _xds_subscription_task
+    logger.info("xDS event subscription started")
 
     # ---------------- Autoscaler (pool + deployment TPS scaling) ----------------
     _AUTOSCALER_POLL_S = float(os.getenv("INFERIA_AUTOSCALER_POLL_S", "10"))

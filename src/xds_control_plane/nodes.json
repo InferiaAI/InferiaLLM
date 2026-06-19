@@ -1,5 +1,0 @@
-[
-  { "id": "node-1", "advertise_url": "http://worker-a:8080", "pool_id": "pool-A", "engine": "vllm", "provider": "aws" },
-  { "id": "node-2", "advertise_url": "http://worker-b:8080", "pool_id": "pool-A", "engine": "ollama", "provider": "aws" },
-  { "id": "node-3", "advertise_url": "http://worker-c:8080", "pool_id": "pool-default", "provider": "aws" }
-]

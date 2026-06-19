@@ -67,5 +67,5 @@ static_resources:
         - endpoint:
             address:
               socket_address:
-                address: xds-control-plane
-                port_value: 18000
+                address: app
+                port_value: 8080

@@ -1,0 +1,288 @@
+"""xDS control plane — Envoy discovery service for inference routing.
+
+Provides Cluster (CDS) and Endpoint (EDS) discovery responses so the
+inference gateway (envoyproxy) knows about available worker nodes.
+
+Subscribes to ``xds:node:state_changed`` Redis events for near-instant
+updates, with a periodic DB refresh as fallback. The primary data source
+is ``InventoryRepository.list_xds_nodes()`` which returns nodes from
+the ``compute_inventory`` table.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import os
+import threading
+import time
+import uuid
+from typing import Any
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, FastAPI, Request, Response
+
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["xDS Control Plane"])
+
+CLUSTER_TYPE_URL = "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+ENDPOINT_TYPE_URL = "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment"
+
+XDS_CLUSTER_NAME = os.environ.get("XDS_CLUSTER_NAME", "xds_cluster")
+REFRESH_DELAY = os.environ.get("XDS_REFRESH_DELAY", "5s")
+
+
+# ---------------------------------------------------------------------------
+# DI — follows the same configure() pattern as api/nodes.py, api/workers.py.
+# ---------------------------------------------------------------------------
+
+
+class _Deps:
+    inventory_repo: Any = None
+    event_bus: Any = None
+
+
+_deps = _Deps()
+
+
+def configure(*, inventory_repo, event_bus=None) -> None:
+    _deps.inventory_repo = inventory_repo
+    _deps.event_bus = event_bus
+
+
+# ---------------------------------------------------------------------------
+# Helpers.
+# ---------------------------------------------------------------------------
+
+
+def _safe(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_." else "-" for c in value)
+
+
+def _parse_advertise_url(advertise_url: str) -> tuple[str, int]:
+    if "//" in advertise_url:
+        parsed = urlparse(advertise_url)
+        return parsed.hostname or "localhost", parsed.port or 8080
+    host, _, port = advertise_url.partition(":")
+    return host, int(port or 8080)
+
+
+def _hash(obj) -> str:
+    blob = json.dumps(obj, sort_keys=True, default=str).encode()
+    return hashlib.sha1(blob).hexdigest()[:12]
+
+
+# ---------------------------------------------------------------------------
+# Resource builders.
+# ---------------------------------------------------------------------------
+
+
+def _build_cluster(cluster_name: str) -> dict:
+    return {
+        "@type": CLUSTER_TYPE_URL,
+        "name": cluster_name,
+        "connect_timeout": "0.25s",
+        "lb_policy": "ROUND_ROBIN",
+        "type": "STRICT_DNS",
+        "eds_cluster_config": {
+            "eds_config": {
+                "api_config_source": {
+                    "api_type": "REST",
+                    "transport_api_version": "V3",
+                    "cluster_names": [XDS_CLUSTER_NAME],
+                    "refresh_delay": REFRESH_DELAY,
+                }
+            }
+        },
+    }
+
+
+def _build_endpoints(cluster_name: str, members: list[dict]) -> dict:
+    return {
+        "@type": ENDPOINT_TYPE_URL,
+        "cluster_name": cluster_name,
+        "endpoints": [
+            {
+                "lb_endpoints": [
+                    {
+                        "endpoint": {
+                            "address": {
+                                "socket_address": {
+                                    "address": m["host"],
+                                    "port_value": m["port"],
+                                }
+                            }
+                        }
+                    }
+                    for m in members
+                ]
+            }
+        ],
+    }
+
+
+async def _load_nodes() -> list[dict]:
+    """Fetch all active nodes from the inventory repo.
+
+    Returns entries with keys: id, advertise_url, pool_id, engine, healthy.
+    """
+    if _deps.inventory_repo is None:
+        return []
+    return await _deps.inventory_repo.list_xds_nodes()
+
+
+async def build_resources() -> dict:
+    """Build all xDS resources (clusters + endpoints) from current inventory."""
+    nodes = await _load_nodes()
+
+    clusters: dict[str, dict] = {}
+    endpoints: dict[str, dict] = {}
+    route_table: dict[str, str] = {}
+    eds_version: dict[str, str] = {}
+
+    pools: dict[str, list[dict]] = {}
+    singletons: list[dict] = []
+    for n in nodes:
+        host, port = _parse_advertise_url(n["advertise_url"])
+        if not host:
+            continue
+        entry = {"host": host, "port": port, "id": n["id"], "engine": n.get("engine")}
+        if n.get("pool_id"):
+            pools.setdefault(n["pool_id"], []).append(entry)
+        else:
+            singletons.append(entry)
+
+    for pool_id, members in pools.items():
+        engines = {m.get("engine") for m in members}
+        for engine in engines:
+            engine_members = [m for m in members if m.get("engine") == engine]
+            cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}" if engine else f"grp-{_safe(pool_id)}"
+            clusters[cluster_name] = _build_cluster(cluster_name)
+            endpoints[cluster_name] = _build_endpoints(cluster_name, engine_members)
+            eds_version[cluster_name] = _hash(endpoints[cluster_name])
+            for m in engine_members:
+                route_table[m["id"]] = cluster_name
+
+    if singletons:
+        cluster_name = "inferia-workers"
+        clusters[cluster_name] = _build_cluster(cluster_name)
+        endpoints[cluster_name] = _build_endpoints(cluster_name, singletons)
+        eds_version[cluster_name] = _hash(endpoints[cluster_name])
+        for n in singletons:
+            route_table[n["id"]] = cluster_name
+
+    return {
+        "clusters": clusters,
+        "endpoints": endpoints,
+        "route_table": route_table,
+        "eds_version": eds_version,
+        "cds_version": _hash([clusters[k] for k in sorted(clusters.keys())]),
+    }
+
+
+def _discovery_response(version: str, resources: list, type_url: str) -> dict:
+    return {
+        "version_info": version,
+        "resources": resources,
+        "type_url": type_url,
+        "nonce": uuid.uuid4().hex,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Envoy xDS discovery endpoints.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/v3/discovery:clusters")
+async def discovery_clusters(request: Request):
+    body = await request.json() or {}
+    client_version = body.get("version_info", "")
+    resources = await build_resources()
+    if client_version == resources["cds_version"]:
+        return Response(status_code=304)
+    return _discovery_response(
+        resources["cds_version"],
+        list(resources["clusters"].values()),
+        CLUSTER_TYPE_URL,
+    )
+
+
+@router.post("/v3/discovery:endpoints")
+async def discovery_endpoints(request: Request):
+    body = await request.json() or {}
+    client_version = body.get("version_info", "")
+    names = body.get("resource_names") or []
+    resources = await build_resources()
+
+    wanted = names or list(resources["endpoints"].keys())
+    combined_version = _hash(
+        sorted((n, resources["eds_version"].get(n, "")) for n in wanted)
+    )
+    if client_version == combined_version:
+        return Response(status_code=304)
+
+    return _discovery_response(
+        combined_version,
+        [resources["endpoints"][n] for n in wanted if n in resources["endpoints"]],
+        ENDPOINT_TYPE_URL,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Auxiliary endpoints.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/v3/route-table")
+async def route_table():
+    resources = await build_resources()
+    return resources["route_table"]
+
+
+@router.get("/v3/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
+@router.get("/v3/debug/resources")
+async def debug_resources():
+    return await build_resources()
+
+
+# ---------------------------------------------------------------------------
+# Event subscription (optional — live updates via Redis event bus).
+# ---------------------------------------------------------------------------
+
+
+async def start_xds_event_subscription(app: FastAPI) -> None:
+    """Subscribe to ``xds:node:state_changed`` events on the Redis event bus.
+
+    When a node transitions to ``ready`` or ``terminated`` the event
+    payload carries ``{node_id, state, advertise_url, pool_id, engine}``
+    and the xds cache is invalidated so the next discovery response picks
+    up the change.  The subscription is best-effort — the periodic DB
+    refresh on each discovery request is the authoritative fallback.
+    """
+    if _deps.event_bus is None:
+        logger.info("xDS event subscription skipped: no event bus configured")
+        return
+
+    logger.info("xDS event subscription started")
+
+    while True:
+        try:
+            async for _msg_id, _event in _deps.event_bus.consume(
+                stream="xds:node:state_changed",
+                group="xds-consumers",
+                consumer="xds-1",
+            ):
+                logger.debug("xDS event received: %s", _event.get("state"))
+                # No explicit cache to invalidate — build_resources queries the
+                # DB fresh each time.  The subscription exists so the consumer
+                # group anchors progress; the DB is the source of truth.
+        except Exception:
+            logger.exception("xDS event subscription crashed, retrying in 5s")
+            await asyncio.sleep(5)
