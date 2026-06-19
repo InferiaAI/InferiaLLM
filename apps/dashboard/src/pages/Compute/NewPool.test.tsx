@@ -140,7 +140,8 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 // Helpers
 // ---------------------------------------------------------------------------
 
-import NewPool from "./NewPool";
+import NewPool, { sortResourcesByAvailability, getOnlineNodeCount } from "./NewPool";
+import { ConfigService } from "@/services/configService";
 
 function renderNewPool() {
     // Disable retries so failures surface immediately and gcTime=0 so cached
@@ -610,5 +611,339 @@ describe("AWS region selector (native <select>)", () => {
             expect(screen.getByRole("button", { name: /^continue$/i })).toBeEnabled(),
         );
         void toast; // suppress unused warning
+    });
+});
+
+// ---------------------------------------------------------------------------
+// T10: Nosana market selector UX (node counts + scroll + availability sort)
+// ---------------------------------------------------------------------------
+//
+// Strategy: pure-helper unit tests for sortResourcesByAvailability and
+// getOnlineNodeCount, plus component-level render tests for the badge and
+// empty-network banner. Component tests navigate to the DePIN (nosana) path
+// using fireEvent (NOT userEvent under fake timers — see project gotchas).
+
+// Nosana market fixtures with varying online_nodes
+const NOSANA_MARKET_WITH_NODES = {
+    provider_resource_id: "market-gpu-a",
+    gpu_type: "RTX 3090",
+    gpu_memory_gb: 24,
+    vcpu: 8,
+    ram_gb: 32,
+    price_per_hour: 0.10,
+    online_nodes: 3,
+    metadata: { online_nodes: 3, market_address: "addr-a" },
+};
+
+const NOSANA_MARKET_ZERO_NODES = {
+    provider_resource_id: "market-gpu-b",
+    gpu_type: "RTX 3090",
+    gpu_memory_gb: 24,
+    vcpu: 8,
+    ram_gb: 32,
+    price_per_hour: 0.08,
+    online_nodes: 0,
+    metadata: { online_nodes: 0, market_address: "addr-b" },
+};
+
+const AWS_RESOURCE_NO_ONLINE_NODES = {
+    provider_resource_id: "g6.xlarge",
+    gpu_type: "NVIDIA L4",
+    gpu_memory_gb: 24,
+    vcpu: 4,
+    ram_gb: 16,
+    price_per_hour: 0.805,
+    // no online_nodes field
+};
+
+describe("getOnlineNodeCount helper", () => {
+    it("returns online_nodes from top-level field when present", () => {
+        expect(getOnlineNodeCount(NOSANA_MARKET_WITH_NODES)).toBe(3);
+    });
+
+    it("falls back to metadata.online_nodes when top-level is absent", () => {
+        const res = { ...NOSANA_MARKET_WITH_NODES };
+        const resWithoutTop = { ...res, online_nodes: undefined };
+        expect(getOnlineNodeCount(resWithoutTop)).toBe(3);
+    });
+
+    it("returns 0 when both top-level and metadata are absent", () => {
+        expect(getOnlineNodeCount(AWS_RESOURCE_NO_ONLINE_NODES)).toBe(0);
+    });
+
+    it("returns 0 for a zero-node market", () => {
+        expect(getOnlineNodeCount(NOSANA_MARKET_ZERO_NODES)).toBe(0);
+    });
+});
+
+describe("sortResourcesByAvailability helper", () => {
+    const resources = [NOSANA_MARKET_ZERO_NODES, NOSANA_MARKET_WITH_NODES];
+
+    it("places markets with online_nodes > 0 before zero-node markets regardless of sortBy", () => {
+        const sorted = sortResourcesByAvailability(resources, "price_asc");
+        expect(sorted[0].provider_resource_id).toBe("market-gpu-a"); // 3 nodes first
+        expect(sorted[1].provider_resource_id).toBe("market-gpu-b"); // 0 nodes last
+    });
+
+    it("within available group sorts by price_asc correctly", () => {
+        const highPrice = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-hi", price_per_hour: 0.20, online_nodes: 5 };
+        const lowPrice = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-lo", price_per_hour: 0.10, online_nodes: 2 };
+        const sorted = sortResourcesByAvailability([highPrice, lowPrice], "price_asc");
+        expect(sorted[0].provider_resource_id).toBe("m-lo");
+        expect(sorted[1].provider_resource_id).toBe("m-hi");
+    });
+
+    it("within available group sorts by price_desc correctly", () => {
+        const highPrice = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-hi", price_per_hour: 0.20, online_nodes: 5 };
+        const lowPrice = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-lo", price_per_hour: 0.10, online_nodes: 2 };
+        const sorted = sortResourcesByAvailability([highPrice, lowPrice], "price_desc");
+        expect(sorted[0].provider_resource_id).toBe("m-hi");
+        expect(sorted[1].provider_resource_id).toBe("m-lo");
+    });
+
+    it("within available group sorts by memory correctly", () => {
+        const big = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-big", gpu_memory_gb: 80, online_nodes: 2 };
+        const small = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-small", gpu_memory_gb: 24, online_nodes: 2 };
+        const sorted = sortResourcesByAvailability([small, big], "memory");
+        expect(sorted[0].provider_resource_id).toBe("m-big"); // 80 > 24
+    });
+
+    it("zero-node markets among themselves are sorted by sortBy (price_asc)", () => {
+        const z1 = { ...NOSANA_MARKET_ZERO_NODES, provider_resource_id: "z-hi", price_per_hour: 0.20 };
+        const z2 = { ...NOSANA_MARKET_ZERO_NODES, provider_resource_id: "z-lo", price_per_hour: 0.05 };
+        const sorted = sortResourcesByAvailability([z1, z2], "price_asc");
+        expect(sorted[0].provider_resource_id).toBe("z-lo");
+    });
+
+    it("availability sort: non-DePIN resource (no online_nodes) stays stable", () => {
+        // Resources without online_nodes field are treated as 0 for availability
+        // but AWS resources won't appear in the DePIN grid anyway
+        const sorted = sortResourcesByAvailability([AWS_RESOURCE_NO_ONLINE_NODES, NOSANA_MARKET_WITH_NODES], "price_asc");
+        // NOSANA_MARKET_WITH_NODES has online_nodes=3 → comes first
+        expect(sorted[0].provider_resource_id).toBe("market-gpu-a");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Component-level tests for badge + empty-network banner.
+// These tests use the Nosana provider path (DePIN, non-cluster).
+// We wire computeApiGet to return nosana as a depin provider and stub the
+// resources endpoint to return our fixture markets.
+// ---------------------------------------------------------------------------
+
+/**
+ * Navigate to Step 2 for a nosana DePIN provider and return once the
+ * resource grid is visible.
+ */
+async function gotoNosanaStep2(resources: any[]) {
+    // Override computeApiGet for this test to return nosana as a provider
+    computeApiGet.mockImplementation((url: string) => {
+        if (url.includes("/inventory/providers")) {
+            return Promise.resolve({
+                data: {
+                    providers: {
+                        nosana: {
+                            adapter_type: "depin",
+                            capabilities: { supports_cluster_mode: false },
+                        },
+                    },
+                },
+            });
+        }
+        if (url.includes("/deployment/provider/resources")) {
+            return Promise.resolve({ data: { resources } });
+        }
+        if (url.includes("/providers/aws/instance-catalog")) {
+            return Promise.resolve({ data: { normal_gpu: [], heavy_gpu: [], cpu: [] } });
+        }
+        return Promise.resolve({ data: {} });
+    });
+
+    // Override ConfigService so nosana appears as "configured" (has an api_key)
+    (ConfigService.getProviderConfig as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        cloud: {},
+        depin: { nosana: { api_key: "test-key" } },
+    });
+
+    renderNewPool();
+
+    // Step 1: wait for the Nosana Network provider card to appear
+    const nosanaBtn = await screen.findByRole("button", { name: /Nosana Network/i });
+    fireEvent.click(nosanaBtn);
+
+    // Step 2: wait for the resource grid to appear
+    // The resource cards are rendered after loading completes
+    await waitFor(() => {
+        expect(screen.queryByText(/Loading available resources/i)).not.toBeInTheDocument();
+    });
+}
+
+describe("Nosana market selector UX (T10)", () => {
+    it("shows online-node badge on DePIN resource cards — green for >0, muted for 0", async () => {
+        await gotoNosanaStep2([NOSANA_MARKET_WITH_NODES, NOSANA_MARKET_ZERO_NODES]);
+
+        // The market with 3 online nodes should show "3 online" badge
+        expect(screen.getByText(/3 online/i)).toBeInTheDocument();
+        // The market with 0 online nodes should show "0 online" or similar
+        expect(screen.getByText(/0 online|No operators/i)).toBeInTheDocument();
+    });
+
+    it("does NOT show online-node badge for AWS resources (no online_nodes field)", async () => {
+        // Override to return aws as cluster provider
+        computeApiGet.mockImplementation((url: string) => {
+            if (url.includes("/inventory/providers")) {
+                return Promise.resolve({
+                    data: {
+                        providers: {
+                            aws: {
+                                adapter_type: "cloud",
+                                capabilities: { supports_cluster_mode: true },
+                            },
+                        },
+                    },
+                });
+            }
+            if (url.includes("/providers/aws/instance-catalog")) {
+                return Promise.resolve({ data: { normal_gpu: [], heavy_gpu: [], cpu: [] } });
+            }
+            return Promise.resolve({ data: { resources: [] } });
+        });
+
+        renderNewPool();
+        const awsBtn = await screen.findByRole("button", { name: /Aws Network/i });
+        fireEvent.click(awsBtn);
+
+        await waitFor(() => {
+            expect(screen.queryByText(/Loading available resources/i)).not.toBeInTheDocument();
+        });
+
+        // No online-node badge should appear since no DePIN resources
+        expect(screen.queryByText(/\d+ online/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/operators online/i)).not.toBeInTheDocument();
+    });
+
+    it("market with online_nodes > 0 appears before 0-node market in the DOM (availability-first sort)", async () => {
+        // Zero-node market has LOWER price (0.08 < 0.10) so price_asc would put it first
+        // But availability sort must override and put the 3-node market first
+        await gotoNosanaStep2([NOSANA_MARKET_ZERO_NODES, NOSANA_MARKET_WITH_NODES]);
+
+        const cards = screen.getAllByRole("button", { name: /market-gpu/i });
+        // There should be at least 2 resource cards
+        expect(cards.length).toBeGreaterThanOrEqual(2);
+
+        // The first card should be market-gpu-a (3 nodes), not market-gpu-b (0 nodes)
+        expect(cards[0].textContent).toContain("market-gpu-a");
+    });
+
+    it("shows empty-network banner when ALL markets have online_nodes === 0", async () => {
+        const allZero = [
+            { ...NOSANA_MARKET_ZERO_NODES, provider_resource_id: "market-zero-1" },
+            { ...NOSANA_MARKET_ZERO_NODES, provider_resource_id: "market-zero-2" },
+        ];
+        await gotoNosanaStep2(allZero);
+
+        // The empty-network banner should appear
+        expect(
+            screen.getByText(/counts are approximate.*Nosana queues a deployment/i)
+        ).toBeInTheDocument();
+    });
+
+    it("does NOT show empty-network banner when at least one market has online_nodes > 0", async () => {
+        await gotoNosanaStep2([NOSANA_MARKET_WITH_NODES, NOSANA_MARKET_ZERO_NODES]);
+
+        // Banner must NOT appear
+        expect(
+            screen.queryByText(/counts are approximate.*Nosana queues a deployment/i)
+        ).not.toBeInTheDocument();
+    });
+
+    it("does NOT show empty-network banner when resource list is empty (not loaded yet)", async () => {
+        await gotoNosanaStep2([]);
+
+        // Empty list — not all-zero (list is empty), so no banner
+        expect(
+            screen.queryByText(/counts are approximate.*Nosana queues a deployment/i)
+        ).not.toBeInTheDocument();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// NEW TESTS (T10 additions)
+// ---------------------------------------------------------------------------
+
+describe("sortResourcesByAvailability: availability tiebreak by price_asc", () => {
+    it("same-tier (all online_nodes>0) resources are ordered price ascending as tiebreak; 0-node resource still ranks last", () => {
+        // Three resources all with online_nodes > 0, different prices (descending order)
+        const highPrice = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-hi", price_per_hour: 0.30, online_nodes: 1 };
+        const midPrice  = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-mid", price_per_hour: 0.20, online_nodes: 2 };
+        const lowPrice  = { ...NOSANA_MARKET_WITH_NODES, provider_resource_id: "m-lo", price_per_hour: 0.10, online_nodes: 5 };
+        // Zero-node resource — cheapest price but must always rank last
+        const zeroNode  = { ...NOSANA_MARKET_ZERO_NODES, provider_resource_id: "m-zero", price_per_hour: 0.01, online_nodes: 0 };
+
+        const sorted = sortResourcesByAvailability([highPrice, zeroNode, midPrice, lowPrice], "availability");
+
+        // Within the online tier, tiebreak is price_asc: lo < mid < hi
+        expect(sorted[0].provider_resource_id).toBe("m-lo");
+        expect(sorted[1].provider_resource_id).toBe("m-mid");
+        expect(sorted[2].provider_resource_id).toBe("m-hi");
+        // Zero-node resource — cheapest overall — still ranks last
+        expect(sorted[3].provider_resource_id).toBe("m-zero");
+    });
+});
+
+describe("Nosana market selector UX: empty-network banner non-blocking", () => {
+    it("shows empty-network banner AND Continue is enabled after selecting a card from an all-zero market list", async () => {
+        // All markets have zero online nodes
+        const allZeroMarkets = [
+            { ...NOSANA_MARKET_ZERO_NODES, provider_resource_id: "zero-mkt-1" },
+            { ...NOSANA_MARKET_ZERO_NODES, provider_resource_id: "zero-mkt-2" },
+        ];
+        await gotoNosanaStep2(allZeroMarkets);
+
+        // Banner must be present (all-zero case)
+        expect(
+            screen.getByText(/counts are approximate.*Nosana queues a deployment/i)
+        ).toBeInTheDocument();
+
+        // Continue button starts disabled (no resource selected yet)
+        const continueBtn = screen.getByRole("button", { name: /^continue$/i });
+        expect(continueBtn).toBeDisabled();
+
+        // Click the first market card (zero-node is still selectable)
+        const cards = screen.getAllByRole("button", { name: /zero-mkt/i });
+        expect(cards.length).toBeGreaterThanOrEqual(1);
+        fireEvent.click(cards[0]);
+
+        // After selection, Continue must no longer be disabled
+        expect(continueBtn).not.toBeDisabled();
+    });
+});
+
+describe("Nosana market selector UX: availability sort <select> reorders DOM", () => {
+    it("changing sort select to 'availability' puts the 3-node market before the 0-node market in DOM order", async () => {
+        // Set up: zero-node market has LOWER price (0.08) so price_asc would put it first.
+        // Switch to 'availability' sort and assert online market comes first.
+        await gotoNosanaStep2([NOSANA_MARKET_ZERO_NODES, NOSANA_MARKET_WITH_NODES]);
+
+        // Locate the sort <select> — ResourceFilter renders two selects; the sort
+        // select is the one that contains the "availability" option.
+        const selects = screen.getAllByRole("combobox");
+        const sortSelect = selects.find(
+            (s) => s.querySelector
+                ? Array.from((s as HTMLSelectElement).options ?? []).some(
+                      (o: HTMLOptionElement) => o.value === "availability"
+                  )
+                : false
+        );
+        expect(sortSelect).toBeDefined();
+
+        // Switch sort to "availability"
+        fireEvent.change(sortSelect!, { target: { value: "availability" } });
+
+        // After changing sort, the 3-node market (market-gpu-a) should come first
+        const cards = screen.getAllByRole("button", { name: /market-gpu/i });
+        expect(cards.length).toBeGreaterThanOrEqual(2);
+        expect(cards[0].textContent).toContain("market-gpu-a"); // 3 online nodes
+        expect(cards[1].textContent).toContain("market-gpu-b"); // 0 online nodes
     });
 });

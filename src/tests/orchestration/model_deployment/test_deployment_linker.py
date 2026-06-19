@@ -32,7 +32,7 @@ async def pool():
 
 
 async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready",
-                              advertise_url=None):
+                              advertise_url=None, provider="aws"):
     org_id, pool_id, node_id = uuid4(), uuid4(), uuid4()
     async with p.acquire() as c:
         await c.execute("INSERT INTO organizations(id,name) VALUES($1,$2) "
@@ -42,10 +42,10 @@ async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready",
                  provider, pool_type, allowed_gpu_types, max_cost_per_hour,
                  scheduling_policy, provider_pool_id, is_active, lifecycle_state,
                  gpu_count)
-               VALUES ($1, $2, 'organization', $3::text, 'aws', 'cluster',
+               VALUES ($1, $2, 'organization', $3::text, $6, 'cluster',
                        ARRAY['none'], 0, '{}', $4, true, 'running', $5)""",
             pool_id, f"p-{pool_id}", str(org_id),
-            f"placeholder:{pool_id}", gpu_total,
+            f"placeholder:{pool_id}", gpu_total, provider,
         )
         await c.execute(
             """INSERT INTO compute_inventory(id, pool_id, provider,
@@ -53,11 +53,11 @@ async def _seed_pool_and_node(p, *, gpu_total=4, gpu_allocated=0, state="ready",
                  advertise_url,
                  gpu_total, gpu_allocated, vcpu_total, vcpu_allocated,
                  ram_gb_total, ram_gb_allocated, state)
-               VALUES ($1, $2, 'aws', $3, 'h', $4, 'worker',
+               VALUES ($1, $2, $9, $3, 'h', $4, 'worker',
                        $8,
                        $5, $6, 0, 0, 0, 0, $7)""",
             node_id, pool_id, f"p-{node_id}", f"n-{node_id}",
-            gpu_total, gpu_allocated, state, advertise_url,
+            gpu_total, gpu_allocated, state, advertise_url, provider,
         )
     return pool_id, node_id
 
@@ -258,6 +258,146 @@ async def test_load_model_failed_status_releases_gpu_and_marks_failed(pool):
     assert row["state"] == "FAILED"          # NOT RUNNING
     assert not row["endpoint"]               # endpoint NOT published on failure
     assert node_row["gpu_allocated"] == 0    # GPU released
+
+
+async def _seed_deploying_deploy(p, pool_id, node_id, *, gpu_required=1,
+                                 model_name="test-model", engine="vllm"):
+    """A deploy orphaned in DEPLOYING bound to node_id — e.g. its load_model
+    was in flight when the control plane restarted, so it is no longer
+    PENDING_NODE and the bind loop skips it."""
+    deploy_id = uuid4()
+    async with p.acquire() as c:
+        await c.execute(
+            """INSERT INTO model_deployments(deployment_id, model_name,
+                 replicas, gpu_per_replica, pool_id, target_pool_id,
+                 target_node_id, state, org_id, engine)
+               VALUES ($1, $5, 1, $4, $2, $2, $6, 'DEPLOYING', $3, $7)""",
+            deploy_id, pool_id, str(uuid4()), gpu_required, model_name,
+            node_id, engine,
+        )
+    return deploy_id
+
+
+@pytest.mark.parametrize("provider", ["aws", "on_prem", "nosana"])
+async def test_on_worker_ready_threads_node_provider_to_mirror(pool, monkeypatch, provider):
+    """on_worker_ready must read the node's provider and thread it into
+    resolve_and_apply_mirror, so the mirror is bypassed for public-cloud nodes
+    (the gate lives in resolve_and_apply_mirror). Pins the call-site wiring: a
+    regression dropping the provider would route cloud deploys through the CP
+    mirror again."""
+    from orchestration.models.model_deployment import deployment_linker as _dl_mod
+    captured = {}
+
+    async def _spy(spec, *, recipe, artifact_uri, mirror_base, cache_repo,
+                   provider=None):
+        captured["provider"] = provider
+
+    monkeypatch.setattr(_dl_mod, "resolve_and_apply_mirror", _spy)
+
+    pool_id, node_id = await _seed_pool_and_node(pool, provider=provider)
+    await _seed_pending_deploy(pool, pool_id)
+    controller = AsyncMock(spec=WorkerController)
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    assert captured.get("provider") == provider  # node's provider, verbatim
+
+
+async def test_orphaned_deploying_is_redriven_on_worker_ready(pool):
+    """A deploy stuck in DEPLOYING (load_model never completed because the
+    control plane restarted mid-flight) is no longer PENDING_NODE, so the bind
+    loop skips it and nothing re-fires load_model — it stays DEPLOYING forever
+    with no container. on_worker_ready must RE-DRIVE such orphans: re-fire
+    load_model on (re)connect and promote to RUNNING."""
+    pool_id, node_id = await _seed_pool_and_node(
+        pool, gpu_total=1, gpu_allocated=1,  # GPU was reserved at bind time
+        advertise_url="http://ec2-x:8080",
+    )
+    deploy_id = await _seed_deploying_deploy(pool, pool_id, node_id)
+    controller = AsyncMock(spec=WorkerController)
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT state, endpoint FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+        node = await c.fetchrow(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
+        )
+    assert row["state"] == "RUNNING"           # re-driven, not stuck
+    assert row["endpoint"] == "http://ec2-x:8080"
+    assert node["gpu_allocated"] == 1          # not double-allocated
+    controller.load_model.assert_awaited_once()  # load_model re-fired
+
+
+async def test_orphaned_deploying_not_redriven_twice_when_also_freshly_bound(pool):
+    """A deploy that the bind loop just drove (PENDING_NODE→bound) must NOT be
+    re-driven again by the orphan sweep — load_model fires exactly once."""
+    pool_id, node_id = await _seed_pool_and_node(
+        pool, gpu_total=2, advertise_url="http://ec2-x:8080",
+    )
+    await _seed_pending_deploy(pool, pool_id)
+    controller = AsyncMock(spec=WorkerController)
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    # The freshly-bound deploy transitions to DEPLOYING then RUNNING within the
+    # same call; the orphan sweep must exclude it (driven set), so load_model
+    # is awaited once, not twice.
+    controller.load_model.assert_awaited_once()
+
+
+async def test_redrive_failure_records_error_message(pool):
+    """When the re-driven load_model fails, the reason must be recorded in
+    error_message (via update_state, not set_state) so the dashboard shows WHY
+    the container never started — the empty-message regression that hid the
+    'container name already in use' worker bug."""
+    pool_id, node_id = await _seed_pool_and_node(pool, gpu_total=1,
+                                                 gpu_allocated=1)
+    deploy_id = await _seed_deploying_deploy(pool, pool_id, node_id)
+    controller = AsyncMock(spec=WorkerController)
+    controller.load_model.side_effect = RuntimeError("container name in use")
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT state, error_message FROM model_deployments "
+            "WHERE deployment_id=$1", deploy_id,
+        )
+        node = await c.fetchrow(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
+        )
+    assert row["state"] == "FAILED"
+    assert row["error_message"]                       # non-empty reason recorded
+    assert "container name in use" in row["error_message"]
+    assert node["gpu_allocated"] == 0                 # GPU released
 
 
 async def test_already_bound_deploy_is_promoted_without_reallocate(pool):

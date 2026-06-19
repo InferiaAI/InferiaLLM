@@ -23,8 +23,6 @@ logger = setup_logging(
     level=settings.log_level,
     service_name="inference-gateway",
     use_json=not settings.is_development,
-    logstash_host=settings.logstash_host,
-    logstash_port=settings.logstash_port,
     logger_name="services.inference",
 )
 

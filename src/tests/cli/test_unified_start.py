@@ -124,3 +124,40 @@ def test_loopback_env_does_not_override_explicit(monkeypatch):
     import os
     assert os.environ["API_GATEWAY_URL"] == "http://gw.internal:8000"
     assert os.environ["INFERENCE_URL"] == "http://inf.internal:8001"
+
+
+# --- DePIN sidecar gateway URL (the Nosana "Service not initialized" fix) ---
+# The sidecar runs as its own process and must derive the /api mount itself;
+# without /api its config poll hits the SPA catch-all and no DePIN credentials
+# load (nosana "disabled" -> deploy 503).
+
+
+def test_sidecar_gateway_url_defaults_to_api_mount():
+    from cli import _sidecar_api_gateway_url
+
+    assert _sidecar_api_gateway_url({}) == "http://localhost:8000/api"
+
+
+def test_sidecar_gateway_url_honors_app_port():
+    from cli import _sidecar_api_gateway_url
+
+    assert _sidecar_api_gateway_url({"APP_PORT": "9100"}) == "http://localhost:9100/api"
+
+
+def test_sidecar_gateway_url_preserves_explicit():
+    """Split-mode operators set API_GATEWAY_URL to the gateway's own host."""
+    from cli import _sidecar_api_gateway_url
+
+    assert (
+        _sidecar_api_gateway_url({"API_GATEWAY_URL": "http://gw.internal:8000"})
+        == "http://gw.internal:8000"
+    )
+
+
+def test_sidecar_gateway_url_never_bare_localhost_without_api():
+    """Regression: the old fallback was bare http://localhost:8000 (no /api),
+    which made the sidecar poll the SPA catch-all and load zero credentials."""
+    from cli import _sidecar_api_gateway_url
+
+    url = _sidecar_api_gateway_url({})
+    assert url.endswith("/api"), f"sidecar gateway URL must include /api mount, got {url!r}"

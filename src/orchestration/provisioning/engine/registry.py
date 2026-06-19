@@ -11,7 +11,9 @@ from this registry until someone writes Pulumi
 `dynamic.ResourceProvider`s wrapping their REST APIs.
 """
 import logging
+from typing import Optional
 
+from orchestration.provisioning.engine.base import AdapterType
 from providers.akash.akash_adapter import (
     AkashAdapter,
 )
@@ -71,6 +73,120 @@ def get_adapter(provider: str):
             f"Available: {sorted(set(ADAPTER_REGISTRY) - _ADAPTER_ALIASES)}"
         )
     return cls()
+
+
+def is_direct_provision_provider(provider: Optional[str]) -> bool:
+    """Does deleting a node of ``provider`` need an inline ``adapter.
+    deprovision_node`` call to stop an external (paid) job?
+
+    True iff the provider has a registered adapter whose CAPABILITIES set
+    ``supports_direct_provisioning`` AND whose ``ADAPTER_TYPE`` is NOT
+    ``CLOUD`` — i.e. the gate is ``supports_direct_provisioning AND
+    ADAPTER_TYPE != CLOUD``. Cloud providers (aws/gcp/azure) tear their
+    EC2/VM down via the Pulumi reconciler (``force_cancel`` → CancelHandler),
+    so the delete handler must NOT also call their adapter. DePIN providers
+    (nosana/akash) record a ``provider_instance_id`` (e.g. the Nosana job
+    address) that keeps billing until the adapter stops it — so their delete
+    path MUST call ``deprovision_node`` inline.
+
+    ON_PREM is NOT a blanket False: the KubernetesAdapter is ``ON_PREM`` yet
+    sets ``supports_direct_provisioning=True``, so k8s DOES return True (its
+    pod/job must be torn down inline, the same as a DePIN job). It is only
+    the WorkerAdapter that returns False — it is ``ON_PREM`` with
+    ``supports_direct_provisioning=False`` (there is no external job to
+    stop). The classification is driven entirely by the two capability/type
+    attributes, not by the adapter family name.
+
+    Reads CLASS attributes only — it must NOT instantiate the adapter
+    (``KubernetesAdapter()`` loads kubeconfig and raises; cloud adapters
+    read pulumi settings at __init__). Unknown / falsy providers → False.
+    """
+    if not provider:
+        return False
+    cls = ADAPTER_REGISTRY.get(provider)
+    if cls is None:
+        return False
+    caps = getattr(cls, "CAPABILITIES", None)
+    if caps is None or not getattr(caps, "supports_direct_provisioning", False):
+        return False
+    return getattr(cls, "ADAPTER_TYPE", None) != AdapterType.CLOUD
+
+
+def provider_prefers_origin_model_fetch(provider: Optional[str]) -> bool:
+    """Should a deploy on ``provider`` fetch model weights from origin
+    (huggingface.co) directly, bypassing the control-plane HF mirror?
+
+    True iff the provider's adapter CAPABILITIES set
+    ``prefers_origin_model_fetch`` — currently the public-cloud providers
+    (aws/gcp/azure), whose VMs have direct internet egress. Air-gapped /
+    DePIN / self-hosted providers return False and keep the cache-first
+    mirror. Gates both the per-deploy cache pre-warm and the mirror injection
+    into the load spec.
+
+    Reads CLASS attributes only — must NOT instantiate the adapter (mirrors
+    :func:`is_direct_provision_provider`; cloud adapters read pulumi settings
+    and k8s loads kubeconfig at __init__). Unknown / falsy providers → False.
+    """
+    if not provider:
+        return False
+    cls = ADAPTER_REGISTRY.get(provider)
+    if cls is None:
+        return False
+    caps = getattr(cls, "CAPABILITIES", None)
+    return bool(caps is not None and getattr(caps, "prefers_origin_model_fetch", False))
+
+
+async def _deprovision_direct_node(
+    node_row: dict,
+    *,
+    pool_credential_name: Optional[str] = None,
+) -> tuple[bool, Optional[str]]:
+    """Stop the external DePIN job a node row points at, before its inventory
+    row is marked terminated.
+
+    Reads ``provider`` + ``provider_instance_id`` from ``node_row`` and calls
+    ``get_adapter(provider).deprovision_node(...)`` with the pool's credential
+    name. This is a fast sidecar call for Nosana, so callers ``await`` it
+    inline (NOT the 202/async pulumi-destroy pattern).
+
+    Returns:
+        ``(True, None)``  — deprovision succeeded, OR was skipped because the
+                node never provisioned an external job (no
+                ``provider_instance_id`` or a ``placeholder:`` sentinel). The
+                caller may safely mark the node terminated.
+        ``(False, err)`` — ``deprovision_node`` raised. ``err`` is
+                ``str(exc)`` for the caller to record as
+                ``metadata.deprovision_error``. An ERROR is also logged
+                flagging a POSSIBLE LEAKED external job (provider + instance
+                id) so ops can see it; the caller should stamp a
+                ``deprovision_failed`` marker (with ``err``) but STILL mark
+                the node terminated (a stuck external job is visible via the
+                marker + error rather than wedging the row forever).
+    """
+    provider = node_row.get("provider")
+    pii = node_row.get("provider_instance_id")
+    if not pii or str(pii).startswith("placeholder:"):
+        logger.info(
+            "_deprovision_direct_node: skipping deprovision for provider=%s "
+            "(no external job: provider_instance_id=%r)",
+            provider, pii,
+        )
+        return True, None
+    try:
+        adapter = get_adapter(provider)
+        await adapter.deprovision_node(
+            provider_instance_id=pii,
+            provider_credential_name=pool_credential_name,
+        )
+        return True, None
+    except Exception as exc:
+        logger.error(
+            "_deprovision_direct_node: deprovision_node FAILED for provider=%s "
+            "provider_instance_id=%s — POSSIBLE LEAKED external job still "
+            "running and billing; ops must verify/stop it manually",
+            provider, pii, exc_info=True,
+        )
+        return False, str(exc)
 
 
 def get_registered_providers() -> list:

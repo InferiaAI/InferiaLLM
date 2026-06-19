@@ -246,3 +246,92 @@ async def test_create_placeholder_uses_external_tx(pool):
             )
             assert row["state"] == "provisioning"
             assert row["gpu_total"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Live-derived gpu_allocated (dashboard reads): list_nodes / get_node must
+# report GPU usage from ACTIVE deployments, not the drifting stored counter.
+# ---------------------------------------------------------------------------
+async def _seed_deployment(p, pool_id, node_id, *, state,
+                           gpu_per_replica=1, replicas=1):
+    dep_id = uuid4()
+    async with p.acquire() as c:
+        await c.execute(
+            """
+            INSERT INTO model_deployments(
+              deployment_id, model_name, replicas, gpu_per_replica,
+              pool_id, target_pool_id, target_node_id, state, org_id
+            ) VALUES ($1, 'm', $2, $3, $4, $4, $5, $6, $7)
+            """,
+            dep_id, replicas, gpu_per_replica, pool_id, node_id, state,
+            str(uuid4()),
+        )
+    return dep_id
+
+
+async def test_list_nodes_derives_gpu_allocated_from_active_deploys(pool):
+    repo = InventoryRepository(pool)
+    org_id, pool_id = await _seed_org_and_pool(pool)
+    # stored counter STALE (4) but only 1 GPU is actually in use
+    node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=4)
+    await _seed_deployment(pool, pool_id, node_id, state="RUNNING")
+    nodes = await repo.list_nodes(org_id=str(org_id))
+    n = next(x for x in nodes if x["id"] == node_id)
+    assert n["gpu_allocated"] == 1  # derived, NOT the stale stored 4
+
+
+async def test_get_node_derives_gpu_allocated(pool):
+    repo = InventoryRepository(pool)
+    _, pool_id = await _seed_org_and_pool(pool)
+    node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=4)
+    await _seed_deployment(pool, pool_id, node_id, state="DEPLOYING")
+    n = await repo.get_node(node_id=node_id)
+    assert n["gpu_allocated"] == 1
+
+
+async def test_derived_ignores_terminal_deployment(pool):
+    """An orphaned node whose deployment FAILED shows derived 0 (the exact
+    drift bug: stored counter stayed elevated)."""
+    repo = InventoryRepository(pool)
+    org_id, pool_id = await _seed_org_and_pool(pool)
+    node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)
+    await _seed_deployment(pool, pool_id, node_id, state="FAILED")
+    nodes = await repo.list_nodes(org_id=str(org_id))
+    n = next(x for x in nodes if x["id"] == node_id)
+    assert n["gpu_allocated"] == 0
+
+
+async def test_derived_counts_replicas_times_per_replica(pool):
+    repo = InventoryRepository(pool)
+    _, pool_id = await _seed_org_and_pool(pool)
+    node_id = await _seed_node(pool, pool_id, gpu_total=8, gpu_allocated=0)
+    await _seed_deployment(pool, pool_id, node_id, state="RUNNING",
+                           gpu_per_replica=2, replicas=3)
+    n = await repo.get_node(node_id=node_id)
+    assert n["gpu_allocated"] == 6  # 2 * 3
+
+
+async def test_derived_sums_multiple_active_deploys(pool):
+    repo = InventoryRepository(pool)
+    org_id, pool_id = await _seed_org_and_pool(pool)
+    node_id = await _seed_node(pool, pool_id, gpu_total=8, gpu_allocated=0)
+    await _seed_deployment(pool, pool_id, node_id, state="RUNNING")
+    await _seed_deployment(pool, pool_id, node_id, state="PENDING_NODE")
+    await _seed_deployment(pool, pool_id, node_id, state="TERMINATED")  # excluded
+    nodes = await repo.list_nodes(org_id=str(org_id))
+    n = next(x for x in nodes if x["id"] == node_id)
+    assert n["gpu_allocated"] == 2  # RUNNING + PENDING_NODE, not TERMINATED
+
+
+async def test_mark_terminated_zeroes_stored_counter(pool):
+    repo = InventoryRepository(pool)
+    _, pool_id = await _seed_org_and_pool(pool)
+    node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=3)
+    await repo.mark_terminated(node_id)
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT state, gpu_allocated FROM compute_inventory WHERE id=$1",
+            node_id,
+        )
+    assert row["state"] == "terminated"
+    assert row["gpu_allocated"] == 0

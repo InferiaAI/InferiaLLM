@@ -140,14 +140,15 @@ class DeploymentLinker:
 
     async def on_worker_ready(self, node_id: UUID) -> None:
         async with self._db.acquire() as conn:
-            pool_id_row = await conn.fetchrow(
-                "SELECT pool_id FROM compute_inventory WHERE id=$1",
+            node_row = await conn.fetchrow(
+                "SELECT pool_id, provider FROM compute_inventory WHERE id=$1",
                 node_id,
             )
-            if pool_id_row is None:
+            if node_row is None:
                 logger.warning("on_worker_ready: node %s not found", node_id)
                 return
-            pool_id = pool_id_row["pool_id"]
+            pool_id = node_row["pool_id"]
+            provider = node_row["provider"]
 
             bound: list[dict] = []
             async with conn.transaction():
@@ -185,107 +186,130 @@ class DeploymentLinker:
                     # else: bound to a DIFFERENT in-flight node — leave it for
                     # that node's on_worker_ready.
 
-        # Transaction committed. Fire load_model OUTSIDE the transaction.
+        # Transaction committed. Drive load_model OUTSIDE the transaction for
+        # the deploys we just bound.
         for deploy in bound:
-            gpu_required = int(deploy.get("gpu_per_replica") or 1)
-            try:
-                spec = _spec_from_pending(deploy, gpu_required)
-                try:
-                    from orchestration.config import settings as _s
-                    _mirror_base = getattr(_s, "model_mirror_base", "") or ""
-                except Exception:
-                    _mirror_base = ""
-                await resolve_and_apply_mirror(
-                    spec, recipe=spec["recipe"],
-                    artifact_uri=spec["model"]["artifact_uri"],
-                    mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
-                )
-                result = await self._controller.load_model(
-                    node_id=str(node_id), spec=spec,
-                )
-            except Exception as e:
-                logger.exception(
-                    "linker: load_model failed for deploy=%s: %s",
-                    deploy["id"], e,
-                )
-                # Atomic rollback: release GPU + mark FAILED in one txn so a
-                # partial failure can't leave gpu_allocated out of sync with
-                # deploy state.
-                async with self._db.acquire() as conn:
-                    async with conn.transaction():
-                        await self._inventory.release_gpu(
-                            node_id, gpu_required, tx=conn,
-                        )
-                        await self._deploys.set_state(
-                            deploy["id"], "FAILED", tx=conn,
-                        )
-            else:
-                # The worker can return a CommandResult with status='failed'
-                # (e.g. readiness probe timed out, pull failed) WITHOUT raising
-                # — controller.load_model returns the body verbatim. Treat that
-                # as a load failure: release the GPU + mark FAILED, and DO NOT
-                # publish an endpoint or report RUNNING (the model is not
-                # serving). Previously this fell through to the success branch
-                # and reported RUNNING for a model that never loaded.
-                if getattr(result, "status", None) == "failed":
-                    logger.error(
-                        "linker: load_model returned status=failed for "
-                        "deploy=%s: %s",
-                        deploy["id"], getattr(result, "detail", ""),
-                    )
-                    async with self._db.acquire() as conn:
-                        async with conn.transaction():
-                            await self._inventory.release_gpu(
-                                node_id, gpu_required, tx=conn,
-                            )
-                            await self._deploys.set_state(
-                                deploy["id"], "FAILED", tx=conn,
-                            )
-                    continue
+            await self._drive_deploy(node_id, deploy, provider=provider)
 
-                # Model loaded on the worker. Promote DEPLOYING → RUNNING so
-                # the dashboard reflects the live deployment. The warm-deploy
-                # path does this (controller/worker set RUNNING); the
-                # EC2-bootstrap path previously left the deploy stuck
-                # DEPLOYING forever even though the model was serving.
-                async with self._db.acquire() as conn:
-                    await self._deploys.set_state(
-                        deploy["id"], "RUNNING", tx=conn,
-                    )
-                # Publish the inference endpoint so the data plane can route
-                # to this worker's :8080 inference proxy. We use the node's
-                # CP-reachable advertise_url — NOT the worker's reported
-                # endpoint_url, which is a 127.0.0.1:<port> loopback useless
-                # to the control plane. The proxy auths with the pool
-                # inference_token and routes by X-Inferia-Deployment-Id; the
-                # inference data plane attaches both. Without this the
-                # deployment has endpoint='' and the sandbox "never connects
-                # to the node".
-                try:
-                    async with self._db.acquire() as conn:
-                        advertise = await conn.fetchval(
-                            "SELECT advertise_url FROM compute_inventory "
-                            "WHERE id=$1",
-                            node_id,
-                        )
-                    if advertise:
-                        await self._deploys.update_endpoint(
-                            deploy["id"], advertise,
-                        )
-                    else:
-                        logger.warning(
-                            "linker: node=%s has no advertise_url; deploy=%s "
-                            "endpoint not set (inference unreachable)",
-                            node_id, deploy["id"],
-                        )
-                except Exception:
-                    logger.exception(
-                        "linker: failed to set endpoint for deploy=%s",
-                        deploy["id"],
-                    )
-
-        if bound:
+        # RE-DRIVE orphaned DEPLOYING deploys. A deploy whose load_model was
+        # in flight when the control plane restarted (or whose linker task
+        # otherwise died) stays DEPLOYING forever: it is no longer PENDING_NODE
+        # so the bind loop above skips it, /start reprovisions a NEW node, and
+        # nothing else re-fires load_model — leaving the deployment "deploying"
+        # with no container on the worker. On worker (re)connect the prior
+        # control channel is dead, so re-firing load_model is safe + idempotent.
+        # Skip the ones we just drove above.
+        driven = {d["id"] for d in bound}
+        try:
+            orphaned = [
+                d for d in await self._deploys.list_deploying_for_node(node_id)
+                if d["id"] not in driven
+            ]
+        except Exception:
+            logger.exception(
+                "linker: failed to list orphaned DEPLOYING deploys for node=%s",
+                node_id,
+            )
+            orphaned = []
+        for deploy in orphaned:
             logger.info(
-                "linker: bound %d pending deploys to node=%s pool=%s",
-                len(bound), node_id, pool_id,
+                "linker: re-driving orphaned DEPLOYING deploy=%s on node=%s "
+                "(load_model never completed; control-plane restart?)",
+                deploy["id"], node_id,
+            )
+            await self._drive_deploy(node_id, deploy, provider=provider)
+
+        if bound or orphaned:
+            logger.info(
+                "linker: drove %d new + %d re-driven deploy(s) on node=%s pool=%s",
+                len(bound), len(orphaned), node_id, pool_id,
+            )
+
+    async def _drive_deploy(self, node_id: UUID, deploy: dict,
+                            *, provider: str | None = None) -> None:
+        """Fire load_model for one already-bound deploy, then promote
+        DEPLOYING → RUNNING (and publish the endpoint) on success, or release
+        the GPU + mark FAILED on failure. The GPU was allocated at bind time, so
+        this never re-allocates — on failure it RELEASES the existing
+        allocation. Shared by the freshly-bound path and the orphan re-drive."""
+        gpu_required = int(deploy.get("gpu_per_replica") or 1)
+        try:
+            spec = _spec_from_pending(deploy, gpu_required)
+            try:
+                from orchestration.config import settings as _s
+                _mirror_base = getattr(_s, "model_mirror_base", "") or ""
+            except Exception:
+                _mirror_base = ""
+            await resolve_and_apply_mirror(
+                spec, recipe=spec["recipe"],
+                artifact_uri=spec["model"]["artifact_uri"],
+                mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
+                provider=provider,
+            )
+            result = await self._controller.load_model(
+                node_id=str(node_id), spec=spec,
+            )
+        except Exception as e:
+            logger.exception(
+                "linker: load_model failed for deploy=%s: %s", deploy["id"], e,
+            )
+            # Atomic rollback: release GPU + mark FAILED in one txn so a
+            # partial failure can't leave gpu_allocated out of sync with state.
+            # Record the reason via update_state (NOT set_state) so the failure
+            # is VISIBLE in the deploy row + dashboard — set_state writes state
+            # only, which previously left load_model failures with an empty
+            # error_message and no clue why the container never started.
+            async with self._db.acquire() as conn:
+                async with conn.transaction():
+                    await self._inventory.release_gpu(
+                        node_id, gpu_required, tx=conn,
+                    )
+                    await self._deploys.update_state(
+                        deploy["id"], "FAILED", tx=conn,
+                        error_message=f"load_model error: {e}",
+                    )
+            return
+
+        # The worker can return a CommandResult with status='failed' (readiness
+        # probe timeout, pull failed) WITHOUT raising — treat that as a load
+        # failure: release the GPU + mark FAILED, do NOT report RUNNING.
+        if getattr(result, "status", None) == "failed":
+            detail = getattr(result, "detail", "") or "worker reported load failure"
+            logger.error(
+                "linker: load_model returned status=failed for deploy=%s: %s",
+                deploy["id"], detail,
+            )
+            async with self._db.acquire() as conn:
+                async with conn.transaction():
+                    await self._inventory.release_gpu(
+                        node_id, gpu_required, tx=conn,
+                    )
+                    await self._deploys.update_state(
+                        deploy["id"], "FAILED", tx=conn,
+                        error_message=f"load_model failed on worker: {detail}",
+                    )
+            return
+
+        # Model loaded on the worker. Promote DEPLOYING → RUNNING.
+        async with self._db.acquire() as conn:
+            await self._deploys.set_state(deploy["id"], "RUNNING", tx=conn)
+        # Publish the inference endpoint (the node's CP-reachable advertise_url,
+        # NOT the worker's 127.0.0.1 loopback) so the data plane can route.
+        try:
+            async with self._db.acquire() as conn:
+                advertise = await conn.fetchval(
+                    "SELECT advertise_url FROM compute_inventory WHERE id=$1",
+                    node_id,
+                )
+            if advertise:
+                await self._deploys.update_endpoint(deploy["id"], advertise)
+            else:
+                logger.warning(
+                    "linker: node=%s has no advertise_url; deploy=%s endpoint "
+                    "not set (inference unreachable)",
+                    node_id, deploy["id"],
+                )
+        except Exception:
+            logger.exception(
+                "linker: failed to set endpoint for deploy=%s", deploy["id"],
             )

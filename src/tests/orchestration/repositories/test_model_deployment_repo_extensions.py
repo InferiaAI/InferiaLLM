@@ -132,6 +132,55 @@ async def test_bind_to_node_sets_target_node_id(pool):
     assert row["target_node_id"] == node_id
 
 
+async def _seed_node(pool, pool_id):
+    node_id = uuid4()
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO compute_inventory(id, pool_id, provider, "
+            "provider_instance_id, hostname, node_name, agent_kind, "
+            "gpu_total, gpu_allocated, vcpu_total, vcpu_allocated, "
+            "ram_gb_total, ram_gb_allocated, state) "
+            "VALUES ($1, $2, 'aws', $3, 'h', $4, 'worker', 1, 0, 0, 0, 0, 0, 'ready')",
+            str(node_id), str(pool_id), f"p-{node_id}", f"n-{node_id}",
+        )
+    return node_id
+
+
+async def test_list_deploying_for_node_filters_state_and_node(pool):
+    """list_deploying_for_node returns ONLY DEPLOYING deploys bound to the given
+    node, FIFO — the input to the orphan re-drive. Other states (RUNNING,
+    PENDING_NODE, FAILED) and other nodes must be excluded."""
+    repo = ModelDeploymentRepository(pool, event_bus=None)
+    _, pool_id = await _seed_pool_row(pool)
+    node_id = await _seed_node(pool, pool_id)
+    other_node = await _seed_node(pool, pool_id)
+
+    older = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    newer = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    d_old = await _seed_deploy(pool, pool_id=pool_id, state="DEPLOYING",
+                               target_node_id=node_id, created_at=older)
+    d_new = await _seed_deploy(pool, pool_id=pool_id, state="DEPLOYING",
+                               target_node_id=node_id, created_at=newer)
+    # Noise that must be excluded.
+    await _seed_deploy(pool, pool_id=pool_id, state="RUNNING",
+                       target_node_id=node_id)
+    await _seed_deploy(pool, pool_id=pool_id, state="PENDING_NODE",
+                       target_node_id=node_id)
+    await _seed_deploy(pool, pool_id=pool_id, state="DEPLOYING",
+                       target_node_id=other_node)
+
+    rows = await repo.list_deploying_for_node(node_id)
+    ids = [r["id"] for r in rows]
+    assert ids == [d_old, d_new]  # only this node's DEPLOYING, FIFO
+
+
+async def test_list_deploying_for_node_empty_when_none(pool):
+    repo = ModelDeploymentRepository(pool, event_bus=None)
+    _, pool_id = await _seed_pool_row(pool)
+    node_id = await _seed_node(pool, pool_id)
+    assert await repo.list_deploying_for_node(node_id) == []
+
+
 async def test_set_state_changes_state(pool):
     repo = ModelDeploymentRepository(pool, event_bus=None)
     _, pool_id = await _seed_pool_row(pool)

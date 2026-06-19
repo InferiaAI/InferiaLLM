@@ -36,8 +36,12 @@ import sys
 from typing import Iterable
 from urllib import error as urlerror, request as urlrequest
 
+from common.service_ports import orchestration_http_url
 
-DEFAULT_ORCHESTRATION_URL = "http://localhost:8080"
+# Tracks HTTP_PORT so an operator on a host with a remapped orchestration port
+# gets the right default; an explicit --orchestration-url / ORCHESTRATION_URL
+# still wins (see _resolve).
+DEFAULT_ORCHESTRATION_URL = orchestration_http_url()
 
 
 def _http(method: str, url: str, *, headers: dict, body: bytes | None = None) -> tuple[int, bytes]:

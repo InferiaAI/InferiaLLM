@@ -20,20 +20,54 @@ from orchestration.v1 import (
     compute_pool_pb2_grpc,
 )
 
+from common.service_ports import orchestration_grpc_addr, depin_sidecar_url
+
+from orchestration.repositories.provider_repo import (
+    ProviderResourceRepository,
+)
+
 from orchestration.provisioning.engine.registry import (
     get_adapter,
     ADAPTER_REGISTRY,
+    is_direct_provision_provider,
+    _deprovision_direct_node,
 )
+from orchestration.provisioning.engine.base import AdapterType
 from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
-from orchestration.models.model_deployment.log_store import (
-    DeploymentLogStore,
-    DeploymentLogBuffer,
+from orchestration.models.model_deployment.direct_provision import (
+    provision_direct_node,
 )
-from orchestration.config import settings as orch_settings
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from types import SimpleNamespace
+
+ProvisioningRoute = Literal["self_register", "reconciler", "direct_adapter"]
+
+# Strong references to fire-and-forget background tasks so they aren't
+# garbage-collected mid-flight (asyncio holds only a weak ref to a bare
+# create_task result, so without this set the task can be collected before it
+# runs — the classic fire-and-forget foot-gun). The done-callback discards
+# each task once it finishes so the set doesn't grow unbounded.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _bg_done(t: "asyncio.Task") -> None:
+    _BG_TASKS.discard(t)
+    if not t.cancelled():
+        exc = t.exception()
+        if exc is not None:
+            logger.error("background task failed: %s", exc, exc_info=exc)
+
+
+def _schedule_background(coro):
+    """Schedule ``coro`` as a fire-and-forget background task, retaining a
+    strong reference until it completes. Returns the created Task."""
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_bg_done)
+    return t
+
 
 import os
 
@@ -55,40 +89,12 @@ def _resolve_postgres_dsn() -> str:
 
 
 POSTGRES_DSN = _resolve_postgres_dsn()
-GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
-NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000")
+GRPC_ADDR = orchestration_grpc_addr("127.0.0.1")
+NOSANA_SIDECAR_URL = depin_sidecar_url(env_var="NOSANA_SIDECAR_URL")
 NOSANA_CLIENT_MANAGER_URL = os.getenv(
     "NOSANA_CLIENT_MANAGER_URL", "https://client-manager.k8s.prd.nosana.com"
 )
 NOSANA_INGRESS_DOMAIN = os.getenv("NOSANA_INGRESS_DOMAIN", "node.k8s.prd.nos.ci")
-
-# Singleton log store — initialized lazily on first use
-_log_store: Optional[DeploymentLogStore] = None
-
-
-async def _get_log_store() -> DeploymentLogStore:
-    """Get or initialize the deployment log store singleton."""
-    global _log_store
-    if _log_store is None:
-        _log_store = DeploymentLogStore(
-            elasticsearch_url=orch_settings.elasticsearch_url
-        )
-        await _log_store.initialize()
-    return _log_store
-
-
-async def _create_log_buffer(deployment_id: str, org_id: str) -> DeploymentLogBuffer:
-    """Create a log buffer for a WebSocket session, seeded with ES line count."""
-    store = await _get_log_store()
-    start_line = await store.get_max_line_number(deployment_id)
-    return DeploymentLogBuffer(
-        store=store,
-        deployment_id=deployment_id,
-        org_id=org_id,
-        max_lines=orch_settings.deployment_log_buffer_size,
-        flush_interval=orch_settings.deployment_log_flush_interval,
-        start_line_number=start_line,
-    )
 
 
 async def _get_nosana_signature(api_key: str) -> str:
@@ -323,6 +329,66 @@ def _model_spec_from_request(req: "DeployModelRequest") -> dict:
     return _model_spec_from_source(req)
 
 
+def _provisioning_route(provider: str, pool_meta: dict | None = None) -> ProvisioningRoute:
+    """Classify a deploy request into one of three provisioning routes.
+
+    Parameters
+    ----------
+    provider : str
+        Provider key that must match an ADAPTER_REGISTRY key exactly (keys are
+        lowercase, e.g. ``"aws"``, ``"nosana"``).  An unrecognised key falls
+        back to ``"reconciler"`` (see Rule 2).
+    pool_meta : dict | None
+        Pool-level metadata dict (e.g. from the ``metadata`` jsonb column).
+        ``None`` is treated as an empty dict.
+
+    Returns
+    -------
+    "self_register"   — inferia-worker agent self-registers (worker/on_prem pools).
+    "reconciler"      — IaC cloud provisioning via the AWS/Pulumi reconciler (aws/gcp/azure).
+    "direct_adapter"  — DePIN/k8s providers provisioned via adapter.provision_node()
+                        (nosana/akash/k8s).
+
+    Rule priority
+    -------------
+    1. pool_meta["agent_kind"] == "worker"  →  "self_register"
+    2. Unknown provider (not in ADAPTER_REGISTRY)  →  "reconciler"
+       (preserves today's enqueue-by-default behaviour)
+    3. CLOUD adapter type  →  "reconciler"
+    4. adapter class CAPABILITIES.supports_direct_provisioning  →  "direct_adapter"
+    5. Fallback  →  "self_register"
+
+    Implementation note: we read ADAPTER_TYPE and CAPABILITIES from the adapter
+    CLASS (via ADAPTER_REGISTRY) rather than instantiating via get_adapter().
+    Instantiation triggers environment-dependent side-effects in some adapters
+    (e.g. KubernetesAdapter loads kube config at __init__ time), which would
+    crash this pure classifier in unit-test environments with no k8s/cloud
+    credentials. Both ADAPTER_TYPE and CAPABILITIES are class-level attributes;
+    get_capabilities() is a @classmethod, so no instance is needed.
+    """
+    pool_meta = pool_meta or {}
+
+    # Rule 1: explicit worker pool override
+    if pool_meta.get("agent_kind") == "worker":
+        return "self_register"
+
+    # Rule 2: unknown provider → preserve existing enqueue-by-default path
+    adapter_cls = ADAPTER_REGISTRY.get(provider)
+    if adapter_cls is None:
+        return "reconciler"
+
+    # Rule 3: cloud providers use the Pulumi/IaC reconciler
+    if adapter_cls.ADAPTER_TYPE == AdapterType.CLOUD:
+        return "reconciler"
+
+    # Rule 4: DePIN / k8s adapters with direct provisioning support
+    if adapter_cls.get_capabilities().supports_direct_provisioning:
+        return "direct_adapter"
+
+    # Rule 5: remaining ON_PREM adapters that rely on agent self-registration
+    return "self_register"
+
+
 async def _build_provisioning_spec(
     *, pool_row, pool_meta: dict, decision, org_id, ami_id: str | None = None,
 ) -> dict:
@@ -462,6 +528,67 @@ async def _initiate_node_destroy(
     it down. The periodic reaper re-arms the real teardown for such a node;
     clearing the flag here just avoids a misleading UI in the interim.
     """
+    # Direct-provision (DePIN: nosana/akash/k8s) teardown. These nodes have NO
+    # reconciler provisioning_job, so force_cancel below would be a no-op and
+    # the EXTERNAL PAID job (e.g. the Nosana job at provider_instance_id) would
+    # keep running and billing. Stop it INLINE (fast sidecar call) here, then
+    # mark the node terminated. This is the shared choke point for every
+    # user-facing deployment delete/terminate path, so wiring it here covers
+    # them all (terminate_deployment_core PENDING_NODE/RUNNING + delete_deployment
+    # C9). Cloud providers (aws/gcp/azure) fall through to the reconciler
+    # force_cancel path below unchanged.
+    if is_direct_provision_provider(provider):
+        async with db_pool.acquire() as conn:
+            node_row = await conn.fetchrow(
+                "SELECT id, provider::text AS provider, provider_instance_id, "
+                "pool_id FROM compute_inventory WHERE id=$1",
+                node_id,
+            )
+            pool_cred = None
+            if pool_id is not None:
+                try:
+                    pool_cred = await conn.fetchval(
+                        "SELECT provider_credential_name FROM compute_pools "
+                        "WHERE id=$1",
+                        pool_id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "_initiate_node_destroy: failed reading pool credential "
+                        "for node=%s pool=%s", node_id, pool_id, exc_info=True,
+                    )
+        node_dict = dict(node_row) if node_row is not None else {
+            "provider": provider, "provider_instance_id": None,
+        }
+        ok, err = await _deprovision_direct_node(
+            node_dict, pool_credential_name=pool_cred,
+        )
+        async with db_pool.acquire() as conn:
+            if ok:
+                await conn.execute(
+                    "UPDATE compute_inventory SET state='terminated', "
+                    "updated_at=now() WHERE id=$1",
+                    node_id,
+                )
+            else:
+                # Surface the failure: a possibly-leaked external job is visible
+                # via the marker (+ the error string) + the ERROR log
+                # _deprovision_direct_node emits. Still mark terminated so the
+                # row isn't wedged.
+                await conn.execute(
+                    "UPDATE compute_inventory SET state='terminated', "
+                    "metadata = COALESCE(metadata,'{}'::jsonb) "
+                    "|| jsonb_build_object("
+                    "'deprovision_failed', true, "
+                    "'deprovision_error', $2::text), "
+                    "updated_at=now() WHERE id=$1",
+                    node_id, err,
+                )
+        # Inline teardown done — do NOT fall through to the async reconciler
+        # path (DePIN has no Pulumi stack). Always report success so the
+        # idempotent delete/terminate completes (the marker carries any leak).
+        return True
+
     async with db_pool.acquire() as conn:
         await conn.execute(
             "UPDATE compute_inventory SET metadata = "
@@ -1056,6 +1183,7 @@ async def place_and_provision(
     # pending_enqueue: set after tx commits; contains kwargs for jobs_repo.enqueue
     bound_for_load: tuple | None = None  # (node_id, deploy_id) for warm path
     pending_enqueue: dict | None = None  # post-tx provisioning job to enqueue
+    pending_direct: dict | None = None  # post-tx direct-adapter background task
     response_body: dict = {}
     response_status = 200
     try:
@@ -1130,16 +1258,16 @@ async def place_and_provision(
                             )
                             await deploys.bind_to_node(deploy_id, node_id, tx=conn)
                             await deploys.set_state(deploy_id, "PENDING_NODE", tx=conn)
-                            is_worker_pool = pool_meta.get("agent_kind") == "worker"
+                            route = _provisioning_route(decision.provider, pool_meta)
                             response_body = {
                                 "deployment_id": str(deploy_id),
                                 "state": "PENDING_NODE",
                                 "target_node_id": str(node_id),
                                 "message": "waiting for worker registration"
-                                if is_worker_pool else "provisioning compute",
+                                if route == "self_register" else "provisioning compute",
                             }
                             response_status = 202
-                            if not is_worker_pool:
+                            if route == "reconciler":
                                 # Collect for post-tx enqueue (FK needs committed node)
                                 pending_enqueue = {
                                     "node_id": node_id,
@@ -1152,6 +1280,18 @@ async def place_and_provision(
                                         ami_id=ami_id,
                                     ),
                                 }
+                            elif route == "direct_adapter":
+                                # DePIN/k8s: provision via the background helper
+                                # post-tx (scheduled after the placeholder commits).
+                                pending_direct = {
+                                    "deploy_id": deploy_id,
+                                    "node_id": node_id,
+                                    "pool_row": pool_row,
+                                    "pool_meta": pool_meta,
+                                    "provider": decision.provider,
+                                    "gpu_per_replica": gpu_per_replica,
+                                }
+                            # route == "self_register": neither (unchanged behavior)
                     else:
                         # first allocate_gpu succeeded — BindToReady warm path
                         await deploys.bind_to_node(deploy_id, decision.node_id, tx=conn)
@@ -1188,16 +1328,16 @@ async def place_and_provision(
                     )
                     await deploys.bind_to_node(deploy_id, node_id, tx=conn)
                     await deploys.set_state(deploy_id, "PENDING_NODE", tx=conn)
-                    is_worker_pool = pool_meta.get("agent_kind") == "worker"
+                    route = _provisioning_route(decision.provider, pool_meta)
                     response_body = {
                         "deployment_id": str(deploy_id),
                         "state": "PENDING_NODE",
                         "target_node_id": str(node_id),
                         "message": "waiting for worker registration"
-                        if is_worker_pool else "provisioning compute",
+                        if route == "self_register" else "provisioning compute",
                     }
                     response_status = 202
-                    if not is_worker_pool:
+                    if route == "reconciler":
                         # Collect for post-tx enqueue (FK needs committed node)
                         pending_enqueue = {
                             "node_id": node_id,
@@ -1210,6 +1350,18 @@ async def place_and_provision(
                                 ami_id=ami_id,
                             ),
                         }
+                    elif route == "direct_adapter":
+                        # DePIN/k8s: provision via the background helper post-tx
+                        # (scheduled after the placeholder commits).
+                        pending_direct = {
+                            "deploy_id": deploy_id,
+                            "node_id": node_id,
+                            "pool_row": pool_row,
+                            "pool_meta": pool_meta,
+                            "provider": decision.provider,
+                            "gpu_per_replica": gpu_per_replica,
+                        }
+                    # route == "self_register": neither (unchanged behavior)
 
     except PoolAtCapacity as e:
         await deploys.set_state(deploy_id, "FAILED")
@@ -1254,6 +1406,13 @@ async def place_and_provision(
                 detail=f"failed to enqueue provisioning job: {e}",
             )
 
+    # 4a'. Post-tx: schedule the direct-adapter provisioning helper as a
+    # fire-and-forget background task. The HTTP 202 (PENDING_NODE) has already
+    # been decided in-tx; provision_direct_node drives the deployment to
+    # RUNNING/FAILED asynchronously and owns its own try/except.
+    if pending_direct is not None:
+        _schedule_background(provision_direct_node(**pending_direct, deps=deps))
+
     # 4b. Post-tx: load_model for the warm path
     if bound_for_load is not None:
         node_id, _ = bound_for_load
@@ -1288,6 +1447,7 @@ async def place_and_provision(
                     spec, recipe=spec["recipe"],
                     artifact_uri=spec["model"]["artifact_uri"],
                     mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
+                    provider=pool_row.get("provider"),
                 )
             except Exception:
                 pass  # mirror is best-effort; never block a warm deploy
@@ -1459,12 +1619,17 @@ async def deploy_model(req: DeployModelRequest, request: Request):
                 ),
             )
 
-    # 1b. vLLM requires an explicit ami_id (the DLAMI to boot); reject early
-    # so the operator sees an actionable 422 instead of a provisioning failure.
-    if (req.engine or "").lower() == "vllm" and not req.ami_id:
+    # 1b. vLLM on AWS requires an explicit ami_id (the DLAMI to boot); reject
+    # early so the operator sees an actionable 422 instead of a provisioning
+    # failure. This is AWS-only: DePIN/direct providers (nosana/akash/k8s) and
+    # worker pools provision their own runtime and never consume an AMI, so the
+    # gate must not fire for them (mirrors _build_provisioning_spec, which only
+    # AWS-scopes ami_id).
+    _provider = (pool_row.get("provider") or "").lower()
+    if (req.engine or "").lower() == "vllm" and _provider == "aws" and not req.ami_id:
         raise HTTPException(
             status_code=422,
-            detail="ami_id is required for vLLM deployments",
+            detail="ami_id is required for vLLM deployments on AWS",
         )
 
     # 1c. Persist ami_id into configuration so the /start resume path can
@@ -1538,7 +1703,15 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             inference_model=req.inference_model,
             model_name=req.model_name,
         )
-        if _dl and _uri and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
+        # Skip the CP cache pre-warm for public-cloud providers: their VMs pull
+        # weights from origin directly (the load spec also bypasses the mirror),
+        # so pre-warming would download to the CP for nothing — and over a
+        # home/tunnel uplink that is slow + wasteful.
+        from orchestration.provisioning.engine.registry import (
+            provider_prefers_origin_model_fetch,
+        )
+        _origin_fetch = provider_prefers_origin_model_fetch(pool_row.get("provider"))
+        if _dl and _uri and not _origin_fetch and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
             _src, _mid, _rev = derive_cache_key(req.engine or "vllm", str(_uri))
             _dl.start(source=_src, model_id=_mid, revision=_rev, engine_hint=req.engine)
     except Exception:
@@ -2967,12 +3140,73 @@ async def delete_pool_rest(pool_id: str):
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         pool = await conn.fetchrow(
-            "SELECT id, lifecycle_state, is_active FROM compute_pools "
+            "SELECT id, lifecycle_state, is_active, provider::text AS provider, "
+            "provider_credential_name FROM compute_pools "
             "WHERE id = $1 AND is_active = TRUE",
             pool_uuid,
         )
         if not pool:
             raise HTTPException(status_code=404, detail="Pool not found")
+
+        # DIRECT-PROVISION (DePIN: nosana/akash/k8s) pool teardown. These pools
+        # have NO reconciler provisioning_jobs, so step 2's force-cancel SQL
+        # below is a no-op and every node's EXTERNAL PAID job (e.g. the Nosana
+        # job at provider_instance_id) would keep running and billing after the
+        # pool row is soft-deleted. Stop each live node's external job INLINE
+        # (fast sidecar calls) BEFORE the cascade, then flip that node to
+        # 'terminated' immediately: DePIN deprovision is synchronous, so the
+        # node is truly gone — terminating it inline lets step 5's count query
+        # return 0 and finalize the pool right here, avoiding the 120s reaper
+        # grace window. (Step 3's terminating-flag UPDATE has
+        # ``WHERE state IS DISTINCT FROM 'terminated'`` so it correctly skips
+        # these now-terminated rows.) Cloud pools (aws/gcp/azure) skip this and
+        # tear down via the reconciler as before.
+        _pool_provider = (
+            pool.get("provider") if hasattr(pool, "get") else pool["provider"]
+        )
+        if is_direct_provision_provider(_pool_provider):
+            _pool_cred = (
+                pool.get("provider_credential_name")
+                if hasattr(pool, "get") else pool["provider_credential_name"]
+            )
+            _depin_nodes = await conn.fetch(
+                "SELECT id, provider::text AS provider, provider_instance_id "
+                "FROM compute_inventory "
+                "WHERE pool_id = $1 AND state IS DISTINCT FROM 'terminated'",
+                pool_uuid,
+            )
+            for _n in _depin_nodes:
+                ok, err = await _deprovision_direct_node(
+                    dict(_n), pool_credential_name=_pool_cred,
+                )
+                # Flip the node terminated inline whether deprovision SUCCEEDED
+                # or FAILED — the job-stop was already attempted+logged and a
+                # stuck external job is surfaced via the marker below rather
+                # than wedging the row (and the pool) forever.
+                if ok:
+                    await conn.execute(
+                        "UPDATE compute_inventory SET state='terminated', "
+                        "updated_at=now() WHERE id=$1",
+                        _n["id"],
+                    )
+                else:
+                    # Surface the possible leak (the helper already logged an
+                    # ERROR) without wedging the pool delete; still terminate.
+                    try:
+                        await conn.execute(
+                            "UPDATE compute_inventory SET state='terminated', "
+                            "metadata = COALESCE(metadata,'{}'::jsonb) "
+                            "|| jsonb_build_object("
+                            "'deprovision_failed', true, "
+                            "'deprovision_error', $2::text), "
+                            "updated_at=now() WHERE id=$1",
+                            _n["id"], err,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "delete_pool_rest: failed to stamp deprovision_failed "
+                            "for node=%s", _n["id"], exc_info=True,
+                        )
 
         # Cascade everything in one transaction so a crash can't leave the
         # pool half-deleted (e.g. jobs cancelled but the pool row still
@@ -3068,7 +3302,8 @@ async def delete_pool_rest(pool_id: str):
         #    were torn down).
         try:
             remaining = await conn.fetchval(
-                "SELECT count(*) FROM compute_inventory WHERE pool_id = $1",
+                "SELECT count(*) FROM compute_inventory "
+                "WHERE pool_id = $1 AND state IS DISTINCT FROM 'terminated'",
                 pool_uuid,
             )
             if int(remaining or 0) == 0:
@@ -3221,7 +3456,7 @@ async def get_deployment_logs(deployment_id: str):
 
         provider_instance_id = node["provider_instance_id"]
 
-        # 3. Try adapter first, fall back to ES
+        # 3. Fetch live logs from the provider adapter.
         try:
             adapter = get_adapter(provider)
             if hasattr(adapter, "get_logs"):
@@ -3232,17 +3467,10 @@ async def get_deployment_logs(deployment_id: str):
                 if logs_data and logs_data.get("logs"):
                     return logs_data
         except Exception as e:
-            logger.warning(f"Adapter log fetch failed, trying ES fallback: {e}")
+            logger.warning(f"Adapter log fetch failed: {e}")
 
-        # 4. Fallback: try Elasticsearch persisted logs
-        try:
-            store = await _get_log_store()
-            es_logs = await store.get_logs(deployment_id)
-            if es_logs:
-                return {"logs": es_logs, "source": "persisted"}
-        except Exception as e:
-            logger.warning(f"ES log fallback also failed: {e}")
-
+        # Persisted terminal logs (captured on failure/stop) are available via
+        # GET /logs/{deployment_id}/persisted (Postgres-backed).
         return {"logs": [f"No logs available for provider: {provider}"], "source": "none"}
 
     finally:
@@ -3337,7 +3565,16 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
         # ?token=<jwt> and opens). The /api prefix must NOT be included here
         # — the dashboard's toWsUrl helper owns it and would produce /api/api/...
         # if it were also present in this string.
-        if (provider == "on_prem") or (node.get("agent_kind") == "worker"):
+        #
+        # Route by PROVIDER, NOT agent_kind: a DePIN (Nosana/Akash) placeholder
+        # node keeps agent_kind="worker" even though it has no worker channel,
+        # so the old `agent_kind == "worker"` gate sent Nosana deployments down
+        # the worker path → "worker offline" and the Terminal Logs tab showed
+        # nothing. is_direct_provision_provider() is the correct discriminator.
+        from orchestration.provisioning.engine.registry import (
+            is_direct_provision_provider as _is_direct,
+        )
+        if not _is_direct(provider):
             return {
                 "ws_url": (
                     f"/v1/admin/workers/{node_id}/logs"
@@ -3680,10 +3917,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
             )
 
-            # Create log buffer for persistence
-            log_buffer = await _create_log_buffer(deployment_id=data.get("deployment_id", "unknown"), org_id=data.get("org_id", ""))
-            await log_buffer.start_periodic_flush()
-
             async def read_logs():
                 try:
                     while True:
@@ -3691,7 +3924,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         if not line:
                             break
                         decoded = line.decode().strip()
-                        log_buffer.append(decoded)
                         await websocket.send_json(
                             {"type": "log", "data": decoded}
                         )
@@ -3710,7 +3942,7 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                     except WebSocketDisconnect:
                         break
             finally:
-                await log_buffer.stop()
+                stream_task.cancel()
 
         elif provider == "nosana":
             job_id = data.get("jobId")
@@ -3771,13 +4003,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
                     logger.info("Connected to Nosana node, relaying logs...")
 
-                    # Create log buffer for persistence
-                    log_buffer = await _create_log_buffer(
-                        deployment_id=data.get("deployment_id", job_id),
-                        org_id=data.get("org_id", ""),
-                    )
-                    await log_buffer.start_periodic_flush()
-
                     async def client_to_sidecar():
                         while True:
                             payload = await websocket.receive()
@@ -3791,7 +4016,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         async for msg in sidecar_ws:
                             if isinstance(msg, bytes):
                                 decoded = msg.decode("utf-8", errors="replace")
-                                log_buffer.append(decoded)
                                 await websocket.send_json(
                                     {"type": "log", "data": decoded}
                                 )
@@ -3804,7 +4028,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                                         log_data = msg
                                 except json.JSONDecodeError:
                                     log_data = msg
-                                log_buffer.append(str(log_data))
                                 await websocket.send_json(
                                     {"type": "log", "data": log_data}
                                 )
@@ -3814,17 +4037,17 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         asyncio.create_task(sidecar_to_client()),
                     }
                     try:
-                        done, pending = await asyncio.wait(
+                        done, _pending = await asyncio.wait(
                             tasks, return_when=asyncio.FIRST_COMPLETED
                         )
-                        for task in pending:
-                            task.cancel()
                         for task in done:
                             exc = task.exception()
                             if exc:
                                 logger.error(f"Nosana WS task error: {exc}")
                     finally:
-                        await log_buffer.stop()
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
 
             except Exception as e:
                 logger.error(f"Nosana WebSocket error: {e}")

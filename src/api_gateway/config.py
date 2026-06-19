@@ -3,12 +3,12 @@ Configuration management for the API Gateway.
 Uses Pydantic Settings for environment-based configuration.
 """
 
-from typing import ClassVar, Literal, Optional, Any
+from typing import ClassVar, Literal, Optional, Any, Dict, List
 import logging
 import warnings
 from pydantic import Field, BaseModel, field_validator, model_validator
-from pydantic_settings import SettingsConfigDict
-from common.unified_config import UnifiedBaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from common.service_ports import orchestration_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -114,23 +114,17 @@ class ProviderCredential(BaseModel):
 # --- Main Settings ---
 
 
-class Settings(UnifiedBaseSettings):
-    """Application settings loaded from yaml, env, or defaults.
+class Settings(BaseSettings):
+    """Application settings loaded from env / .env / defaults.
 
-    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
-    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    Source precedence (highest → lowest): init/CLI > env > .env > pydantic defaults.
     """
-
-    _yaml_path: ClassVar[str] = "services.api_gateway"
-
 
     # Application Settings
     app_name: str = "InferiaLLM API Gateway"
     app_version: str = "0.1.0"
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
-    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # Server Settings
     host: str = "0.0.0.0"
@@ -311,8 +305,10 @@ class Settings(UnifiedBaseSettings):
 
     # Service URLs (Microservices)
     # In production, these should use HTTPS with valid certificates
+    # Co-located default derives from HTTP_PORT (orchestration REST). An
+    # explicit ORCHESTRATION_URL (split mode) wins via the alias.
     orchestration_url: str = Field(
-        default="http://localhost:8080", validation_alias="ORCHESTRATION_URL"
+        default_factory=orchestration_http_url, validation_alias="ORCHESTRATION_URL"
     )
     inference_url: str = Field(
         default="http://localhost:8001", validation_alias="INFERENCE_URL"

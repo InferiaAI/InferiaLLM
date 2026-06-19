@@ -2,19 +2,23 @@
 Configuration for Inference Gateway.
 """
 
-from typing import Any, ClassVar, Optional
+from typing import Any, Optional
 from pydantic import Field, field_validator
-from common.unified_config import UnifiedBaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(UnifiedBaseSettings):
+class Settings(BaseSettings):
     """Inference Gateway settings.
 
-    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
-    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    Source precedence (highest → lowest): init/CLI > env > .env > pydantic defaults.
     """
 
-    _yaml_path: ClassVar[str] = "services.inference"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
@@ -38,8 +42,6 @@ class Settings(UnifiedBaseSettings):
         validation_alias="INFERENCE_WORKERS",
     )
     log_level: str = "INFO"
-    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
-    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # API Gateway Settings
     # In production, use HTTPS URLs with valid SSL certificates

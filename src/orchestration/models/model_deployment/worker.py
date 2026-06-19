@@ -369,6 +369,30 @@ class ModelDeploymentWorker:
                     )
                     return
 
+                # ----------------------------------------------------------
+                # SUPERSEDED: this legacy job-based DePIN provisioning tail
+                # (adapter.provision_node → wait_for_ready → register_node →
+                # attach_runtime → update_state RUNNING) is superseded by
+                # direct_provision.provision_direct_node, which is the LIVE
+                # path invoked from place_and_provision on both POST /deploy and
+                # POST /start for nosana/akash/k8s providers (via the
+                # _provisioning_route "direct_adapter" arm, T4).
+                #
+                # Liveness: the model.deploy.requested stream is published by
+                # ModelDeploymentController.create_deployment (controller.py,
+                # non-external workloads) and consumed by
+                # _consume_deploy_requests in orchestration/server.py (started
+                # at boot in the live single-port app).  However, DePIN deploys
+                # created via the modern /deploy route arrive in state CREATED
+                # (not PENDING), so the worker's PENDING gate (line ~55) never
+                # fires for them; this tail is therefore not reached on the
+                # modern pool-first path.  The _RECONCILER_MANAGED_PROVIDERS
+                # fence above short-circuits aws/gcp/azure/on_prem/worker
+                # before this point.  This code remains only for legacy DePIN
+                # deploys that may exist in a PENDING state with no reconciler
+                # path; removing it risks breaking fenced tests for zero runtime
+                # benefit, so it is retained unchanged.
+                # ----------------------------------------------------------
                 node_spec = await adapter.provision_node(
                     provider_resource_id=pool["allowed_gpu_types"][0],
                     pool_id=pool["provider_pool_id"],

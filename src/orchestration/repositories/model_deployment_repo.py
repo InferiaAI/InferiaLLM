@@ -493,6 +493,29 @@ class ModelDeploymentRepository(BaseRepository):
                 rows = await conn.fetch(q, pool_id)
         return [dict(r) for r in rows]
 
+    async def list_deploying_for_node(self, node_id, *, tx=None):
+        """DEPLOYING deploys bound to a node — used by the linker to RE-DRIVE
+        load_model for deploys orphaned when the control plane restarted with an
+        in-flight load_model (the worker-channel ``on_worker_ready`` hook only
+        binds PENDING_NODE deploys, so an already-DEPLOYING deploy is otherwise
+        never re-driven and stays stuck DEPLOYING with no container). Same
+        column projection as ``list_pending_for_pool`` so ``_spec_from_pending``
+        works unchanged. No row lock — this is a recovery read, not a claim."""
+        q = """
+            SELECT deployment_id AS id, target_node_id, gpu_per_replica,
+                   replicas, model_name, inference_model, engine, configuration
+              FROM model_deployments
+             WHERE target_node_id = $1
+               AND state = 'DEPLOYING'
+          ORDER BY created_at ASC
+            """
+        if tx is not None:
+            rows = await tx.fetch(q, node_id)
+        else:
+            async with self.db.acquire() as conn:
+                rows = await conn.fetch(q, node_id)
+        return [dict(r) for r in rows]
+
     async def bind_to_node(
         self,
         deployment_id: UUID,

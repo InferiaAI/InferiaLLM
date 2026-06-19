@@ -226,6 +226,29 @@ class TestSoftDeleteNode:
 
 
 # ---------------------------------------------------------------------------
+# inventory_repo.mark_deprovision_failed_node
+# ---------------------------------------------------------------------------
+
+
+class TestMarkDeprovisionFailedNode:
+    @pytest.mark.asyncio
+    async def test_stamps_marker_with_reason(self):
+        pool, conn = make_db()
+        repo = InventoryRepository(pool)
+        await repo.mark_deprovision_failed_node(node_id=NODE, reason="sidecar down")
+        sql = conn.execute.await_args.args[0]
+        assert "deprovision_failed" in sql.lower()
+        assert conn.execute.await_args.args[2] == "sidecar down"
+
+    @pytest.mark.asyncio
+    async def test_reason_optional(self):
+        pool, conn = make_db()
+        repo = InventoryRepository(pool)
+        await repo.mark_deprovision_failed_node(node_id=NODE)
+        assert conn.execute.await_args.args[2] is None
+
+
+# ---------------------------------------------------------------------------
 # inventory_repo.get_node
 # ---------------------------------------------------------------------------
 

@@ -886,3 +886,273 @@ async def test_resume_no_ami_id_in_configuration_passes_none(monkeypatch):
     assert captured_ami_ids[0] is None, (
         f"Expected ami_id=None for row without ami_id, got {captured_ami_ids[0]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# T5: /start resume parity — DePIN provider routing.
+#
+# _start_deployment_impl delegates to place_and_provision, which already
+# contains the 3-way _provisioning_route dispatch introduced in T4.  These
+# tests verify that:
+#
+#   1. A nosana resume reaches the direct_adapter arm:
+#      - jobs_repo.enqueue is NOT awaited (no reconciler job)
+#      - provision_direct_node IS scheduled via _schedule_background
+#      - the response is 202 PENDING_NODE
+#
+#   2. An akash resume behaves identically.
+#
+#   3. An aws resume still enqueues a reconciler ProvisioningJob (regression
+#      lock so the nosana path change doesn't silently break AWS).
+#
+# Technique mirrors test_place_and_provision._patch_direct: we patch the
+# module-level _schedule_background with a synchronous spy and
+# provision_direct_node with AsyncMock(spec=...) so:
+#   - the never-awaited coroutine emits no RuntimeWarning,
+#   - call args are introspectable via direct_mock.call_args.kwargs, and
+#   - a wrong kwargs signature fails loudly (AsyncMock-blindness guard).
+#
+# The _start_deployment_impl fixture mirrors test_resume_impl_unbinds_and_places
+# above: fully-mocked repos, no DB, _build_provisioning_spec patched for aws
+# tests that reach the reconciler path.
+# ---------------------------------------------------------------------------
+
+from orchestration.models.model_deployment import direct_provision as _dp_mod
+
+
+def _patch_direct_start(monkeypatch):
+    """Synchronous spy for _schedule_background + AsyncMock for provision_direct_node.
+
+    Returns (sched_spy, direct_mock).  Mirrors _patch_direct from
+    test_place_and_provision.py but targets the deployment_server module
+    attributes because _start_deployment_impl lives there.
+    """
+    direct_mock = AsyncMock(spec=_dp_mod.provision_direct_node)
+
+    scheduled = []
+
+    def _sched_spy(coro):
+        scheduled.append(coro)
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return None
+
+    _sched_spy.scheduled = scheduled  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(
+        deployment_server, "provision_direct_node", direct_mock, raising=True
+    )
+    monkeypatch.setattr(
+        deployment_server, "_schedule_background", _sched_spy, raising=True
+    )
+    return _sched_spy, direct_mock
+
+
+def _make_start_mocks(provider: str, node_id):
+    """Build repo mocks and a db_pool stub for _start_deployment_impl tests.
+
+    Returns (deploys, pool_repo, inventory, jobs_repo, controller, db_pool).
+    All repo mocks use AsyncMock(spec=RealClass) per the AsyncMock-blindness rule.
+    """
+    from orchestration.repositories.inventory_repo import InventoryRepository
+    from orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+    from orchestration.repositories.pool_repo import ComputePoolRepository
+    from orchestration.state_machine.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+    from orchestration.models.model_deployment.pool_placer import (
+        PoolPlacer, ColdStart,
+    )
+
+    deploy_id = uuid4()
+    pool_id = uuid4()
+    org_id = str(uuid4())
+
+    class _TxCtx:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _AcquireCtx:
+        def __init__(self, conn):
+            self._conn = conn
+
+        async def __aenter__(self):
+            return self._conn
+
+        async def __aexit__(self, *exc):
+            return False
+
+    conn = MagicMock(name="conn")
+    conn.transaction = MagicMock(return_value=_TxCtx())
+    db_pool = MagicMock(name="db_pool")
+    db_pool.acquire = MagicMock(return_value=_AcquireCtx(conn))
+
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = ColdStart(
+        gpu_total_per_node=1, provider=provider
+    )
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.create_placeholder.return_value = node_id
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+    deploys.get.return_value = {
+        "deployment_id": deploy_id,
+        "state": "FAILED",
+        "configuration": {"model": {"artifact_uri": "hf://test-model"}},
+        "pool_id": pool_id,
+        "target_pool_id": pool_id,
+        "target_node_id": None,
+        "gpu_per_replica": 2,
+        "org_id": org_id,
+        "engine": "vllm",
+        "model_name": "test-model",
+        "inference_model": None,
+    }
+    pool_meta = {"some": "meta"}
+    pool_repo = AsyncMock(spec=ComputePoolRepository)
+    pool_row = {
+        "id": pool_id,
+        "lifecycle_state": "running",
+        "metadata": pool_meta,
+        "allowed_gpu_types": ["A100"],
+        "region_constraint": ["us-east-1"],
+        "provider_pool_id": f"{provider}/gpu",
+        "provider": provider,
+    }
+    pool_repo.get.return_value = pool_row
+    jobs_repo = AsyncMock(spec=ProvisioningJobRepository)
+    controller = AsyncMock(spec=WorkerController)
+
+    return (
+        deploy_id, pool_id, org_id, pool_row, pool_meta,
+        deploys, pool_repo, inventory, jobs_repo, controller, db_pool, placer,
+    )
+
+
+async def test_resume_nosana_schedules_direct_not_enqueue(monkeypatch):
+    """Resuming a nosana deployment via _start_deployment_impl routes to the
+    direct_adapter arm: provision_direct_node is scheduled via
+    _schedule_background, jobs_repo.enqueue is NOT awaited, and the response is
+    202 PENDING_NODE."""
+    node_id = uuid4()
+    sched_spy, direct_mock = _patch_direct_start(monkeypatch)
+    (
+        deploy_id, pool_id, org_id, pool_row, pool_meta,
+        deploys, pool_repo, inventory, jobs_repo, controller, db_pool, placer,
+    ) = _make_start_mocks("nosana", node_id)
+
+    body, status = await deployment_server._start_deployment_impl(
+        deployment_id=str(deploy_id),
+        db_pool=db_pool,
+        controller=controller,
+        pool_repo=pool_repo,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    assert status == 202
+    assert body["state"] == "PENDING_NODE"
+    assert body["target_node_id"] == str(node_id)
+
+    # No reconciler enqueue on the DePIN path.
+    jobs_repo.enqueue.assert_not_awaited()
+
+    # direct background helper scheduled exactly once.
+    assert len(sched_spy.scheduled) == 1
+    direct_mock.assert_called_once()
+    kw = direct_mock.call_args.kwargs
+    assert kw["deploy_id"] == deploy_id
+    assert kw["node_id"] == node_id
+    assert kw["provider"] == "nosana"
+    assert kw["gpu_per_replica"] == 2
+
+
+async def test_resume_akash_schedules_direct_not_enqueue(monkeypatch):
+    """Resuming an akash deployment behaves identically to nosana: direct
+    background helper scheduled, no reconciler enqueue."""
+    node_id = uuid4()
+    sched_spy, direct_mock = _patch_direct_start(monkeypatch)
+    (
+        deploy_id, pool_id, org_id, pool_row, pool_meta,
+        deploys, pool_repo, inventory, jobs_repo, controller, db_pool, placer,
+    ) = _make_start_mocks("akash", node_id)
+
+    body, status = await deployment_server._start_deployment_impl(
+        deployment_id=str(deploy_id),
+        db_pool=db_pool,
+        controller=controller,
+        pool_repo=pool_repo,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    assert status == 202
+    assert body["state"] == "PENDING_NODE"
+
+    jobs_repo.enqueue.assert_not_awaited()
+    assert len(sched_spy.scheduled) == 1
+    direct_mock.assert_called_once()
+    kw = direct_mock.call_args.kwargs
+    assert kw["provider"] == "akash"
+    assert kw["node_id"] == node_id
+    assert kw["deploy_id"] == deploy_id
+
+
+async def test_resume_aws_enqueues_reconciler_not_direct(monkeypatch):
+    """REGRESSION: An aws resume still enqueues a reconciler ProvisioningJob
+    and does NOT schedule the direct background helper.  Guards against the
+    DePIN routing change accidentally breaking the AWS path."""
+    node_id = uuid4()
+    sched_spy, direct_mock = _patch_direct_start(monkeypatch)
+
+    # _build_provisioning_spec touches the instance catalog; stub it out.
+    fake_spec = {"provider": "aws", "instance_type": "g6.xlarge"}
+
+    async def _fake_build_spec(*, pool_row, pool_meta, decision, org_id, ami_id=None):
+        return fake_spec
+
+    monkeypatch.setattr(
+        deployment_server, "_build_provisioning_spec", _fake_build_spec
+    )
+
+    (
+        deploy_id, pool_id, org_id, pool_row, pool_meta,
+        deploys, pool_repo, inventory, jobs_repo, controller, db_pool, placer,
+    ) = _make_start_mocks("aws", node_id)
+    # Persist an ami_id in configuration so the AWS path doesn't reject it.
+    deploys.get.return_value["configuration"]["ami_id"] = "ami-0abc123"
+
+    body, status = await deployment_server._start_deployment_impl(
+        deployment_id=str(deploy_id),
+        db_pool=db_pool,
+        controller=controller,
+        pool_repo=pool_repo,
+        inventory=inventory,
+        deploys=deploys,
+        placer=placer,
+        jobs_repo=jobs_repo,
+    )
+
+    assert status == 202
+    assert body["state"] == "PENDING_NODE"
+
+    # Reconciler enqueue MUST fire for AWS (exactly once).
+    jobs_repo.enqueue.assert_awaited_once()
+    eq = jobs_repo.enqueue.await_args.kwargs
+    assert eq["node_id"] == node_id
+    assert eq["provider"] == "aws"
+    assert eq["spec"] is fake_spec
+
+    # Direct helper must NOT be scheduled on the AWS path.
+    assert sched_spy.scheduled == []
+    direct_mock.assert_not_called()

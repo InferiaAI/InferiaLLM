@@ -4,6 +4,8 @@ import { cn } from "@/lib/utils"
 import { useState } from "react"
 import { INFERENCE_URL, api } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "react-router-dom"
+import { getPool } from "@/services/poolService"
 
 interface DeploymentData {
     id?: string
@@ -20,6 +22,9 @@ interface DeploymentData {
     provider?: string
     git_repo?: string
     training_script?: string
+    pool_id?: string
+    node_ids?: string[]
+    target_node_id?: string | null
 }
 
 interface DeploymentOverviewProps {
@@ -59,6 +64,18 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
     const isVideoGen = deployment?.model_type === "video_generation" || deployment?.workload_type === "video"
     const isImageGen = deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)
     const state = deployment?.state || deployment?.status || "Unknown"
+
+    // Resolve the pool name for the (clickable) Pool row; pool_id is present for
+    // every non-external deployment. Falls back to the id if the fetch fails.
+    const { data: poolInfo } = useQuery({
+        queryKey: ["pool", deployment?.pool_id],
+        enabled: !!deployment?.pool_id,
+        staleTime: 60_000,
+        queryFn: () => getPool(deployment!.pool_id!),
+    })
+    const nodeIds = (deployment?.node_ids && deployment.node_ids.length > 0)
+        ? deployment.node_ids
+        : (deployment?.target_node_id ? [deployment.target_node_id] : [])
 
     const { data: embeddingMetrics, isLoading: loadingLogMetrics } = useQuery({
         queryKey: ["deployment-overview-metrics", deploymentId],
@@ -216,6 +233,17 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                             <div className="text-xs text-muted-foreground font-mono mb-1">Replicas</div>
                             <div className="font-mono text-sm">1</div>
                         </div>
+                        {deployment?.pool_id && (
+                            <div>
+                                <div className="text-xs text-muted-foreground font-mono mb-1">Pool</div>
+                                <Link
+                                    to={`/dashboard/compute/pools/${deployment.pool_id}`}
+                                    className="font-mono text-sm text-ember-600 hover:underline break-all"
+                                >
+                                    {poolInfo?.pool_name ?? deployment.pool_id}
+                                </Link>
+                            </div>
+                        )}
                     </div>
                     <div className="space-y-6">
                         <div>
@@ -229,6 +257,24 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                                 <span className="bg-muted px-2 py-0.5 rounded text-xs font-mono border">provider: {deployment.provider}</span>
                             </div>
                         </div>
+                        {deployment?.pool_id && nodeIds.length > 0 && (
+                            <div>
+                                <div className="text-xs text-muted-foreground font-mono mb-1">
+                                    Node{nodeIds.length > 1 ? "s" : ""}
+                                </div>
+                                <div className="space-y-1">
+                                    {nodeIds.map((nid) => (
+                                        <Link
+                                            key={nid}
+                                            to={`/dashboard/compute/pools/${deployment.pool_id}/nodes/${nid}`}
+                                            className="block font-mono text-sm text-ember-600 hover:underline break-all"
+                                        >
+                                            {nid}
+                                        </Link>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 

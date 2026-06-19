@@ -15,6 +15,7 @@ from providers.akash.sdl_builder import (
     build_training_sdl,
 )
 from orchestration.config import settings
+from common.service_ports import depin_sidecar_url
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ internal_headers = {
 AKASH_SIDECAR_URL = getattr(
     settings,
     "akash_sidecar_url",
-    os.getenv("AKASH_SIDECAR_URL", "http://localhost:3000/akash"),
+    depin_sidecar_url("/akash", env_var="AKASH_SIDECAR_URL"),
 )
 
 AKASH_RPC_URL = getattr(

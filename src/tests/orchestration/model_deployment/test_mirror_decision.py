@@ -125,3 +125,41 @@ async def test_resolve_swallows_lookup_error():
     await resolve_and_apply_mirror(spec, recipe="vllm", artifact_uri="hf://org/m",
                                    mirror_base="https://cp", cache_repo=_ErrorRepo())
     assert "HF_ENDPOINT" not in spec.get("env", {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["aws", "gcp", "azure"])
+async def test_resolve_noop_for_cloud_provider(provider):
+    """Public-cloud providers fetch from origin directly — the mirror must NOT
+    be injected even when the model is cached and a mirror_base is configured."""
+    spec = {"recipe": "vllm", "model": {"artifact_uri": "hf://org/m"}, "env": {}}
+    await resolve_and_apply_mirror(spec, recipe="vllm", artifact_uri="hf://org/m",
+                                   mirror_base="https://cp",
+                                   cache_repo=_FakeRepo({"status": "cached"}),
+                                   provider=provider)
+    assert "HF_ENDPOINT" not in spec["env"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["nosana", "akash", "worker", "on_prem", "k8s"])
+async def test_resolve_applies_for_non_cloud_provider(provider):
+    """DePIN / self-hosted providers keep the cache-first mirror."""
+    spec = {"recipe": "vllm", "model": {"artifact_uri": "hf://org/m"}, "env": {}}
+    await resolve_and_apply_mirror(spec, recipe="vllm", artifact_uri="hf://org/m",
+                                   mirror_base="https://cp",
+                                   cache_repo=_FakeRepo({"status": "cached"}),
+                                   provider=provider)
+    assert spec["env"]["HF_ENDPOINT"] == "https://cp/hf"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", [None, "", "unknown-provider"])
+async def test_resolve_applies_when_provider_unknown_or_none(provider):
+    """Unknown / unset provider must not bypass the mirror (backward compatible:
+    callers that don't pass a provider keep the prior cache-first behaviour)."""
+    spec = {"recipe": "vllm", "model": {"artifact_uri": "hf://org/m"}, "env": {}}
+    await resolve_and_apply_mirror(spec, recipe="vllm", artifact_uri="hf://org/m",
+                                   mirror_base="https://cp",
+                                   cache_repo=_FakeRepo({"status": "cached"}),
+                                   provider=provider)
+    assert spec["env"]["HF_ENDPOINT"] == "https://cp/hf"

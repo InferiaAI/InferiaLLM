@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -418,6 +419,151 @@ def aws_app_and_deps():
     )
     app.include_router(_aw.router)
     return app, inventory
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/admin/workers/{node_id} — DePIN (nosana) branch.
+#
+# A DePIN node records a `provider_instance_id` (the Nosana job address) that
+# keeps the EXTERNAL PAID job running until the adapter stops it. The legacy
+# delete branch only marked the inventory row terminated — leaking the job.
+# Now, for direct-provision providers, the handler must call
+# adapter.deprovision_node BEFORE marking terminated.
+# ---------------------------------------------------------------------------
+
+
+from orchestration.provisioning.engine import registry as engine_registry  # noqa: E402
+from providers.nosana.nosana_adapter import NosanaAdapter  # noqa: E402
+
+
+class DepinFakeInventory(FakeInventory):
+    """FakeInventory with a deprovision_failed marker recorder."""
+
+    def __init__(self):
+        super().__init__()
+        self.deprovision_failed_marks: list[str] = []
+        self.deprovision_failed_reasons: dict[str, str | None] = {}
+
+    async def mark_deprovision_failed_worker(self, *, node_id, reason=None):
+        self.deprovision_failed_marks.append(node_id)
+        self.deprovision_failed_reasons[node_id] = reason
+
+
+@pytest.fixture
+def depin_app_and_deps():
+    from orchestration.api import admin_workers as _aw
+
+    app = FastAPI()
+    auth = WorkerAuth(secret_key=SECRET, algorithm="HS256")
+    registry = WorkerRegistry()
+    inventory = DepinFakeInventory()
+    pool_repo = FakePoolRepo(pool={
+        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running",
+        "provider_credential_name": "nosana-cred-1",
+    })
+    _aw.configure(
+        worker_auth=auth,
+        worker_registry=registry,
+        inventory_repo=inventory,
+        pool_repo=pool_repo,
+        control_plane_external_url="https://control.example.com",
+        require_permission=fake_require_permission,
+        db_pool=FakeDbPool(),
+    )
+    app.include_router(_aw.router)
+    return app, inventory, pool_repo
+
+
+class TestRevokeDepinWorker:
+    @pytest.mark.asyncio
+    async def test_nosana_worker_deprovisions_then_terminates_204(
+        self, depin_app_and_deps,
+    ):
+        app, inventory, _pool = depin_app_and_deps
+        inventory.workers = [{
+            "id": NODE_ID, "agent_kind": "nosana", "provider": "nosana",
+            "pool_id": POOL_ID, "provider_instance_id": "job-addr-123",
+        }]
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+
+        with patch.object(
+            engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with _httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/admin/workers/{NODE_ID}",
+                    headers={"Authorization": "Bearer deployment:delete"},
+                )
+
+        assert r.status_code == 204, r.text
+        # deprovision_node awaited ONCE with the node's instance id + the
+        # pool's credential name.
+        fake_adapter.deprovision_node.assert_awaited_once_with(
+            provider_instance_id="job-addr-123",
+            provider_credential_name="nosana-cred-1",
+        )
+        # Then the node is marked terminated.
+        assert NODE_ID in inventory.terminated
+
+    @pytest.mark.asyncio
+    async def test_nosana_placeholder_pii_skips_deprovision(
+        self, depin_app_and_deps,
+    ):
+        app, inventory, _pool = depin_app_and_deps
+        inventory.workers = [{
+            "id": NODE_ID, "agent_kind": "nosana", "provider": "nosana",
+            "pool_id": POOL_ID, "provider_instance_id": "placeholder:abc",
+        }]
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        with patch.object(
+            engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with _httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/admin/workers/{NODE_ID}",
+                    headers={"Authorization": "Bearer deployment:delete"},
+                )
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_not_called()
+        assert NODE_ID in inventory.terminated
+
+    @pytest.mark.asyncio
+    async def test_nosana_deprovision_failure_still_terminates(
+        self, depin_app_and_deps,
+    ):
+        """A deprovision failure must NOT wedge the row: the node is still
+        marked terminated AND the failure is surfaced (marker), not swallowed."""
+        app, inventory, _pool = depin_app_and_deps
+        inventory.workers = [{
+            "id": NODE_ID, "agent_kind": "nosana", "provider": "nosana",
+            "pool_id": POOL_ID, "provider_instance_id": "job-addr-123",
+        }]
+        fake_adapter = AsyncMock(spec=NosanaAdapter)
+        fake_adapter.deprovision_node.side_effect = RuntimeError("sidecar down")
+        with patch.object(
+            engine_registry, "get_adapter", return_value=fake_adapter,
+        ):
+            transport = ASGITransport(app=app)
+            async with _httpx.AsyncClient(
+                transport=transport, base_url="http://t",
+            ) as c:
+                r = await c.delete(
+                    f"/v1/admin/workers/{NODE_ID}",
+                    headers={"Authorization": "Bearer deployment:delete"},
+                )
+        assert r.status_code == 204, r.text
+        fake_adapter.deprovision_node.assert_awaited_once()
+        assert NODE_ID in inventory.terminated
+        # Failure surfaced, not silently swallowed — and the error string from
+        # the adapter is recorded (-> metadata.deprovision_error), not dropped.
+        assert NODE_ID in inventory.deprovision_failed_marks
+        assert inventory.deprovision_failed_reasons[NODE_ID] == "sidecar down"
 
 
 class _FakeJobsRepoFactory:

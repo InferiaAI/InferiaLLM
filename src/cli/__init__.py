@@ -7,6 +7,7 @@ import multiprocessing
 import traceback
 from startup_ui import StartupUI
 from dotenv import load_dotenv, find_dotenv
+from common.service_ports import orchestration_http_url, depin_sidecar_port
 from inferiadocs import (
     show_inferia,
     show_api_gateway_docs,
@@ -171,8 +172,19 @@ def run_nosana_sidecar(queue=None, env: str = "production"):
                 subprocess.run(["npm", "install", "--omit=dev"], cwd=sidecar_dir, check=True)
 
         node_env = os.environ.copy()
-        if not node_env.get("API_GATEWAY_URL"):
-            node_env["API_GATEWAY_URL"] = "http://localhost:8000"
+        # Unified single-port deployment mounts the gateway at /api on APP_PORT;
+        # the sidecar must poll /api/internal/config/credentials or it hits the
+        # SPA catch-all and loads no DePIN credentials. See
+        # _sidecar_api_gateway_url. An explicit API_GATEWAY_URL (split mode) wins.
+        node_env["API_GATEWAY_URL"] = _sidecar_api_gateway_url(node_env)
+        # The sidecar also calls BACK to the orchestration control plane
+        # (watchdog + job monitoring) via ORCHESTRATOR_URL, and binds its own
+        # HTTP/WS port. Derive both from the same env knobs the Python side uses
+        # so a host-network port remap reaches the right place and the sidecar's
+        # bind matches the URL the control plane dials. setdefault → an explicit
+        # ORCHESTRATOR_URL / DEPIN_SIDECAR_PORT (split mode) still wins.
+        node_env.setdefault("ORCHESTRATOR_URL", orchestration_http_url())
+        node_env.setdefault("DEPIN_SIDECAR_PORT", depin_sidecar_port())
 
         print("[DePIN] Launching sidecar...")
         cmd = ["npm", "run", "dev"] if env == "dev" else ["npm", "start"]
@@ -292,6 +304,26 @@ def _set_unified_loopback_env(port: int) -> None:
     """
     os.environ.setdefault("API_GATEWAY_URL", f"http://localhost:{port}/api")
     os.environ.setdefault("INFERENCE_URL", f"http://localhost:{port}/inf")
+
+
+def _sidecar_api_gateway_url(env: dict) -> str:
+    """Gateway base URL the DePIN sidecar polls for /internal/config/credentials.
+
+    The sidecar runs as its OWN process (it does not inherit
+    _set_unified_loopback_env's os.environ mutations), so it must derive the
+    same unified mount itself. In unified single-port mode the gateway is
+    mounted at ``/api`` on APP_PORT; WITHOUT the ``/api`` prefix the request
+    falls through to the ``/`` SPA StaticFiles catch-all and returns HTML, so
+    ``data.providers`` is undefined, the sidecar loads ZERO credentials, and
+    every DePIN provider (Nosana/Akash) reports ``disabled`` -> deploys 503
+    with "Nosana Service '<name>' not initialized". An explicit API_GATEWAY_URL
+    (split mode, where the gateway is a different host) is preserved.
+    """
+    explicit = env.get("API_GATEWAY_URL")
+    if explicit:
+        return explicit
+    port = env.get("APP_PORT", "8000")
+    return f"http://localhost:{port}/api"
 
 
 def run_unified_web(queue=None):
@@ -501,7 +533,7 @@ def build_sidecar():
         print(f"[inferia:init] Error building sidecar: {e}")
 
 
-def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: str | None = None) -> None:
+def run_write_dashboard_config(dashboard_dir: str | None = None) -> None:
     """Write window.__RUNTIME_CONFIG__ = {...}; to the installed dashboard's config.js.
 
     Dashboard URLs are env-only: DASHBOARD_API_GATEWAY_URL, DASHBOARD_INFERENCE_URL,
@@ -509,9 +541,6 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
     API_GATEWAY_URL defaults to "/api" and INFERENCE_URL defaults to "/inf" so the
     single-port unified image works same-origin without extra config. WEB_SOCKET_URL
     and SIDECAR_URL default to empty string (callers construct them from the origin).
-
-    The --config / config_path argument is accepted for forward-compat with existing
-    scripts but is not used — yaml no longer carries dashboard URLs.
 
     The function is intentionally import-light and DB-free so it can be called
     from entrypoint.sh before the database is available.
@@ -710,24 +739,11 @@ def main(argv=None):
         default="production",
         help="Environment to run in (default: production)",
     )
-    start_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to unified YAML config file (default: auto-discover via "
-             "INFERIA_CONFIG, ./inferia.yaml, or /etc/inferia/inferia.yaml)",
-    )
 
     # --- write-dashboard-config ---
     wdc_parser = sub.add_parser(
         "write-dashboard-config",
         help="Write dashboard runtime config.js from DASHBOARD_* env vars",
-    )
-    wdc_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Accepted for forward-compat but unused; dashboard URLs are env-only",
     )
     wdc_parser.add_argument(
         "--dashboard-dir",
@@ -998,10 +1014,6 @@ def main(argv=None):
             service = getattr(args, "service", "all")
             env = getattr(args, "env", "production")
 
-            config_path = getattr(args, "config", None)
-            if config_path is not None:
-                os.environ["INFERIA_CONFIG"] = config_path
-
             if service == "all":
                 if wants_help(flags):
                     show_inferia()
@@ -1037,14 +1049,8 @@ def main(argv=None):
             run_migrate()
 
         elif cmd == "write-dashboard-config":
-            config_path = getattr(args, "config", None)
             dashboard_dir = getattr(args, "dashboard_dir", None)
-            if config_path is not None:
-                os.environ["INFERIA_CONFIG"] = config_path
-            run_write_dashboard_config(
-                config_path=config_path,
-                dashboard_dir=dashboard_dir,
-            )
+            run_write_dashboard_config(dashboard_dir=dashboard_dir)
 
         elif cmd == "providers":
             from cli.providers import run_providers_command

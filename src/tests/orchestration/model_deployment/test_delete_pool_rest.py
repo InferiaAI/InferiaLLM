@@ -23,14 +23,22 @@ pytestmark = pytest.mark.asyncio
 
 
 class _FakeConn:
-    def __init__(self, *, pool_row, active_count, live_inventory=0):
+    def __init__(self, *, pool_row, active_count, live_inventory=0,
+                 depin_nodes=None):
         self._pool_row = pool_row
         self._active = active_count
         self._live_inventory = live_inventory
+        self._depin_nodes = depin_nodes or []
         self.executed: list[tuple] = []
 
     async def fetchrow(self, sql, *args):
         return self._pool_row
+
+    async def fetch(self, sql, *args):
+        # Only the DePIN pre-teardown reads a row list (live nodes to stop).
+        if "FROM compute_inventory" in sql:
+            return list(self._depin_nodes)
+        return []
 
     async def fetchval(self, sql, *args):
         # The empty-pool finalize check counts compute_inventory rows still
@@ -175,6 +183,92 @@ async def test_delete_empty_pool_finalizes_immediately():
         "DELETE FROM worker_bootstrap_tokens WHERE pool_id = $1" in s
         for s in sqls
     ), sqls
+
+
+async def test_delete_depin_pool_deprovisions_each_node_inline():
+    """A DePIN (nosana) pool has no reconciler jobs, so the force-cancel SQL
+    no-ops. Each live node's external job MUST be stopped inline via
+    adapter.deprovision_node before the cascade, or the paid Nosana jobs leak.
+    """
+    from unittest.mock import AsyncMock as _AsyncMock
+    from orchestration.provisioning.engine import registry as _registry
+    from providers.nosana.nosana_adapter import NosanaAdapter
+
+    pid = uuid4()
+    nodes = [
+        {"id": uuid4(), "provider": "nosana", "provider_instance_id": "job-1"},
+        {"id": uuid4(), "provider": "nosana", "provider_instance_id": "job-2"},
+        # placeholder: never provisioned an external job -> skipped.
+        {"id": uuid4(), "provider": "nosana",
+         "provider_instance_id": "placeholder:x"},
+    ]
+    conn = _FakeConn(
+        pool_row={
+            "id": pid, "is_active": True, "provider": "nosana",
+            "provider_credential_name": "nosana-cred-1",
+        },
+        active_count=0,
+        live_inventory=3,
+        depin_nodes=nodes,
+    )
+    fake_adapter = _AsyncMock(spec=NosanaAdapter)
+    p1, p2, p3 = _patches(conn)
+    with p1, p2, p3, patch.object(
+        _registry, "get_adapter", return_value=fake_adapter,
+    ):
+        r = await _delete(f"/deployment/pool/{pid}")
+    assert r.status_code == 202, r.text
+    # Two real jobs stopped, the placeholder skipped.
+    assert fake_adapter.deprovision_node.await_count == 2
+    stopped = {
+        c.kwargs["provider_instance_id"]
+        for c in fake_adapter.deprovision_node.await_args_list
+    }
+    assert stopped == {"job-1", "job-2"}
+    # Each call carries the pool credential.
+    for c in fake_adapter.deprovision_node.await_args_list:
+        assert c.kwargs["provider_credential_name"] == "nosana-cred-1"
+    # DePIN deprovision is synchronous, so EACH node row (incl. the skipped
+    # placeholder) is flipped to state='terminated' INLINE — this is what lets
+    # step 5's count return 0 and finalize the pool now, not 120s later via the
+    # reaper. Assert a state='terminated' UPDATE was issued for every node id.
+    terminated_ids = {
+        args[0]
+        for sql, args in conn.executed
+        if "compute_inventory" in sql and "state='terminated'" in sql and args
+    }
+    assert terminated_ids == {n["id"] for n in nodes}
+
+
+async def test_delete_aws_pool_does_not_deprovision_inline():
+    """Regression lock: a CLOUD (aws) pool must NOT call adapter.deprovision_node
+    inline — it tears down via the reconciler force-cancel SQL."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from orchestration.provisioning.engine import registry as _registry
+    from providers.nosana.nosana_adapter import NosanaAdapter
+
+    pid = uuid4()
+    conn = _FakeConn(
+        pool_row={
+            "id": pid, "is_active": True, "provider": "aws",
+            "provider_credential_name": "aws-cred",
+        },
+        active_count=0,
+        live_inventory=1,
+        depin_nodes=[{"id": uuid4(), "provider": "aws",
+                      "provider_instance_id": "i-123"}],
+    )
+    fake_adapter = _AsyncMock(spec=NosanaAdapter)
+    p1, p2, p3 = _patches(conn)
+    with p1, p2, p3, patch.object(
+        _registry, "get_adapter", return_value=fake_adapter,
+    ):
+        r = await _delete(f"/deployment/pool/{pid}")
+    assert r.status_code == 202, r.text
+    fake_adapter.deprovision_node.assert_not_called()
+    # Still flips reconciler jobs to cancelling.
+    sqls = [sql for sql, _ in conn.executed]
+    assert any("provisioning_jobs" in s and "phase = 'cancelling'" in s for s in sqls)
 
 
 async def test_delete_pool_with_live_nodes_defers_finalize():

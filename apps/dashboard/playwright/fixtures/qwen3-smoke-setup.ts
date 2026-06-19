@@ -1,8 +1,10 @@
 import { execSync } from "node:child_process";
-import path from "node:path";
 
-const REPO_ROOT = path.resolve(__dirname, "../../../..");
-const COMPOSE = path.join(REPO_ROOT, "deploy", "compose.worker-local.yml");
+// The platform ships a single root compose; this one-off smoke worker is run
+// inline via `docker run` (mirrors scripts/smoke/local.py). Secrets pass via
+// bare `-e KEY` so they never land on the argv.
+const WORKER_CONTAINER = "inferia-worker";
+const WORKER_VOLUME = "worker-state-local";
 const GATEWAY = process.env.PLAYWRIGHT_GATEWAY_URL ?? "http://localhost:8000";
 const ADMIN_EMAIL = process.env.PLAYWRIGHT_ADMIN_EMAIL ?? "admin@inferia.local";
 const ADMIN_PASSWORD = process.env.PLAYWRIGHT_ADMIN_PASSWORD ?? "admin";
@@ -43,8 +45,23 @@ export async function setupLocalWorker(): Promise<SetupResult> {
     POOL_ID: pool.id,
     INFERENCE_TOKEN: require("node:crypto").randomBytes(32).toString("hex"),
     NODE_NAME: "pw-smoke-1",
+    CONTROL_PLANE_URL: process.env.CONTROL_PLANE_URL ?? "http://inferia-app:8000",
   };
-  execSync(`docker compose -f ${COMPOSE} up -d`, { env, stdio: "inherit" });
+  execSync(
+    [
+      "docker run -d",
+      `--name ${WORKER_CONTAINER} --restart unless-stopped`,
+      "--network deploy_inferia-net --gpus all",
+      "-v /var/run/docker.sock:/var/run/docker.sock:rw",
+      `-v ${WORKER_VOLUME}:/var/lib/inferia-worker`,
+      "-e CONTROL_PLANE_URL -e BOOTSTRAP_TOKEN -e POOL_ID -e NODE_NAME -e INFERENCE_TOKEN",
+      "-e WORKER_ADVERTISE_URL=http://inferia-worker:8080",
+      "-e MODELS_NETWORK=inferia-models",
+      "-e ALLOCATABLE_GPU_OVERRIDE=1 -e ALLOCATABLE_GPU_MODELS_OVERRIDE=NVIDIA",
+      "inferia-worker:smoke",
+    ].join(" "),
+    { env, stdio: "inherit" },
+  );
   const deadline = Date.now() + 60_000;
   for (;;) {
     const w = await api<{ workers: Array<{ status: string }> }>(
@@ -59,9 +76,10 @@ export async function setupLocalWorker(): Promise<SetupResult> {
 
 export async function teardownLocalWorker(state: SetupResult): Promise<void> {
   try {
-    execSync(`docker compose -f ${COMPOSE} down -v`, { stdio: "inherit" });
+    execSync(`docker rm -f ${WORKER_CONTAINER}`, { stdio: "inherit" });
+    execSync(`docker volume rm ${WORKER_VOLUME}`, { stdio: "inherit" });
   } catch (e) {
-    console.error("compose down failed", e);
+    console.error("worker teardown failed", e);
   }
   try {
     const auth = await api<{ access_token: string }>(null, "POST", "/v1/auth/login", {

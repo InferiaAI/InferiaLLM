@@ -14,6 +14,39 @@ from orchestration.config import settings
 # Internal API key used for service-to-service auth and vLLM security
 INTERNAL_API_KEY = settings.internal_api_key or os.getenv("INTERNAL_API_KEY", "")
 
+# CUDA forward-compat fix for the vllm/vllm-openai (and vllm-omni) images.
+#
+# Those images bake a CUDA forward-compat libcuda (e.g.
+# /usr/local/cuda/compat/libcuda.so.575) into their ld.so cache, AHEAD of the
+# standard lib dirs. Forward-compat is meant to run a newer CUDA userspace on an
+# OLDER kernel driver. On hosts whose NVIDIA driver is NEWER than that compat lib
+# (the common case on Nosana GPU nodes, which run recent drivers), the loader
+# still binds the baked compat libcuda — now mismatched against the running kernel
+# module — and CUDA init dies at vLLM EngineCore startup with
+# "Error 803: system has unsupported display driver / cuda driver combination",
+# before a single weight is fetched. The container then exits and Nosana reports
+# the job COMPLETED while the inference endpoint never serves (HTTP 503).
+#
+# Pointing LD_LIBRARY_PATH at the dirs where the container runtime injects the
+# HOST driver's libcuda (which always matches the running kernel module) makes the
+# loader bind the correct driver and bypass the broken compat shim — any
+# LD_LIBRARY_PATH entry is searched before the ld.so cache. The injection dir
+# varies by host/runtime (Debian multiarch /usr/lib/x86_64-linux-gnu on the AWS
+# DLAMI; /usr/lib on others), so we list every common location and let the first
+# one that actually contains libcuda win. This mirrors the fix already shipped in
+# the inferia-worker vLLM recipe (internal/runtime/recipes/vllm.go), broadened so
+# it is robust to whatever layout a given Nosana operator node uses.
+#
+# NOTE: NVIDIA_DISABLE_CUDA_COMPAT=1 alone does NOT fix this — the compat lib is
+# baked into the image's ld.so cache at build time, not added by the runtime
+# entrypoint hook that env var gates (verified live: the broken container sets it
+# and still hits Error 803).
+CUDA_DRIVER_LD_LIBRARY_PATH = (
+    "/usr/lib/x86_64-linux-gnu:/usr/lib64:/usr/lib:"
+    "/lib/x86_64-linux-gnu:/lib64:/lib:"
+    "/usr/local/nvidia/lib64:/usr/local/cuda/lib64"
+)
+
 
 def create_vllm_job(
     model_id: str,
@@ -21,7 +54,13 @@ def create_vllm_job(
     hf_token: Optional[str] = None,
     api_key: Optional[str] = None,
     # Stability & Hardware
-    gpu_util: float = 0.95,
+    # 0.80 (not vLLM's 0.95/0.90): community/DePIN GPUs always reserve VRAM for the
+    # CUDA context (~0.8 GiB) plus any co-tenant processes, and vLLM ABORTS at startup
+    # if free memory < gpu_util * TOTAL ("Free memory on device ... is less than desired
+    # GPU memory utilization"). 0.95 demanded ~95% of total be free and reliably failed
+    # on real nodes (e.g. 10.81/11.62 GiB free). 0.80 leaves headroom across the fleet
+    # (incl. 8 GiB cards) and matches the dashboard's intended default. Overridable.
+    gpu_util: float = 0.80,
     dtype: str = "auto",
     enforce_eager: bool = False,
     min_vram: int = 8,
@@ -88,6 +127,11 @@ def create_vllm_job(
     if nvidia_disable_cuda_compat:
         envs["NVIDIA_DISABLE_CUDA_COMPAT"] = nvidia_disable_cuda_compat
 
+    # Bind the host driver's libcuda instead of the image's baked forward-compat
+    # shim, or EngineCore CUDA init dies with Error 803 on newer-driver nodes.
+    # See CUDA_DRIVER_LD_LIBRARY_PATH above.
+    envs["LD_LIBRARY_PATH"] = CUDA_DRIVER_LD_LIBRARY_PATH
+
     token_to_use = hf_token or os.getenv("HF_TOKEN")
     if token_to_use:
         envs["HF_TOKEN"] = token_to_use
@@ -96,6 +140,8 @@ def create_vllm_job(
         model_id,
         "--served-model-name",
         model_id,
+        "--host",
+        "0.0.0.0",
         "--port",
         "9000",
         "--max-model-len",
@@ -265,7 +311,9 @@ def create_vllm_omni_job(
     hf_token: Optional[str] = None,
     api_key: Optional[str] = None,
     # Stability & Hardware
-    gpu_util: float = 0.95,
+    # 0.80 leaves VRAM headroom for the CUDA context + co-tenants on community GPUs;
+    # vLLM aborts at startup if free memory < gpu_util * total. See create_vllm_job.
+    gpu_util: float = 0.80,
     dtype: str = "auto",
     enforce_eager: bool = False,
     min_vram: int = 16,
@@ -310,6 +358,10 @@ def create_vllm_omni_job(
         health_headers["Authorization"] = f"Bearer {effective_api_key}"
 
     envs: Dict[str, str] = {}
+    # Bind the host driver's libcuda instead of the image's baked forward-compat
+    # shim, or EngineCore CUDA init dies with Error 803 on newer-driver nodes.
+    # See CUDA_DRIVER_LD_LIBRARY_PATH above.
+    envs["LD_LIBRARY_PATH"] = CUDA_DRIVER_LD_LIBRARY_PATH
     token_to_use = hf_token or os.getenv("HF_TOKEN")
     if token_to_use:
         envs["HF_TOKEN"] = token_to_use

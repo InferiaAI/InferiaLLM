@@ -86,6 +86,13 @@ export const ALL_PHASES = [
   "preflight", "provisioning", "bootstrapping", "ready",
 ] as const;
 
+// DePIN (nosana/akash) nodes report a different provisioning lifecycle:
+// the backend emits scheduling → loading → serving instead of the AWS
+// preflight/provisioning/bootstrapping/ready skeleton.
+export const DEPIN_PHASES = [
+  "scheduling", "loading", "serving",
+] as const;
+
 export async function retryProvisioning(nodeId: string): Promise<{ job_id: string; phase: string }> {
   const res = await computeApi.post(`/nodes/${nodeId}/provisioning/retry`, {});
   return res.data;

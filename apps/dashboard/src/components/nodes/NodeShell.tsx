@@ -10,7 +10,10 @@ interface NodeShellProps {
   className?: string;
   nodeState?: string;
   currentPhase?: string | null;
+  nodeProvider?: string;
 }
+
+const DEPIN_PROVIDERS = ["nosana", "akash"];
 
 // Strip ANSI escape sequences. Container shells (bash/sh) emit a lot of
 // cursor/colour control, none of which renders meaningfully in a plain
@@ -42,7 +45,19 @@ const USER_OPTIONS: { label: string; value: string }[] = [
 // the React "Rendered more hooks than during the previous render" crash that
 // occurs when a component transitions between two code-paths that call
 // different numbers of hooks.
-export default function NodeShell({ nodeId, deploymentId, containerId, className, nodeState, currentPhase }: NodeShellProps) {
+export default function NodeShell({ nodeId, deploymentId, containerId, className, nodeState, currentPhase, nodeProvider }: NodeShellProps) {
+  // DePIN nodes (nosana/akash) have no worker control channel — there is no
+  // interactive shell to attach to. Show a static explanation (no hooks) and
+  // point operators at the Logs tab. This backstops a deep-linked /shell even
+  // though NodeDetail hides the Shell tab for these providers.
+  if (nodeProvider && DEPIN_PROVIDERS.includes(nodeProvider)) {
+    return (
+      <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
+        Interactive shell is not available for DePIN compute nodes — the model runs in a
+        confidential, isolated job. Use the Logs tab for live container output.
+      </div>
+    );
+  }
   if (nodeState && nodeState !== "ready") {
     return (
       <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">

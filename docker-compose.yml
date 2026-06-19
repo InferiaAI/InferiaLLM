@@ -55,24 +55,18 @@ services:
   app:
     build:
       context: .
-      dockerfile: docker/Dockerfile
+      dockerfile: deploy/Dockerfile
     container_name: inferia-app
     restart: unless-stopped
     env_file: .env
     environment:
       - SERVICE_TYPE=unified
-      # Unified config — when the inferia.yaml below is mounted, this points
-      # the loader at it. If the file is absent the loader falls back to env
-      # + pydantic defaults, so the stack still boots on env-only deployments.
-      - INFERIA_CONFIG=/etc/inferia/inferia.yaml
       # Dashboard frontend URLs (DASHBOARD_ prefix avoids colliding with
       # backend service URL env vars like INFERENCE_URL used by Pydantic config)
       - DASHBOARD_API_GATEWAY_URL=${DASHBOARD_API_GATEWAY_URL:-}
       - DASHBOARD_INFERENCE_URL=${DASHBOARD_INFERENCE_URL:-}
       - DASHBOARD_WEB_SOCKET_URL=${DASHBOARD_WEB_SOCKET_URL:-}
       - DASHBOARD_SIDECAR_URL=${DASHBOARD_SIDECAR_URL:-}
-      - LOGSTASH_HOST=${LOGSTASH_HOST:-}
-      - LOGSTASH_PORT=${LOGSTASH_PORT:-5959}
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
       - INFERIA_MODEL_CACHE_DIR=${INFERIA_MODEL_CACHE_DIR:-/var/lib/inferia/models}
       - INFERIA_MODEL_CACHE_MAX_GB=${INFERIA_MODEL_CACHE_MAX_GB:-100}
@@ -82,22 +76,8 @@ services:
     volumes:
       - appdata:/data
       - modelcache:/var/lib/inferia/models
-      # Pulumi local-backend state. MUST be a persistent volume: it is the only
-      # record of which AWS resources each node stack owns. If the container is
-      # recreated (rebuild/redeploy/crash) between `pulumi up` and the later
-      # `pulumi destroy`, an ephemeral state dir is wiped → destroy finds an
-      # empty stack, silently "succeeds", and the EC2 leaks (DB flips the job to
-      # terminated, so no retry ever fires). Persisting it keeps delete able to
-      # actually tear the instance down.
       - pulumistate:/var/lib/inferia/pulumi-state
-      # Unified config yaml — mounted read-only. Edit the host file to change
-      # operational parameters; restart the container to apply.
-      - ./inferia.yaml.example:/etc/inferia/inferia.yaml:ro
       # SSH authorized_keys to install on every provisioned EC2 worker.
-      # Operator drops one or more public keys (one per line) into the
-      # host file; Pulumi reads it at provision time and bakes it into
-      # the cloud-init user-data for the ubuntu + root users.
-      # Override the host path with INFERIA_SSH_AUTHORIZED_KEYS_FILE.
       - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
       - "${APP_PORT:-8000}:${APP_PORT:-8000}"   # Unified web: /api gateway, /inf inference, /v2 OCI mirror, / dashboard
@@ -131,86 +111,9 @@ services:
     networks:
       - inferia-net
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
-    container_name: inferia-elasticsearch
-    restart: unless-stopped
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms1g -Xmx1g
-    volumes:
-      - esdata:/usr/share/elasticsearch/data
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: "2"
-        reservations:
-          memory: 1G
-    networks:
-      - inferia-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  logstash:
-    image: docker.elastic.co/logstash/logstash:8.13.4
-    container_name: inferia-logstash
-    restart: unless-stopped
-    environment:
-      - LS_JAVA_OPTS=-Xmx512m -Xms256m
-      - xpack.monitoring.enabled=false
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
-      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
-      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
-    volumes:
-      - ./docker/logstash/pipeline:/usr/share/logstash/pipeline:ro
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "1"
-        reservations:
-          memory: 512M
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    networks:
-      - inferia-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9600 || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.13.4
-    container_name: inferia-kibana
-    restart: unless-stopped
-    environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-    ports:
-      - "5601:5601"
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "1"
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    networks:
-      - inferia-net
-
 volumes:
   pgdata:
   appdata:
-  esdata:
   modelcache:
   pulumistate:
 
