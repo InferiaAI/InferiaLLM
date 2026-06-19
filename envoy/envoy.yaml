@@ -42,11 +42,15 @@ static_resources:
                 expose_headers: "content-type, cache-control, connection, x-accel-buffering, x-request-id"
                 allow_methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"
                 max_age: "86400"
-              routes:
-              - match: { prefix: "/" }
-                route:
-                  cluster_header: "x-inferia-route-cluster"
-                  timeout: 0s
+               routes:
+               - match: { prefix: "/" }
+                 route:
+                   cluster_header: "x-inferia-route-cluster"
+                   timeout: 0s
+                   retry_policy:
+                     retry_on: "5xx"
+                     num_retries: 2
+                     per_try_timeout: 5s
           http_filters:
           - name: envoy.filters.http.cors
             typed_config:

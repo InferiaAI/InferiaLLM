@@ -23,6 +23,8 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
+from common.cluster_naming import build_envoy_cluster_name
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["xDS Control Plane"])
 
@@ -49,10 +51,6 @@ _deps = _Deps()
 def configure(*, inventory_repo, event_bus=None) -> None:
     _deps.inventory_repo = inventory_repo
     _deps.event_bus = event_bus
-
-
-def _safe(value: str) -> str:
-    return "".join(c if c.isalnum() or c in "-_." else "-" for c in value)
 
 
 def _parse_advertise_url(advertise_url: str) -> tuple[str, int]:
@@ -145,14 +143,8 @@ async def build_resources() -> dict:
             group_members = [
                 m for m in members if m["engine"] == engine and m["model"] == model
             ]
-            if model and model != "__default__":
-                cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}-{_safe(model)}"
-            else:
-                cluster_name = (
-                    f"grp-{_safe(pool_id)}-{_safe(engine)}"
-                    if engine
-                    else f"grp-{_safe(pool_id)}"
-                )
+            # Use shared cluster naming logic to ensure consistency with worker_routing.py
+            cluster_name = build_envoy_cluster_name(pool_id=pool_id, engine=engine, model=model)
             clusters[cluster_name] = _build_cluster(cluster_name, group_members)
             for m in group_members:
                 route_table[m["id"]] = cluster_name
@@ -163,10 +155,8 @@ async def build_resources() -> dict:
             key = (m["engine"], m["model"])
             singleton_groups.setdefault(key, []).append(m)
         for (engine, model), members in singleton_groups.items():
-            if model and model != "__default__":
-                cluster_name = f"grp-{_safe(engine)}-{_safe(model)}"
-            else:
-                cluster_name = "inferia-workers"
+            # Use shared cluster naming logic for singletons too
+            cluster_name = build_envoy_cluster_name(pool_id=None, engine=engine, model=model)
             clusters[cluster_name] = _build_cluster(cluster_name, members)
             for m in members:
                 route_table[m["id"]] = cluster_name

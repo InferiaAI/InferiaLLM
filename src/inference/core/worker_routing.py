@@ -19,9 +19,13 @@ correctly. They are pure (no I/O) for straightforward unit testing.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional, Tuple
 
+from common.cluster_naming import build_envoy_cluster_name
 from .providers import is_external_engine
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["provider_auth", "upstream_model", "envoy_route_headers"]
 
@@ -117,23 +121,20 @@ def envoy_route_headers(
         return None, {}
 
     pool_id = deployment.get("pool_id")
-    engine = deployment.get("engine", "vllm")
-    model = deployment.get("inference_model") or deployment.get("model_name") or "__default__"
-    if pool_id:
-        if model != "__default__":
-            cluster = f"grp-{_safe_cluster(pool_id)}-{_safe_cluster(engine)}-{_safe_cluster(model)}"
-        else:
-            cluster = f"grp-{_safe_cluster(pool_id)}-{_safe_cluster(engine)}"
-    else:
-        if model != "__default__":
-            cluster = f"grp-{_safe_cluster(engine)}-{_safe_cluster(model)}"
-        else:
-            cluster = "inferia-workers"
+    engine = deployment.get("engine")
+    model = deployment.get("inference_model") or deployment.get("model_name")
+
+    # Use shared cluster naming logic to ensure consistency with xds.py
+    cluster = build_envoy_cluster_name(pool_id=pool_id, engine=engine, model=model)
+    
+    # Log for diagnostic purposes (helps catch mismatches with xDS)
+    logger.debug(
+        "envoy_route_headers: pool_id=%s engine=%s model=%s → cluster=%s",
+        pool_id,
+        engine,
+        model,
+        cluster,
+    )
 
     return envoy_url, {ROUTE_CLUSTER_HEADER: cluster}
 
-
-def _safe_cluster(value: str) -> str:
-    """Sanitize a pool_id / group_id for use in an Envoy cluster name.
-    Keeps alphanumeric, dash, underscore, and dot — same as the xDS shim."""
-    return "".join(c if c.isalnum() or c in "-_." else "-" for c in value)

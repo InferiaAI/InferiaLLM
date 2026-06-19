@@ -4,19 +4,11 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from orchestration.api.xds import (
-    _safe,
     _parse_advertise_url,
     _build_cluster,
     build_resources,
     configure,
 )
-
-
-def test_safe_sanitization():
-    assert _safe("pool-123") == "pool-123"
-    assert _safe("pool 123") == "pool-123"
-    assert _safe("pool@123!") == "pool-123-"
-    assert _safe("vllm_engine") == "vllm_engine"
 
 
 def test_parse_advertise_url():
