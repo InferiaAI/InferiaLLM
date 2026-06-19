@@ -9,6 +9,61 @@ import httpx
 logger = logging.getLogger(__name__)
 
 HF_API_BASE = "https://huggingface.co/api/models"
+HF_RESOLVE_BASE = "https://huggingface.co"
+
+# Field names HF model configs use for the native context window. Multimodal
+# configs (e.g. Gemma 3) nest the language model under "text_config".
+_CTX_FIELDS = (
+    "max_position_embeddings",
+    "max_sequence_length",
+    "seq_length",
+    "n_positions",
+    "max_seq_len",
+)
+
+
+def _native_context_from_config(config: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Extract a model's native context window from an HF config dict.
+
+    Checks the top level and a nested ``text_config`` (multimodal models).
+    Returns the int, or None when no recognized field is present.
+    """
+    if not isinstance(config, dict):
+        return None
+    sources = [config]
+    text_cfg = config.get("text_config")
+    if isinstance(text_cfg, dict):
+        sources.append(text_cfg)
+    for src in sources:
+        for field_name in _CTX_FIELDS:
+            val = src.get(field_name)
+            if isinstance(val, int) and val > 0:
+                return val
+    return None
+
+
+async def fetch_native_max_len(
+    model_id: str, hf_token: Optional[str] = None
+) -> Optional[int]:
+    """Best-effort fetch of a model's native context window from its config.json.
+
+    Used to clamp a deploy's ``max_model_len`` so it never exceeds the model's
+    native context — vLLM HARD-ERRORS at startup otherwise (and the container
+    crashes during model load). Returns None on any failure (gated / missing /
+    parse error); callers then let the engine derive the context itself.
+    """
+    url = f"{HF_RESOLVE_BASE}/{model_id}/resolve/main/config.json"
+    headers = {}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                return _native_context_from_config(resp.json())
+    except Exception as e:
+        logger.warning("Failed to fetch native context for %s: %s", model_id, e)
+    return None
 
 # Engines that require config.json (transformers-based)
 ENGINES_REQUIRING_CONFIG_JSON = {"vllm", "tei", "infinity"}
@@ -516,15 +571,10 @@ def check_context_length(
     if not hf_info or not max_model_len:
         return ContextLengthCheckResult(ok=True, skipped=True)
 
-    # HF config sometimes has max_position_embeddings
     config = hf_info.get("config", {}) or {}
-    native_ctx = (
-        config.get("max_position_embeddings")
-        or config.get("max_sequence_length")
-        or config.get("seq_length")
-    )
+    native_ctx = _native_context_from_config(config)
 
-    if not native_ctx or not isinstance(native_ctx, int):
+    if not native_ctx:
         return ContextLengthCheckResult(ok=True, skipped=True)
 
     if max_model_len > native_ctx:
