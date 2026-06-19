@@ -1,7 +1,8 @@
 """xDS control plane — Envoy discovery service for inference routing.
 
-Provides Cluster (CDS) and Endpoint (EDS) discovery responses so the
-inference gateway (envoyproxy) knows about available worker nodes.
+Provides Cluster (CDS) discovery responses so the inference gateway (envoyproxy)
+knows about available worker nodes. Uses STRICT_DNS clusters with embedded
+load_assignment, so all endpoint data is included in CDS.
 
 Subscribes to ``xds:node:state_changed`` Redis events for near-instant
 updates, with a periodic DB refresh as fallback. The primary data source
@@ -16,8 +17,6 @@ import hashlib
 import json
 import logging
 import os
-import threading
-import time
 import uuid
 from typing import Any
 from urllib.parse import urlparse
@@ -52,11 +51,6 @@ def configure(*, inventory_repo, event_bus=None) -> None:
     _deps.event_bus = event_bus
 
 
-# ---------------------------------------------------------------------------
-# Helpers.
-# ---------------------------------------------------------------------------
-
-
 def _safe(value: str) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "-" for c in value)
 
@@ -74,52 +68,33 @@ def _hash(obj) -> str:
     return hashlib.sha1(blob).hexdigest()[:12]
 
 
-# ---------------------------------------------------------------------------
-# Resource builders.
-# ---------------------------------------------------------------------------
-
-
-def _build_cluster(cluster_name: str) -> dict:
+def _build_cluster(cluster_name: str, members: list[dict]) -> dict:
     return {
         "@type": CLUSTER_TYPE_URL,
         "name": cluster_name,
         "connect_timeout": "0.25s",
         "lb_policy": "ROUND_ROBIN",
-        "type": "EDS",
-        "eds_cluster_config": {
-            "eds_config": {
-                "api_config_source": {
-                    "api_type": "REST",
-                    "transport_api_version": "V3",
-                    "cluster_names": [XDS_CLUSTER_NAME],
-                    "refresh_delay": REFRESH_DELAY,
-                }
-            }
-        },
-    }
-
-
-def _build_endpoints(cluster_name: str, members: list[dict]) -> dict:
-    return {
-        "@type": ENDPOINT_TYPE_URL,
-        "cluster_name": cluster_name,
-        "endpoints": [
-            {
-                "lb_endpoints": [
-                    {
-                        "endpoint": {
-                            "address": {
-                                "socket_address": {
-                                    "address": m["host"],
-                                    "port_value": m["port"],
+        "type": "STRICT_DNS",
+        "load_assignment": {
+            "cluster_name": cluster_name,
+            "endpoints": [
+                {
+                    "lb_endpoints": [
+                        {
+                            "endpoint": {
+                                "address": {
+                                    "socket_address": {
+                                        "address": m["host"],
+                                        "port_value": m["port"],
+                                    }
                                 }
                             }
                         }
-                    }
-                    for m in members
-                ]
-            }
-        ],
+                        for m in members
+                    ]
+                }
+            ],
+        },
     }
 
 
@@ -134,13 +109,15 @@ async def _load_nodes() -> list[dict]:
 
 
 async def build_resources() -> dict:
-    """Build all xDS resources (clusters + endpoints) from current inventory."""
+    """Build all xDS resources (clusters) from current inventory.
+
+    Uses STRICT_DNS clusters with embedded load_assignment, so all endpoint
+    data is included in CDS. No separate EDS discovery is needed.
+    """
     nodes = await _load_nodes()
 
     clusters: dict[str, dict] = {}
-    endpoints: dict[str, dict] = {}
     route_table: dict[str, str] = {}
-    eds_version: dict[str, str] = {}
 
     pools: dict[str, list[dict]] = {}
     singletons: list[dict] = []
@@ -149,7 +126,8 @@ async def build_resources() -> dict:
         if not host:
             continue
         entry = {
-            "host": host, "port": port,
+            "host": host,
+            "port": port,
             "id": n["id"],
             "engine": n.get("engine"),
             "model": n.get("model", "__default__"),
@@ -160,16 +138,22 @@ async def build_resources() -> dict:
             singletons.append(entry)
 
     for pool_id, members in pools.items():
-        groups: set[tuple[str | None, str]] = {(m["engine"], m["model"]) for m in members}
+        groups: set[tuple[str | None, str]] = {
+            (m["engine"], m["model"]) for m in members
+        }
         for engine, model in groups:
-            group_members = [m for m in members if m["engine"] == engine and m["model"] == model]
+            group_members = [
+                m for m in members if m["engine"] == engine and m["model"] == model
+            ]
             if model and model != "__default__":
                 cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}-{_safe(model)}"
             else:
-                cluster_name = f"grp-{_safe(pool_id)}-{_safe(engine)}" if engine else f"grp-{_safe(pool_id)}"
-            clusters[cluster_name] = _build_cluster(cluster_name)
-            endpoints[cluster_name] = _build_endpoints(cluster_name, group_members)
-            eds_version[cluster_name] = _hash(endpoints[cluster_name])
+                cluster_name = (
+                    f"grp-{_safe(pool_id)}-{_safe(engine)}"
+                    if engine
+                    else f"grp-{_safe(pool_id)}"
+                )
+            clusters[cluster_name] = _build_cluster(cluster_name, group_members)
             for m in group_members:
                 route_table[m["id"]] = cluster_name
 
@@ -183,17 +167,13 @@ async def build_resources() -> dict:
                 cluster_name = f"grp-{_safe(engine)}-{_safe(model)}"
             else:
                 cluster_name = "inferia-workers"
-            clusters[cluster_name] = _build_cluster(cluster_name)
-            endpoints[cluster_name] = _build_endpoints(cluster_name, members)
-            eds_version[cluster_name] = _hash(endpoints[cluster_name])
+            clusters[cluster_name] = _build_cluster(cluster_name, members)
             for m in members:
                 route_table[m["id"]] = cluster_name
 
     return {
         "clusters": clusters,
-        "endpoints": endpoints,
         "route_table": route_table,
-        "eds_version": eds_version,
         "cds_version": _hash([clusters[k] for k in sorted(clusters.keys())]),
     }
 
@@ -205,11 +185,6 @@ def _discovery_response(version: str, resources: list, type_url: str) -> dict:
         "type_url": type_url,
         "nonce": uuid.uuid4().hex,
     }
-
-
-# ---------------------------------------------------------------------------
-# Envoy xDS discovery endpoints.
-# ---------------------------------------------------------------------------
 
 
 @router.post("/v3/discovery:clusters")
@@ -228,28 +203,16 @@ async def discovery_clusters(request: Request):
 
 @router.post("/v3/discovery:endpoints")
 async def discovery_endpoints(request: Request):
-    body = await request.json() or {}
-    client_version = body.get("version_info", "")
-    names = body.get("resource_names") or []
-    resources = await build_resources()
+    """Endpoint discovery (EDS) is deprecated in favor of STRICT_DNS clusters.
 
-    wanted = names or list(resources["endpoints"].keys())
-    combined_version = _hash(
-        sorted((n, resources["eds_version"].get(n, "")) for n in wanted)
-    )
-    if client_version == combined_version:
-        return Response(status_code=304)
-
+    All endpoint information is now embedded in CDS via load_assignment.
+    This handler returns an empty response for compatibility.
+    """
     return _discovery_response(
-        combined_version,
-        [resources["endpoints"][n] for n in wanted if n in resources["endpoints"]],
-        ENDPOINT_TYPE_URL,
+        version="1",
+        resources=[],
+        type_url=ENDPOINT_TYPE_URL,
     )
-
-
-# ---------------------------------------------------------------------------
-# Auxiliary endpoints.
-# ---------------------------------------------------------------------------
 
 
 @router.get("/v3/route-table")
@@ -268,9 +231,19 @@ async def debug_resources():
     return await build_resources()
 
 
-# ---------------------------------------------------------------------------
-# Event subscription (optional — live updates via Redis event bus).
-# ---------------------------------------------------------------------------
+async def reconcile_on_startup() -> None:
+    """Force one eager DB pull on process start so the in-process world
+    (and any caches/logs) reflect already-running deployments immediately,
+    rather than waiting for Envoy's first CDS poll to trigger discovery.
+    """
+    try:
+        resources = await build_resources()
+        logger.info(
+            "xDS startup reconciliation: loaded %d cluster(s) from existing inventory",
+            len(resources["clusters"]),
+        )
+    except Exception:
+        logger.exception("xDS startup reconciliation failed")
 
 
 async def start_xds_event_subscription(app: FastAPI) -> None:

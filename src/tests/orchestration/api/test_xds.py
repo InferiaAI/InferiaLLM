@@ -7,7 +7,6 @@ from orchestration.api.xds import (
     _safe,
     _parse_advertise_url,
     _build_cluster,
-    _build_endpoints,
     build_resources,
     configure,
 )
@@ -28,19 +27,16 @@ def test_parse_advertise_url():
 
 
 def test_build_cluster_format():
-    cluster = _build_cluster("test-cluster")
+    members = [{"host": "h1", "port": 8080}]
+    cluster = _build_cluster("test-cluster", members)
     assert cluster["name"] == "test-cluster"
     assert cluster["type"] == "STRICT_DNS"
     assert cluster["@type"] == "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    assert "load_assignment" in cluster
+    assert cluster["load_assignment"]["cluster_name"] == "test-cluster"
 
 
-def test_build_endpoints_format():
-    members = [{"host": "h1", "port": 8080}]
-    endpoints = _build_endpoints("test-cluster", members)
-    assert endpoints["cluster_name"] == "test-cluster"
-    addr = endpoints["endpoints"][0]["lb_endpoints"][0]["endpoint"]["address"]["socket_address"]
-    assert addr["address"] == "h1"
-    assert addr["port_value"] == 8080
+
 
 
 @pytest.mark.asyncio
@@ -71,8 +67,8 @@ async def test_build_resources_grouping():
     # n5 is unhealthy — list_xds_nodes still returns it; xDS doesn't filter
     assert "grp-p1-vllm-gemma" in rs["clusters"]
     # n5 sits in the same pool+engine+model group as n1/n2
-    endpoints = rs["endpoints"]["grp-p1-vllm-gemma"]
-    lb = endpoints["endpoints"][0]["lb_endpoints"]
+    # Endpoint data is now embedded in cluster load_assignment
+    lb = rs["clusters"]["grp-p1-vllm-gemma"]["load_assignment"]["endpoints"][0]["lb_endpoints"]
     hosts_in = {e["endpoint"]["address"]["socket_address"]["address"] for e in lb}
     assert "h5" in hosts_in  # unhealthy nodes are NOT filtered by xDS
 
@@ -86,7 +82,6 @@ async def test_build_resources_grouping():
 
     # Check structure
     assert len(rs["clusters"]) > 0
-    assert len(rs["endpoints"]) > 0
     assert len(rs["route_table"]) > 0
     assert rs["cds_version"]
 

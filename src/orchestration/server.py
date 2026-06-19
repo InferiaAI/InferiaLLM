@@ -812,9 +812,16 @@ async def serve():
             )
 
     # ---------------- xDS Event Subscription ----------------
-    # Listens for node state changes on the Redis event bus so the Envoy
+    # First, load all existing inventory from the DB so caches/logs reflect
+    # already-running deployments immediately (eager reconciliation on startup).
+    # Then listen for node state changes on the Redis event bus so the Envoy
     # discovery service picks up new/deleted endpoints without waiting for
     # the next DB poll cycle. Runs as a background task.
+    try:
+        await xds_api.reconcile_on_startup()
+    except Exception:
+        logger.warning("xDS startup reconciliation failed", exc_info=True)
+
     _xds_subscription_task = asyncio.create_task(
         xds_api.start_xds_event_subscription(app),
     )
