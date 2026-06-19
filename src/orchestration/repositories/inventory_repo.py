@@ -920,7 +920,7 @@ async def _upsert_worker_impl(
             ON CONFLICT (pool_id, node_name)
                 WHERE agent_kind = 'worker' AND node_name IS NOT NULL
             DO UPDATE SET
-                advertise_url = EXCLUDED.advertise_url,
+                advertise_url = COALESCE(EXCLUDED.advertise_url, compute_inventory.advertise_url),
                 metadata = EXCLUDED.metadata,
                 labels = compute_inventory.labels || EXCLUDED.labels,
                 -- Resource totals are refreshed only when the incoming
