@@ -106,6 +106,21 @@ async def _load_nodes() -> list[dict]:
     return await _deps.inventory_repo.list_xds_nodes()
 
 
+async def load_ready_nodes() -> list[dict]:
+    """Fetch ready nodes with active deployments directly from DB.
+
+    Delegates to InventoryRepository.get_ready_nodes() for a filtered
+    view: only 'ready' state nodes with a recent heartbeat that have
+    at least one RUNNING/DEPLOYING deployment bound.
+
+    Returns entries with keys: id, advertise_url, expose_url, pool_id,
+    engine, model, healthy, last_heartbeat.
+    """
+    if _deps.inventory_repo is None:
+        return []
+    return await _deps.inventory_repo.get_ready_nodes()
+
+
 async def build_resources() -> dict:
     """Build all xDS resources (clusters) from current inventory.
 
