@@ -65,11 +65,11 @@ static_resources:
               - match: { prefix: "/" }
                 route:
                   cluster_header: "x-inferia-route-cluster"
-                  timeout: 0s
+                  timeout: 60s
                   retry_policy:
                     retry_on: "5xx,reset,connect-failure"
                     num_retries: 3
-                    per_try_timeout: 5s
+                    per_try_timeout: 0s
           http_filters:
           - name: envoy.filters.http.cors
             typed_config:
