@@ -70,7 +70,7 @@ def _build_cluster(cluster_name: str, members: list[dict]) -> dict:
     return {
         "@type": CLUSTER_TYPE_URL,
         "name": cluster_name,
-        "connect_timeout": "5s",
+        "connect_timeout": "45s",
         "lb_policy": "ROUND_ROBIN",
         "type": "STRICT_DNS",
         "health_checks": [
@@ -171,7 +171,9 @@ async def build_resources() -> dict:
                 m for m in members if m["engine"] == engine and m["model"] == model
             ]
             # Use shared cluster naming logic to ensure consistency with worker_routing.py
-            cluster_name = build_envoy_cluster_name(pool_id=pool_id, engine=engine, model=model)
+            cluster_name = build_envoy_cluster_name(
+                pool_id=pool_id, engine=engine, model=model
+            )
             clusters[cluster_name] = _build_cluster(cluster_name, group_members)
             for m in group_members:
                 route_table[m["id"]] = cluster_name
@@ -183,7 +185,9 @@ async def build_resources() -> dict:
             singleton_groups.setdefault(key, []).append(m)
         for (engine, model), members in singleton_groups.items():
             # Use shared cluster naming logic for singletons too
-            cluster_name = build_envoy_cluster_name(pool_id=None, engine=engine, model=model)
+            cluster_name = build_envoy_cluster_name(
+                pool_id=None, engine=engine, model=model
+            )
             clusters[cluster_name] = _build_cluster(cluster_name, members)
             for m in members:
                 route_table[m["id"]] = cluster_name
