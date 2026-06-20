@@ -27,6 +27,13 @@ static_resources:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: ingress_http
           codec_type: AUTO
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                text_format_source:
+                  inline_string: "[%START_TIME%] \"%REQ(:METHOD)% %REQ(:PATH)%\" %RESPONSE_CODE% %RESPONSE_FLAGS% cluster=%UPSTREAM_CLUSTER% header=%REQ(X-INFERIA-ROUTE-CLUSTER)%\n"
           route_config:
             name: local_route
             virtual_hosts:
@@ -54,12 +61,10 @@ static_resources:
                 route: { cluster: app_cluster, timeout: 60s }
               - match: { prefix: "/assets/" }
                 route: { cluster: app_cluster, timeout: 60s }
-              - match: { prefix: "/inf/" }
+              - match: { prefix: "/" }
                 route:
                   cluster_header: "x-inferia-route-cluster"
                   timeout: 0s
-              - match: { prefix: "/" }
-                route: { cluster: app_cluster, timeout: 60s }
           http_filters:
           - name: envoy.filters.http.cors
             typed_config:

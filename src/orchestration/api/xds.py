@@ -70,7 +70,7 @@ def _build_cluster(cluster_name: str, members: list[dict]) -> dict:
     return {
         "@type": CLUSTER_TYPE_URL,
         "name": cluster_name,
-        "connect_timeout": "0.25s",
+        "connect_timeout": "5s",
         "lb_policy": "ROUND_ROBIN",
         "type": "STRICT_DNS",
         "load_assignment": {
