@@ -402,6 +402,7 @@ async def resolve_inference_context(
             # the internal resolve channel (internal-API-key gated), never the
             # dashboard-facing deployment API.
             "inference_token": deployment.get("inference_token"),
+            "pool_id": deployment.get("pool_id"),
         },
         rate_limit_config=config.get("rate_limit"),
         user_id_context=user_id_context,
