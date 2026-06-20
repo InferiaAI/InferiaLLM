@@ -584,8 +584,8 @@ class InventoryRepository:
         excluded (they cannot receive traffic and should not occupy clusters).
         """
         query = """
-            SELECT i.id, i.pool_id, i.advertise_url, i.state,
-                   i.health_score, d.engine, d.model
+            SELECT i.id, i.pool_id, i.advertise_url, i.expose_url,
+                   i.state, i.health_score, d.engine, d.model
               FROM compute_inventory i
               INNER JOIN LATERAL (
                 SELECT DISTINCT md.engine,
@@ -605,7 +605,7 @@ class InventoryRepository:
         for r in rows:
             node_id = str(r["id"])
             pool_id = str(r["pool_id"]) if r.get("pool_id") else None
-            advertise_url = r.get("advertise_url")
+            advertise_url = r.get("advertise_url") or r.get("expose_url")
             if not advertise_url:
                 continue
             healthy = r["state"] == "ready" and (r.get("health_score", 0) or 0) >= 50
@@ -650,7 +650,7 @@ class InventoryRepository:
                    AND md.state IN ('RUNNING', 'DEPLOYING')
               ) d ON true
              WHERE i.state = 'ready'
-               AND i.advertise_url IS NOT NULL
+               AND (i.advertise_url IS NOT NULL OR i.expose_url IS NOT NULL)
                AND i.last_heartbeat IS NOT NULL
                AND i.last_heartbeat > now() - INTERVAL '5 minutes'
              ORDER BY i.id, d.engine, d.model
@@ -660,9 +660,10 @@ class InventoryRepository:
         result = []
         for r in rows:
             healthy = (r.get("health_score", 0) or 0) >= 50
+            url = r.get("advertise_url") or r.get("expose_url")
             result.append({
                 "id": str(r["id"]),
-                "advertise_url": r["advertise_url"],
+                "advertise_url": url,
                 "expose_url": r.get("expose_url"),
                 "pool_id": str(r["pool_id"]) if r.get("pool_id") else None,
                 "engine": r["engine"],

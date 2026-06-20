@@ -146,9 +146,10 @@ async def build_resources() -> dict:
     pools: dict[str, list[dict]] = {}
     singletons: list[dict] = []
     for n in nodes:
-        host, port = _parse_advertise_url(n["advertise_url"])
-        if not host:
+        url = n.get("expose_url") or n.get("advertise_url")
+        if not url:
             continue
+        host, port = _parse_advertise_url(url)
         entry = {
             "host": host,
             "port": port,
