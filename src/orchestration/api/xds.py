@@ -114,7 +114,7 @@ async def load_ready_nodes() -> list[dict]:
     at least one RUNNING/DEPLOYING deployment bound.
 
     Returns entries with keys: id, advertise_url, expose_url, pool_id,
-    engine, model, healthy, last_heartbeat.
+    engine, model, endpoint, healthy, last_heartbeat.
     """
     if _deps.inventory_repo is None:
         return []
@@ -127,7 +127,7 @@ async def build_resources() -> dict:
     Uses STRICT_DNS clusters with embedded load_assignment, so all endpoint
     data is included in CDS. No separate EDS discovery is needed.
     """
-    nodes = await _load_nodes()
+    nodes = await load_ready_nodes()
 
     clusters: dict[str, dict] = {}
     route_table: dict[str, str] = {}

@@ -632,18 +632,19 @@ class InventoryRepository:
         engines/models appears once per combination.
 
         Fields returned: id, advertise_url, expose_url, pool_id, engine,
-        model, healthy, last_heartbeat.
+        model, endpoint, healthy, last_heartbeat.
         """
         query = """
             SELECT i.id, i.pool_id, i.advertise_url, i.expose_url,
                    i.state, i.health_score, i.last_heartbeat,
-                   d.engine, d.model
+                   d.engine, d.model, d.endpoint
               FROM compute_inventory i
               INNER JOIN LATERAL (
                 SELECT DISTINCT md.engine,
                        COALESCE(NULLIF(md.inference_model, ''),
                                 NULLIF(md.model_name, ''),
-                                '__default__') AS model
+                                '__default__') AS model,
+                       md.endpoint
                   FROM model_deployments md
                  WHERE (md.node_ids @> ARRAY[i.id] OR md.target_node_id = i.id)
                    AND md.state IN ('RUNNING', 'DEPLOYING')
@@ -666,6 +667,7 @@ class InventoryRepository:
                 "pool_id": str(r["pool_id"]) if r.get("pool_id") else None,
                 "engine": r["engine"],
                 "model": r["model"] or "__default__",
+                "endpoint": r.get("endpoint"),
                 "healthy": healthy,
                 "last_heartbeat": r["last_heartbeat"].isoformat() if r["last_heartbeat"] else None,
             })
