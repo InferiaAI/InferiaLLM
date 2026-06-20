@@ -225,6 +225,42 @@ class Settings(BaseSettings):
     )
     jwt_algorithm: str = "HS256"
 
+    # External SSO auth (sandbox JWT verification in oidc/inferiaauth mode).
+    # In these modes the dashboard's bearer is an EdDSA JWT issued by the IdP
+    # (verified via JWKS), NOT a local HS256 token — so the sandbox path must
+    # verify it the same way the api_gateway does. Mirrors api_gateway.config.
+    auth_provider: str = Field(default="local", validation_alias="AUTH_PROVIDER")
+    external_auth_url: Optional[str] = Field(
+        default=None, validation_alias="EXTERNAL_AUTH_URL"
+    )
+    external_auth_issuer: Optional[str] = Field(
+        default=None, validation_alias="EXTERNAL_AUTH_ISSUER"
+    )
+    app_namespace: str = Field(
+        default="inferiallm", validation_alias="APP_NAMESPACE"
+    )
+    oauth_client_id: Optional[str] = Field(
+        default=None, validation_alias="OAUTH_CLIENT_ID"
+    )
+    oauth_jwks_cache_ttl_seconds: int = Field(
+        default=3600, ge=60, le=86400,
+        validation_alias="OAUTH_JWKS_CACHE_TTL_SECONDS",
+    )
+    verify_ssl: bool = Field(default=True, validation_alias="VERIFY_SSL")
+    ssl_ca_bundle: Optional[str] = Field(
+        default=None, validation_alias="SSL_CA_BUNDLE"
+    )
+
+    @property
+    def is_external_mode(self) -> bool:
+        """True when auth is delegated to an external IdP (oidc/inferiaauth)."""
+        return self.auth_provider in ("oidc", "inferiaauth", "external")
+
+    @property
+    def httpx_verify(self) -> object:
+        """httpx ``verify=`` value: CA-bundle path if set, else the bool."""
+        return self.ssl_ca_bundle or self.verify_ssl
+
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""

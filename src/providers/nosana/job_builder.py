@@ -50,7 +50,7 @@ CUDA_DRIVER_LD_LIBRARY_PATH = (
 
 def create_vllm_job(
     model_id: str,
-    image: str = "docker.io/vllm/vllm-openai:v0.16.0",
+    image: str = "docker.io/vllm/vllm-openai:v0.22.1",
     hf_token: Optional[str] = None,
     api_key: Optional[str] = None,
     # Stability & Hardware
@@ -65,7 +65,7 @@ def create_vllm_job(
     enforce_eager: bool = False,
     min_vram: int = 8,
     # Advanced Tuning
-    max_model_len: int = 8192,
+    max_model_len: Optional[int] = None,
     max_num_seqs: int = 256,
     quantization: Optional[str] = None,
     # Additional config
@@ -144,8 +144,6 @@ def create_vllm_job(
         "0.0.0.0",
         "--port",
         "9000",
-        "--max-model-len",
-        str(max_model_len),
         "--gpu-memory-utilization",
         str(gpu_util),
         "--max-num-seqs",
@@ -153,6 +151,15 @@ def create_vllm_job(
         "--dtype",
         dtype,
     ]
+
+    # Only pin --max-model-len when it is explicitly known. Forcing a value
+    # ABOVE the model's native context (max_position_embeddings) makes vLLM
+    # HARD-ERROR at config creation and the container crashes during model load
+    # ("User-specified max_model_len (8192) is greater than the derived
+    # max_model_len" — e.g. facebook/opt-125m's native 2048). When None, vLLM
+    # derives the model's native context, which is always valid.
+    if max_model_len is not None:
+        cmd_args.extend(["--max-model-len", str(max_model_len)])
 
     if trust_remote_code:
         cmd_args.append("--trust-remote-code")
@@ -318,7 +325,7 @@ def create_vllm_omni_job(
     enforce_eager: bool = False,
     min_vram: int = 16,
     # Advanced Tuning
-    max_model_len: int = 8192,
+    max_model_len: Optional[int] = None,
     max_num_seqs: int = 64,
     limit_mm_per_prompt: str = "image=1,video=1",
     required_cuda: Optional[List[str]] = None,
@@ -376,8 +383,6 @@ def create_vllm_omni_job(
         "--port",
         "9000",
         "--omni",
-        "--max-model-len",
-        str(max_model_len),
         "--gpu-memory-utilization",
         str(gpu_util),
         "--max-num-seqs",
@@ -386,6 +391,11 @@ def create_vllm_omni_job(
         dtype,
         "--trust-remote-code",
     ]
+
+    # See create_vllm_job: pin --max-model-len only when known, else let vLLM
+    # derive the native context (forcing > native crashes the container).
+    if max_model_len is not None:
+        cmd_args.extend(["--max-model-len", str(max_model_len)])
 
     if enforce_eager:
         cmd_args.append("--enforce-eager")
@@ -912,7 +922,7 @@ def build_job_definition(
     if engine == "vllm":
         job = create_vllm_job(
             model_id=model_id,
-            image=image or "docker.io/vllm/vllm-openai:v0.16.0",
+            image=image or "docker.io/vllm/vllm-openai:v0.22.1",
             hf_token=hf_token,
             api_key=api_key,
             **{
