@@ -73,6 +73,17 @@ def _build_cluster(cluster_name: str, members: list[dict]) -> dict:
         "connect_timeout": "5s",
         "lb_policy": "ROUND_ROBIN",
         "type": "STRICT_DNS",
+        "health_checks": [
+            {
+                "timeout": "2s",
+                "interval": "5s",
+                "unhealthy_threshold": 2,
+                "healthy_threshold": 1,
+                "http_health_check": {
+                    "path": "/healthz",
+                },
+            },
+        ],
         "load_assignment": {
             "cluster_name": cluster_name,
             "endpoints": [

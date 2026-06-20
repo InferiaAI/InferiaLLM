@@ -13,7 +13,8 @@ dynamic_resources:
       transport_api_version: V3
       cluster_names: [xds_cluster]
       refresh_delay: 5s
-      request_timeout: 2s
+      request_timeout: 5s
+    initial_fetch_timeout: 0s
 
 static_resources:
   listeners:
@@ -65,6 +66,10 @@ static_resources:
                 route:
                   cluster_header: "x-inferia-route-cluster"
                   timeout: 0s
+                  retry_policy:
+                    retry_on: "5xx,reset,connect-failure"
+                    num_retries: 3
+                    per_try_timeout: 5s
           http_filters:
           - name: envoy.filters.http.cors
             typed_config:
