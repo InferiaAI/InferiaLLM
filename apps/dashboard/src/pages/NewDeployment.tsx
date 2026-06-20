@@ -100,15 +100,6 @@ const computeEngines = [
     modelTypes: ["inference", "multimodal"]
   },
   {
-    id: "sglang",
-    name: "SGLang",
-    desc: "High-performance serving engine with optimized KV cache management.",
-    image: "docker.io/sglang/sglang:latest",
-    icon: Cpu,
-    types: ["inference"],
-    modelTypes: ["inference"]
-  },
-  {
     id: "ollama",
     name: "Ollama",
     desc: "Run huge models locally with ease.",
