@@ -176,6 +176,8 @@ class Autoscaler:
             # 1. Cooldown check (shared for scale-out and scale-in)
             if last_scale is not None:
                 if isinstance(last_scale, datetime):
+                    if last_scale.tzinfo is not None:
+                        last_scale = last_scale.replace(tzinfo=None)
                     if _now_dt - last_scale < timedelta(minutes=COOLDOWN_MINUTES):
                         continue
 
