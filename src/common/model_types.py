@@ -59,7 +59,7 @@ class ModelCapabilities:
             "api_endpoints": ["/v1/images/generations"],
             "streaming_support": False,
             "gpu_required": True,
-            "supported_backends": ["diffusers", "sdxl", "comfyui"],
+            "supported_backends": ["diffusers", "sdxl", "comfyui", "inferia-diffusion"],
             "default_backend": "diffusers",
             "description": "Image generation models (Stable Diffusion, etc.)",
         },
