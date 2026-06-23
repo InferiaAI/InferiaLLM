@@ -816,6 +816,10 @@ def create_inferia_diffusion_job(
     host: str = "0.0.0.0",
     min_vram: int = 6,
     required_cuda: Optional[List[str]] = None,
+    model_type: Optional[str] = None,
+    trust_remote_code: bool = False,
+    model_offload: bool = False,
+    group_offload: bool = False,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for Inferia Diffusion engine.
@@ -828,6 +832,10 @@ def create_inferia_diffusion_job(
         port: Port to expose
         host: Host to bind to
         min_vram: Minimum VRAM requirement in GB
+        model_type: image_generation|video_generation|image|video — maps to --model-type
+        trust_remote_code: allow remote code execution for the model (--trust-remote-code)
+        model_offload: enable sequential model CPU offload (--model-offload)
+        group_offload: enable grouped CPU offload (--group-offload)
 
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
@@ -849,11 +857,28 @@ def create_inferia_diffusion_job(
         str(port),
     ]
 
+    _MODEL_TYPE_FLAG = {
+        "image_generation": "image",
+        "image": "image",
+        "video_generation": "video",
+        "video": "video",
+    }
+    _mt = _MODEL_TYPE_FLAG.get((model_type or "").lower())
+    if _mt:
+        cmd_args.extend(["--model-type", _mt])
+
     if effective_api_key:
         cmd_args.extend(["--api-key", effective_api_key])
 
     if hf_token:
         cmd_args.extend(["--hf-token", hf_token])
+
+    if trust_remote_code:
+        cmd_args.append("--trust-remote-code")
+    if model_offload:
+        cmd_args.append("--model-offload")
+    if group_offload:
+        cmd_args.append("--group-offload")
 
     container_op = {
         "id": "InferiaDiffusion",
@@ -1034,7 +1059,18 @@ def build_job_definition(
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k in ["port", "host", "min_vram", "required_cuda"] and v is not None
+                if k
+                in [
+                    "port",
+                    "host",
+                    "min_vram",
+                    "required_cuda",
+                    "model_type",
+                    "trust_remote_code",
+                    "model_offload",
+                    "group_offload",
+                ]
+                and v is not None
             },
         )
     else:

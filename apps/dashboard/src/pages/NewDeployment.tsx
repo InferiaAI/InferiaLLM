@@ -25,6 +25,7 @@ import { calculateCompatibility, fetchExternalRegistry, GPU_SPECS, type FitLevel
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 import { ConfigService } from "@/services/configService"
+import { buildDiffusionSpec } from "./newDeploymentSpec"
 
 // --- Constants ---
 
@@ -785,26 +786,13 @@ export default function NewDeployment() {
       }
       return JSON.stringify(spec, null, 4)
     } else if (selectedEngine === "inferia-diffusion") {
-      const finalModelId = modelId || "segmind/tiny-sd";
-      const spec: any = {
-        model_id: finalModelId,
-        engine: "inferia-diffusion",
-        image: "docker.io/inferiaai/inferiadiffusion:latest",
-        port: 8080,
-        host: "0.0.0.0",
-        min_vram: 8,
-        gpu: true,
-        env: hfToken ? { "HF_TOKEN": hfToken } : {},
-        expose: [{
-          port: 8080,
-          type: "http",
-          health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }]
-        }]
-      }
-      if (state.trustRemoteCode) spec.trust_remote_code = true
-      if (state.modelOffload) spec.model_offload = true
-      if (state.groupOffload) spec.group_offload = true
-      return JSON.stringify(spec, null, 4)
+      return buildDiffusionSpec({
+        modelId,
+        modelType,
+        trustRemoteCode: state.trustRemoteCode,
+        modelOffload: state.modelOffload,
+        groupOffload: state.groupOffload,
+      })
     } else if (selectedEngine === "pytorch") {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
@@ -879,8 +867,8 @@ export default function NewDeployment() {
     const preflightOk = await runPreflight(
       modelId || (config as any).model_id || "",
       selectedEngine,
-      ["vllm", "sglang"].includes(selectedEngine) ? undefined : (hfToken || undefined),
-      ["vllm", "sglang"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
+      ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine) ? undefined : (hfToken || undefined),
+      ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
     );
     if (!preflightOk) return;
  
@@ -889,7 +877,7 @@ export default function NewDeployment() {
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
       ami_id: requiresAmi(selectedEngine, selectedPool) ? selectedAmiId : undefined,
-      hf_token_name: selectedEngine === "vllm" ? (selectedHfTokenName || undefined) : undefined,
+      hf_token_name: ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
       auto_replica_enabled: state.autoReplicaEnabled,
       tokens_per_second_threshold: state.autoReplicaEnabled ? (parseFloat(state.tokensPerSecondThreshold) || undefined) : undefined,
     }
@@ -1085,7 +1073,7 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
 function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry }: { state: State; dispatch: React.Dispatch<Action>; onLaunch: () => void; isPending: boolean; externalRegistry?: ExternalModel[] }) {
   const {
     deploymentType, modelType, instanceName, selectedEngine, selectedHFModel, modelId,
-    maxModelLen, gpuUtil, hfToken, batchSize, maxSequenceLength, gitRepo,
+    maxModelLen, gpuUtil, batchSize, maxSequenceLength, gitRepo,
     trainingScript, datasetUrl, baseModel, dtype, enforceEager, quantization,
     isAdvancedOpen,
     maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled,
@@ -1121,7 +1109,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
   const { data: hfTokenNames = [] } = useQuery({
     queryKey: ['hf-token-names'],
     queryFn: () => ConfigService.listHfTokenNames(),
-    enabled: selectedEngine === "vllm" || selectedEngine === "sglang",
+    enabled: ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine),
     staleTime: 1000 * 60 * 5,
   });
 
@@ -1643,9 +1631,25 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
             Model type is automatically set based on your deployment type. API key is configured automatically by the system.
           </div>
           <div>
-            <label htmlFor="hfTokenLocalai" className="block text-xs font-medium text-muted-foreground mb-1.5">HuggingFace Token (for private/gated models)</label>
-            <input id="hfTokenLocalai" type="password" value={hfToken} onChange={e => dispatch({ type: 'SET_FIELD', field: 'hfToken', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="hf_xxxxx (optional)" />
-            <p className="text-xs text-muted-foreground mt-1">Required only for gated models like SDXL, FLUX, etc.</p>
+            <label htmlFor="hfTokenNameDiff" className="block text-xs font-medium text-muted-foreground mb-1.5">
+              HuggingFace Token <span className="text-muted-foreground/60">(optional — required for gated models)</span>
+            </label>
+            <select
+              id="hfTokenNameDiff"
+              value={selectedHfTokenName}
+              onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedHfTokenName', value: e.target.value })}
+              className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
+            >
+              <option value="">None</option>
+              {hfTokenNames.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+            {hfTokenNames.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                No saved tokens — add one at Settings → Providers → HuggingFace.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div className="flex items-center gap-2">
