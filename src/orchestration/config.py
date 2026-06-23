@@ -154,9 +154,10 @@ class Settings(BaseSettings):
     worker_image_tag: str = Field(
         # docker/metadata-action's semver pattern strips the leading "v"
         # from git tags, so the GHCR tag for git tag v0.2.9 is 0.2.9.
-        # 0.2.9 also drops the broken VLLM_USE_FASTOKENS default; 0.2.8 added container-name idempotency fix
+        # 0.2.11 adds the per-recipe readiness timeout (diffusion model-load-before-health); 0.2.10 fixed the inferia-diffusion image name (no-hyphen) + serve-CLI model load;
+        # 0.2.9 dropped the broken VLLM_USE_FASTOKENS default; 0.2.8 added container-name idempotency fix
         # (remove-before-create) that unsticks DEPLOYING deploys.
-        default="0.2.9",
+        default="0.2.11",
         validation_alias="INFERIA_WORKER_IMAGE_TAG",
     )
     bootstrap_token_ttl_seconds: int = Field(
