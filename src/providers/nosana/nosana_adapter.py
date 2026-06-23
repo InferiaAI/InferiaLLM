@@ -84,6 +84,24 @@ def generate_api_key(prefix: str = "nos") -> str:
     return f"{prefix}_{secrets.token_urlsafe(32)}"
 
 
+def _diffusion_job_overrides(metadata: dict) -> dict:
+    """Diffusion-specific job_config values sourced from ``configuration.config``.
+
+    ``trust_remote_code`` deliberately defaults to ``False`` for diffusion — it
+    is NOT inherited from the engine-wide ``True`` default, because we do not
+    auto-trust remote code for image/video models unless the user opts in.
+    Values are expected to be native booleans (already coerced upstream by
+    ``sanitize_config``); ``bool()`` is a defensive last resort.
+    """
+    cfg = metadata.get("config") if isinstance(metadata.get("config"), dict) else {}
+    return {
+        "model_type": cfg.get("model_type"),
+        "trust_remote_code": bool(cfg.get("trust_remote_code", False)),
+        "model_offload": bool(cfg.get("model_offload", False)),
+        "group_offload": bool(cfg.get("group_offload", False)),
+    }
+
+
 class NosanaAdapter(ProviderAdapter):
     """
     Nosana DePIN adapter.
@@ -325,6 +343,9 @@ class NosanaAdapter(ProviderAdapter):
                 "diffusers_pipeline": metadata.get("diffusers_pipeline"),
                 "scheduler": metadata.get("scheduler"),
             }
+
+            if engine == "inferia-diffusion":
+                job_config.update(_diffusion_job_overrides(metadata))
 
             job_definition = build_job_definition(
                 engine=engine,

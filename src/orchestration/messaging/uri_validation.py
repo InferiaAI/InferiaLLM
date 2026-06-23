@@ -31,6 +31,9 @@ _ALLOWED_CONFIG_KEYS = frozenset({
     "max_batch_size",
     "max_input_length",
     "max_total_tokens",
+    "model_type",
+    "model_offload",
+    "group_offload",
 })
 
 

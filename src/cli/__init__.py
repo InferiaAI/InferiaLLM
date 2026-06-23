@@ -846,11 +846,11 @@ def main(argv=None):
     )
     cmp_p.add_argument(
         "--worker-image",
-        default="ghcr.io/inferiaai/inferia-worker:0.2.7",
+        default="ghcr.io/inferiaai/inferia-worker:0.2.10",
         help="Worker container image (full repository:tag). Published via the "
              "InferiaAI/inferia-worker GitHub Action on v* tags. Note that "
              "docker/metadata-action strips the leading 'v' from semver tags, "
-             "so git tag v0.2.7 produces GHCR tag 0.2.7.",
+             "so git tag v0.2.10 produces GHCR tag 0.2.10.",
     )
     cmp_p.add_argument(
         "--inference-port", type=int, default=8080,
