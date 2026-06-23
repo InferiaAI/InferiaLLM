@@ -86,6 +86,18 @@ class Settings(BaseSettings):
         description="URL of external LLM proxy (e.g., InferiaGate). Routes all external provider traffic through this proxy.",
     )
 
+    # Envoy proxy URL for worker-hosted inference routing.
+    # When set, all worker-hosted deployment traffic is routed through
+    # the front Envoy proxy instead of directly to the worker's advertise_url.
+    # The Envoy must have the xDS control plane configured to discover nodes.
+    # Example: "http://front-envoy:10000"
+    envoy_url: Optional[str] = Field(
+        default=None,
+        alias="ENVOY_URL",
+        validation_alias="ENVOY_URL",
+        description="URL of the front Envoy proxy for worker-hosted inference routing",
+    )
+
     # Timeouts
     request_timeout: int = 30
 

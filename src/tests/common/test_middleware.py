@@ -1,9 +1,7 @@
 """Tests for internal auth middleware — security layer."""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
 from common.middleware import create_internal_auth_middleware

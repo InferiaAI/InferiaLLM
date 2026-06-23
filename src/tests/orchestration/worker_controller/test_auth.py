@@ -9,7 +9,6 @@ import pytest
 
 from orchestration.workers.worker_controller.auth import (
     BootstrapClaim,
-    BootstrapClaims,
     InvalidBootstrapToken,
     InvalidTokenError,
     WorkerAuth,

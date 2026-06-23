@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from typing import Dict, Any, List, Optional, Callable, get_args, get_origin
-import httpx
 from common.http_client import InternalHttpClient
 from pydantic import BaseModel
 

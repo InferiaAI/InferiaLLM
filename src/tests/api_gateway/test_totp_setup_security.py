@@ -1,7 +1,6 @@
 """Tests for TOTP setup security — secret must not be written to totp_secret before verification."""
 
 import pytest
-import pytest_asyncio
 import pyotp
 from unittest.mock import AsyncMock, MagicMock, patch
 

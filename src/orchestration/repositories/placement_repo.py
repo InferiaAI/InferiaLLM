@@ -59,7 +59,7 @@ class PlacementRepository:
             ephemeral_filter = """
             AND NOT EXISTS (
                 SELECT 1 FROM model_deployments md
-                WHERE md.node_ids @> ARRAY[ci.id]::uuid[]
+                WHERE (md.node_ids @> ARRAY[ci.id]::uuid[] OR md.target_node_id = ci.id)
                 AND md.state IN ('RUNNING', 'READY', 'PROVISIONING')
             )
             """

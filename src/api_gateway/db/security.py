@@ -1,8 +1,8 @@
 import os
 import json
 from cryptography.fernet import Fernet
-from typing import Any, Dict, Optional
-from sqlalchemy.types import TypeDecorator, Text, JSON
+from typing import Any, Optional
+from sqlalchemy.types import TypeDecorator, JSON
 from api_gateway.config import settings
 
 # The encryption key should be a 32-byte base64 encoded string

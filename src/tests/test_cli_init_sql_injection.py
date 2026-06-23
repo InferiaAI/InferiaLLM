@@ -7,7 +7,7 @@ preventing SQL injection via crafted passwords.
 """
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 import asyncio
 
 from cli.init import _safe_ident

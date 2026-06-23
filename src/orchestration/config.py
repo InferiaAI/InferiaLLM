@@ -3,7 +3,7 @@ Orchestration Service Configuration
 """
 
 import os
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from common.service_ports import depin_sidecar_url

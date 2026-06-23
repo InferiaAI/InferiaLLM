@@ -1,6 +1,5 @@
 """Tests for upstream proxy security validators and integration."""
 
-import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from contextlib import asynccontextmanager

@@ -26,7 +26,6 @@ from scripts.smoke.lib import (
     SmokeAPI,
     SmokeError,
     SmokeTimeoutError,
-    WorkerNode,
     wait_until,
 )
 

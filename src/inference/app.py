@@ -4,7 +4,6 @@ Proxies requests to the Filtration service for security and policy enforcement,
 then routes to the actual model provider.
 """
 
-import logging
 import json
 from typing import Optional
 from jose import JWTError, jwt

@@ -21,7 +21,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import api_gateway.rbac.middleware as mw
-from api_gateway.rbac.jwks_verifier import JWKSVerifyError
 from api_gateway.rbac.catalog import CATALOG
 
 

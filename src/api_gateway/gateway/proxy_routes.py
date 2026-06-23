@@ -3,7 +3,6 @@ Proxy routes for routing requests to downstream services.
 Handles dashboard → orchestration service proxying.
 """
 
-from typing import Dict, Optional
 import httpx
 import logging
 import asyncio

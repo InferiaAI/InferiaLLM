@@ -72,7 +72,6 @@ async def test_apply_migrations_via_production_runner(conn):
     (b) The columns/index from 20260530 are present
     (c) A second invocation is idempotent (no duplicate rows in schema_migrations)
     """
-    from cli import init
 
     # First, set up the schema_migrations table (normally done by _apply_migrations)
     await conn.execute("""

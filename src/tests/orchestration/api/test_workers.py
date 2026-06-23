@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -35,9 +34,6 @@ from orchestration.workers.worker_controller.auth import (
 )
 from orchestration.workers.worker_controller.registry import (
     WorkerRegistry,
-)
-from orchestration.workers.worker_controller.protocol import (
-    Envelope,
 )
 
 

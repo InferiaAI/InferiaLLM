@@ -2,7 +2,6 @@
 
 import pytest
 from cachetools import TTLCache
-from unittest.mock import MagicMock, patch
 
 from api_gateway.gateway.rate_limiter import (
     InMemoryRateLimiter,

@@ -2,7 +2,6 @@
 
 import os
 import logging
-import pytest
 from unittest.mock import patch
 from cachetools import TTLCache
 

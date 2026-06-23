@@ -9,7 +9,6 @@ interpolation into shell command strings.
 import shlex
 from unittest.mock import patch
 
-import pytest
 
 # Patch settings before importing job_builder so it doesn't fail on missing config
 _mock_settings = type("Settings", (), {"internal_api_key": "test-key"})()

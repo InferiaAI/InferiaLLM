@@ -394,6 +394,9 @@ CREATE TABLE IF NOT EXISTS public.model_deployments
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     error_message text,
+    auto_replica_enabled boolean DEFAULT false,
+    tokens_per_second_threshold float DEFAULT NULL,
+    auto_replica_last_scale_at timestamp with time zone DEFAULT NULL,
     CONSTRAINT model_deployments_pkey PRIMARY KEY (deployment_id),
     CONSTRAINT model_deployments_model_id_fkey FOREIGN KEY (model_id)
         REFERENCES public.model_registry (model_id) MATCH SIMPLE

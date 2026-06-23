@@ -66,7 +66,7 @@ async def fetch_native_max_len(
     return None
 
 # Engines that require config.json (transformers-based)
-ENGINES_REQUIRING_CONFIG_JSON = {"vllm", "tei", "infinity"}
+ENGINES_REQUIRING_CONFIG_JSON = {"vllm", "sglang", "tei", "infinity"}
 
 # Engines that work with GGUF files
 ENGINES_SUPPORTING_GGUF = {"ollama", "localai", "llama.cpp"}
@@ -80,6 +80,7 @@ OLLAMA_REGISTRY_BASE = "https://ollama.com"
 # Engine → expected pipeline_tag mapping
 ENGINE_PIPELINE_MAP = {
     "vllm": {"text-generation"},
+    "sglang": {"text-generation"},
     "tei": {"feature-extraction", "sentence-similarity"},
     "infinity": {"feature-extraction", "sentence-similarity"},
     "localai": {

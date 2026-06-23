@@ -4,7 +4,6 @@ import os
 from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
-from uuid import UUID
 
 FILTRATION_DATABASE_URL = os.getenv("FILTRATION_DATABASE_URL")
 
@@ -109,7 +108,7 @@ async def heartbeat(payload: HeartbeatPayload, request: Request):
                             ):
                                 final_state = "FAILED"
 
-                except Exception as e:
+                except Exception:
                     # If we can't determine ephemeral status, use default logic
                     pass
 

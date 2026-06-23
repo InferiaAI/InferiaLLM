@@ -93,7 +93,8 @@ class FakeInventory:
     async def get_deployments_for_node(self, node_id):
         return []  # default: no deployments
 
-    async def upsert_worker(self, *, pool_id, node_name, advertise_url, allocatable):
+    async def upsert_worker(self, *, pool_id, node_name, advertise_url, allocatable,
+                            labels=None):
         nid = NODE
         self.nodes[nid] = {
             "id": nid, "pool_id": pool_id, "node_name": node_name,
@@ -895,9 +896,7 @@ class TestAddAwsNode:
 
 import httpx
 from httpx import ASGITransport
-from unittest.mock import AsyncMock, patch
 
-from orchestration.provisioning.engine import aws_deprovision
 
 
 class FakeDbPool:

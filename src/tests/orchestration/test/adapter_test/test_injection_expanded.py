@@ -4,7 +4,6 @@ import shlex
 import yaml
 from unittest.mock import patch
 
-import pytest
 
 # Patch settings before importing job_builder
 _mock_settings = type("Settings", (), {"internal_api_key": "test-key"})()
@@ -17,7 +16,6 @@ with patch("orchestration.config.settings", _mock_settings):
 
 from providers.akash.sdl_builder import (
     build_inference_sdl,
-    build_training_sdl,
 )
 
 

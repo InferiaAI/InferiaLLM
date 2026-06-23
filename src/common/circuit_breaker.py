@@ -8,7 +8,7 @@ import logging
 import time
 from enum import Enum
 from functools import wraps
-from typing import Callable, Optional, TypeVar, Generic, Any
+from typing import Callable, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ class CircuitBreaker:
                 result = await func(*args, **kwargs)
                 await self._record_success()
                 return result
-            except self.expected_exception as e:
+            except self.expected_exception:
                 await self._record_failure()
                 raise
 

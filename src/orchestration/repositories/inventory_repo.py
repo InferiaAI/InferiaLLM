@@ -118,7 +118,7 @@ class InventoryRepository:
                         """
                         UPDATE model_deployments
                         SET endpoint = $1, updated_at = now()
-                        WHERE node_ids @> ARRAY[$2]::uuid[]
+                        WHERE (node_ids @> ARRAY[$2]::uuid[] OR target_node_id = $2)
                           AND (endpoint IS NULL OR endpoint != $1)
                         """,
                         expose_url,
@@ -393,6 +393,36 @@ class InventoryRepository:
             last_heartbeat,
         )
 
+    async def sync_node_deployments_endpoint(self, *, node_id, expose_url):
+        """Sync endpoint URL to all deployments bound to this node.
+        
+        When a node's expose_url changes (e.g., on heartbeat or registration),
+        update all active deployments bound to the node so their endpoint
+        field reflects the current URL. This ensures the dashboard and
+        routing layers have the correct endpoint for traffic.
+        
+        Handles both legacy (node_ids array) and modern (target_node_id)
+        deployment bindings.
+        
+        Args:
+            node_id: The UUID of the node whose deployments to update.
+            expose_url: The endpoint URL to propagate to deployments.
+        """
+        if not expose_url:
+            return
+        
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE model_deployments
+                SET endpoint = $1, updated_at = now()
+                WHERE (node_ids @> ARRAY[$2]::uuid[] OR target_node_id = $2)
+                  AND (endpoint IS NULL OR endpoint != $1)
+                """,
+                expose_url,
+                node_id,
+            )
+
     async def update_usage(
         self,
         *,
@@ -537,11 +567,112 @@ class InventoryRepository:
         """Find all model deployments assigned to this node."""
         query = """
         SELECT deployment_id FROM model_deployments
-        WHERE node_ids @> ARRAY[$1]::uuid[]
+        WHERE node_ids @> ARRAY[$1]::uuid[] OR target_node_id = $1
         """
         async with self.db.acquire() as conn:
             rows = await conn.fetch(query, node_id)
             return [row["deployment_id"] for row in rows]
+
+    async def list_xds_nodes(self) -> list[dict]:
+        """All non-terminated compute_inventory rows WITH active deployments.
+
+        Returns entries in the format the xDS control plane expects:
+          {id, advertise_url, pool_id, engine, model, healthy}
+        One entry per (node, engine, model) triple — if a node has multiple
+        deployments with different engines or models it will appear for
+        each distinct combination. Nodes with NO active deployments are
+        excluded (they cannot receive traffic and should not occupy clusters).
+        """
+        query = """
+            SELECT i.id, i.pool_id, i.advertise_url, i.expose_url,
+                   i.state, i.health_score, d.engine, d.model
+              FROM compute_inventory i
+              INNER JOIN LATERAL (
+                SELECT DISTINCT md.engine,
+                       COALESCE(NULLIF(md.inference_model, ''),
+                                NULLIF(md.model_name, ''),
+                                '__default__') AS model
+                  FROM model_deployments md
+                 WHERE (md.node_ids @> ARRAY[i.id] OR md.target_node_id = i.id)
+                   AND md.state IN ('RUNNING','DEPLOYING','PENDING_NODE')
+              ) d ON true
+             WHERE i.state IS DISTINCT FROM 'terminated'
+             ORDER BY i.id, d.engine, d.model
+        """
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(query)
+        result = []
+        for r in rows:
+            node_id = str(r["id"])
+            pool_id = str(r["pool_id"]) if r.get("pool_id") else None
+            advertise_url = r.get("advertise_url") or r.get("expose_url")
+            if not advertise_url:
+                continue
+            healthy = r["state"] == "ready" and (r.get("health_score", 0) or 0) >= 50
+            # engine and model now come from the INNER JOIN — never NULL
+            engine = r.get("engine")  # No default — INNER JOIN guarantees a value
+            model = r.get("model") or "__default__"
+            result.append({
+                "id": node_id,
+                "advertise_url": advertise_url,
+                "pool_id": pool_id,
+                "engine": engine,
+                "model": model,
+                "healthy": healthy,
+            })
+        return result
+
+    async def get_ready_nodes(self) -> list[dict]:
+        """Poll DB for ready nodes with active deployments xDS needs.
+
+        Returns every compute_inventory row in 'ready' state that has at
+        least one active (RUNNING/DEPLOYING) deployment bound to it via
+        either node_ids or target_node_id. Each (node, engine, model)
+        triple is returned as a separate entry so a node serving multiple
+        engines/models appears once per combination.
+
+        Fields returned: id, advertise_url, expose_url, pool_id, engine,
+        model, endpoint, healthy, last_heartbeat.
+        """
+        query = """
+            SELECT i.id, i.pool_id, i.advertise_url, i.expose_url,
+                   i.state, i.health_score, i.last_heartbeat,
+                   d.engine, d.model, d.endpoint
+              FROM compute_inventory i
+              INNER JOIN LATERAL (
+                SELECT DISTINCT md.engine,
+                       COALESCE(NULLIF(md.inference_model, ''),
+                                NULLIF(md.model_name, ''),
+                                '__default__') AS model,
+                       md.endpoint
+                  FROM model_deployments md
+                 WHERE (md.node_ids @> ARRAY[i.id] OR md.target_node_id = i.id)
+                   AND md.state IN ('RUNNING', 'DEPLOYING')
+              ) d ON true
+             WHERE i.state = 'ready'
+               AND (i.advertise_url IS NOT NULL OR i.expose_url IS NOT NULL)
+               AND i.last_heartbeat IS NOT NULL
+               AND i.last_heartbeat > now() - INTERVAL '5 minutes'
+             ORDER BY i.id, d.engine, d.model
+        """
+        async with self.db.acquire() as conn:
+            rows = await conn.fetch(query)
+        result = []
+        for r in rows:
+            healthy = (r.get("health_score", 0) or 0) >= 50
+            url = r.get("advertise_url") or r.get("expose_url")
+            result.append({
+                "id": str(r["id"]),
+                "advertise_url": url,
+                "expose_url": r.get("expose_url"),
+                "pool_id": str(r["pool_id"]) if r.get("pool_id") else None,
+                "engine": r["engine"],
+                "model": r["model"] or "__default__",
+                "endpoint": r.get("endpoint"),
+                "healthy": healthy,
+                "last_heartbeat": r["last_heartbeat"].isoformat() if r["last_heartbeat"] else None,
+            })
+        return result
 
     async def list_nodes_by_provider(
         self, provider: str, *, limit: int = 200, offset: int = 0
@@ -871,7 +1002,7 @@ async def _upsert_worker_impl(
             ON CONFLICT (pool_id, node_name)
                 WHERE agent_kind = 'worker' AND node_name IS NOT NULL
             DO UPDATE SET
-                advertise_url = EXCLUDED.advertise_url,
+                advertise_url = COALESCE(EXCLUDED.advertise_url, compute_inventory.advertise_url),
                 metadata = EXCLUDED.metadata,
                 labels = compute_inventory.labels || EXCLUDED.labels,
                 -- Resource totals are refreshed only when the incoming

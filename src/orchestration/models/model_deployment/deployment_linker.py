@@ -42,10 +42,38 @@ from orchestration.models.model_cache import deps as _mc_deps
 logger = logging.getLogger(__name__)
 
 
+DISAGG_RECIPE_MAP = {
+    "vllm": "vllm-prefill-decode",
+    "sglang": "sglang-prefill-decode",
+}
+
+
+def _resolve_recipe(engine: str, prefill_replicas: int, decode_replicas: int) -> str:
+    """Upgrade recipe to prefill-decode variant when disagg is active."""
+    if (prefill_replicas > 0 or decode_replicas > 0) and engine not in (
+        "vllm-prefill-decode", "sglang-prefill-decode",
+    ):
+        return DISAGG_RECIPE_MAP.get(engine, engine)
+    return engine
+
+
+def _build_disagg_spec(spec: dict, cfg: dict, prefill_replicas: int, decode_replicas: int, gpu_indices: list[int]) -> None:
+    """Mutate spec in-place with disagg fields."""
+    spec["prefill_replicas"] = prefill_replicas
+    spec["decode_replicas"] = decode_replicas or 1
+    # GPU index assignment is owned by the worker's GPUAllocator.
+    # Omit prefill_gpu_indices / decode_gpu_indices so the worker
+    # defaults both to GPUIndices and partitions via its allocator.
+
+
 def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     """Build the load_model spec from a list_pending_for_pool row.
 
     asyncpg returns ``configuration`` as a JSON string. Parse it if so.
+    When the config contains ``prefill_replicas`` / ``decode_replicas``
+    (set by the dashboard's GPU slider) the recipe is upgraded to the
+    ``-prefill-decode`` variant so the worker dispatcher takes the
+    multi-container path.
     """
     import json as _json
 
@@ -60,10 +88,6 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     model_block = cfg.get("model")
     if not isinstance(model_block, dict):
         model_block = {}
-    # The real model identifier for ollama lives in cfg["model_id"] (a bare
-    # name:tag); resolve_artifact_uri reads it and guarantees a scheme the
-    # worker accepts. Falling back to model_name (the display name) is the
-    # bug this replaces — it shipped e.g. "hjg" instead of "gemma3:4b".
     artifact_uri = resolve_artifact_uri(
         configuration=cfg,
         inference_model=deploy.get("inference_model"),
@@ -71,6 +95,10 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
     ) or ""
     recipe = deploy.get("engine") or "vllm"
     gpu_indices = list(range(gpu_required))
+    prefill_replicas = cfg.get("prefill_replicas", 0)
+    decode_replicas = cfg.get("decode_replicas", 0)
+    recipe = _resolve_recipe(deploy.get("engine") or "vllm", prefill_replicas, decode_replicas)
+
     spec: dict = {
         "deployment_id": str(deploy["id"]),
         "recipe": recipe,
@@ -89,6 +117,9 @@ def _spec_from_pending(deploy: dict, gpu_required: int) -> dict:
         "port": 0,
         "env": dict(cfg.get("env") or {}),
     }
+
+    if prefill_replicas > 0 or decode_replicas > 0:
+        _build_disagg_spec(spec, cfg, prefill_replicas, decode_replicas, gpu_indices)
 
     return spec
 

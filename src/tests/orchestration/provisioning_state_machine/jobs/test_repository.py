@@ -3,13 +3,13 @@ pattern in services/orchestration/services/worker_controller/test_auth.py."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from orchestration.state_machine.jobs.model import (
-    ClassifiedError, ErrorClass, EventLine, Phase, ProvisioningJob,
+    ClassifiedError, ErrorClass, Phase, ProvisioningJob,
 )
 from orchestration.state_machine.jobs.repository import (
     ProvisioningJobRepository,

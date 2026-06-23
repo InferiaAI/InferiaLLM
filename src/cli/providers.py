@@ -24,7 +24,6 @@ import json
 import os
 import sys
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 _CONFIG_KEY = "providers_config"
 _CLOUD_PROVIDERS = {"aws", "gcp", "azure", "ibm"}

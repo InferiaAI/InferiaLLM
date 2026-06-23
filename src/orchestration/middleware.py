@@ -1,4 +1,4 @@
-from fastapi import Request, status
+from fastapi import status
 from fastapi.responses import JSONResponse
 import logging
 from orchestration.config import settings

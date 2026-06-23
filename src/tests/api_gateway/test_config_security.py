@@ -5,7 +5,6 @@ Verifies that placeholder/default secrets are rejected in production
 and warned about in development.
 """
 
-import logging
 import os
 import pytest
 from unittest.mock import patch

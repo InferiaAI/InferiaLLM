@@ -1,6 +1,5 @@
 """Tests for DB-level Fernet encryption — security layer."""
 
-import json
 import pytest
 from unittest.mock import patch
 from cryptography.fernet import Fernet

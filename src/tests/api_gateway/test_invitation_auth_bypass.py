@@ -5,7 +5,7 @@ lookup route, not for any arbitrary path under /auth/invitations/.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from api_gateway.rbac.middleware import auth_middleware
 

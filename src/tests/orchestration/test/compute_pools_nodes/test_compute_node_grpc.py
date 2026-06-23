@@ -1,7 +1,5 @@
 import asyncio
 import grpc
-import json
-import datetime as dt
 
 from orchestration.v1 import (
     compute_pool_pb2,

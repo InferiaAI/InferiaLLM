@@ -81,6 +81,7 @@ services:
       - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
       - "${APP_PORT:-8000}:${APP_PORT:-8000}"   # Unified web: /api gateway, /inf inference, /v2 OCI mirror, / dashboard
+      - "8080:8080"                                 # Orchestration service internal port
     deploy:
       resources:
         limits:
@@ -93,6 +94,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - inferia-net
+
+  front-envoy:
+    image: envoyproxy/envoy:v1.38.2
+    container_name: inferia-envoy
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+      - "9901:9901"
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      - app
     networks:
       - inferia-net
 

@@ -13,9 +13,8 @@ from fastapi.responses import StreamingResponse
 
 from inference.client import api_gateway_client
 from inference.config import settings
-from ..pipeline import Pipeline, RequestContext
-from ..providers import get_adapter, resolve_upstream
-from ..worker_routing import provider_auth, upstream_model
+from ..providers import resolve_upstream
+from ..worker_routing import envoy_route_headers, provider_auth, upstream_model
 from ..rate_limiter import rate_limiter
 from ..request_logger import RequestLogger
 from ..service import GatewayService
@@ -98,6 +97,18 @@ class CompletionHandler:
         )
         provider_headers = adapter.get_headers(provider_key)
         provider_headers.update(extra_headers)
+
+        # --- Envoy proxy routing ---
+        # When ENVOY_URL is configured and the deployment is worker-hosted,
+        # route through the front Envoy instead of directly to the worker.
+        # The X-Inferia-Route-Cluster header tells Envoy which upstream
+        # cluster to forward to (grouped by pool_id or individual node).
+        _envoy_url, _envoy_headers = envoy_route_headers(
+            deployment, settings.envoy_url,
+        )
+        if _envoy_url:
+            endpoint_url = _envoy_url
+            provider_headers.update(_envoy_headers)
 
         provider_payload = body.copy()
         provider_payload["messages"] = messages

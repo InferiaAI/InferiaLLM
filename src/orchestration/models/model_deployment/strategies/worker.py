@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import uuid
 
+from orchestration.models.model_deployment.deployment_linker import (
+    _build_disagg_spec,
+    _resolve_recipe,
+)
+
 
 class WorkerDeploymentStrategy:
     """
@@ -69,18 +74,29 @@ class WorkerDeploymentStrategy:
             allocated = True
 
             # Build the worker LoadModel spec.
+            model_config = model.get("config") or {}
+            prefill_replicas = model_config.get("prefill_replicas", 0)
+            decode_replicas = model_config.get("decode_replicas", 0)
+
+            recipe = _resolve_recipe(
+                model.get("backend", "vllm"), prefill_replicas, decode_replicas
+            )
+
             spec = {
                 "deployment_id": str(deployment_id),
-                "recipe": model.get("backend", "vllm"),
+                "recipe": recipe,
                 "model": {
                     "artifact_uri": model["artifact_uri"],
                     "format": model.get("format", "hf"),
                     "backend": model.get("backend", "vllm"),
                 },
-                "config": model.get("config") or {},
+                "config": model_config,
                 "gpu_indices": list(range(gpu_per_replica)),
                 "port": 0,  # let the worker allocate
             }
+
+            if prefill_replicas > 0 or decode_replicas > 0:
+                _build_disagg_spec(spec, model_config, prefill_replicas, decode_replicas, list(range(gpu_per_replica)))
             result = await self.controller.load_model(
                 node_id=str(node_id), spec=spec,
             )

@@ -8,7 +8,7 @@ are exercised here.
 
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 # ---------------------------------------------------------------------------
 # Path fix: pyenv PyJWT must shadow the conflicting jwt 1.3.1 at ~/.local/lib

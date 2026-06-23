@@ -6,7 +6,6 @@ verify the imports it depends on are wired correctly and the strategy
 class is constructible with the same DI shape main() uses.
 """
 
-import pytest
 
 
 def test_worker_main_has_strategy_registration():

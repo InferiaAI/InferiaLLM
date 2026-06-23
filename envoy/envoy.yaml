@@ -1,0 +1,107 @@
+node:
+  cluster: front-envoy
+  id: front-envoy-1
+
+admin:
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 9901 }
+
+dynamic_resources:
+  cds_config:
+    api_config_source:
+      api_type: REST
+      transport_api_version: V3
+      cluster_names: [xds_cluster]
+      refresh_delay: 5s
+      request_timeout: 5s
+    initial_fetch_timeout: 0s
+
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 10000 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                text_format_source:
+                  inline_string: "[%START_TIME%] \"%REQ(:METHOD)% %REQ(:PATH)%\" %RESPONSE_CODE% %RESPONSE_FLAGS% cluster=%UPSTREAM_CLUSTER% header=%REQ(X-INFERIA-ROUTE-CLUSTER)%\n"
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains: ["*"]
+              typed_per_filter_config:
+                envoy.filters.http.cors:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
+                  allow_origin_string_match:
+                  - prefix: "http://localhost:"
+                  - safe_regex:
+                      regex: "https?://[a-zA-Z0-9.-]+(:[0-9]+)?"
+                  allow_headers: "authorization, content-type, x-sandbox, x-inferia-route-cluster, x-inferia-deployment-id"
+                  expose_headers: "content-type, cache-control, connection, x-accel-buffering, x-request-id"
+                  allow_methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"
+                  max_age: "86400"
+              routes:
+              - match: { prefix: "/api/" }
+                route: { cluster: app_cluster, timeout: 60s }
+              - match: { prefix: "/v2/" }
+                route: { cluster: app_cluster, timeout: 60s }
+              - match: { prefix: "/v3/" }
+                route: { cluster: app_cluster, timeout: 60s }
+              - match: { prefix: "/dashboard/" }
+                route: { cluster: app_cluster, timeout: 60s }
+              - match: { prefix: "/assets/" }
+                route: { cluster: app_cluster, timeout: 60s }
+              - match: { prefix: "/" }
+                route:
+                  cluster_header: "x-inferia-route-cluster"
+                  timeout: 60s
+                  retry_policy:
+                    retry_on: "5xx,reset,connect-failure"
+                    num_retries: 3
+                    per_try_timeout: 0s
+          http_filters:
+          - name: envoy.filters.http.cors
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  - name: app_cluster
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: app_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: app
+                port_value: 8080
+  - name: xds_cluster
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: xds_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: app
+                port_value: 8080

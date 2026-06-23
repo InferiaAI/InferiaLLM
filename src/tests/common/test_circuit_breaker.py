@@ -1,9 +1,8 @@
 """Tests for circuit breaker — error handling layer."""
 
 import asyncio
-import time
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 from common.circuit_breaker import (
     CircuitBreaker,

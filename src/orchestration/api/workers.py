@@ -11,8 +11,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from orchestration.workers.worker_controller.auth import (
     InvalidBootstrapToken,

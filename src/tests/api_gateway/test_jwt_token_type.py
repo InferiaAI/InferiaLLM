@@ -1,9 +1,7 @@
 """Tests for decode_token expected_type enforcement (issue #52)."""
 
 import pytest
-from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
-from jose import jwt
 from fastapi import HTTPException
 
 from api_gateway.rbac.auth import AuthService

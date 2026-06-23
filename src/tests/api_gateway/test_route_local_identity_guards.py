@@ -8,7 +8,6 @@ when the decorator is missing.
 Run with --noconftest:
   pytest .../tests/test_route_local_identity_guards.py --noconftest -q
 """
-import pytest
 from fastapi.routing import APIRoute
 
 import api_gateway.rbac.router as rbac_router
