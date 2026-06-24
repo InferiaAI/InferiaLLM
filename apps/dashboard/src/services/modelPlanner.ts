@@ -126,10 +126,13 @@ export function calculatePoolCompatibility(
 
 export function mapBestQuantToVllm(quant: string): string | undefined {
   const lower = quant.toLowerCase();
-  if (lower === 'fp8') return 'fp8';
-  if (lower === 'awq') return 'awq';
-  if (lower === 'gptq') return 'gptq';
-  return undefined;
+  if (lower.includes('f16') || lower.includes('fp16') || lower.includes('bf16') || lower.includes('bfloat16') || lower.includes('float16') || lower === 'native') {
+    return undefined;
+  }
+  if (lower.includes('fp8')) return 'fp8';
+  if (lower.includes('gptq')) return 'gptq';
+  if (lower.includes('awq')) return 'awq';
+  return 'awq';
 }
 
 // ---- Fit Color Utility ----
