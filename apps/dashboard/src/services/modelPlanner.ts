@@ -29,6 +29,8 @@ export interface LlmfitTtftResult {
 
 export interface PoolCompatibilityWithFit extends CompatibilityResult {
   ttft: LlmfitTtftResult;
+  bestQuant?: string;
+  contextLength?: number;
 }
 
 // ---- LLMFit Server Config ----
@@ -52,6 +54,7 @@ interface LlmfitModelFit {
   runtime: string;
   runtime_label: string;
   context_length: number;
+  best_quant: string | null;
   params_b: number;
   score: number;
   score_components: { quality: number; speed: number; fit: number; context: number };
@@ -117,6 +120,16 @@ export function calculatePoolCompatibility(
     },
     externalRegistry,
   );
+}
+
+// ---- Quantization Mapping ----
+
+export function mapBestQuantToVllm(quant: string): string | undefined {
+  const lower = quant.toLowerCase();
+  if (lower === 'fp8') return 'fp8';
+  if (lower === 'awq') return 'awq';
+  if (lower === 'gptq') return 'gptq';
+  return undefined;
 }
 
 // ---- Fit Color Utility ----
@@ -319,7 +332,11 @@ export async function calculatePoolCompatibilityWithFit(
         fit.context_length || arch.contextLength || 4096,
       );
 
-      return { ...mapped, ttft };
+      const result: PoolCompatibilityWithFit = { ...mapped, ttft, bestQuant: fit.best_quant || undefined, contextLength: fit.context_length || arch.contextLength };
+      if (result.recommendedVllmConfig && fit.context_length) {
+        result.recommendedVllmConfig = { ...result.recommendedVllmConfig, maxModelLen: fit.context_length };
+      }
+      return result;
     }
   }
 
@@ -329,5 +346,5 @@ export async function calculatePoolCompatibilityWithFit(
   const paramsB = extractParamsFromModelId(modelId);
   const ttft = calculateTtft(base.estimatedTps, paramsB, bandwidth, arch.contextLength || 4096);
 
-  return { ...base, ttft };
+  return { ...base, ttft, contextLength: arch.contextLength };
 }

@@ -858,21 +858,39 @@ async def proxy_admin_aws_discovery(
     )
 
 
-LLMFIT_SKIP_PREFIXES = frozenset({"/health"})
-
-
 @router.api_route("/llmfit/health", methods=["GET"])
 async def proxy_llmfit_health(request: Request):
     """Unauthenticated health check for llmfit sidecar."""
-    url = f"{LLMFIT_URL}/health"
+    return await _proxy_llmfit_unauthenticated(request, "health")
+
+
+@router.api_route("/llmfit/{path:path}", methods=["GET"])
+async def proxy_llmfit(
+    request: Request,
+    path: str,
+):
+    """Proxy model-fit queries to the llmfit sidecar (no auth needed)."""
+    return await _proxy_llmfit_unauthenticated(request, path)
+
+
+async def _proxy_llmfit_unauthenticated(request: Request, path: str) -> Response:
+    """Forward a request to the llmfit sidecar without user auth."""
+    url = f"{LLMFIT_URL}/{path}"
     headers = dict(request.headers)
+    headers.pop("Authorization", None)
     headers.pop("X-Internal-API-Key", None)
     headers["X-Internal-API-Key"] = settings.internal_api_key
     headers["X-Gateway-Request"] = "true"
     content = await request.body()
     try:
         client = gateway_http_client.get_proxy_client()
-        response = await client.get(url, headers=headers, params=request.query_params)
+        response = await client.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            content=content,
+            params=request.query_params,
+        )
         return Response(
             content=response.content,
             status_code=response.status_code,
@@ -880,23 +898,3 @@ async def proxy_llmfit_health(request: Request):
         )
     except httpx.RequestError as e:
         raise HTTPException(status_code=503, detail=f"llmfit unavailable: {e}")
-
-
-@router.api_route("/llmfit/{path:path}", methods=["GET"])
-async def proxy_llmfit(
-    request: Request,
-    path: str,
-    user_context: UserContext = Depends(get_current_user_from_request),
-):
-    """Proxy model-fit queries to the llmfit sidecar (read-only).
-    Requires DEPLOYMENT_LIST."""
-    authz_service.require_permission(
-        user_context, PermissionEnum.DEPLOYMENT_LIST
-    )
-    return await proxy_request(
-        method=request.method,
-        path=path,
-        request=request,
-        target_url=LLMFIT_URL,
-        user_context=user_context,
-    )

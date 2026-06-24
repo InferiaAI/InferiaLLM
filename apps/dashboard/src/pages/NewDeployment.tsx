@@ -22,7 +22,7 @@ import {
   type ModelTypeKey
 } from "@/services/huggingfaceService"
 import { fetchExternalRegistry, type ExternalModel } from "@/services/gpuCompatibility"
-import { resolvePoolGpuResources, extractHfArchitecture, getFitColor, calculatePoolCompatibilityWithFit } from "@/services/modelPlanner"
+import { resolvePoolGpuResources, extractHfArchitecture, getFitColor, calculatePoolCompatibilityWithFit, mapBestQuantToVllm } from "@/services/modelPlanner"
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 import { ConfigService } from "@/services/configService"
@@ -807,6 +807,22 @@ export default function NewDeployment() {
     }
   }, [buildJobSpec])
 
+  // Auto-apply llmfit recommendations when compatibility data arrives
+  useEffect(() => {
+    if (!compatibility) return;
+
+    if (compatibility.contextLength) {
+      dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: compatibility.contextLength.toString() });
+    }
+
+    if (compatibility.bestQuant) {
+      const mapped = mapBestQuantToVllm(compatibility.bestQuant);
+      if (mapped) {
+        dispatch({ type: 'SET_FIELD', field: 'quantization', value: mapped });
+      }
+    }
+  }, [compatibility])
+
   // --- Mutations ---
 
   const createMutation = useMutation({
@@ -1211,6 +1227,14 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
               <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">VRAM Allocation</div>
               <div className="text-lg font-black">{compatibility.requiredVram.toFixed(1)} <span className="text-xs font-normal opacity-70">/ {compatibility.availableVram} GB</span></div>
             </div>
+            <div className="bg-current/5 p-3 rounded-lg border border-current/10">
+              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Max Context Length</div>
+              <div className="text-lg font-black">{compatibility.contextLength ? `${compatibility.contextLength.toLocaleString()} tokens` : "Unknown"}</div>
+            </div>
+            <div className="bg-current/5 p-3 rounded-lg border border-current/10">
+              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Recommended Quant</div>
+              <div className="text-lg font-black uppercase">{compatibility.bestQuant || "Auto (Native)"}</div>
+            </div>
           </div>
 
           {compatibility.recommendedVllmConfig && selectedEngine === 'vllm' && (
@@ -1223,11 +1247,12 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                   type="button"
                   onClick={() => {
                     const cfg = compatibility.recommendedVllmConfig!;
-                    dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: cfg.maxModelLen.toString() });
+                    const optimalMaxLen = compatibility.contextLength || cfg.maxModelLen;
+                    dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: optimalMaxLen.toString() });
                     dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: cfg.gpuMemoryUtilization.toString() });
                     dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: cfg.enforceEager });
                     dispatch({ type: 'SET_FIELD', field: 'dtype', value: cfg.dtype });
-                    toast.success("Applied vLLM optimizations for this hardware.");
+                    toast.success("Applied model optimizations and context limits.");
                   }}
                   className="px-3 py-1 bg-current/10 hover:bg-current/20 rounded-md text-[10px] font-black uppercase transition-colors border border-current/20 active:scale-95"
                 >

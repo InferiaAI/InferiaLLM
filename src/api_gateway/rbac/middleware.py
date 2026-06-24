@@ -279,6 +279,11 @@ async def auth_middleware(request: Request, call_next):
     if route_path.startswith("/hf/") or route_path.startswith("/v2/"):
         return await call_next(request)
 
+    # Skip user-auth for llmfit sidecar — it's an internal model-fit
+    # calculation service with no user-specific data.
+    if route_path.startswith("/v1/llmfit/"):
+        return await call_next(request)
+
     # Skip auth for public endpoints
     public_paths = [
         "/",
