@@ -807,22 +807,6 @@ export default function NewDeployment() {
     }
   }, [buildJobSpec])
 
-  // Auto-apply llmfit recommendations when compatibility data arrives
-  useEffect(() => {
-    if (!compatibility) return;
-
-    if (compatibility.contextLength) {
-      dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: compatibility.contextLength.toString() });
-    }
-
-    if (compatibility.bestQuant) {
-      const mapped = mapBestQuantToVllm(compatibility.bestQuant);
-      if (mapped) {
-        dispatch({ type: 'SET_FIELD', field: 'quantization', value: mapped });
-      }
-    }
-  }, [compatibility])
-
   // --- Mutations ---
 
   const createMutation = useMutation({
@@ -1145,6 +1129,22 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     enabled: !!selectedPool && !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
     staleTime: 1000 * 60 * 5,
   });
+
+  // Auto-apply llmfit recommendations when compatibility data arrives
+  useEffect(() => {
+    if (!compatibility) return;
+
+    if (compatibility.contextLength) {
+      dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: compatibility.contextLength.toString() });
+    }
+
+    if (compatibility.bestQuant) {
+      const mapped = mapBestQuantToVllm(compatibility.bestQuant);
+      if (mapped) {
+        dispatch({ type: 'SET_FIELD', field: 'quantization', value: mapped });
+      }
+    }
+  }, [compatibility])
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
