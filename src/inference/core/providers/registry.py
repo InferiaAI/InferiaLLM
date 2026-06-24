@@ -30,7 +30,7 @@ EXTERNAL_PROVIDERS = {
     "openrouter",
     "cerebras",
 }
-TEXT_INFERENCE_ENGINES = {"vllm", "ollama", "generic"}
+TEXT_INFERENCE_ENGINES = {"vllm", "sglang", "ollama", "generic"}
 EMBEDDING_ENGINES = {"infinity", "tei"}
 IMAGE_ENGINES = {"inferia-diffusion"}
 VIDEO_ENGINES = {"inferia-diffusion"}

@@ -42,6 +42,7 @@ export default defineConfig({
         "src/components/nodes/NodeLogs.tsx",
         "src/components/deployment/TerminalLogs.tsx",
         "src/components/deployment/DeploymentOverview.tsx",
+        "src/pages/newDeploymentSpec.ts",
       ],
       exclude: ["src/main.tsx", "src/setupTests.ts", "**/*.test.{ts,tsx}", "**/__tests__/**"],
       reporter: ["text", "html"],

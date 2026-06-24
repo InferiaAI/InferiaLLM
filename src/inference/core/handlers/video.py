@@ -7,7 +7,6 @@ from typing import Dict, List, Optional
 import httpx
 from fastapi import BackgroundTasks, HTTPException
 
-from inference.client import api_gateway_client
 from inference.config import settings
 from ..http_client import http_client
 from ..pipeline import Pipeline, RequestContext

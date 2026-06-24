@@ -8,7 +8,7 @@ Local mode is unchanged.
 """
 
 from typing import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio

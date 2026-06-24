@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import asyncpg

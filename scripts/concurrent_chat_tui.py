@@ -16,7 +16,6 @@ import argparse
 import curses
 import http.client
 import json
-import math
 import os
 import queue
 import ssl

@@ -7,11 +7,10 @@ import argparse
 # Ensure current directory is in path (though python does this by default for scripts)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from api_gateway.db.database import DATABASE_URL, Base
 
 # Import all models to ensure they are registered with Base
-from db import models 
 from api_gateway.rbac.initialization import initialize_default_org
 
 logging.basicConfig(level=logging.INFO)

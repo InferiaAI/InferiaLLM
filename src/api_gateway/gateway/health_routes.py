@@ -6,7 +6,7 @@ Provides a unified health endpoint that checks all downstream services.
 import asyncio
 import os
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 import httpx
 import logging
 

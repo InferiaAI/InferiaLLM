@@ -56,13 +56,53 @@ class OAuthClient:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=self._timeout, verify=self._verify)
+            # No idle keep-alive: OAuth token exchange is infrequent (once per
+            # login) and the IdP sits behind an external proxy/tunnel that
+            # silently drops idle connections. A pooled keep-alive connection
+            # would go stale between logins and the next reuse fails. Dialing
+            # fresh each time costs nothing here and removes that whole class of
+            # "works after restart, then breaks again" failures.
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout,
+                verify=self._verify,
+                limits=httpx.Limits(max_keepalive_connections=0),
+            )
         return self._client
 
     async def close(self) -> None:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
         self._client = None
+
+    async def _post(self, url: str, data: dict) -> httpx.Response:
+        """POST form data, retrying ONCE on a transport error with a fresh client.
+
+        A long-lived singleton client can hold a connection the IdP's
+        proxy/tunnel has already dropped; reusing it raises a transport error.
+        We discard the client (so the next dial is fresh) and retry once, which
+        lets the gateway self-heal on the very next request instead of needing a
+        process restart. Re-sending the request is safe: a transport error means
+        no response was received, and an authorization code that the IdP did
+        manage to consume simply comes back as a 4xx on retry (handled as
+        'auth failed') — never a double-spend.
+        """
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        last_exc: Optional[httpx.HTTPError] = None
+        for attempt in (1, 2):
+            try:
+                return await self._get_client().post(url, data=data, headers=headers)
+            except httpx.HTTPError as e:
+                last_exc = e
+                # Drop the (possibly stale) client so the retry — and every
+                # later request — dials a brand-new connection.
+                await self.close()
+                logger.info(
+                    "OAuth POST to %s failed (%s); attempt %d/2",
+                    url, type(e).__name__, attempt,
+                )
+        raise OAuthClientError(
+            f"OAuth request failed after retry: {type(last_exc).__name__}"
+        ) from last_exc
 
     # --- token endpoint -----------------------------------------------------
 
@@ -108,16 +148,7 @@ class OAuthClient:
 
     async def _post_token(self, data: dict) -> Optional[dict]:
         url = f"{self._base_url}/oauth/token"
-        try:
-            resp = await self._get_client().post(
-                url,
-                data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-        except httpx.HTTPError as e:
-            raise OAuthClientError(
-                f"OAuth token request failed: {type(e).__name__}"
-            ) from e
+        resp = await self._post(url, data)
 
         if resp.status_code >= 500:
             raise OAuthClientError(
@@ -157,12 +188,10 @@ class OAuthClient:
 
         url = f"{self._base_url}/oauth/revoke"
         try:
-            resp = await self._get_client().post(
-                url,
-                data={"token": token, "token_type_hint": token_type_hint},
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            resp = await self._post(
+                url, {"token": token, "token_type_hint": token_type_hint}
             )
-        except httpx.HTTPError:
+        except OAuthClientError:
             logger.warning("OAuth revoke network error; treating as not revoked")
             return False
 

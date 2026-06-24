@@ -24,6 +24,7 @@ from orchestration.models.model_deployment.strategies.localai import LocalAIDepl
 from orchestration.models.model_deployment.strategies.worker import WorkerDeploymentStrategy
 from orchestration.workers.worker_controller.registry import WorkerRegistry
 from orchestration.workers.worker_controller.controller import WorkerController
+from common.service_ports import depin_sidecar_url
 # from services.vllm_runtime.runtime import VLLMRuntime
 # from services.nosana_runtime.client import NosanaRuntimeClient
 
@@ -39,7 +40,7 @@ def _resolve_postgres_dsn() -> str:
 
 
 POSTGRES_DSN = _resolve_postgres_dsn()
-NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000/nosana")
+NOSANA_SIDECAR_URL = depin_sidecar_url("/nosana", env_var="NOSANA_SIDECAR_URL")
 POLL_INTERVAL = 30  # seconds
 MAX_CONCURRENT_DEPLOYS = int(os.getenv("MAX_CONCURRENT_DEPLOYS", "8"))
 
@@ -86,6 +87,27 @@ async def consume_terminate_requests(worker, event_bus, semaphore):
     ):
         log.info(f"Received terminate event: {event}. Spawning task.")
         asyncio.create_task(process_terminate(msg_id, event))
+
+
+async def consume_reload_requests(worker, event_bus, semaphore):
+    async def process_reload(msg_id, event):
+        async with semaphore:
+            try:
+                log.info(f"Processing reload event: {event}")
+                deployment_id = UUID(event["deployment_id"])
+                await worker.handle_reload_requested(deployment_id)
+                await event_bus.redis.xack("model.deployment.reload", "deployment-workers", msg_id)
+                log.info(f"Successfully processed reload event for {deployment_id}")
+            except Exception:
+                log.exception("Failed to process reload event")
+
+    async for msg_id, event in event_bus.consume(
+        stream="model.deployment.reload",
+        group="deployment-workers",
+        consumer="worker-1",
+    ):
+        log.info(f"Received reload event: {event}. Spawning task.")
+        asyncio.create_task(process_reload(msg_id, event))
 
 
 async def health_check_loop(inventory_repo, deployment_repo):
@@ -196,6 +218,7 @@ async def main():
     await asyncio.gather(
         consume_deploy_requests(worker, event_bus, deploy_semaphore),
         consume_terminate_requests(worker, event_bus, deploy_semaphore),
+        consume_reload_requests(worker, event_bus, deploy_semaphore),
         health_check_loop(inventory_repo, deployment_repo),
     )
     

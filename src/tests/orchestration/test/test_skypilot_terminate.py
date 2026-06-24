@@ -2,7 +2,7 @@
 
 import logging
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 
 @pytest.fixture()

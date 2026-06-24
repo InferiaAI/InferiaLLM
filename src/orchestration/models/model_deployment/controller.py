@@ -129,6 +129,7 @@ class ModelDeploymentController:
 
         # --- transactional intent creation ---
         async with self.deployments.transaction() as tx:
+            logger.info(f"Creating deployment {deployment_id}: engine={engine}, model_name={model_name}")
             await self.deployments.create(
                 deployment_id=deployment_id,
                 model_id=model_id,
@@ -292,15 +293,30 @@ class ModelDeploymentController:
         if not d:
             raise ValueError("Deployment not found")
 
-        await self.deployments.update(
-            deployment_id=deployment_id,
-            configuration=configuration,
-            inference_model=inference_model,
-            endpoint=endpoint,
-            replicas=replicas,
-        )
+        async with self.deployments.transaction() as tx:
+            await self.deployments.update(
+                deployment_id=deployment_id,
+                configuration=configuration,
+                inference_model=inference_model,
+                endpoint=endpoint,
+                replicas=replicas,
+                tx=tx,
+            )
 
-        # Emit event for tracking
+            await self.outbox.enqueue(
+                aggregate_type="model_deployment",
+                aggregate_id=deployment_id,
+                event_type="model.deployment.reload",
+                payload={
+                    "deployment_id": str(deployment_id),
+                    "configuration": configuration,
+                    "inference_model": inference_model,
+                    "replicas": replicas,
+                },
+                tx=tx,
+            )
+
+        # Emit event for tracking (outside transaction)
         await self.event_bus.publish(
             "model.deployment.updated",
             {

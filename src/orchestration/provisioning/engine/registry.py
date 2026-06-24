@@ -112,6 +112,30 @@ def is_direct_provision_provider(provider: Optional[str]) -> bool:
     return getattr(cls, "ADAPTER_TYPE", None) != AdapterType.CLOUD
 
 
+def provider_prefers_origin_model_fetch(provider: Optional[str]) -> bool:
+    """Should a deploy on ``provider`` fetch model weights from origin
+    (huggingface.co) directly, bypassing the control-plane HF mirror?
+
+    True iff the provider's adapter CAPABILITIES set
+    ``prefers_origin_model_fetch`` — currently the public-cloud providers
+    (aws/gcp/azure), whose VMs have direct internet egress. Air-gapped /
+    DePIN / self-hosted providers return False and keep the cache-first
+    mirror. Gates both the per-deploy cache pre-warm and the mirror injection
+    into the load spec.
+
+    Reads CLASS attributes only — must NOT instantiate the adapter (mirrors
+    :func:`is_direct_provision_provider`; cloud adapters read pulumi settings
+    and k8s loads kubeconfig at __init__). Unknown / falsy providers → False.
+    """
+    if not provider:
+        return False
+    cls = ADAPTER_REGISTRY.get(provider)
+    if cls is None:
+        return False
+    caps = getattr(cls, "CAPABILITIES", None)
+    return bool(caps is not None and getattr(caps, "prefers_origin_model_fetch", False))
+
+
 async def _deprovision_direct_node(
     node_row: dict,
     *,

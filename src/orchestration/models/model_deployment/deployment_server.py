@@ -20,9 +20,12 @@ from orchestration.v1 import (
     compute_pool_pb2_grpc,
 )
 
+from common.service_ports import orchestration_grpc_addr, depin_sidecar_url
+
 from orchestration.repositories.provider_repo import (
     ProviderResourceRepository,
 )
+
 from orchestration.provisioning.engine.registry import (
     get_adapter,
     ADAPTER_REGISTRY,
@@ -33,14 +36,9 @@ from orchestration.provisioning.engine.base import AdapterType
 from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
-from orchestration.models.model_deployment.log_store import (
-    DeploymentLogStore,
-    DeploymentLogBuffer,
-)
 from orchestration.models.model_deployment.direct_provision import (
     provision_direct_node,
 )
-from orchestration.config import settings as orch_settings
 from typing import Any, Literal, Optional
 from types import SimpleNamespace
 
@@ -91,40 +89,12 @@ def _resolve_postgres_dsn() -> str:
 
 
 POSTGRES_DSN = _resolve_postgres_dsn()
-GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "127.0.0.1:50051")
-NOSANA_SIDECAR_URL = os.getenv("NOSANA_SIDECAR_URL", "http://localhost:3000")
+GRPC_ADDR = orchestration_grpc_addr("127.0.0.1")
+NOSANA_SIDECAR_URL = depin_sidecar_url(env_var="NOSANA_SIDECAR_URL")
 NOSANA_CLIENT_MANAGER_URL = os.getenv(
     "NOSANA_CLIENT_MANAGER_URL", "https://client-manager.k8s.prd.nosana.com"
 )
 NOSANA_INGRESS_DOMAIN = os.getenv("NOSANA_INGRESS_DOMAIN", "node.k8s.prd.nos.ci")
-
-# Singleton log store — initialized lazily on first use
-_log_store: Optional[DeploymentLogStore] = None
-
-
-async def _get_log_store() -> DeploymentLogStore:
-    """Get or initialize the deployment log store singleton."""
-    global _log_store
-    if _log_store is None:
-        _log_store = DeploymentLogStore(
-            elasticsearch_url=orch_settings.elasticsearch_url
-        )
-        await _log_store.initialize()
-    return _log_store
-
-
-async def _create_log_buffer(deployment_id: str, org_id: str) -> DeploymentLogBuffer:
-    """Create a log buffer for a WebSocket session, seeded with ES line count."""
-    store = await _get_log_store()
-    start_line = await store.get_max_line_number(deployment_id)
-    return DeploymentLogBuffer(
-        store=store,
-        deployment_id=deployment_id,
-        org_id=org_id,
-        max_lines=orch_settings.deployment_log_buffer_size,
-        flush_interval=orch_settings.deployment_log_flush_interval,
-        start_line_number=start_line,
-    )
 
 
 async def _get_nosana_signature(api_key: str) -> str:
@@ -518,7 +488,7 @@ async def _build_provisioning_spec(
     # >= 75GB"). Default GPU tiers to 100GB; CPU (plain Ubuntu) to 30GB.
     # A per-pool root_volume_gb override above still wins.
     if "root_volume_gb" not in spec:
-        spec["root_volume_gb"] = 30 if instance_class == "cpu" else 100
+        spec["root_volume_gb"] = 30 if instance_class == "cpu" else 130
     return spec
 
 
@@ -685,6 +655,8 @@ class DeployModelRequest(BaseModel):
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
     ami_id: str | None = None
     hf_token_name: str | None = None
+    auto_replica_enabled: bool = False
+    tokens_per_second_threshold: float | None = None
 
 
 class PreflightRequest(BaseModel):
@@ -721,6 +693,8 @@ class UpdateDeploymentRequest(BaseModel):
     inference_model: str | None = None
     endpoint: str | None = None
     replicas: int | None = None
+    auto_replica_enabled: bool | None = None
+    tokens_per_second_threshold: float | None = None
 
 
 class CreatePoolRequest(BaseModel):
@@ -1473,6 +1447,7 @@ async def place_and_provision(
                     spec, recipe=spec["recipe"],
                     artifact_uri=spec["model"]["artifact_uri"],
                     mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
+                    provider=pool_row.get("provider"),
                 )
             except Exception:
                 pass  # mirror is best-effort; never block a warm deploy
@@ -1704,6 +1679,8 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         model_type=req.model_type,
         target_pool_id=pool_id_uuid,
         target_node_id=None,
+        auto_replica_enabled=req.auto_replica_enabled,
+        tokens_per_second_threshold=req.tokens_per_second_threshold,
     )
 
     # 2b. Fire-and-forget pre-warm: start downloading weights to the CP cache
@@ -1726,7 +1703,15 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             inference_model=req.inference_model,
             model_name=req.model_name,
         )
-        if _dl and _uri and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
+        # Skip the CP cache pre-warm for public-cloud providers: their VMs pull
+        # weights from origin directly (the load spec also bypasses the mirror),
+        # so pre-warming would download to the CP for nothing — and over a
+        # home/tunnel uplink that is slow + wasteful.
+        from orchestration.provisioning.engine.registry import (
+            provider_prefers_origin_model_fetch,
+        )
+        _origin_fetch = provider_prefers_origin_model_fetch(pool_row.get("provider"))
+        if _dl and _uri and not _origin_fetch and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
             _src, _mid, _rev = derive_cache_key(req.engine or "vllm", str(_uri))
             _dl.start(source=_src, model_id=_mid, revision=_rev, engine_hint=req.engine)
     except Exception:
@@ -1801,11 +1786,13 @@ async def get_deployment_status(deployment_id: str):
     # Fetch node_ids directly from the DB (not in proto response).
     node_ids: list[str] = []
     target_node_id: str | None = None
+    auto_replica_enabled: bool = False
+    tokens_per_second_threshold: float | None = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         try:
             row = await conn.fetchrow(
-                "SELECT node_ids, target_node_id FROM model_deployments WHERE deployment_id = $1",
+                "SELECT node_ids, target_node_id, auto_replica_enabled, tokens_per_second_threshold FROM model_deployments WHERE deployment_id = $1",
                 deployment_id,
             )
             if row:
@@ -1813,6 +1800,8 @@ async def get_deployment_status(deployment_id: str):
                     node_ids = [str(n) for n in row["node_ids"]]
                 if row["target_node_id"]:
                     target_node_id = str(row["target_node_id"])
+                auto_replica_enabled = row.get("auto_replica_enabled", False)
+                tokens_per_second_threshold = row.get("tokens_per_second_threshold")
         finally:
             await conn.close()
     except Exception:
@@ -1835,11 +1824,30 @@ async def get_deployment_status(deployment_id: str):
         "error_message": resp.error_message or None,
         "node_ids": node_ids,
         "target_node_id": node_ids[0] if node_ids else target_node_id,
+        "auto_replica_enabled": auto_replica_enabled,
+        "tokens_per_second_threshold": tokens_per_second_threshold,
     }
 
 
 @router.patch("/update/{deployment_id}")
 async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
+    # Persist control-plane-only fields (auto_replica) directly to DB
+    # before/after the gRPC call, since gRPC doesn't carry these.
+    if req.auto_replica_enabled is not None or req.tokens_per_second_threshold is not None:
+        from uuid import UUID as _UUID
+        from orchestration.repositories.model_deployment_repo import (
+            ModelDeploymentRepository,
+        )
+        deploys_repo = ModelDeploymentRepository(
+            request.app.state.pool,
+            event_bus=getattr(request.app.state, "event_bus", None),
+        )
+        await deploys_repo.update_auto_replica(
+            _UUID(deployment_id),
+            auto_replica_enabled=req.auto_replica_enabled,
+            tokens_per_second_threshold=req.tokens_per_second_threshold,
+        )
+
     async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
@@ -2549,7 +2557,7 @@ async def create_pool(req: CreatePoolRequest, request: Request):
     other provisioning. All provisioning happens at /deploy time via
     PoolPlacer when an actual model deploy arrives (T7).
     """
-    from uuid import UUID, uuid4
+    from uuid import uuid4
     from orchestration.repositories.pool_repo import (
         ComputePoolRepository,
     )
@@ -3448,7 +3456,7 @@ async def get_deployment_logs(deployment_id: str):
 
         provider_instance_id = node["provider_instance_id"]
 
-        # 3. Try adapter first, fall back to ES
+        # 3. Fetch live logs from the provider adapter.
         try:
             adapter = get_adapter(provider)
             if hasattr(adapter, "get_logs"):
@@ -3459,17 +3467,10 @@ async def get_deployment_logs(deployment_id: str):
                 if logs_data and logs_data.get("logs"):
                     return logs_data
         except Exception as e:
-            logger.warning(f"Adapter log fetch failed, trying ES fallback: {e}")
+            logger.warning(f"Adapter log fetch failed: {e}")
 
-        # 4. Fallback: try Elasticsearch persisted logs
-        try:
-            store = await _get_log_store()
-            es_logs = await store.get_logs(deployment_id)
-            if es_logs:
-                return {"logs": es_logs, "source": "persisted"}
-        except Exception as e:
-            logger.warning(f"ES log fallback also failed: {e}")
-
+        # Persisted terminal logs (captured on failure/stop) are available via
+        # GET /logs/{deployment_id}/persisted (Postgres-backed).
         return {"logs": [f"No logs available for provider: {provider}"], "source": "none"}
 
     finally:
@@ -3716,9 +3717,6 @@ async def list_provider_resources(provider: str | None = None):
     Returns:
         Dict with "resources" key containing list of available resources.
     """
-    from orchestration.provisioning.engine.registry import (
-        ADAPTER_REGISTRY,
-    )
 
     try:
         if provider:
@@ -3919,10 +3917,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
             )
 
-            # Create log buffer for persistence
-            log_buffer = await _create_log_buffer(deployment_id=data.get("deployment_id", "unknown"), org_id=data.get("org_id", ""))
-            await log_buffer.start_periodic_flush()
-
             async def read_logs():
                 try:
                     while True:
@@ -3930,7 +3924,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         if not line:
                             break
                         decoded = line.decode().strip()
-                        log_buffer.append(decoded)
                         await websocket.send_json(
                             {"type": "log", "data": decoded}
                         )
@@ -3949,7 +3942,7 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                     except WebSocketDisconnect:
                         break
             finally:
-                await log_buffer.stop()
+                stream_task.cancel()
 
         elif provider == "nosana":
             job_id = data.get("jobId")
@@ -4010,13 +4003,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
                     logger.info("Connected to Nosana node, relaying logs...")
 
-                    # Create log buffer for persistence
-                    log_buffer = await _create_log_buffer(
-                        deployment_id=data.get("deployment_id", job_id),
-                        org_id=data.get("org_id", ""),
-                    )
-                    await log_buffer.start_periodic_flush()
-
                     async def client_to_sidecar():
                         while True:
                             payload = await websocket.receive()
@@ -4030,7 +4016,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         async for msg in sidecar_ws:
                             if isinstance(msg, bytes):
                                 decoded = msg.decode("utf-8", errors="replace")
-                                log_buffer.append(decoded)
                                 await websocket.send_json(
                                     {"type": "log", "data": decoded}
                                 )
@@ -4043,7 +4028,6 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                                         log_data = msg
                                 except json.JSONDecodeError:
                                     log_data = msg
-                                log_buffer.append(str(log_data))
                                 await websocket.send_json(
                                     {"type": "log", "data": log_data}
                                 )
@@ -4053,17 +4037,17 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                         asyncio.create_task(sidecar_to_client()),
                     }
                     try:
-                        done, pending = await asyncio.wait(
+                        done, _pending = await asyncio.wait(
                             tasks, return_when=asyncio.FIRST_COMPLETED
                         )
-                        for task in pending:
-                            task.cancel()
                         for task in done:
                             exc = task.exception()
                             if exc:
                                 logger.error(f"Nosana WS task error: {exc}")
                     finally:
-                        await log_buffer.stop()
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
 
             except Exception as e:
                 logger.error(f"Nosana WebSocket error: {e}")

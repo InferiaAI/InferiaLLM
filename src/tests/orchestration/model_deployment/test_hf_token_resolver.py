@@ -8,7 +8,6 @@ with an AsyncMock returning the huggingface config (object or dict).
 """
 from __future__ import annotations
 
-import asyncio
 import pytest
 from unittest.mock import AsyncMock
 

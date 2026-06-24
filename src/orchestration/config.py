@@ -5,8 +5,8 @@ Orchestration Service Configuration
 import os
 from typing import Any, ClassVar, Optional
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
-from common.unified_config import UnifiedBaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from common.service_ports import depin_sidecar_url
 
 
 class ProviderSettings(BaseSettings):
@@ -14,7 +14,8 @@ class ProviderSettings(BaseSettings):
 
     # Nosana Configuration
     nosana_sidecar_url: str = Field(
-        default="http://localhost:3000", validation_alias="NOSANA_SIDECAR_URL"
+        default_factory=lambda: depin_sidecar_url(env_var="NOSANA_SIDECAR_URL"),
+        validation_alias="NOSANA_SIDECAR_URL",
     )
     nosana_discovery_url: str = Field(
         default="https://dashboard.k8s.prd.nos.ci/api/markets",
@@ -26,7 +27,8 @@ class ProviderSettings(BaseSettings):
 
     # Akash Configuration
     akash_sidecar_url: str = Field(
-        default="http://localhost:3000/akash", validation_alias="AKASH_SIDECAR_URL"
+        default_factory=lambda: depin_sidecar_url("/akash", env_var="AKASH_SIDECAR_URL"),
+        validation_alias="AKASH_SIDECAR_URL",
     )
     akash_rpc_url: str = Field(
         default="https://rpc.akash.forbole.com:443", validation_alias="AKASH_NODE"
@@ -56,21 +58,23 @@ class ProviderSettings(BaseSettings):
     )
 
 
-class Settings(UnifiedBaseSettings):
+class Settings(BaseSettings):
     """Application settings.
 
-    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
-    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    Source precedence (highest → lowest): init/CLI > env > .env > pydantic defaults.
     """
 
-    _yaml_path: ClassVar[str] = "services.orchestration"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # App info
     app_name: str = "Orchestration Service"
     app_version: str = "0.1.0"
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
-    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
-    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # Server settings
     host: str = Field(default="0.0.0.0", validation_alias="HOST")
@@ -117,7 +121,8 @@ class Settings(UnifiedBaseSettings):
 
     # Provider Settings (backward compatibility)
     nosana_sidecar_url: str = Field(
-        default="http://localhost:3000", validation_alias="NOSANA_SIDECAR_URL"
+        default_factory=lambda: depin_sidecar_url(env_var="NOSANA_SIDECAR_URL"),
+        validation_alias="NOSANA_SIDECAR_URL",
     )
 
     internal_api_key: str = Field(default="", validation_alias="INTERNAL_API_KEY")
@@ -148,10 +153,11 @@ class Settings(UnifiedBaseSettings):
     )
     worker_image_tag: str = Field(
         # docker/metadata-action's semver pattern strips the leading "v"
-        # from git tags, so the GHCR tag for git tag v0.2.8 is 0.2.8.
-        # 0.2.8 ships the load_model container-name idempotency fix
+        # from git tags, so the GHCR tag for git tag v0.2.9 is 0.2.9.
+        # 0.2.11 adds the per-recipe readiness timeout (diffusion model-load-before-health); 0.2.10 fixed the inferia-diffusion image name (no-hyphen) + serve-CLI model load;
+        # 0.2.9 dropped the broken VLLM_USE_FASTOKENS default; 0.2.8 added container-name idempotency fix
         # (remove-before-create) that unsticks DEPLOYING deploys.
-        default="0.2.8",
+        default="0.2.11",
         validation_alias="INFERIA_WORKER_IMAGE_TAG",
     )
     bootstrap_token_ttl_seconds: int = Field(
@@ -186,17 +192,6 @@ class Settings(UnifiedBaseSettings):
         default="", validation_alias="INFERIA_MODEL_MIRROR_BASE"
     )
 
-    # Deployment Log Persistence (Elasticsearch)
-    elasticsearch_url: Optional[str] = Field(
-        default=None, validation_alias="ELASTICSEARCH_URL"
-    )
-    deployment_log_buffer_size: int = Field(
-        default=10000, validation_alias="DEPLOYMENT_LOG_BUFFER_SIZE"
-    )
-    deployment_log_flush_interval: int = Field(
-        default=10, validation_alias="DEPLOYMENT_LOG_FLUSH_INTERVAL"
-    )
-
     @property
     def is_development(self) -> bool:
         return self.environment == "development"
@@ -225,7 +220,8 @@ class Settings(UnifiedBaseSettings):
             },
             "akash": {
                 "sidecar_url": getattr(
-                    self, "akash_sidecar_url", "http://localhost:3000/akash"
+                    self, "akash_sidecar_url",
+                    depin_sidecar_url("/akash", env_var="AKASH_SIDECAR_URL"),
                 ),
                 "rpc_url": getattr(
                     self, "akash_rpc_url", "https://rpc.akash.forbole.com:443"

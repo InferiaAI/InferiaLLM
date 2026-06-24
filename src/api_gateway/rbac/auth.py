@@ -95,7 +95,7 @@ class AuthService:
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             return token_payload
-        except JWTError as e:
+        except JWTError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token",

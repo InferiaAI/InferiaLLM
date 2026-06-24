@@ -1,6 +1,5 @@
 from sqlalchemy import Column, String, DateTime, func, JSON
 from ..database import Base
-import uuid
 
 class Role(Base):
     __tablename__ = "roles"

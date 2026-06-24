@@ -14,10 +14,10 @@ import socket
 from typing import Any
 
 from orchestration.state_machine.errors import (
-    AMINotFoundError, AWSServerError, AWSThrottledError,
+    AMINotFoundError, AWSThrottledError,
     CapacityUnavailableError, InfrastructureError, InvalidCredentialsError,
-    InvalidInstanceTypeError, NetworkError, PermanentError,
-    PulumiCliMissingError, PulumiTransientError, ProvisioningError,
+    InvalidInstanceTypeError, PermanentError,
+    ProvisioningError,
     QuotaExceededError, SecurityGroupNotFoundError,
     SubnetNotFoundError, TransientError,
 )

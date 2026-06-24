@@ -1,10 +1,8 @@
 """Tests for common.runtime_env — CP-side runtime environment detector."""
 
-import os
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from common import runtime_env
 

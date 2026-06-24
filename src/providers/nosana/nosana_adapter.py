@@ -1,4 +1,3 @@
-import os
 import secrets
 import logging
 import asyncio
@@ -18,8 +17,34 @@ from providers.nosana.job_builder import (
     INTERNAL_API_KEY,
 )
 from orchestration.config import settings
+from orchestration.models.model_deployment.preflight import fetch_native_max_len
 
 logger = logging.getLogger(__name__)
+
+# Default context-length cap for vLLM deploys when the user doesn't specify one.
+# Keeps KV-cache memory bounded for large-context models; always clamped down to
+# the model's native context so small models (e.g. opt-125m, native 2048) never
+# get a value above their max_position_embeddings (which vLLM rejects at startup).
+DEFAULT_VLLM_MAX_MODEL_LEN = 8192
+
+
+def _clamp_max_model_len(
+    requested: Optional[int], native: Optional[int]
+) -> Optional[int]:
+    """Resolve the effective vLLM --max-model-len.
+
+    - requested set  -> min(requested, native) if native known, else requested.
+    - requested unset -> min(DEFAULT, native) if native known, else None.
+
+    Returns None to mean "omit the flag" so vLLM derives the model's native
+    context (always valid). Never returns a value above ``native``.
+    """
+    if requested:
+        return min(requested, native) if native else requested
+    if native:
+        return min(DEFAULT_VLLM_MAX_MODEL_LEN, native)
+    return None
+
 
 TERMINAL_JOB_STATES = {2, 3, 4, "COMPLETED", "STOPPED", "FAILED", "QUIT"}
 
@@ -56,6 +81,24 @@ NOSANA_DISCOVERY_URL = getattr(
 def generate_api_key(prefix: str = "nos") -> str:
     """Generate a secure API key for Caddy authentication."""
     return f"{prefix}_{secrets.token_urlsafe(32)}"
+
+
+def _diffusion_job_overrides(metadata: dict) -> dict:
+    """Diffusion-specific job_config values sourced from ``configuration.config``.
+
+    ``trust_remote_code`` deliberately defaults to ``False`` for diffusion — it
+    is NOT inherited from the engine-wide ``True`` default, because we do not
+    auto-trust remote code for image/video models unless the user opts in.
+    Values are expected to be native booleans (already coerced upstream by
+    ``sanitize_config``); ``bool()`` is a defensive last resort.
+    """
+    cfg = metadata.get("config") if isinstance(metadata.get("config"), dict) else {}
+    return {
+        "model_type": cfg.get("model_type"),
+        "trust_remote_code": bool(cfg.get("trust_remote_code", False)),
+        "model_offload": bool(cfg.get("model_offload", False)),
+        "group_offload": bool(cfg.get("group_offload", False)),
+    }
 
 
 class NosanaAdapter(ProviderAdapter):
@@ -243,6 +286,26 @@ class NosanaAdapter(ProviderAdapter):
         elif model_id:
             logger.info(f"Using job_builder for engine={engine}, model={model_id}")
 
+            # Clamp the vLLM context length to the model's native window. Forcing
+            # a value above max_position_embeddings makes vLLM hard-error at
+            # startup → the container crashes during model load ("endpoint never
+            # served"). This was crashing every small-context model (opt-125m,
+            # etc.) while large-context models (Qwen3) ran fine. Best-effort
+            # fetch; on failure the flag is omitted and vLLM derives the context.
+            requested_mml = metadata.get("max_model_len")
+            if engine in ("vllm", "vllm-omni"):
+                native_ctx = await fetch_native_max_len(model_id, hf_token)
+                effective_mml = _clamp_max_model_len(requested_mml, native_ctx)
+                logger.info(
+                    "vLLM max_model_len for %s: requested=%s native=%s -> %s",
+                    model_id, requested_mml, native_ctx, effective_mml,
+                )
+            else:
+                effective_mml = (
+                    requested_mml if requested_mml is not None
+                    else DEFAULT_VLLM_MAX_MODEL_LEN
+                )
+
             # Extract additional config from metadata.
             # Default 0.80 (not 0.95): community/DePIN GPUs reserve VRAM for the CUDA
             # context + co-tenants, and vLLM ABORTS at startup if free < gpu_util*total.
@@ -251,7 +314,7 @@ class NosanaAdapter(ProviderAdapter):
                 "gpu_util": metadata.get("gpu_util", 0.80),
                 "dtype": metadata.get("dtype", "auto"),
                 "enforce_eager": metadata.get("enforce_eager", False),
-                "max_model_len": metadata.get("max_model_len", 8192),
+                "max_model_len": effective_mml,
                 "max_num_seqs": metadata.get("max_num_seqs", 256),
                 "quantization": metadata.get("quantization"),
                 "min_vram": metadata.get("min_vram", 12),
@@ -279,6 +342,9 @@ class NosanaAdapter(ProviderAdapter):
                 "diffusers_pipeline": metadata.get("diffusers_pipeline"),
                 "scheduler": metadata.get("scheduler"),
             }
+
+            if engine == "inferia-diffusion":
+                job_config.update(_diffusion_job_overrides(metadata))
 
             job_definition = build_job_definition(
                 engine=engine,
@@ -631,7 +697,7 @@ class NosanaAdapter(ProviderAdapter):
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
-                        raise RuntimeError(f"Failed to fetch job details")
+                        raise RuntimeError("Failed to fetch job details")
                     job_data = await resp.json()
                     node_address = job_data.get("nodeAddress")
                     raw_state = job_data.get("jobState")

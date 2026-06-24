@@ -3,7 +3,6 @@ Proxy routes for routing requests to downstream services.
 Handles dashboard → orchestration service proxying.
 """
 
-from typing import Dict, Optional
 import httpx
 import logging
 import asyncio
@@ -28,6 +27,7 @@ from api_gateway.rbac.middleware import (
 from api_gateway.models import UserContext, PermissionEnum
 from api_gateway.rbac.authorization import authz_service
 from api_gateway.config import settings
+from common.service_ports import orchestration_http_url
 from api_gateway.gateway.http_client import gateway_http_client
 from api_gateway.gateway.rate_limiter import rate_limiter
 from api_gateway.db.database import AsyncSessionLocal
@@ -47,7 +47,7 @@ worker_passthrough_router = APIRouter(tags=["Worker Passthrough"])
 # it is intentionally NOT included in the gateway app.include_router calls.
 ollama_registry_router = APIRouter(tags=["Ollama OCI Mirror"])
 
-ORCHESTRATION_URL = settings.orchestration_url or "http://localhost:8080"
+ORCHESTRATION_URL = settings.orchestration_url or orchestration_http_url()
 LLMFIT_URL = "http://llmfit:8787"
 
 

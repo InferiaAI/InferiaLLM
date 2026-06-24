@@ -6,8 +6,6 @@ and ignores the X-Forwarded-For header, which clients can spoof to
 circumvent IP-based rate limiting.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from common.rate_limit import RateLimiter, login_rate_limiter
 
 

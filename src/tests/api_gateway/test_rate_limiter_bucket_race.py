@@ -8,7 +8,6 @@ duplicate TokenBucket instances and resetting rate limit state.
 Closes #67
 """
 
-import inspect
 from pathlib import Path
 from unittest.mock import patch
 

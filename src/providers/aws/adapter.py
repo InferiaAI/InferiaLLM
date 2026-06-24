@@ -2,18 +2,18 @@ import boto3
 import grpc
 import asyncio
 import functools
-import datetime as dt
 import os
 from adapters.base.adapter import ProviderAdapter
 from orchestration.v1 import (
     compute_node_pb2_grpc,
     compute_node_pb2,
 )
+from common.service_ports import orchestration_grpc_addr
 
-# Same env knob as services/model_deployment/deployment_server.py — must follow
-# GRPC_PORT when the orchestration gRPC server is remapped, or this dials
-# whatever else holds 50051.
-GRPC_ADDR = os.getenv("ORCHESTRATION_GRPC_ADDR", "localhost:50051")
+# Co-located dial address of the orchestration gRPC server. Follows GRPC_PORT
+# when the server is remapped (host-network mode); an explicit
+# ORCHESTRATION_GRPC_ADDR wins (split deployments).
+GRPC_ADDR = orchestration_grpc_addr("localhost")
 
 
 async def _run_sync(func, *args, **kwargs):

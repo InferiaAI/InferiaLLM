@@ -474,6 +474,9 @@ class PulumiAWSAdapter(PulumiProvisioningBase, ProviderAdapter):
     CAPABILITIES = ProviderCapabilities(
         supports_multi_gpu=True,
         supports_cluster_mode=True,
+        # Public-cloud VMs have direct internet egress → pull models straight
+        # from origin (huggingface.co), bypassing the CP HF mirror.
+        prefers_origin_model_fetch=True,
         pricing_model=PricingModel.ON_DEMAND,
         features={"cloud": "aws", "bootstrap": "cloud-init", "iac": "pulumi"},
     )

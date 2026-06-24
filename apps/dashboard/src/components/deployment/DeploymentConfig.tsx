@@ -31,6 +31,8 @@ interface DeploymentData {
     inference_model?: string
     endpoint?: string
     configuration?: any
+    auto_replica_enabled?: boolean
+    tokens_per_second_threshold?: number | null
 }
 
 interface DeploymentConfigProps {
@@ -75,6 +77,9 @@ type State = {
     diffusionTrustRemoteCode: boolean;
     diffusionModelOffload: boolean;
     diffusionGroupOffload: boolean;
+    // Auto-replica
+    autoReplicaEnabled: boolean;
+    tokensPerSecondThreshold: string;
 };
 
 type Action =
@@ -119,6 +124,9 @@ const initialState = (deployment: DeploymentData): State => ({
     diffusionTrustRemoteCode: true,
     diffusionModelOffload: false,
     diffusionGroupOffload: false,
+    // Auto-replica defaults
+    autoReplicaEnabled: false,
+    tokensPerSecondThreshold: "10",
 });
 
 function reducer(state: State, action: Action): State {
@@ -145,17 +153,19 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
 
     const isTraining = deployment?.workload_type === "training"
     const isVllm = deployment?.engine === "vllm"
+    const isSglang = deployment?.engine === "sglang"
+    const isVllmFamily = isVllm || isSglang
     const isEmbedding = deployment?.engine === "tei" || deployment?.engine === "infinity"
     const isVideoGen = deployment?.model_type === "video_generation" || deployment?.workload_type === "video"
-    const isImageGen = (deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)) && !isVllm && !isEmbedding
+    const isImageGen = (deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)) && !isVllmFamily && !isEmbedding
     const isDiffusion = isImageGen || isVideoGen
 
     useEffect(() => {
         if (deployment?.configuration) {
             const c = deployment.configuration
             const updates: Partial<State> = { config: c };
-            if (isVllm) {
-                updates.vllmImage = c.image || "docker.io/vllm/vllm-openai:v0.22.1";
+            if (isVllmFamily) {
+                updates.vllmImage = c.image || (isSglang ? "docker.io/sglang/sglang:latest" : "docker.io/vllm/vllm-openai:v0.22.1");
                 if (c.cmd) {
                     const mLenIdx = c.cmd.indexOf("--max-model-len")
                     if (mLenIdx !== -1) updates.maxModelLen = c.cmd[mLenIdx + 1]
@@ -198,9 +208,16 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updates.diffusionGroupOffload = c.group_offload ?? false;
                 if (c.env?.HF_TOKEN) updates.hfToken = c.env.HF_TOKEN;
             }
+            // Auto-replica fields from deployment (top-level columns)
+            if (deployment?.auto_replica_enabled !== undefined) {
+                updates.autoReplicaEnabled = deployment.auto_replica_enabled;
+            }
+            if (deployment?.tokens_per_second_threshold !== undefined && deployment?.tokens_per_second_threshold !== null) {
+                updates.tokensPerSecondThreshold = String(deployment.tokens_per_second_threshold);
+            }
             dispatch({ type: 'INIT_CONFIG', payload: updates });
         }
-    }, [deployment, isVllm, isTraining, isEmbedding, isDiffusion])
+    }, [deployment, isVllmFamily, isTraining, isEmbedding, isDiffusion])
 
     const handleSave = async () => {
         dispatch({ type: 'SET_LOADING', payload: true });
@@ -257,6 +274,16 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 updatedConfig.quantization = quantization || null;
                 updatedConfig.required_cuda = cudaVersions.length > 0 ? cudaVersions : null;
             }
+            if (isSglang) {
+                if (hfToken) {
+                    updatedConfig.env = { ...updatedConfig.env, HF_TOKEN: hfToken }
+                }
+                updatedConfig.dtype = dtype;
+                updatedConfig.max_model_len = parseInt(maxModelLen) || 8192;
+                updatedConfig.mem_fraction_static = parseFloat(gpuUtil) || 0.90;
+                updatedConfig.quantization = quantization || null;
+                updatedConfig.trust_remote_code = trustRemoteCode;
+            }
             if (isEmbedding) {
                 updatedConfig.port = parseInt(port) || 8080;
                 updatedConfig.batch_size = parseInt(batchSize) || 32;
@@ -287,6 +314,14 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
             if (isEmbedding) {
                 payload.inference_model = updatedConfig.model_id || inferenceModel;
             }
+            // Auto-replica fields are sent as top-level properties
+            if (state.autoReplicaEnabled) {
+                payload.auto_replica_enabled = true;
+                payload.tokens_per_second_threshold = parseFloat(state.tokensPerSecondThreshold) || 10;
+            } else {
+                payload.auto_replica_enabled = false;
+                payload.tokens_per_second_threshold = null;
+            }
             await computeApi.patch(`/deployment/update/${deployment.id || deployment.deployment_id}`, payload)
             toast.success("Configuration updated successfully")
             if (onUpdate) onUpdate()
@@ -304,8 +339,19 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
                         <GeneralSettings replicas={replicas} inferenceModel={inferenceModel} dispatch={dispatch} />
+
+                        {/* Auto-Replica Section */}
+                        {isVllmFamily && (
+                            <AutoReplicaSettings
+                                autoReplicaEnabled={state.autoReplicaEnabled}
+                                tokensPerSecondThreshold={state.tokensPerSecondThreshold}
+                                dispatch={dispatch}
+                            />
+                        )}
+
                         <AnimatePresence mode="wait">
-                            {isVllm && <VllmSettings
+                            {isVllmFamily && <VllmSettings
+                                engine={deployment?.engine || ""}
                                 vllmImage={vllmImage}
                                 maxModelLen={maxModelLen}
                                 gpuUtil={gpuUtil}
@@ -386,11 +432,11 @@ function GeneralSettings({ replicas, inferenceModel, dispatch }: { replicas: num
 }
 
 function VllmSettings({
-    vllmImage, maxModelLen, gpuUtil,
+    engine, vllmImage, maxModelLen, gpuUtil,
     dtype, enforceEager, maxNumSeqs, kvCacheDtype, trustRemoteCode, cudaModuleLoading, nvidiaDisableCudaCompat, quantization, cudaVersions,
     isAdvancedOpen, setIsAdvancedOpen, dispatch
 }: {
-    vllmImage: string; maxModelLen: string; gpuUtil: string;
+    engine: string; vllmImage: string; maxModelLen: string; gpuUtil: string;
     dtype: string; enforceEager: boolean; maxNumSeqs: string;
     kvCacheDtype: string; trustRemoteCode: boolean;
     cudaModuleLoading: string; nvidiaDisableCudaCompat: string; quantization: string;
@@ -398,12 +444,14 @@ function VllmSettings({
     isAdvancedOpen: boolean; setIsAdvancedOpen: (open: boolean) => void;
     dispatch: React.Dispatch<Action>
 }) {
+    const isSglang = engine === "sglang"
+
     return (
         <m.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="bg-card border border-border rounded-2xl p-6 hover:border-ember-500/30 transition-colors duration-300">
-            <div className="flex items-center gap-2 mb-6 text-foreground"><Zap className="w-4 h-4 text-ember-500 dark:text-ember-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">vLLM Optimization</h3></div>
+            <div className="flex items-center gap-2 mb-6 text-foreground"><Zap className="w-4 h-4 text-ember-500 dark:text-ember-400" /><h3 className="text-sm font-bold uppercase tracking-wider font-mono">{isSglang ? "SGLang" : "vLLM"} Optimization</h3></div>
             <div className="space-y-6">
                 <div className="space-y-2"><label htmlFor="vllm-image" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Container Image</label><input id="vllm-image" value={vllmImage} onChange={e => dispatch({ type: 'SET_FIELD', field: 'vllmImage', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" /></div>
-                <div className="space-y-2">
+                {!isSglang && (<div className="space-y-2">
                     <label className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Required CUDA Versions</label>
                     <div className="flex flex-wrap gap-2">
                         {["12.0", "12.1", "12.2", "12.3", "12.4", "12.5", "12.6", "12.7", "12.8", "12.9", "13.0", "13.1", "13.2"].map(v => (
@@ -423,10 +471,10 @@ function VllmSettings({
                             </label>
                         ))}
                     </div>
-                </div>
+                </div>)}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
-                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">GPU Util</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">{isSglang ? "Mem Fraction Static" : "GPU Util"}</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
                 </div>
 
                 {/* Advanced Config Section */}
@@ -515,6 +563,7 @@ function VllmSettings({
                                 <label htmlFor="enforce-eager" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">Enforce Eager Mode</label>
                             </div>
 
+                            {!isSglang && (
                             <div className="flex items-center gap-3">
                                 <input
                                     id="cuda-module-loading"
@@ -525,7 +574,9 @@ function VllmSettings({
                                 />
                                 <label htmlFor="cuda-module-loading" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">CUDA Module Loading: LAZY</label>
                             </div>
+                            )}
 
+                            {!isSglang && (
                             <div className="flex items-center gap-3">
                                 <input
                                     id="nvidia-disable-cuda-compat"
@@ -536,6 +587,7 @@ function VllmSettings({
                                 />
                                 <label htmlFor="nvidia-disable-cuda-compat" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">NVIDIA Disable CUDA Compat</label>
                             </div>
+                            )}
                         </m.div>
                     )}
                 </div>
@@ -671,6 +723,54 @@ function DiffusionSettings({
                 </div>
             </div>
         </m.div>
+    );
+}
+
+function AutoReplicaSettings({ autoReplicaEnabled, tokensPerSecondThreshold, dispatch }: { autoReplicaEnabled: boolean; tokensPerSecondThreshold: string; dispatch: React.Dispatch<Action> }) {
+    return (
+        <div className="bg-card border border-border rounded-2xl p-6 hover:border-amber-500/30 transition-colors duration-300">
+            <div className="flex items-center gap-2 mb-6 text-foreground">
+                <Zap className="w-4 h-4 text-amber-500" />
+                <h3 className="text-sm font-bold uppercase tracking-wider font-mono">Auto-Replica</h3>
+            </div>
+            <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                    <input
+                        id="autoReplicaEnabled"
+                        type="checkbox"
+                        checked={autoReplicaEnabled}
+                        onChange={e => dispatch({ type: 'SET_FIELD', field: 'autoReplicaEnabled', value: e.target.checked })}
+                        className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
+                    />
+                    <label htmlFor="autoReplicaEnabled" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">
+                        Automatically provision new nodes when throughput degrades
+                    </label>
+                </div>
+                {autoReplicaEnabled && (
+                    <div className="space-y-2">
+                        <label htmlFor="tpsThreshold" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">
+                            Tokens/sec threshold
+                        </label>
+                        <div className="relative">
+                            <input
+                                id="tpsThreshold"
+                                type="number"
+                                min="0.1"
+                                step="0.1"
+                                value={tokensPerSecondThreshold}
+                                onChange={e => dispatch({ type: 'SET_FIELD', field: 'tokensPerSecondThreshold', value: e.target.value })}
+                                className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono pr-12"
+                                placeholder="10"
+                            />
+                            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">tok/s</span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-mono mt-2">
+                            Monitors average tokens/sec over 5-minute windows. Provisions a new pool node when breached.
+                        </p>
+                    </div>
+                )}
+            </div>
+        </div>
     );
 }
 

@@ -36,8 +36,12 @@ import sys
 from typing import Iterable
 from urllib import error as urlerror, request as urlrequest
 
+from common.service_ports import orchestration_http_url
 
-DEFAULT_ORCHESTRATION_URL = "http://localhost:8080"
+# Tracks HTTP_PORT so an operator on a host with a remapped orchestration port
+# gets the right default; an explicit --orchestration-url / ORCHESTRATION_URL
+# still wins (see _resolve).
+DEFAULT_ORCHESTRATION_URL = orchestration_http_url()
 
 
 def _http(method: str, url: str, *, headers: dict, body: bytes | None = None) -> tuple[int, bytes]:
@@ -386,7 +390,7 @@ def cmd_pool_show(args) -> None:
         print(f"  security_group_ids:   {', '.join(sgs) if sgs else '-'}")
         print(f"  ami_id:               {metadata.get('ami_id', '(auto)')}")
         print(f"  iam_instance_profile: {metadata.get('iam_instance_profile', '-')}")
-        print(f"  root_volume_gb:       {metadata.get('root_volume_gb', 100)}")
+        print(f"  root_volume_gb:       {metadata.get('root_volume_gb', 130)}")
         print(f"  worker_image_tag:     {metadata.get('worker_image_tag', '(default)')}")
     elif metadata:
         print("\nMetadata:")

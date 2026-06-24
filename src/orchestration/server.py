@@ -8,12 +8,10 @@ This is the main entry point for the orchestration layer that includes:
 """
 
 import asyncio
-import logging
 import os
 import asyncpg
 import grpc
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from common.exception_handlers import register_exception_handlers
@@ -26,8 +24,6 @@ logger = setup_logging(
     level="INFO",
     service_name="orchestration-service",
     use_json=not settings.is_development,
-    logstash_host=settings.logstash_host,
-    logstash_port=settings.logstash_port,
     logger_name="services.orchestration",
 )
 
@@ -44,6 +40,7 @@ from orchestration.api import admin_engine_ami as admin_engine_ami_api
 from orchestration.api import admin_aws_discovery as admin_aws_discovery_api
 from orchestration.api import nodes as nodes_api
 from orchestration.api import providers as providers_api
+from orchestration.api import xds as xds_api
 from orchestration.provisioning.engine.registry import (
     ADAPTER_REGISTRY,
 )
@@ -310,6 +307,21 @@ async def serve():
     db_pool = await create_db_pool()
     event_bus = RedisEventBus()
 
+    # ---------------- Auto-migrate schema ----------------
+    # Apply pending ALTER TABLE statements for new columns so the code
+    # doesn't crash on UndefinedColumnError when old PG data lacks them.
+    # Uses IF NOT EXISTS so it's idempotent across restarts.
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                ALTER TABLE model_deployments
+                  ADD COLUMN IF NOT EXISTS auto_replica_enabled BOOLEAN NOT NULL DEFAULT false,
+                  ADD COLUMN IF NOT EXISTS tokens_per_second_threshold DOUBLE PRECISION,
+                  ADD COLUMN IF NOT EXISTS auto_replica_last_scale_at TIMESTAMP WITHOUT TIME ZONE
+            """)
+    except Exception:
+        logger.warning("auto-replica schema migration failed (non-fatal)", exc_info=True)
+
     # ---------------- Repositories ----------------
     inventory_repo = InventoryRepository(db_pool)
     pool_repo = ComputePoolRepository(db_pool)
@@ -422,6 +434,11 @@ async def serve():
         db_pool=db_pool,
     )
 
+    xds_api.configure(
+        inventory_repo=inventory_repo,
+        event_bus=event_bus,
+    )
+
     # ---------------- FastAPI App ----------------
     app = FastAPI(
         title=settings.app_name,
@@ -443,6 +460,12 @@ async def serve():
             "/deployment/ws",
             "/v1/workers/register",
             "/v1/workers/channel",
+            "/v1/nodes/xds-status",
+            "/v3/discovery:clusters",
+            "/v3/discovery:endpoints",
+            "/v3/healthz",
+            "/v3/route-table",
+            "/v3/debug/resources",
         ],
     )
 
@@ -458,6 +481,7 @@ async def serve():
     app.include_router(admin_aws_discovery_api.router)
     app.include_router(nodes_api.router)
     app.include_router(providers_api.router)
+    app.include_router(xds_api.router)
 
     # ---------------- Model Cache wiring ----------------
     # Instantiate model-cache singletons and wire them into the dep registry.
@@ -787,6 +811,64 @@ async def serve():
                 "Failed to start provisioning reconciler: %s", e
             )
 
+    # ---------------- xDS Event Subscription ----------------
+    # First, load all existing inventory from the DB so caches/logs reflect
+    # already-running deployments immediately (eager reconciliation on startup).
+    # Then listen for node state changes on the Redis event bus so the Envoy
+    # discovery service picks up new/deleted endpoints without waiting for
+    # the next DB poll cycle. Runs as a background task.
+    try:
+        await xds_api.reconcile_on_startup()
+    except Exception:
+        logger.warning("xDS startup reconciliation failed", exc_info=True)
+
+    _xds_subscription_task = asyncio.create_task(
+        xds_api.start_xds_event_subscription(app),
+    )
+    app.state.xds_subscription_task = _xds_subscription_task
+    logger.info("xDS event subscription started")
+
+    # ---------------- Autoscaler (pool + deployment TPS scaling) ----------------
+    _AUTOSCALER_POLL_S = float(os.getenv("INFERIA_AUTOSCALER_POLL_S", "10"))
+    if os.getenv("INFERIA_DISABLE_AUTOSCALER", "0") != "1":
+
+        async def _autoscaler_loop():
+            from orchestration.repositories.inventory_repo import (
+                InventoryRepository,
+            )
+            from orchestration.repositories.model_deployment_repo import (
+                ModelDeploymentRepository,
+            )
+            from orchestration.scheduling.autoscaler import Autoscaler
+            from orchestration.state_machine.jobs.repository import (
+                ProvisioningJobRepository,
+            )
+
+            _ar_deploys = ModelDeploymentRepository(db_pool, event_bus=event_bus)
+            _ar_jobs = ProvisioningJobRepository(db_pool)
+            _ar_inventory = InventoryRepository(db_pool)
+
+            autoscaler = Autoscaler(
+                repo=None,
+                adapter_engine=None,
+                db_pool=db_pool,
+                deploys_repo=_ar_deploys,
+                jobs_repo=_ar_jobs,
+                inventory_repo=_ar_inventory,
+                auto_replica_interval=60.0,
+            )
+
+            while True:
+                try:
+                    await autoscaler.tick()
+                except Exception:
+                    logger.warning("autoscaler tick failed", exc_info=True)
+                await asyncio.sleep(_AUTOSCALER_POLL_S)
+
+        _autoscaler_task = asyncio.create_task(_autoscaler_loop())
+        app.state.autoscaler_task = _autoscaler_task
+        logger.info("Autoscaler started (poll=%ss)", _AUTOSCALER_POLL_S)
+
     # ---------------- Model-cache eviction loop ----------------
     # Runs once per minute; refreshes the in-use snapshot from the DB
     # (async), then invokes a synchronous eviction pass.  Disabled via
@@ -861,7 +943,9 @@ async def serve():
             except (asyncio.CancelledError, Exception):
                 pass
 
-    # Cancel the model-cache eviction loop and close its httpx client.
+    # Cancel background loops and close shared clients.
+    if getattr(app.state, "autoscaler_task", None) is not None:
+        app.state.autoscaler_task.cancel()
     if getattr(app.state, "mc_eviction_task", None) is not None:
         app.state.mc_eviction_task.cancel()
     try:

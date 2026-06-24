@@ -1,9 +1,8 @@
 """Tests for AuthService security properties."""
 
 import pytest
-import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 from jose import jwt
 
 import bcrypt
@@ -68,7 +67,6 @@ class TestJWTTokens:
 
     def test_expired_token_rejected(self, auth, mock_user):
         """Token with past expiry should raise on decode."""
-        from jose import JWTError
         from fastapi import HTTPException
 
         # Create token that's already expired

@@ -5,11 +5,9 @@ Coverage target: ≥85 % of cli_providers.py lines.
 """
 from __future__ import annotations
 
-import io
 import json
-import sys
 from typing import Any, Optional
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from cli.providers import (
@@ -22,7 +20,6 @@ from cli.providers import (
     cmd_remove,
     _parse_bool,
     _parse_bool_opt,
-    _CONFIG_KEY,
 )
 
 

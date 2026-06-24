@@ -8,13 +8,14 @@ and provider key resolution into a single Pipeline class.
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import BackgroundTasks, HTTPException
 
 from inference.client import api_gateway_client
 from inference.config import settings
-from .providers import ProviderAdapter, get_adapter, is_external_engine, resolve_upstream
+from .providers import ProviderAdapter, is_external_engine, resolve_upstream
+from .worker_routing import envoy_route_headers
 from .rate_limiter import rate_limiter
 from .service import GatewayService
 
@@ -142,3 +143,11 @@ class Pipeline:
                 ctx.body["model"] = deployment["inference_model"]
 
         ctx.provider_headers = ctx.adapter.get_headers(ctx.provider_key)
+
+        # --- Envoy proxy routing ---
+        _envoy_url, _envoy_headers = envoy_route_headers(
+            deployment, settings.envoy_url,
+        )
+        if _envoy_url:
+            ctx.endpoint_url = _envoy_url
+            ctx.provider_headers.update(_envoy_headers)

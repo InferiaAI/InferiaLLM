@@ -8,20 +8,14 @@ This is the main entry point for the API Gateway that includes:
 - Request routing to downstream services (Orchestration, etc.)
 """
 
-from fastapi import FastAPI, Request, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.encoders import jsonable_encoder
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 from common.exception_handlers import register_exception_handlers
-import logging
-import sys
 
 from common.logger import setup_logging
 from common.app_setup import setup_cors, add_standard_health_routes
 from api_gateway.config import httpx_verify, settings
-from api_gateway.models import HealthCheckResponse, ErrorResponse
 from api_gateway.gateway.middleware import (
     RequestIDMiddleware,
     StandardHeadersMiddleware,
@@ -50,8 +44,6 @@ logger = setup_logging(
     service_name="api-gateway",
     use_json=not settings.is_development,
     log_file="debug.log",
-    logstash_host=settings.logstash_host,
-    logstash_port=settings.logstash_port,
     logger_name="services.api_gateway",
 )
 

@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import time
 import uuid
 from typing import Any, Callable
 
@@ -262,6 +260,18 @@ async def list_nodes(
     selector = _parse_selector(labels)
     rows = await _deps.inventory_repo.list_nodes(org_id=org_id, selector=selector)
     return ListResponse(nodes=[_to_view(r) for r in rows])
+
+
+@router.get("/xds-status")
+async def list_xds_nodes():
+    """Return all non-terminated nodes in xDS control-plane format.
+
+    Internal endpoint for the envoyproxy xDS control plane. Returns every
+    node regardless of org, with engines derived from running deployments.
+    No auth — only accessible via internal API key.
+    """
+    rows = await _deps.inventory_repo.list_xds_nodes()
+    return {"nodes": rows}
 
 
 @router.get("/{node_id}", response_model=NodeView)

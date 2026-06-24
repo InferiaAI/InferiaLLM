@@ -373,7 +373,7 @@ async def test_build_provisioning_spec_derives_instance_class_and_region():
     assert spec["instance_class"] == "normal_gpu"  # catalog-derived
     assert spec["region"] == "us-east-1"
     assert spec["gpu_count"] == 1
-    assert spec["root_volume_gb"] == 100  # GPU DLAMI needs >=75GB
+    assert spec["root_volume_gb"] == 130  # GPU DLAMI needs >=75GB
 
 
 async def test_build_provisioning_spec_unknown_instance_type_raises_422():
@@ -675,7 +675,6 @@ async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
     )
 
     # Patch resolve_hf_token so no real provider config is needed.
-    import orchestration.models.model_deployment.deployment_server as ds
     from unittest.mock import patch
 
     from unittest.mock import AsyncMock as _AsyncMock

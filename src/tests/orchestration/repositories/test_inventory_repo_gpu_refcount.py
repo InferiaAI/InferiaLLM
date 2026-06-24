@@ -4,7 +4,7 @@ import os
 import pytest
 import pytest_asyncio
 import asyncpg
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from orchestration.repositories.inventory_repo import (
     InventoryRepository,

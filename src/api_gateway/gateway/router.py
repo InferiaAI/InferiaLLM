@@ -3,7 +3,7 @@ API Gateway router for inference endpoints.
 Handles request routing to the orchestration layer.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 from api_gateway.db.database import get_db
 from fastapi import (
@@ -11,14 +11,11 @@ from fastapi import (
     Depends,
     HTTPException,
     Request,
-    Response,
     status,
     BackgroundTasks,
     Query,
 )
 from api_gateway.models import (
-    InferenceRequest,
-    InferenceResponse,
     ModelInfo,
     ModelsListResponse,
 )
@@ -349,7 +346,6 @@ from api_gateway.db.database import get_db
 from fastapi import Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
 
 class ResolveContextRequest(BaseModel):
@@ -359,7 +355,7 @@ class ResolveContextRequest(BaseModel):
     sandbox: bool = False
 
 
-from typing import Any, Dict, Optional
+from typing import Dict
 
 
 class ResolveContextResponse(BaseModel):
@@ -406,6 +402,7 @@ async def resolve_inference_context(
             # the internal resolve channel (internal-API-key gated), never the
             # dashboard-facing deployment API.
             "inference_token": deployment.get("inference_token"),
+            "pool_id": deployment.get("pool_id"),
         },
         rate_limit_config=config.get("rate_limit"),
         user_id_context=user_id_context,

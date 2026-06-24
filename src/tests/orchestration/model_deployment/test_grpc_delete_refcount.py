@@ -30,17 +30,13 @@ python -m pytest test_grpc_delete_refcount.py -q'
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4, UUID
+from uuid import uuid4
 
 import asyncpg
 import pytest
 import pytest_asyncio
 
-from orchestration.models.model_deployment import (
-    deployment_server,
-)
 from orchestration.models.model_deployment.deployment_server import (
     _build_terminate_deps,
     terminate_deployment_core,
@@ -68,7 +64,6 @@ from orchestration.workers.worker_controller.controller import (
 # exercises the exact same DB fixtures the REST path is verified against.
 from tests.orchestration.model_deployment.test_terminate_endpoint_refcount import (
     _seed_pool,
-    _seed_node,
     _seed_ready_node,
     _seed_deploy,
 )

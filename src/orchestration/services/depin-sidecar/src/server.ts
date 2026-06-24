@@ -13,7 +13,10 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
-const PORT: number = Number(process.env.PORT) || 3000;
+// DEPIN_SIDECAR_PORT lets host-network deployments remap the sidecar off 3000;
+// PORT kept as a fallback for backward compat. The control plane derives the
+// sidecar URL from the SAME DEPIN_SIDECAR_PORT (see common/service_ports.py).
+const PORT: number = Number(process.env.DEPIN_SIDECAR_PORT || process.env.PORT) || 3000;
 
 app.use(express.json());
 app.use(cors());
@@ -358,7 +361,7 @@ nosanaRouter.post('/jobs/launch', async (req, res) => {
         // Watchdog
         service.watchJob(
             result.jobAddress,
-            process.env.ORCHESTRATOR_URL || "http://localhost:8080",
+            process.env.ORCHESTRATOR_URL || `http://localhost:${process.env.HTTP_PORT || "8080"}`,
             {
                 jobDefinition,
                 marketAddress,

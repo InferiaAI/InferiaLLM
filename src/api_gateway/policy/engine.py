@@ -1,9 +1,7 @@
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional
-from api_gateway.audit.service import audit_service
-from api_gateway.models import AuditLogCreate
+from datetime import date
+from typing import Dict, Optional
 
 import cachetools
 from api_gateway.db.models import Usage as DBUsage
@@ -28,7 +26,6 @@ from api_gateway.rbac.auth import auth_service
 
 
 import redis.asyncio as redis
-from api_gateway.config import settings
 
 # Fix import path for common module
 import sys
@@ -83,33 +80,36 @@ class PolicyEngine:
 
         return None
 
-    async def _fetch_inference_token(self, db: AsyncSession, deployment_id) -> Optional[str]:
-        """Pool inference token for a deployment, or None.
+    async def _fetch_inference_token(self, db: AsyncSession, deployment_id) -> tuple[Optional[str], Optional[str]]:
+        """Pool inference token + pool_id for a deployment, or (None, None).
 
         Worker-hosted deploys (ollama/vllm on an InferiaLLM worker) are
         reached via the worker's :8080 inference proxy, which requires this
         token as the bearer. The gateway has no ComputePool ORM model, so we
         join compute_pools by the deployment's pool_id with a raw query.
-        Returns None for deploys whose pool has no token (e.g. external/k8s),
-        leaving the legacy auth path unchanged.
+        Returns (None, None) for deploys whose pool has no token (e.g.
+        external/k8s), leaving the legacy auth path unchanged.
         """
         try:
             res = await db.execute(
                 text(
-                    "SELECT p.inference_token "
+                    "SELECT p.inference_token, d.pool_id "
                     "FROM model_deployments d "
                     "JOIN compute_pools p ON p.id = d.pool_id "
                     "WHERE d.deployment_id = :did"
                 ),
                 {"did": str(deployment_id)},
             )
-            return res.scalar()
+            row = res.one_or_none()
+            if row is None:
+                return None, None
+            return row[0], str(row[1]) if row[1] else None
         except Exception:
             logger.exception(
                 "resolve_context: inference_token lookup failed for %s",
                 deployment_id,
             )
-            return None
+            return None, None
 
     async def _resolve_sandbox_context(
         self,
@@ -168,8 +168,13 @@ class PolicyEngine:
             # Pool inference token: lets the inference data plane auth to a
             # worker-hosted deploy's :8080 proxy. Internal-only (this context
             # goes to the inference service, never the dashboard).
-            "inference_token": await self._fetch_inference_token(db, deployment.id),
+            # pool_id: identifies the compute pool for Envoy proxy routing.
+            "_token_and_pool": await self._fetch_inference_token(db, deployment.id),
         }
+
+        _tok, _pid = deployment_dict.pop("_token_and_pool")
+        deployment_dict["inference_token"] = _tok
+        deployment_dict["pool_id"] = _pid
 
         # For sandbox mode, return minimal config (no policies enforcement)
         config = {
@@ -270,8 +275,12 @@ class PolicyEngine:
             "org_id": deployment.org_id,
             "policies": deployment.policies,
             "inference_model": deployment.inference_model,
-            "inference_token": await self._fetch_inference_token(db, deployment.id),
+            "_token_and_pool": await self._fetch_inference_token(db, deployment.id),
         }
+
+        _tok, _pid = deployment_dict.pop("_token_and_pool")
+        deployment_dict["inference_token"] = _tok
+        deployment_dict["pool_id"] = _pid
 
         # 3. Fetch Policies (DB + Deployment Metadata)
         try:

@@ -139,5 +139,8 @@ chromadb/chroma.sqlite3
 src/dashboard
 .localhost-dashboard/
 
+# opencode agent config
+.opencode/
+
 # superpowers visual companion scratch
 .superpowers/

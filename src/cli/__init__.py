@@ -7,6 +7,7 @@ import multiprocessing
 import traceback
 from startup_ui import StartupUI
 from dotenv import load_dotenv, find_dotenv
+from common.service_ports import orchestration_http_url, depin_sidecar_port
 from inferiadocs import (
     show_inferia,
     show_api_gateway_docs,
@@ -176,6 +177,14 @@ def run_nosana_sidecar(queue=None, env: str = "production"):
         # SPA catch-all and loads no DePIN credentials. See
         # _sidecar_api_gateway_url. An explicit API_GATEWAY_URL (split mode) wins.
         node_env["API_GATEWAY_URL"] = _sidecar_api_gateway_url(node_env)
+        # The sidecar also calls BACK to the orchestration control plane
+        # (watchdog + job monitoring) via ORCHESTRATOR_URL, and binds its own
+        # HTTP/WS port. Derive both from the same env knobs the Python side uses
+        # so a host-network port remap reaches the right place and the sidecar's
+        # bind matches the URL the control plane dials. setdefault → an explicit
+        # ORCHESTRATOR_URL / DEPIN_SIDECAR_PORT (split mode) still wins.
+        node_env.setdefault("ORCHESTRATOR_URL", orchestration_http_url())
+        node_env.setdefault("DEPIN_SIDECAR_PORT", depin_sidecar_port())
 
         print("[DePIN] Launching sidecar...")
         cmd = ["npm", "run", "dev"] if env == "dev" else ["npm", "start"]
@@ -524,7 +533,7 @@ def build_sidecar():
         print(f"[inferia:init] Error building sidecar: {e}")
 
 
-def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: str | None = None) -> None:
+def run_write_dashboard_config(dashboard_dir: str | None = None) -> None:
     """Write window.__RUNTIME_CONFIG__ = {...}; to the installed dashboard's config.js.
 
     Dashboard URLs are env-only: DASHBOARD_API_GATEWAY_URL, DASHBOARD_INFERENCE_URL,
@@ -532,9 +541,6 @@ def run_write_dashboard_config(config_path: str | None = None, dashboard_dir: st
     API_GATEWAY_URL defaults to "/api" and INFERENCE_URL defaults to "/inf" so the
     single-port unified image works same-origin without extra config. WEB_SOCKET_URL
     and SIDECAR_URL default to empty string (callers construct them from the origin).
-
-    The --config / config_path argument is accepted for forward-compat with existing
-    scripts but is not used — yaml no longer carries dashboard URLs.
 
     The function is intentionally import-light and DB-free so it can be called
     from entrypoint.sh before the database is available.
@@ -737,24 +743,11 @@ def main(argv=None):
         default="production",
         help="Environment to run in (default: production)",
     )
-    start_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to unified YAML config file (default: auto-discover via "
-             "INFERIA_CONFIG, ./inferia.yaml, or /etc/inferia/inferia.yaml)",
-    )
 
     # --- write-dashboard-config ---
     wdc_parser = sub.add_parser(
         "write-dashboard-config",
         help="Write dashboard runtime config.js from DASHBOARD_* env vars",
-    )
-    wdc_parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Accepted for forward-compat but unused; dashboard URLs are env-only",
     )
     wdc_parser.add_argument(
         "--dashboard-dir",
@@ -857,11 +850,11 @@ def main(argv=None):
     )
     cmp_p.add_argument(
         "--worker-image",
-        default="ghcr.io/inferiaai/inferia-worker:0.2.7",
+        default="ghcr.io/inferiaai/inferia-worker:0.2.10",
         help="Worker container image (full repository:tag). Published via the "
              "InferiaAI/inferia-worker GitHub Action on v* tags. Note that "
              "docker/metadata-action strips the leading 'v' from semver tags, "
-             "so git tag v0.2.7 produces GHCR tag 0.2.7.",
+             "so git tag v0.2.10 produces GHCR tag 0.2.10.",
     )
     cmp_p.add_argument(
         "--inference-port", type=int, default=8080,
@@ -1025,10 +1018,6 @@ def main(argv=None):
             service = getattr(args, "service", "all")
             env = getattr(args, "env", "production")
 
-            config_path = getattr(args, "config", None)
-            if config_path is not None:
-                os.environ["INFERIA_CONFIG"] = config_path
-
             if service == "all":
                 if wants_help(flags):
                     show_inferia()
@@ -1064,14 +1053,8 @@ def main(argv=None):
             run_migrate()
 
         elif cmd == "write-dashboard-config":
-            config_path = getattr(args, "config", None)
             dashboard_dir = getattr(args, "dashboard_dir", None)
-            if config_path is not None:
-                os.environ["INFERIA_CONFIG"] = config_path
-            run_write_dashboard_config(
-                config_path=config_path,
-                dashboard_dir=dashboard_dir,
-            )
+            run_write_dashboard_config(dashboard_dir=dashboard_dir)
 
         elif cmd == "providers":
             from cli.providers import run_providers_command

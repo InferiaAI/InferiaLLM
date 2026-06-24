@@ -5,8 +5,6 @@ With workers > 1, rate limits are multiplied by N. The fix is to use Redis
 for shared state across workers when available.
 """
 
-import time
-import pytest
 from unittest.mock import MagicMock, patch
 
 from inference.core.rate_limiter import (

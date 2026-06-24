@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from datetime import datetime, timezone
 import asyncio
 import logging
@@ -34,20 +34,13 @@ from api_gateway.audit.service import audit_service
 from api_gateway.models import AuditLogCreate
 
 # New imports for local provider config
-from pydantic import BaseModel, Field
-from pathlib import Path
-import json
+from pydantic import BaseModel
 import os
 from api_gateway.config import settings
+from common.service_ports import orchestration_http_url
 from api_gateway.config import (
     ProvidersConfig,
     ProviderCredential,
-    NosanaApiKeyEntry,
-    CloudConfig,
-    DePINConfig,
-    VectorDBConfig,
-    HuggingFaceConfig,
-    HFTokenEntry,
 )
 
 router = APIRouter(tags=["Configuration"])
@@ -1039,7 +1032,7 @@ async def _cleanup_provider_resources(
     2. Terminate all deployments in those pools.
     3. Delete those compute pools.
     """
-    orch_url = settings.orchestration_url or "http://localhost:8080"
+    orch_url = settings.orchestration_url or orchestration_http_url()
     client = gateway_http_client.get_service_client()
 
     logger.info(

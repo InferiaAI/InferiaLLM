@@ -2,7 +2,6 @@
 
 import yaml
 
-import pytest
 
 from providers.akash.sdl_builder import (
     build_inference_sdl,

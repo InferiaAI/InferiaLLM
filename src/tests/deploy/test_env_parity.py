@@ -1,4 +1,6 @@
-import os, re, pytest
+import os
+import re
+import pytest
 
 REPO = "/host"
 ENV = os.path.join(REPO, ".env")
@@ -7,7 +9,7 @@ EXAMPLE = os.path.join(REPO, ".env.example")
 SECRET_KEYS = {
     "SUPERADMIN_PASSWORD", "JWT_SECRET_KEY", "INTERNAL_API_KEY",
     "SECRET_ENCRYPTION_KEY", "LOG_ENCRYPTION_KEY", "POSTGRES_PASSWORD",
-    "PG_ADMIN_PASSWORD", "REDIS_PASSWORD", "ELASTICSEARCH_PASSWORD",
+    "PG_ADMIN_PASSWORD", "REDIS_PASSWORD",
 }
 DROPPED = {"INFERIA_HF_TOKEN", "NOSANA_PROD_KEY", "SOLANA_RPC_URL"}
 

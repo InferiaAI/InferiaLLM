@@ -6,15 +6,14 @@ repo writes happened.
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from orchestration.state_machine.errors import (
-    AWSThrottledError, InvalidCredentialsError, PermanentError,
+    AWSThrottledError, InvalidCredentialsError,
 )
 from orchestration.state_machine.jobs.model import (
     Phase, PhaseResult, ProvisioningJob,

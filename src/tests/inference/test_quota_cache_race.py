@@ -7,7 +7,7 @@ redundant task creation (which could produce spurious 429 errors).
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 
 @pytest.fixture

@@ -1,5 +1,4 @@
 import json
-import time
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from providers.aws import aws_discovery as d

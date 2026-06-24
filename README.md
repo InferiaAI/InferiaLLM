@@ -131,7 +131,7 @@ flowchart TB
 
 **Control plane** (`/api`) authenticates and authorizes, enforces policy and budgets, records audit, and manages provider credentials and deployments. The orchestration subsystem owns the compute fleet lifecycle.
 
-> Need separate processes per service? A **split (microservices)** mode is still supported via Docker Compose profiles — see [Services & ports](#services--ports).
+> Everything runs in the one unified app; the internal services (orchestration REST/gRPC, DePIN sidecar) sit on loopback and are remappable for host networking — see [Services & ports](#services--ports).
 
 ---
 
@@ -242,7 +242,7 @@ The fastest way to a running stack is **Docker Compose** (below). You can also i
 
 ### Self-Hosting with Docker Compose
 
-The repository ships a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis + Elasticsearch/Logstash/Kibana for logs).
+The repository ships a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis).
 
 ```bash
 # 1. Clone
@@ -271,24 +271,17 @@ That's it. Everything is served on one port:
 Database migrations run automatically on boot. Log in with the `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` you set.
 
 <details>
-<summary><strong>Deployment variants (localhost TLS, SSO, split microservices)</strong></summary>
+<summary><strong>Deployment (single compose, env-driven ports & SSO)</strong></summary>
 <br/>
 
 ```bash
-# Default: unified app + Postgres + Redis + ELK
+# The single canonical stack: unified app + Postgres + Redis + ELK
 docker compose up -d --build
-
-# Localhost TLS via Caddy (https://localhost)
-docker compose -f docker/docker-compose.localhost.yml up -d --build
-
-# SSO mode — InferiaLLM behind InferiaAuth (OIDC)
-make docker-up-sso
-
-# Split (microservices) — one container per service via profiles
-docker compose -f docker/docker-compose.profiles.yml --profile split up -d --build
 ```
 
-See [`docker/README.md`](./docker/README.md) for reverse-proxy contracts, TLS, and the full matrix of compose files.
+There is ONE compose file — the root `docker-compose.yml`. Everything else is env-driven in `.env`: ports (`APP_PORT`, and the internal `HTTP_PORT` / `GRPC_PORT` / `DEPIN_SIDECAR_PORT` for host networking), and external SSO (`AUTH_PROVIDER` + the `EXTERNAL_AUTH_*` / `OAUTH_*` block).
+
+See [`deploy/README.md`](./deploy/README.md) for reverse-proxy / TLS contracts.
 </details>
 
 ### Install from PyPI
@@ -324,19 +317,19 @@ inferiallm start
 
 ## Services & ports
 
-In the default **unified** mode everything is on `APP_PORT` (8000). The supporting infrastructure and the optional **split** mode expose the following:
+The whole web surface runs on a single port, `APP_PORT` (default `8000`) — the only port you publish. A few internal services listen on loopback; each is remappable via its own env var so the app can also run on **host networking** without colliding with other host services.
 
-| Component | Default port | Mode | Notes |
+| Component | Default | Env var | Notes |
 | :--- | :---: | :--- | :--- |
-| **Unified app** | `8000` | unified | Dashboard `/`, gateway `/api`, inference `/inf`, mirror `/v2` |
-| API Gateway | `8000` | split | Control plane only |
-| Inference Gateway | `8001` | split | Data plane only |
-| Orchestration | `8080` | both | Compute lifecycle, worker channel |
-| DePIN sidecar | `3000` | optional | Decentralized compute coordination |
-| PostgreSQL | `5432` | infra | Primary datastore |
-| Redis | `6379` | infra | Rate limiting, pub/sub, streams |
-| Kibana | `5601` | optional | Log exploration (ELK) |
-| inferia-worker | `8080` | per node | Inference port advertised by each GPU node |
+| **Unified app** | `8000` | `APP_PORT` | Dashboard `/`, gateway `/api`, inference `/inf`, mirror `/v2` — the only published port |
+| Orchestration REST | `8080` | `HTTP_PORT` | Compute lifecycle / worker channel (loopback; the gateway proxies to it) |
+| Orchestration gRPC | `50051` | `GRPC_PORT` | Internal RPC (loopback) |
+| DePIN sidecar | `3000` | `DEPIN_SIDECAR_PORT` | Nosana/Akash coordination (loopback Node service) |
+| PostgreSQL | `5432` | `DATABASE_URL` | Primary datastore (external) |
+| Redis | `6379` | `REDIS_PORT` | Rate limiting, pub/sub, streams (external) |
+| inferia-worker | `8080` | — | Inference port advertised by each GPU node (on the worker host) |
+
+The in-process clients derive their target from the same env var, so changing e.g. `HTTP_PORT` moves both the orchestration listener and every caller together. An explicit `ORCHESTRATION_URL` / `ORCHESTRATION_GRPC_ADDR` / `NOSANA_SIDECAR_URL` / `AKASH_SIDECAR_URL` still wins (split / remote deployments).
 
 ---
 
@@ -422,7 +415,7 @@ inferiallm worker list    --pool-id <id>
 | **Auth** | Stateless JWT; optional external SSO (InferiaAuth / OIDC) |
 | **Encryption** | Fernet symmetric encryption for credentials at rest |
 | **Provisioning** | Pulumi (AWS/GCP/Azure) + cloud-init |
-| **Observability** | Prometheus-compatible metrics; optional ELK (Elasticsearch/Logstash/Kibana) |
+| **Observability** | Prometheus-compatible metrics; JSON structured logs to stdout |
 | **Vector** | pgvector / ChromaDB compatible |
 
 ---
@@ -458,7 +451,7 @@ git clone https://github.com/InferiaAI/InferiaAllSpark.git && cd InferiaAllSpark
 ./down.sh -v           # stop and wipe data volumes
 ```
 
-The LLM host needs WebSocket upgrade, response buffering off, large request bodies, and long timeouts (for SSE token streaming and multi-GB model pulls over `/api/hf` and `/v2`). See [`docker/README.md`](./docker/README.md) and the InferiaAllSpark nginx contract.
+The LLM host needs WebSocket upgrade, response buffering off, large request bodies, and long timeouts (for SSE token streaming and multi-GB model pulls over `/api/hf` and `/v2`). See [`deploy/README.md`](./deploy/README.md) and the InferiaAllSpark nginx contract.
 
 ---
 
@@ -477,8 +470,8 @@ InferiaLLM/
 │  ├─ infra/            # SQL schemas + migrations
 │  └─ dashboard/        # Built React SPA (source in apps/dashboard)
 ├─ apps/dashboard/      # Dashboard source (React 19 + Vite)
-├─ docker/              # Dockerfile, compose profiles, Caddy/nginx, logstash
-├─ docker-compose.yml   # Default unified deployment (project name: deploy)
+├─ deploy/              # Dockerfile, entrypoint, nginx
+├─ docker-compose.yml   # The single canonical deployment (project name: deploy)
 └─ .env.example         # Configuration template
 ```
 
@@ -497,7 +490,7 @@ Contributions are welcome. Each major component carries its own README with arch
 | **Gateway** | Secure internal service routing | [README](./src/api_gateway/gateway/README.md) |
 | **Policy** | Quota, rate, and budget enforcement | [README](./src/api_gateway/policy/README.md) |
 | **Audit** | Immutable execution and policy logs | [README](./src/api_gateway/audit/README.md) |
-| **Deployment** | Docker, compose profiles, reverse-proxy | [docker/README](./docker/README.md) |
+| **Deployment** | Docker (single root compose), reverse-proxy | [deploy/README](./deploy/README.md) |
 
 Open an [issue](https://github.com/InferiaAI/InferiaLLM/issues) to report bugs or request features. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development workflow.
 

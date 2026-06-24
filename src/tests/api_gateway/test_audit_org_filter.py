@@ -2,7 +2,6 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
 
 from api_gateway.audit.service import AuditService
 from api_gateway.models import AuditLogFilter, UserContext, PermissionEnum

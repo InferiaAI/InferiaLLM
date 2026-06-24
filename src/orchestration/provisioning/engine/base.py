@@ -57,6 +57,15 @@ class ProviderCapabilities:
     supports_cluster_mode: bool = (
         False  # Persistent cluster (SkyPilot) vs job-based (Nosana)
     )
+    # When True, this provider's nodes fetch model weights straight from the
+    # origin (e.g. huggingface.co) rather than through the control plane's HF
+    # mirror. Set for public-cloud providers (AWS/GCP/Azure) whose VMs have
+    # direct internet egress: routing them through the CP mirror is slower and,
+    # when the CP is behind a home/proxy tunnel, often unreachable. Air-gapped
+    # / DePIN / self-hosted providers leave this False so they keep using the
+    # cache-first mirror. Gates both the per-deploy cache pre-warm and the
+    # mirror injection into the load spec.
+    prefers_origin_model_fetch: bool = False
 
     # Pricing
     pricing_model: PricingModel = PricingModel.FIXED
@@ -80,6 +89,7 @@ class ProviderCapabilities:
             "requires_sidecar": self.requires_sidecar,
             "supports_direct_provisioning": self.supports_direct_provisioning,
             "supports_cluster_mode": self.supports_cluster_mode,
+            "prefers_origin_model_fetch": self.prefers_origin_model_fetch,
             "pricing_model": self.pricing_model.value,
             "features": self.features,
         }

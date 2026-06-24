@@ -547,7 +547,7 @@ async def test_reaper_builder_sweep_survives_cred_resolution_failure(pool):
 async def test_reaper_builder_sweep_continues_after_per_region_failure(pool):
     """If sweep_stale_builders raises for one region, _reap_stale_builders
     continues to the next region without propagating the error."""
-    from unittest.mock import MagicMock, AsyncMock, call
+    from unittest.mock import MagicMock, AsyncMock
 
     org_id = await _seed_org(pool)
     # Seed a pool with us-east-1 (from _seed_pool default).

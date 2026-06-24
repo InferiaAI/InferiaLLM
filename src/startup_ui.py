@@ -1,5 +1,4 @@
-import sys
-from startup_events import ServiceStarted, ServiceStarting, ServiceFailed
+from startup_events import ServiceStarted, ServiceFailed
 
 
 class StartupUI:

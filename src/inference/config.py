@@ -2,19 +2,23 @@
 Configuration for Inference Gateway.
 """
 
-from typing import Any, ClassVar, Optional
+from typing import Any, Optional
 from pydantic import Field, field_validator
-from common.unified_config import UnifiedBaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(UnifiedBaseSettings):
+class Settings(BaseSettings):
     """Inference Gateway settings.
 
-    Source precedence (highest → lowest): init/CLI > env > .env > yaml > pydantic defaults.
-    See docs/superpowers/specs/2026-05-12-unified-config-design.md.
+    Source precedence (highest → lowest): init/CLI > env > .env > pydantic defaults.
     """
 
-    _yaml_path: ClassVar[str] = "services.inference"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
@@ -38,8 +42,6 @@ class Settings(UnifiedBaseSettings):
         validation_alias="INFERENCE_WORKERS",
     )
     log_level: str = "INFO"
-    logstash_host: Optional[str] = Field(default=None, validation_alias="LOGSTASH_HOST")
-    logstash_port: int = Field(default=5959, validation_alias="LOGSTASH_PORT")
 
     # API Gateway Settings
     # In production, use HTTPS URLs with valid SSL certificates
@@ -82,6 +84,18 @@ class Settings(UnifiedBaseSettings):
         alias="EXTERNAL_PROXY_URL",
         validation_alias="EXTERNAL_PROXY_URL",
         description="URL of external LLM proxy (e.g., InferiaGate). Routes all external provider traffic through this proxy.",
+    )
+
+    # Envoy proxy URL for worker-hosted inference routing.
+    # When set, all worker-hosted deployment traffic is routed through
+    # the front Envoy proxy instead of directly to the worker's advertise_url.
+    # The Envoy must have the xDS control plane configured to discover nodes.
+    # Example: "http://front-envoy:10000"
+    envoy_url: Optional[str] = Field(
+        default=None,
+        alias="ENVOY_URL",
+        validation_alias="ENVOY_URL",
+        description="URL of the front Envoy proxy for worker-hosted inference routing",
     )
 
     # Timeouts
@@ -210,6 +224,42 @@ class Settings(UnifiedBaseSettings):
         validation_alias="JWT_SECRET_KEY",
     )
     jwt_algorithm: str = "HS256"
+
+    # External SSO auth (sandbox JWT verification in oidc/inferiaauth mode).
+    # In these modes the dashboard's bearer is an EdDSA JWT issued by the IdP
+    # (verified via JWKS), NOT a local HS256 token — so the sandbox path must
+    # verify it the same way the api_gateway does. Mirrors api_gateway.config.
+    auth_provider: str = Field(default="local", validation_alias="AUTH_PROVIDER")
+    external_auth_url: Optional[str] = Field(
+        default=None, validation_alias="EXTERNAL_AUTH_URL"
+    )
+    external_auth_issuer: Optional[str] = Field(
+        default=None, validation_alias="EXTERNAL_AUTH_ISSUER"
+    )
+    app_namespace: str = Field(
+        default="inferiallm", validation_alias="APP_NAMESPACE"
+    )
+    oauth_client_id: Optional[str] = Field(
+        default=None, validation_alias="OAUTH_CLIENT_ID"
+    )
+    oauth_jwks_cache_ttl_seconds: int = Field(
+        default=3600, ge=60, le=86400,
+        validation_alias="OAUTH_JWKS_CACHE_TTL_SECONDS",
+    )
+    verify_ssl: bool = Field(default=True, validation_alias="VERIFY_SSL")
+    ssl_ca_bundle: Optional[str] = Field(
+        default=None, validation_alias="SSL_CA_BUNDLE"
+    )
+
+    @property
+    def is_external_mode(self) -> bool:
+        """True when auth is delegated to an external IdP (oidc/inferiaauth)."""
+        return self.auth_provider in ("oidc", "inferiaauth", "external")
+
+    @property
+    def httpx_verify(self) -> object:
+        """httpx ``verify=`` value: CA-bundle path if set, else the bool."""
+        return self.ssl_ca_bundle or self.verify_ssl
 
     @property
     def is_production(self) -> bool:

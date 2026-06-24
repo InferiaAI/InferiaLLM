@@ -9,7 +9,6 @@ needs to start/stop, the deployment worker calls
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 from orchestration.messaging.uri_validation import (
@@ -75,6 +74,10 @@ class WorkerController:
             spec.get("model", {}).get("artifact_uri"),
         )
 
+        prefill_gpu = list(spec.get("prefill_gpu_indices", []))
+        decode_gpu = list(spec.get("decode_gpu_indices", []))
+        has_disagg = bool(prefill_gpu) or bool(decode_gpu)
+
         body = LoadModelBody(
             deployment_id=spec["deployment_id"],
             recipe=spec["recipe"],
@@ -84,9 +87,13 @@ class WorkerController:
                 backend=spec["model"].get("backend", ""),
             ),
             config=clean_config,
-            gpu_indices=list(spec.get("gpu_indices", [])),
+            gpu_indices=[] if has_disagg else list(spec.get("gpu_indices", [])),
             port=int(spec.get("port", 0)),
             env=dict(spec.get("env", {})),
+            prefill_replicas=int(spec.get("prefill_replicas", 0)),
+            decode_replicas=int(spec.get("decode_replicas", 0)),
+            prefill_gpu_indices=prefill_gpu,
+            decode_gpu_indices=decode_gpu,
         )
         env = Envelope(
             type="LoadModel",

@@ -2,7 +2,7 @@
 import time
 import logging
 import os
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)

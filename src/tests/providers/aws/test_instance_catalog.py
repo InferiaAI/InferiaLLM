@@ -5,7 +5,6 @@ import pytest
 
 from providers.aws.instance_catalog import (
     INSTANCE_CATALOG,
-    InstanceType,
     by_class,
     lookup,
 )

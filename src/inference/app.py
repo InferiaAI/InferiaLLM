@@ -4,11 +4,11 @@ Proxies requests to the Filtration service for security and policy enforcement,
 then routes to the actual model provider.
 """
 
-import logging
 import json
 from typing import Optional
 from jose import JWTError, jwt
 
+from common.jwks_verifier import JWKSVerifier, JWKSVerifyError
 from common.schemas.common import HealthCheckResponse
 from inference.client import api_gateway_client
 from inference.config import settings
@@ -25,8 +25,6 @@ logger = setup_logging(
     level=settings.log_level,
     service_name="inference-gateway",
     use_json=not settings.is_development,
-    logstash_host=settings.logstash_host,
-    logstash_port=settings.logstash_port,
     logger_name="services.inference",
 )
 
@@ -60,12 +58,68 @@ async def shutdown_event():
     await api_gateway_client.close_client()
 
 
+_sandbox_verifier: Optional[JWKSVerifier] = None
+
+
+def _get_sandbox_verifier() -> JWKSVerifier:
+    """Lazily build the JWKS verifier for external-mode sandbox tokens.
+
+    Mirrors api_gateway.rbac.middleware._get_verifier: generic OIDC IdPs issue
+    tokens with aud=client_id, while InferiaAuth issues aud=app_namespace.
+    """
+    global _sandbox_verifier
+    if _sandbox_verifier is None:
+        audience = (
+            settings.oauth_client_id
+            if settings.auth_provider == "oidc"
+            else settings.app_namespace
+        )
+        _sandbox_verifier = JWKSVerifier(
+            jwks_url=settings.external_auth_url.rstrip("/") + "/.well-known/jwks.json",
+            issuer=settings.external_auth_issuer,
+            audience=audience,
+            cache_ttl=settings.oauth_jwks_cache_ttl_seconds,
+            verify=settings.httpx_verify,
+        )
+    return _sandbox_verifier
+
+
+def _sandbox_key_from_claims(claims: dict) -> str:
+    """Build the `sandbox:{org_id}:{user_id}` key from verified JWT claims.
+
+    The `sub` of an InferiaAuth token is prefixed (`user:<uuid>`); the prefix
+    MUST be stripped because the policy engine splits this key on ':' and
+    requires exactly 3 parts. org_id comes from the explicit `org_id` claim,
+    else the first entry of `org_ids[]` (matches api_gateway extraction).
+    """
+    sub = claims.get("sub", "") or ""
+    user_id = sub.split(":", 1)[1] if ":" in sub else sub
+    org_id = claims.get("org_id")
+    if not org_id:
+        org_ids = claims.get("org_ids") or []
+        org_id = org_ids[0] if org_ids else None
+    return f"sandbox:{org_id}:{user_id}"
+
+
 def extract_api_key(authorization: str, sandbox: bool = False) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid API Key format")
     token = authorization.split(" ")[1]
 
     if sandbox:
+        # External SSO (oidc/inferiaauth): the bearer is an EdDSA JWT issued by
+        # the IdP, verified via JWKS — NOT the local HS256 secret. The verifier
+        # already enforces type==access + iss/aud/sub/exp/iat.
+        if settings.is_external_mode:
+            try:
+                claims = _get_sandbox_verifier().verify_sync(token)
+            except JWKSVerifyError:
+                raise HTTPException(
+                    status_code=401, detail="Invalid JWT token for sandbox mode"
+                )
+            return _sandbox_key_from_claims(claims)
+
+        # Local mode: built-in HS256 access token.
         try:
             payload = jwt.decode(
                 token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]

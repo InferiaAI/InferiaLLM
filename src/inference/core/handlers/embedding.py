@@ -6,9 +6,7 @@ from typing import Dict, Optional
 
 from fastapi import BackgroundTasks, HTTPException
 
-from inference.config import settings
 from ..pipeline import Pipeline, RequestContext
-from ..providers import get_adapter, is_external_engine
 from ..request_logger import RequestLogger
 from ..service import GatewayService
 
