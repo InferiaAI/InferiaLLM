@@ -64,6 +64,7 @@ COPY --from=node-builder /build/dashboard/dist /app/src/dashboard
 RUN touch /app/src/dashboard/__init__.py
 COPY --from=node-builder /build/depin-sidecar/dist /app/src/orchestration/services/depin-sidecar/dist
 
+
 RUN pip install --no-cache-dir '.[logstash]'
 
 # Copy entrypoint script

@@ -21,7 +21,8 @@ import {
   type HFModel,
   type ModelTypeKey
 } from "@/services/huggingfaceService"
-import { calculateCompatibility, fetchExternalRegistry, GPU_SPECS, type FitLevel, type ExternalModel } from "@/services/gpuCompatibility"
+import { fetchExternalRegistry, type ExternalModel } from "@/services/gpuCompatibility"
+import { resolvePoolGpuResources, extractHfArchitecture, getFitColor, calculatePoolCompatibilityWithFit, mapBestQuantToVllm } from "@/services/modelPlanner"
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 import { ConfigService } from "@/services/configService"
@@ -1113,59 +1114,37 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     staleTime: 1000 * 60 * 5,
   });
 
-  // Extract full architecture details from HF config
-  const hfContextLength = hfConfig?.max_position_embeddings || hfConfig?.seq_length || hfConfig?.max_sequence_length;
-  const hfHiddenSize = hfConfig?.hidden_size;
-  const hfNumLayers = hfConfig?.num_hidden_layers;
-  const hfNumAttentionHeads = hfConfig?.num_attention_heads;
-  const hfNumKeyValueHeads = hfConfig?.num_key_value_heads; // GQA: e.g. Llama 3 uses 8 KV heads vs 32 attention heads
-
-  // For multi-GPU pools, resolve GPU specs and aggregate VRAM/bandwidth
-  const poolGpuCount = selectedPool?.gpu_count || 1;
-  const gpuKey = selectedPool?.allowed_gpu_types?.[0]?.toUpperCase().replace(/[\s-]/g, "") || "";
-  const gpuSpecKey = Object.keys(GPU_SPECS).find(k => {
-    const nk = k.toUpperCase().replace(/[\s-]/g, "");
-    return gpuKey.includes(nk) || nk.includes(gpuKey);
+  // Compatibility planning (uses llmfit server when available, falls back to local calculation)
+  const { data: compatibility } = useQuery({
+    queryKey: ['compat', modelId, selectedPool?.pool_id || selectedPool?.pool_name, quantization, dtype, selectedEngine],
+    queryFn: () => calculatePoolCompatibilityWithFit(
+      modelId,
+      selectedPool,
+      hfConfig,
+      quantization,
+      dtype,
+      externalRegistry,
+      selectedEngine,
+    ),
+    enabled: !!selectedPool && !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
+    staleTime: 1000 * 60 * 5,
   });
 
-  const singleGpuVram = selectedPool?.gpu_specs?.[0]?.vram || (gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.vram : 0) || 0;
-  // Only pass aggregated vram override when gpu_count > 1 (multi-GPU),
-  // otherwise let calculateCompatibility use its own GPU_SPECS lookup for single GPU
-  const aggregatedVram = poolGpuCount > 1 ? singleGpuVram * poolGpuCount : undefined;
+  // Auto-apply llmfit recommendations when compatibility data arrives
+  useEffect(() => {
+    if (!compatibility) return;
 
-  const baseBandwidth = gpuSpecKey ? GPU_SPECS[gpuSpecKey]?.bandwidth : undefined;
-  // Multi-GPU bandwidth scales ~0.85x per GPU due to interconnect overhead
-  const aggregatedBandwidth = (poolGpuCount > 1 && baseBandwidth)
-    ? baseBandwidth * poolGpuCount * 0.85
-    : undefined;
-
-  const compatibility = (selectedPool && modelId && (selectedEngine === "vllm" || selectedEngine === "sglang" || selectedEngine === "ollama"))
-    ? calculateCompatibility(
-      modelId,
-      selectedPool.allowed_gpu_types?.[0] || "GENERIC-GPU",
-      quantization || dtype,
-      {
-        vram: aggregatedVram,
-        bandwidth: aggregatedBandwidth,
-        contextLength: hfContextLength,
-        hiddenSize: hfHiddenSize,
-        numLayers: hfNumLayers,
-        numAttentionHeads: hfNumAttentionHeads,
-        numKeyValueHeads: hfNumKeyValueHeads
-      },
-      externalRegistry
-    )
-    : null;
-
-  const getFitColor = (level: FitLevel) => {
-    switch (level) {
-      case "Perfect": return "text-ember-500 bg-ember-500/10 border-ember-500/20";
-      case "Good": return "text-blue-500 bg-blue-500/10 border-blue-500/20";
-      case "Marginal": return "text-amber-500 bg-amber-500/10 border-amber-500/20";
-      case "TooTight": return "text-rose-500 bg-rose-500/10 border-rose-500/20";
-      default: return "text-muted-foreground bg-muted-foreground/10 border-muted-foreground/20";
+    if (compatibility.contextLength) {
+      dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: compatibility.contextLength.toString() });
     }
-  };
+
+    if (compatibility.bestQuant) {
+      const mapped = mapBestQuantToVllm(compatibility.bestQuant);
+      if (mapped) {
+        dispatch({ type: 'SET_FIELD', field: 'quantization', value: mapped });
+      }
+    }
+  }, [compatibility])
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -1248,6 +1227,14 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
               <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">VRAM Allocation</div>
               <div className="text-lg font-black">{compatibility.requiredVram.toFixed(1)} <span className="text-xs font-normal opacity-70">/ {compatibility.availableVram} GB</span></div>
             </div>
+            <div className="bg-current/5 p-3 rounded-lg border border-current/10">
+              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Max Context Length</div>
+              <div className="text-lg font-black">{compatibility.contextLength ? `${compatibility.contextLength.toLocaleString()} tokens` : "Unknown"}</div>
+            </div>
+            <div className="bg-current/5 p-3 rounded-lg border border-current/10">
+              <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Recommended Quant</div>
+              <div className="text-lg font-black uppercase">{compatibility.bestQuant || "Auto (Native)"}</div>
+            </div>
           </div>
 
           {compatibility.recommendedVllmConfig && selectedEngine === 'vllm' && (
@@ -1260,11 +1247,12 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
                   type="button"
                   onClick={() => {
                     const cfg = compatibility.recommendedVllmConfig!;
-                    dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: cfg.maxModelLen.toString() });
+                    const optimalMaxLen = compatibility.contextLength || cfg.maxModelLen;
+                    dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: optimalMaxLen.toString() });
                     dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: cfg.gpuMemoryUtilization.toString() });
                     dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: cfg.enforceEager });
                     dispatch({ type: 'SET_FIELD', field: 'dtype', value: cfg.dtype });
-                    toast.success("Applied vLLM optimizations for this hardware.");
+                    toast.success("Applied model optimizations and context limits.");
                   }}
                   className="px-3 py-1 bg-current/10 hover:bg-current/20 rounded-md text-[10px] font-black uppercase transition-colors border border-current/20 active:scale-95"
                 >

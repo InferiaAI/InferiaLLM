@@ -67,6 +67,7 @@ services:
       - DASHBOARD_INFERENCE_URL=${DASHBOARD_INFERENCE_URL:-}
       - DASHBOARD_WEB_SOCKET_URL=${DASHBOARD_WEB_SOCKET_URL:-}
       - DASHBOARD_SIDECAR_URL=${DASHBOARD_SIDECAR_URL:-}
+      - DASHBOARD_LLMFIT_SERVER_URL=${DASHBOARD_LLMFIT_SERVER_URL:-}
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
       - INFERIA_MODEL_CACHE_DIR=${INFERIA_MODEL_CACHE_DIR:-/var/lib/inferia/models}
       - INFERIA_MODEL_CACHE_MAX_GB=${INFERIA_MODEL_CACHE_MAX_GB:-100}
@@ -94,6 +95,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - inferia-net
+
+  llmfit:
+    image: ghcr.io/alexsjones/llmfit
+    container_name: inferia-llmfit
+    restart: unless-stopped
+    command: serve --host 0.0.0.0 --port ${LLMFIT_PORT:-8787}
     networks:
       - inferia-net
 

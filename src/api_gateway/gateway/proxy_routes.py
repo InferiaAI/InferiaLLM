@@ -48,6 +48,7 @@ worker_passthrough_router = APIRouter(tags=["Worker Passthrough"])
 ollama_registry_router = APIRouter(tags=["Ollama OCI Mirror"])
 
 ORCHESTRATION_URL = settings.orchestration_url or orchestration_http_url()
+LLMFIT_URL = "http://llmfit:8787"
 
 
 def _require_proxy_permission(
@@ -855,3 +856,45 @@ async def proxy_admin_aws_discovery(
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
     )
+
+
+@router.api_route("/llmfit/health", methods=["GET"])
+async def proxy_llmfit_health(request: Request):
+    """Unauthenticated health check for llmfit sidecar."""
+    return await _proxy_llmfit_unauthenticated(request, "health")
+
+
+@router.api_route("/llmfit/{path:path}", methods=["GET"])
+async def proxy_llmfit(
+    request: Request,
+    path: str,
+):
+    """Proxy model-fit queries to the llmfit sidecar (no auth needed)."""
+    return await _proxy_llmfit_unauthenticated(request, path)
+
+
+async def _proxy_llmfit_unauthenticated(request: Request, path: str) -> Response:
+    """Forward a request to the llmfit sidecar without user auth."""
+    url = f"{LLMFIT_URL}/{path}"
+    headers = dict(request.headers)
+    headers.pop("Authorization", None)
+    headers.pop("X-Internal-API-Key", None)
+    headers["X-Internal-API-Key"] = settings.internal_api_key
+    headers["X-Gateway-Request"] = "true"
+    content = await request.body()
+    try:
+        client = gateway_http_client.get_proxy_client()
+        response = await client.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            content=content,
+            params=request.query_params,
+        )
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail=f"llmfit unavailable: {e}")
