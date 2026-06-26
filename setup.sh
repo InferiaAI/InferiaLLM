@@ -28,6 +28,7 @@ PYTHON="${PYTHON:-python3}"
 ENV_FILE="${INFERIA_ENV_FILE:-$SCRIPT_DIR/.env}"
 PUBLIC_URL=""
 APP_PORT="8000"
+APP_PORT_EXPLICIT=0
 AUTH_MODE="local"
 SUPERADMIN_EMAIL=""
 PASSWORD=""
@@ -48,11 +49,42 @@ FOLLOW_LOGS=0
 GEN_PW=""
 
 # ---- output helpers ---------------------------------------------------------
-log()  { printf '\033[0;36m[setup]\033[0m %s\n' "$*"; }
-ok()   { printf '\033[0;32m[ ok ]\033[0m %s\n' "$*"; }
-warn() { printf '\033[0;33m[warn]\033[0m %s\n' "$*"; }
-err()  { printf '\033[0;31m[fail]\033[0m %s\n' "$*" >&2; }
+# Colours are enabled only on a TTY and when NO_COLOR is unset (https://no-color.org).
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+  C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'
+  C_BLUE=$'\033[34m'; C_CYAN=$'\033[36m'; C_GRAY=$'\033[90m'
+else
+  C_RESET=""; C_BOLD=""; C_DIM=""; C_RED=""; C_GREEN=""
+  C_YELLOW=""; C_BLUE=""; C_CYAN=""; C_GRAY=""
+fi
+_RULE="──────────────────────────────────────────────────────"
+
+log()  { printf '%s•%s %s\n' "$C_CYAN" "$C_RESET" "$*"; }
+ok()   { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+warn() { printf '  %s!%s %s%s%s\n' "$C_YELLOW" "$C_RESET" "$C_YELLOW" "$*" "$C_RESET"; }
+err()  { printf '  %s✗ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; }
 die()  { err "$*"; exit 1; }
+step() { printf '  %s→%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
+
+# A section header: blank line, bold title, dim rule underneath.
+section() {
+  printf '\n%s%s▸ %s%s\n' "$C_BOLD" "$C_CYAN" "$1" "$C_RESET"
+  printf '%s%s%s\n' "$C_GRAY" "$_RULE" "$C_RESET"
+}
+
+# An aligned key/value line for summaries.
+kv() { printf '  %s%-16s%s %s\n' "$C_DIM" "$1" "$C_RESET" "$2"; }
+
+banner() {
+  # Inner width matches _RULE (54). Titles are ASCII so printf's byte-based
+  # %-*s padding equals the display width (multibyte glyphs would misalign).
+  local w=54 edge="${C_BOLD}${C_BLUE}" t1="   InferiaLLM  setup" t2="   one-command bring-up & verification"
+  printf '\n%s╭%s╮%s\n' "$edge" "$_RULE" "$C_RESET"
+  printf '%s│%s%s%-*s%s%s│%s\n' "$edge" "$C_RESET" "$C_BOLD" "$w" "$t1" "$C_RESET" "$edge" "$C_RESET"
+  printf '%s│%s%s%-*s%s%s│%s\n' "$edge" "$C_RESET" "$C_DIM"  "$w" "$t2" "$C_RESET" "$edge" "$C_RESET"
+  printf '%s╰%s╯%s\n' "$edge" "$_RULE" "$C_RESET"
+}
 
 usage() {
   cat <<'EOF'
@@ -96,7 +128,7 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --public-url) PUBLIC_URL="$2"; shift 2 ;;
-      --app-port) APP_PORT="$2"; shift 2 ;;
+      --app-port) APP_PORT="$2"; APP_PORT_EXPLICIT=1; shift 2 ;;
       --auth-mode) AUTH_MODE="$2"; shift 2 ;;
       --superadmin-email) SUPERADMIN_EMAIL="$2"; shift 2 ;;
       --superadmin-password) PASSWORD="$2"; shift 2 ;;
@@ -127,6 +159,47 @@ default_email_from_url() {
   local host
   host="$(printf '%s' "$1" | sed -E 's#^[a-zA-Z]+://##; s#[:/].*$##')"
   printf 'admin@%s' "${host:-localhost}"
+}
+
+# Read a single value from ENV_FILE (last occurrence; surrounding quotes stripped).
+_env_get() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  local line val
+  line="$(grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1)" || true
+  [[ -z "$line" ]] && return 0
+  val="${line#*=}"
+  val="${val%\"}"; val="${val#\"}"   # strip surrounding double quotes
+  printf '%s' "$val"
+}
+
+# Recover the public origin from an existing .env: prefer the API gateway URL
+# (origin + /api), then the control-plane URL, then the last absolute origin in
+# ALLOWED_ORIGINS. Returns empty if only same-origin ("/api") values are present.
+_derive_public_url() {
+  local v
+  v="$(_env_get DASHBOARD_API_GATEWAY_URL)"
+  [[ -z "$v" ]] && v="$(_env_get INFERIA_CONTROL_PLANE_EXTERNAL_URL)"
+  v="${v%/}"; v="${v%/api}"; v="${v%/}"
+  if [[ "$v" =~ ^https?:// ]]; then printf '%s' "$v"; return 0; fi
+  printf '%s' "$(_env_get ALLOWED_ORIGINS | tr ',' '\n' | grep -E '^https?://' | tail -n1)"
+}
+
+# When .env exists, source the verification targets from it so health/public
+# checks and the summary reflect what the deployment actually serves. Explicit
+# flags / prompted values still win (only empty fields are filled).
+load_env_settings() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  local v
+  if [[ $APP_PORT_EXPLICIT -eq 0 ]]; then
+    v="$(_env_get APP_PORT)"; [[ -n "$v" ]] && APP_PORT="$v"
+  fi
+  if [[ -z "$PUBLIC_URL" ]]; then
+    v="$(_derive_public_url)"; [[ -n "$v" ]] && PUBLIC_URL="$v"
+  fi
+  if [[ -z "$SUPERADMIN_EMAIL" ]]; then
+    v="$(_env_get SUPERADMIN_EMAIL)"; [[ -n "$v" ]] && SUPERADMIN_EMAIL="$v"
+  fi
+  return 0
 }
 
 collect_inputs() {
@@ -164,17 +237,25 @@ collect_inputs() {
 
 # ---- .env generation --------------------------------------------------------
 generate_env() {
+  section "Environment"
   local merge_args=()
   if [[ -f "$ENV_FILE" ]]; then
     if [[ $FORCE -eq 0 ]]; then
-      log "$ENV_FILE already exists — keeping it (use --force to regenerate)."
+      ok "$ENV_FILE already exists — keeping it"
+      step "use --force to regenerate (secrets + DB password are preserved)"
       return 0
     fi
     merge_args=(--merge "$ENV_FILE")
-    log "Regenerating $ENV_FILE (preserving secret key + DB password)."
+    step "Regenerating $ENV_FILE (preserving secret key + DB password)"
   fi
 
   collect_inputs
+
+  kv "Public URL" "$PUBLIC_URL"
+  kv "App port"   "$APP_PORT"
+  kv "Auth mode"  "$AUTH_MODE"
+  kv "Superadmin" "$SUPERADMIN_EMAIL"
+  kv "Env file"   "$ENV_FILE"
 
   local args=(generate-env
     --public-url "$PUBLIC_URL"
@@ -202,12 +283,13 @@ generate_env() {
   ( umask 077; cat "$tmp_out" >"$tmp_env" )
   mv -f "$tmp_env" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
-  ok "Wrote $ENV_FILE (chmod 600)."
+  ok "Wrote $ENV_FILE (chmod 600)"
 
   if grep -q '^GENERATED_SUPERADMIN_PASSWORD=' "$tmp_err"; then
     GEN_PW="$(sed -n 's/^GENERATED_SUPERADMIN_PASSWORD=//p' "$tmp_err")"
-    log "Generated superadmin password: ${GEN_PW}"
-    log "  (also stored in $ENV_FILE as SUPERADMIN_PASSWORD — change it after first login)"
+    ok "Generated a random superadmin password"
+    printf '    %ssuperadmin password:%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_BOLD" "$GEN_PW" "$C_RESET"
+    step "stored in $ENV_FILE as SUPERADMIN_PASSWORD — change it after first login"
   fi
 }
 
@@ -217,17 +299,24 @@ compose() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
 need_tool() { command -v "$1" >/dev/null 2>&1 || die "required tool not found: $1"; }
 
 preflight() {
+  section "Preconditions"
   need_tool docker
   need_tool curl
   need_tool "$PYTHON"
   docker compose version >/dev/null 2>&1 || die "'docker compose' (v2+) is required"
   docker info >/dev/null 2>&1 || die "the Docker daemon is not reachable"
+  ok "docker, docker compose, curl, $PYTHON available"
+  ensure_network
+  ensure_ssh_file
 }
 
 ensure_network() {
-  if ! docker network inspect inferia-net >/dev/null 2>&1; then
-    log "Creating external Docker network 'inferia-net'."
+  if docker network inspect inferia-net >/dev/null 2>&1; then
+    ok "Docker network 'inferia-net' present"
+  else
+    step "Creating external Docker network 'inferia-net'"
     docker network create inferia-net >/dev/null
+    ok "Created 'inferia-net'"
   fi
 }
 
@@ -236,7 +325,12 @@ ensure_ssh_file() {
   # silently creates a *directory* there. Make sure it's a regular file.
   local f="$SCRIPT_DIR/.ssh/authorized_keys"
   mkdir -p "$SCRIPT_DIR/.ssh"
-  [[ -e "$f" ]] || { : >"$f"; log "Created empty $f for the worker SSH bind-mount."; }
+  if [[ -e "$f" ]]; then
+    ok "SSH keys file present"
+  else
+    : >"$f"
+    ok "Created empty .ssh/authorized_keys for the worker bind-mount"
+  fi
 }
 
 stale_volume_guard() {
@@ -250,27 +344,28 @@ stale_volume_guard() {
 }
 
 compose_up() {
-  ensure_network
-  ensure_ssh_file
+  section "Docker stack"
   stale_volume_guard
   if [[ $RESET_DB -eq 1 ]]; then
-    warn "--reset-db: removing volumes (postgres data, model cache, pulumi state)."
+    warn "--reset-db: removing volumes (postgres data, model cache, pulumi state)"
     compose down -v --remove-orphans || true
   fi
   local up=(up -d)
   [[ $DO_BUILD -eq 1 ]] && up+=(--build)
-  log "Starting the stack: docker compose ${up[*]}"
+  step "docker compose ${up[*]}"
   compose "${up[@]}"
+  ok "Containers started (app, postgres, redis)"
 }
 
 # ---- health + routing -------------------------------------------------------
 wait_local_health() {
+  section "Health check"
   local url="http://127.0.0.1:${APP_PORT}/api/health"
   local deadline=$(( SECONDS + HEALTH_TIMEOUT ))
-  log "Waiting for ${url} (timeout ${HEALTH_TIMEOUT}s)..."
+  step "Waiting for ${url} (timeout ${HEALTH_TIMEOUT}s)"
   while (( SECONDS < deadline )); do
     if curl -fsS -o /dev/null "$url" 2>/dev/null; then
-      ok "Local health: ${url} 200"
+      ok "Local /api/health → 200"
       return 0
     fi
     sleep 3
@@ -293,29 +388,41 @@ http_code() {
   printf '%s' "$c"
 }
 
+# Probe one public route and print an aligned result line. Relies on bash
+# dynamic scoping for `base`/`failed` from the calling check_public_routes.
+# $1=path  $2=extended-regex of acceptable codes
+_check_route() {
+  local code msg
+  code="$(http_code "${base}$1")"
+  msg="$(printf '%-15s %s' "$1" "$code")"
+  if [[ "$code" =~ $2 ]]; then ok "$msg"; else warn "$msg"; failed=1; fi
+}
+
 check_public_routes() {
-  [[ $SKIP_PUBLIC -eq 1 ]] && { log "Skipping public route checks (--skip-public-check)."; return 0; }
+  section "Public routes"
+  if [[ $SKIP_PUBLIC -eq 1 ]]; then
+    step "Skipped (--skip-public-check)"
+    return 0
+  fi
+  if [[ -z "$PUBLIC_URL" ]]; then
+    warn "No public URL known — pass --public-url or set DASHBOARD_API_GATEWAY_URL in $ENV_FILE."
+    step "Skipping public route checks."
+    return 0
+  fi
   local base="$PUBLIC_URL"; base="${base%/}"
-  local failed=0 code
+  local failed=0 code msg
 
-  log "Verifying public routes at ${base} ..."
+  step "Probing ${base}"
 
-  code="$(http_code "${base}/")"
-  [[ "$code" == "200" ]] && ok "public /            ${code}" || { warn "public /            ${code}"; failed=1; }
-
-  code="$(http_code "${base}/api/health")"
-  [[ "$code" == "200" ]] && ok "public /api/health  ${code}" || { warn "public /api/health  ${code}"; failed=1; }
-
-  code="$(http_code "${base}/config.js")"
-  [[ "$code" == "200" ]] && ok "public /config.js   ${code}" || { warn "public /config.js   ${code}"; failed=1; }
-
-  # inference may require a token (401) — both 200 and 401 mean "routed correctly"
-  code="$(http_code "${base}/inf/v1/models")"
-  [[ "$code" == "200" || "$code" == "401" ]] && ok "public /inf/v1/models ${code}" || { warn "public /inf/v1/models ${code}"; failed=1; }
-
-  # ollama OCI mirror lives at the root; anything but 404 means it's routed
+  _check_route "/"              '^200$'
+  _check_route "/config.js"     '^200$'
+  _check_route "/api/health"    '^200$'
+  # inference is token-protected — 200 or 401 both mean "routed correctly"
+  _check_route "/inf/v1/models" '^(200|401)$'
+  # ollama OCI mirror lives at the root; anything but 404/000 means it's routed
   code="$(http_code "${base}/v2/")"
-  [[ "$code" != "404" && "$code" != "000" ]] && ok "public /v2/          ${code}" || { warn "public /v2/          ${code}"; failed=1; }
+  msg="$(printf '%-15s %s' "/v2/" "$code")"
+  if [[ "$code" != "404" && "$code" != "000" ]]; then ok "$msg"; else warn "$msg"; failed=1; fi
 
   if [[ $failed -eq 1 ]]; then
     if [[ $REQUIRE_PUBLIC -eq 1 ]]; then
@@ -329,15 +436,18 @@ check_public_routes() {
 
 summary() {
   local base="${PUBLIC_URL%/}"
+  section "Summary"
+  printf '  %s%s✓ InferiaLLM is up%s\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
   echo
-  ok "InferiaLLM is up."
-  log "Dashboard:        ${base}/"
-  log "API health:       ${base}/api/health"
-  log "Superadmin email: ${SUPERADMIN_EMAIL}"
-  [[ -n "$GEN_PW" ]] && log "Superadmin pass:  ${GEN_PW}  (generated — change after login)"
-  log "Env file:         ${ENV_FILE}"
-  log "Reverse proxy:    see deploy/README.md (forward all paths to inferia-app:${APP_PORT})"
-  log "Manage:           ./setup.sh --down   |   ./setup.sh --logs"
+  kv "Dashboard"  "${base}/"
+  kv "API health" "${base}/api/health"
+  kv "Superadmin" "${SUPERADMIN_EMAIL}"
+  [[ -n "$GEN_PW" ]] && kv "Password" "${GEN_PW}  ${C_DIM}(generated — change after login)${C_RESET}"
+  kv "Env file"   "${ENV_FILE}"
+  echo
+  kv "Reverse proxy" "deploy/README.md — forward all paths to inferia-app:${APP_PORT}"
+  kv "Manage"     "./setup.sh --down   ·   ./setup.sh --logs"
+  echo
 }
 
 # ---- main -------------------------------------------------------------------
@@ -345,15 +455,21 @@ main() {
   parse_args "$@"
   [[ -f "$HELPER" ]] || die "helper not found: $HELPER"
 
+  banner
+
   if [[ $DO_DOWN -eq 1 ]]; then
     preflight
-    log "Stopping the stack."
+    section "Docker stack"
+    step "Stopping the stack"
     compose down
-    ok "Stopped."
+    ok "Stopped"
     return 0
   fi
 
   generate_env
+  # If .env already existed (generation skipped), recover the verification
+  # targets (public URL, app port, superadmin) from it.
+  load_env_settings
 
   if [[ $NO_UP -eq 1 ]]; then
     log "--no-up: skipping Docker. Done."
