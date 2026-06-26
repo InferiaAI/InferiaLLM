@@ -8,6 +8,7 @@ Supports vLLM, Ollama, and vLLM-Omni engines.
 from typing import Dict, Any, Optional, List
 import json
 import os
+import re
 import shlex
 from orchestration.config import settings
 
@@ -46,6 +47,38 @@ CUDA_DRIVER_LD_LIBRARY_PATH = (
     "/lib/x86_64-linux-gnu:/lib64:/lib:"
     "/usr/local/nvidia/lib64:/usr/local/cuda/lib64"
 )
+
+# Nosana's POST /deployments/create validates each job-definition container op
+# "id" against ^[A-Za-z0-9_-]+$. Any other character — notably the "/" and "."
+# that appear in HuggingFace repo ids such as "Qwen/Qwen3-0.6B" or
+# "meta-llama/Llama-3.1-8B-Instruct" — is rejected with an opaque HTTP 400
+# ({"error":"Bad Request"}), failing the deploy at submission before a node is
+# ever scheduled. (Verified live: "/" AND "." both rejected; uppercase, digits,
+# "_" and "-" accepted.) We therefore derive op ids that pass this validator.
+_OPID_INVALID_RE = re.compile(r"[^A-Za-z0-9_-]")
+_OPID_DASH_RUN_RE = re.compile(r"-{2,}")
+# Conservative identifier-length cap (DNS-label size). Truncating only ever
+# keeps the slug valid; Nosana's own limit is at least this large.
+_OPID_MAX_LEN = 63
+
+
+def _sanitize_op_id(raw: str, *, fallback: str = "service") -> str:
+    """Derive a Nosana-valid container op id from an arbitrary string.
+
+    Maps every character outside ``[A-Za-z0-9_-]`` to ``-`` (so "/" and "." in
+    HF repo ids become "-"), collapses runs of dashes, trims stray leading/
+    trailing separators, caps the length, and falls back to a static literal if
+    nothing valid survives.
+
+    Pure and deterministic — the same input always yields the same slug. This
+    matters because the Nosana SDK derives the public service-URL hash from the
+    job definition (which embeds the op id), so the id must be stable across
+    re-resolves of the same deployment.
+    """
+    slug = _OPID_INVALID_RE.sub("-", raw or "")
+    slug = _OPID_DASH_RUN_RE.sub("-", slug).strip("-_")
+    slug = slug[:_OPID_MAX_LEN].strip("-_")
+    return slug or fallback
 
 
 def create_vllm_job(
@@ -179,7 +212,7 @@ def create_vllm_job(
         cmd_args.append("--enforce-eager")
 
     container_op = {
-        "id": model_id,
+        "id": _sanitize_op_id(model_id, fallback="vllm"),
         "type": "container/run",
         "args": {
             "cmd": cmd_args,
@@ -404,7 +437,7 @@ def create_vllm_omni_job(
         cmd_args.extend(["--api-key", effective_api_key])
 
     container_op = {
-        "id": f"vllm-omni-{model_id.replace('/', '-')}",
+        "id": _sanitize_op_id(f"vllm-omni-{model_id}", fallback="vllm-omni"),
         "type": "container/run",
         "args": {
             "cmd": cmd_args,
