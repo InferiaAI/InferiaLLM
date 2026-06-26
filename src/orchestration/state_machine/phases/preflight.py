@@ -18,6 +18,7 @@ from providers.aws.instance_catalog import (
 )
 from providers.pulumi.ami import (
     resolve_ami,
+    ami_root_volume_gb,
 )
 from providers.pulumi.credentials import (
     verify_credentials,
@@ -172,6 +173,32 @@ class PreflightHandler:
             status="log", message=f"AMI resolved: {ami}",
         )
 
+        # 9. Floor the root volume at the AMI's own snapshot size. Baked
+        # engine-cache AMIs (vLLM image + model cache) carry a larger root
+        # snapshot than the base DLAMI; AWS rejects RunInstances when the
+        # requested root volume is smaller than the snapshot
+        # ("InvalidBlockDeviceMapping ... expect size >= N"), failing the
+        # deploy at pulumi up. Best-effort: on lookup failure we keep the
+        # requested size. The corrected value is pinned into outputs so it
+        # survives retries and overrides spec in build_program.
+        outputs = {"ami_id": ami, "region": region,
+                   "instance_class": instance_class,
+                   "instance_type": instance_type}
+        requested_root = int(spec.get("root_volume_gb") or 0)
+        ami_root = ami_root_volume_gb(region, ami, creds=creds)
+        effective_root = max(requested_root, int(ami_root or 0))
+        if effective_root > 0:
+            outputs["root_volume_gb"] = effective_root
+            if ami_root and effective_root != requested_root:
+                await ctx.emit_event(
+                    pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
+                    status="log",
+                    message=(
+                        f"Root volume raised to {effective_root}GB to fit the "
+                        f"AMI snapshot ({ami_root}GB)"
+                    ),
+                )
+
         await ctx.emit_event(
             pool_id=job.pool_id, node_id=job.node_id, phase=Phase.PREFLIGHT,
             status="succeeded", message="Preflight checks passed",
@@ -179,7 +206,5 @@ class PreflightHandler:
 
         return PhaseResult(
             next_phase=Phase.PROVISIONING,
-            outputs={"ami_id": ami, "region": region,
-                       "instance_class": instance_class,
-                       "instance_type": instance_type},
+            outputs=outputs,
         )

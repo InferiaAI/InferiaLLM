@@ -181,3 +181,58 @@ def resolve_ami(
         aws_secret_access_key=aws_secret_access_key,
         parameter_name=parameter,
     )
+
+
+def ami_root_volume_gb(
+    region: str,
+    ami_id: str,
+    *,
+    creds: "AWSCredentials | None" = None,  # noqa: F821  (forward ref)
+) -> Optional[int]:
+    """Return the AMI's root EBS volume size in GiB, or ``None`` on failure.
+
+    Baked engine-cache AMIs bundle the vLLM image + model cache, so their root
+    snapshot is much larger than the base DLAMI's. AWS rejects ``RunInstances``
+    when the requested root volume is smaller than the AMI's backing snapshot
+    ("InvalidBlockDeviceMapping: Volume of size N is smaller than snapshot,
+    expect size >= M"), which silently fails every deploy off such an AMI.
+    Callers floor the launch root volume at this value.
+
+    Best-effort: never raises and returns ``None`` (caller keeps its requested
+    size) when the AMI can't be described or carries no EBS root mapping.
+    """
+    if not ami_id:
+        return None
+    aws_access_key_id = creds.access_key_id if creds is not None else None
+    aws_secret_access_key = creds.secret_access_key if creds is not None else None
+    aws_session_token = getattr(creds, "session_token", None) if creds is not None else None
+    try:
+        client = _engine_ec2_client(
+            region,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+        )
+        resp = client.describe_images(ImageIds=[ami_id])
+        images = resp.get("Images") or []
+        if not images:
+            return None
+        img = images[0]
+        root_name = img.get("RootDeviceName")
+        root_size: Optional[int] = None
+        sizes: list[int] = []
+        for m in img.get("BlockDeviceMappings") or []:
+            ebs = m.get("Ebs") or {}
+            size = ebs.get("VolumeSize")
+            if size is None:
+                continue
+            sizes.append(int(size))
+            if m.get("DeviceName") == root_name:
+                root_size = int(size)
+        # Prefer the explicit root device; fall back to the largest EBS mapping
+        # so the launch volume is never smaller than any of the AMI's snapshots.
+        if root_size is not None:
+            return root_size
+        return max(sizes) if sizes else None
+    except Exception:  # noqa: BLE001 — best-effort; never block provisioning
+        return None

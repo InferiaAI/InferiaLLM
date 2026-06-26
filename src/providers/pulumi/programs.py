@@ -340,7 +340,14 @@ def build_program(
             subnet_id=spec.get("subnet_id"),
             security_group_ids=sg_ids,
             iam_instance_profile=spec.get("iam_instance_profile"),
-            root_volume_gb=int(spec.get("root_volume_gb") or 130),
+            # Preflight pins a snapshot-aware root size into stack_outputs (it
+            # floors the requested size at the AMI's own snapshot); prefer it so
+            # a baked engine AMI larger than spec.root_volume_gb still launches.
+            root_volume_gb=int(
+                stack_outputs.get("root_volume_gb")
+                or spec.get("root_volume_gb")
+                or 50
+            ),
             user_data=str(spec.get("user_data") or ""),
             use_spot=bool(spec.get("use_spot") or False),
         )
