@@ -24,7 +24,7 @@ logger = setup_logging(
     level="INFO",
     service_name="orchestration-service",
     use_json=not settings.is_development,
-    logger_name="services.orchestration",
+    logger_name="orchestration",
 )
 
 # Import from absolute paths

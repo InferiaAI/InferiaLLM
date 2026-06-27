@@ -26,7 +26,7 @@ import { resolvePoolGpuResources, extractHfArchitecture, getFitColor, calculateP
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
 import { ConfigService } from "@/services/configService"
-import { buildDiffusionSpec } from "./newDeploymentSpec"
+import { buildDiffusionSpec, buildVllmOmniSpec } from "./newDeploymentSpec"
 
 // --- Constants ---
 
@@ -132,9 +132,18 @@ const computeEngines = [
   {
     id: "inferia-diffusion",
     name: "Inferia Diffusion",
-    desc: "High-performance image & video generation engine powered by Inferia.",
+    desc: "High-performance image & video generation engine powered by Inferia. AWS only.",
     image: "docker.io/inferiaai/inferiadiffusion:latest",
     icon: Image,
+    types: ["inference"],
+    modelTypes: ["image_generation", "video_generation"]
+  },
+  {
+    id: "vllm-omni",
+    name: "Inferia vLLM Omni",
+    desc: "Omni-modal vLLM server for image & video generation. AWS only.",
+    image: "docker.io/vllm/vllm-omni:v0.23.0",
+    icon: Video,
     types: ["inference"],
     modelTypes: ["image_generation", "video_generation"]
   },
@@ -352,6 +361,18 @@ const initialState: State = {
  */
 export function requiresAmi(engine: string, pool: { provider?: string } | null | undefined): boolean {
   return engine === "vllm" && pool?.provider === "aws";
+}
+
+/**
+ * Engines that may only be deployed on AWS pools. vLLM Omni and Inferia
+ * Diffusion run as GPU containers the worker pulls at runtime; we only support
+ * (and validate) them on the AWS provisioning path. Used to filter pool
+ * selection and to guard launch.
+ */
+const AWS_ONLY_ENGINES = new Set(["vllm-omni", "inferia-diffusion"]);
+
+export function requiresAwsPool(engine: string): boolean {
+  return AWS_ONLY_ENGINES.has(engine);
 }
 
 // --- Components ---
@@ -794,6 +815,12 @@ export default function NewDeployment() {
         modelOffload: state.modelOffload,
         groupOffload: state.groupOffload,
       })
+    } else if (selectedEngine === "vllm-omni") {
+      return buildVllmOmniSpec({
+        modelId,
+        modelType,
+        trustRemoteCode: state.trustRemoteCode,
+      })
     } else if (selectedEngine === "pytorch") {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
@@ -857,6 +884,7 @@ export default function NewDeployment() {
   const handleManagedLaunch = async () => {
     if (!instanceName) return toast.error("Please name your deployment")
     if (!selectedPool) return toast.error("Select a compute node")
+    if (requiresAwsPool(selectedEngine) && selectedPool?.provider !== "aws") return toast.error("This engine can only be deployed on AWS pools.")
     if (requiresAmi(selectedEngine, selectedPool) && !selectedAmiId) return toast.error("Select an engine AMI")
     const targetOrgId = user?.org_id || organizations?.[0]?.id;
     if (!targetOrgId) return toast.error("Organization context missing. Please reload.")
@@ -868,8 +896,8 @@ export default function NewDeployment() {
     const preflightOk = await runPreflight(
       modelId || (config as any).model_id || "",
       selectedEngine,
-      ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine) ? undefined : (hfToken || undefined),
-      ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
+      ["vllm", "sglang", "inferia-diffusion", "vllm-omni"].includes(selectedEngine) ? undefined : (hfToken || undefined),
+      ["vllm", "sglang", "inferia-diffusion", "vllm-omni"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
     );
     if (!preflightOk) return;
  
@@ -878,7 +906,7 @@ export default function NewDeployment() {
       configuration: deploymentType === "training" ? { workload_type: "training", image: computeEngines.find(e => e.id === selectedEngine)?.image || "pytorch/pytorch:latest", git_repo: gitRepo, training_script: trainingScript, dataset_url: datasetUrl, base_model: baseModel, gpu_count: 1, hf_token: hfToken || undefined } : config,
       owner_id: user?.user_id, org_id: targetOrgId, inference_model: modelId || undefined, job_definition: config,
       ami_id: requiresAmi(selectedEngine, selectedPool) ? selectedAmiId : undefined,
-      hf_token_name: ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
+      hf_token_name: ["vllm", "sglang", "inferia-diffusion", "vllm-omni"].includes(selectedEngine) ? (selectedHfTokenName || undefined) : undefined,
       auto_replica_enabled: state.autoReplicaEnabled,
       tokens_per_second_threshold: state.autoReplicaEnabled ? (parseFloat(state.tokensPerSecondThreshold) || undefined) : undefined,
     }
@@ -962,7 +990,7 @@ function ManagedFlow({ state, dispatch, onLaunch, isPending, externalRegistry }:
 
       {step === 1 && <TypeSelection selectedId={deploymentType} onSelect={(id, mt) => dispatch({ type: 'SELECT_TYPE', deploymentType: id, modelType: mt })} />}
       {step === 2 && <EngineSelection modelType={modelType} selectedEngine={selectedEngine} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
-      {step === 3 && <PoolSelection userPools={userPools} poolsLoading={state.poolsLoading} selectedPool={selectedPool} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
+      {step === 3 && <PoolSelection userPools={userPools} poolsLoading={state.poolsLoading} selectedPool={selectedPool} selectedEngine={selectedEngine} dispatch={dispatch} setStep={(s) => dispatch({ type: 'SET_STEP', payload: s })} />}
       {step === 4 && <ManagedConfig state={state} dispatch={dispatch} onLaunch={onLaunch} isPending={isPending} externalRegistry={externalRegistry} />}
     </>
   )
@@ -1023,9 +1051,27 @@ function EngineSelection({ modelType, selectedEngine, dispatch, setStep }: { mod
   );
 }
 
-function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setStep }: { userPools: any[]; poolsLoading: boolean; selectedPool: any; dispatch: React.Dispatch<Action>; setStep: (s: number) => void }) {
+function PoolSelection({ userPools, poolsLoading, selectedPool, selectedEngine, dispatch, setStep }: { userPools: any[]; poolsLoading: boolean; selectedPool: any; selectedEngine: string; dispatch: React.Dispatch<Action>; setStep: (s: number) => void }) {
+  const awsOnly = requiresAwsPool(selectedEngine);
+
+  // If the engine is AWS-only and a previously-selected pool is non-AWS,
+  // clear it so the user can't carry an invalid selection into launch.
+  useEffect(() => {
+    if (awsOnly && selectedPool && selectedPool.provider !== "aws") {
+      dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: null });
+    }
+  }, [awsOnly, selectedPool, dispatch]);
+
+  const hasSelectablePool = !awsOnly || userPools.some(p => p.provider === "aws" && p.state !== "terminated" && p.state !== "failed");
+
   return (
     <div className="space-y-6">
+      {awsOnly && (
+        <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs text-amber-700 dark:text-amber-300">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          The selected engine is only supported on AWS pools — other providers are disabled.
+        </div>
+      )}
       {poolsLoading ? (
         <div className="flex items-center justify-center py-12">
           <div className="flex flex-col items-center gap-3">
@@ -1033,11 +1079,11 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
             <p className="text-sm text-muted-foreground">Loading compute pools...</p>
           </div>
         </div>
-      ) : userPools.length === 0 ? (
+      ) : userPools.length === 0 || !hasSelectablePool ? (
         <div className="text-center py-12 bg-muted dark:bg-card/50 rounded-xl border border-dashed dark:border-border flex flex-col items-center">
           <Server className="w-12 h-12 text-cream/70 dark:text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium text-foreground dark:text-cream">No Compute Pools Found</h3>
-          <p className="text-muted-foreground mt-1 mb-6 max-w-sm">You need at least one compute pool to deploy this model.</p>
+          <h3 className="text-lg font-medium text-foreground dark:text-cream">{awsOnly && userPools.length > 0 ? "No AWS Compute Pools Found" : "No Compute Pools Found"}</h3>
+          <p className="text-muted-foreground mt-1 mb-6 max-w-sm">{awsOnly && userPools.length > 0 ? "This engine can only be deployed on AWS pools. Create an AWS pool to continue." : "You need at least one compute pool to deploy this model."}</p>
           <Link to="/dashboard/compute/pools/new" className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium text-fg-secondary dark:text-cream/70 hover:bg-muted dark:hover:bg-card shadow-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500" /> Create New Pool</Link>
         </div>
       ) : (
@@ -1045,7 +1091,8 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
           {userPools.map(pool => {
             const isActive = pool.state === "active" || pool.state === "ready" || pool.state === "idle";
             const isTerminated = pool.state === "terminated" || pool.state === "failed";
-            const selectable = !isTerminated;
+            const blockedByProvider = awsOnly && pool.provider !== "aws";
+            const selectable = !isTerminated && !blockedByProvider;
             const hasNoNodes = !pool.nodes_count || pool.nodes_count === 0;
             return (
             <button type="button" key={pool.pool_id} aria-pressed={selectedPool?.pool_id === pool.pool_id} disabled={!selectable} onClick={() => selectable && dispatch({ type: 'SET_FIELD', field: 'selectedPool', value: pool })} className={cn("w-full cursor-pointer p-5 rounded-xl border bg-card dark:border-border relative transition-colors outline-none text-left focus:ring-2 focus:ring-ember-500/40", !selectable && "opacity-50 cursor-not-allowed", selectedPool?.pool_id === pool.pool_id ? "border-ember-600 dark:border-ember-500 ring-1 ring-ember-600 dark:ring-ember-500 shadow-md" : "hover:border-ember-300 dark:hover:border-ember-700")}>
@@ -1053,7 +1100,11 @@ function PoolSelection({ userPools, poolsLoading, selectedPool, dispatch, setSte
                 <div>
                   <div className="font-bold text-lg">{pool.pool_name}</div>
                   <div className="text-sm text-muted-foreground font-mono mt-1">{pool.provider}</div>
-                  {hasNoNodes && (
+                  {blockedByProvider ? (
+                    <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                      AWS-only engine — not available on {pool.provider}
+                    </div>
+                  ) : hasNoNodes && (
                     <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
                       No node yet — deploy will provision (~90s)
                     </div>
@@ -1110,7 +1161,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
   const { data: hfTokenNames = [] } = useQuery({
     queryKey: ['hf-token-names'],
     queryFn: () => ConfigService.listHfTokenNames(),
-    enabled: ["vllm", "sglang", "inferia-diffusion"].includes(selectedEngine),
+    enabled: ["vllm", "sglang", "inferia-diffusion", "vllm-omni"].includes(selectedEngine),
     staleTime: 1000 * 60 * 5,
   });
 
@@ -1670,6 +1721,51 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
               />
               <label htmlFor="groupOffload" className="text-xs font-medium text-muted-foreground">Group Offload</label>
             </div>
+          </div>
+        </div>
+      )}
+
+      {selectedEngine === "vllm-omni" && (
+        <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
+          <div className="flex items-center gap-2 mb-2">
+            {modelType === "video_generation" ? <Video className="w-4 h-4 text-primary" /> : <Image className="w-4 h-4 text-primary" />}
+            <h4 className="font-medium text-sm">
+              {modelType === "video_generation" ? "vLLM Omni Video Generation" : "vLLM Omni Image Generation"}
+            </h4>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            Omni-modal vLLM server. AWS only. Model type is set automatically from your deployment type.
+          </div>
+          <div>
+            <label htmlFor="hfTokenNameOmni" className="block text-xs font-medium text-muted-foreground mb-1.5">
+              HuggingFace Token <span className="text-muted-foreground/60">(optional — required for gated models)</span>
+            </label>
+            <select
+              id="hfTokenNameOmni"
+              value={selectedHfTokenName}
+              onChange={e => dispatch({ type: 'SET_FIELD', field: 'selectedHfTokenName', value: e.target.value })}
+              className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white"
+            >
+              <option value="">None</option>
+              {hfTokenNames.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+            {hfTokenNames.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                No saved tokens — add one at Settings → Providers → HuggingFace.
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="trustRemoteCodeOmni"
+              type="checkbox"
+              checked={state.trustRemoteCode || false}
+              onChange={e => dispatch({ type: 'SET_FIELD', field: 'trustRemoteCode', value: e.target.checked })}
+              className="w-4 h-4 rounded border-border text-ember-600 focus:ring-ember-500"
+            />
+            <label htmlFor="trustRemoteCodeOmni" className="text-xs font-medium text-muted-foreground">Trust Remote Code</label>
           </div>
         </div>
       )}
