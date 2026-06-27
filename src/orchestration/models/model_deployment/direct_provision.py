@@ -351,13 +351,27 @@ async def provision_direct_node(
         # shows RUNNING while the endpoint 503s and the playground returns
         # "Upstream provider returned an error". Other providers keep the
         # original "RUNNING once scheduled" behavior.
-        probeable = (
-            getattr(caps, "endpoint_http_probeable", False)
-            and expose_url
+        http_probeable = bool(getattr(caps, "endpoint_http_probeable", False))
+        has_usable_url = bool(
+            expose_url
             and not _is_sentinel_endpoint(expose_url)
             and str(expose_url).startswith("http")
         )
-        if not probeable:
+        # A provider that advertises a control-plane-reachable endpoint but for
+        # which no usable http(s) URL ever resolved (empty / sentinel after the
+        # readiness poll) cannot be verified to serve. Marking RUNNING here would
+        # strand exactly the "dashboard RUNNING but the endpoint never routes"
+        # state this gate exists to prevent — so fail instead. The except block
+        # marks FAILED + releases the GPU + deprovisions; a retry lands cleanly.
+        if http_probeable and not has_usable_url:
+            raise RuntimeError(
+                f"provider {provider} advertises a reachable endpoint but none "
+                f"resolved for job {provider_instance_id} (no usable service URL "
+                f"after the readiness poll); cannot verify the model serves"
+            )
+        if not http_probeable:
+            # Genuinely non-probeable provider (worker pools / k8s): keep the
+            # original "RUNNING once scheduled" behavior.
             await deps.deploys.update_state(deploy_id, "RUNNING")
             log.info(
                 "provision_direct_node: deployment %s provider=%s node %s RUNNING "
@@ -410,19 +424,24 @@ async def provision_direct_node(
             await _best_effort_deprovision(adapter, provider_instance_id, cred_name)
             return
         if result == "timeout":
-            # Slow node that never served within the window: do NOT fail it (it
-            # may still come up). Mark RUNNING and let the DePIN liveness
-            # reconciler flip it FAILED if the job later goes terminal.
-            log.warning(
-                "provision_direct_node: deployment %s endpoint %s did not serve "
-                "within %ss; marking RUNNING anyway (liveness worker reconciles "
-                "if the job dies)",
-                deploy_id,
-                expose_url,
-                timeout,
+            # The endpoint never served within the window. Do NOT mark RUNNING:
+            # a DePIN job can report RUNNING while its container never serves
+            # (slow/failed image pull — Nosana pulls the full vLLM image fresh
+            # every time, no baked cache), so the liveness worker (which only
+            # fails *terminal* jobs) would never reconcile it, leaving a deploy
+            # the dashboard shows RUNNING while the endpoint 503s ("Service
+            # Initializing") and the sandbox returns "Upstream provider returned
+            # an error". Fail clearly instead so the operator gets an actionable
+            # error and a retry/resume lands on a fresh node. The except block
+            # marks FAILED + releases the GPU + deprovisions (uniform teardown),
+            # mirroring the "crashed" path.
+            raise RuntimeError(
+                f"endpoint never served within {timeout}s: the provider job "
+                f"{provider_instance_id} did not become ready (image pull/model "
+                f"load too slow, or the container failed to start on the node)"
             )
 
-        # ready or timeout -> RUNNING (guarded against a concurrent cancel).
+        # ready -> RUNNING (guarded against a concurrent cancel).
         if not await deps.deploys.update_state_if(
             deploy_id, "DEPLOYING", "RUNNING"
         ):
