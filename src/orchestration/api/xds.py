@@ -66,24 +66,32 @@ def _hash(obj) -> str:
     return hashlib.sha1(blob).hexdigest()[:12]
 
 
-def _build_cluster(cluster_name: str, members: list[dict]) -> dict:
+DIFFUSION_ENGINES = frozenset({"inferia-diffusion"})
+
+
+def _health_checks(engine: str | None) -> list[dict]:
+    is_diffusion = engine in DIFFUSION_ENGINES
+    return [
+        {
+            "timeout": "60s" if is_diffusion else "10s",
+            "interval": "60s" if is_diffusion else "5s",
+            "unhealthy_threshold": 30 if is_diffusion else 2,
+            "healthy_threshold": 1,
+            "http_health_check": {
+                "path": "/healthz",
+            },
+        },
+    ]
+
+
+def _build_cluster(cluster_name: str, members: list[dict], engine: str | None = None) -> dict:
     return {
         "@type": CLUSTER_TYPE_URL,
         "name": cluster_name,
-        "connect_timeout": "45s",
+        "connect_timeout": "120s" if (engine or "") in DIFFUSION_ENGINES else "45s",
         "lb_policy": "ROUND_ROBIN",
         "type": "STRICT_DNS",
-        "health_checks": [
-            {
-                "timeout": "2s",
-                "interval": "5s",
-                "unhealthy_threshold": 2,
-                "healthy_threshold": 1,
-                "http_health_check": {
-                    "path": "/healthz",
-                },
-            },
-        ],
+        "health_checks": _health_checks(engine),
         "load_assignment": {
             "cluster_name": cluster_name,
             "endpoints": [
@@ -174,7 +182,7 @@ async def build_resources() -> dict:
             cluster_name = build_envoy_cluster_name(
                 pool_id=pool_id, engine=engine, model=model
             )
-            clusters[cluster_name] = _build_cluster(cluster_name, group_members)
+            clusters[cluster_name] = _build_cluster(cluster_name, group_members, engine=engine)
             for m in group_members:
                 route_table[m["id"]] = cluster_name
 
@@ -188,7 +196,7 @@ async def build_resources() -> dict:
             cluster_name = build_envoy_cluster_name(
                 pool_id=None, engine=engine, model=model
             )
-            clusters[cluster_name] = _build_cluster(cluster_name, members)
+            clusters[cluster_name] = _build_cluster(cluster_name, members, engine=engine)
             for m in members:
                 route_table[m["id"]] = cluster_name
 

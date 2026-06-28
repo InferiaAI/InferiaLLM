@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import shutil
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -137,12 +138,17 @@ async def test_happy_path_returns_provisioning():
          patch(
             "orchestration.state_machine.phases."
             "preflight.resolve_ami", return_value="ami-abc",
+        ), \
+         patch(
+            "orchestration.state_machine.phases."
+            "preflight.ami_root_volume_gb", return_value=None,
         ):
         ctx = _ctx()
         result = await PreflightHandler().run(_job(), ctx)
     assert result.next_phase == Phase.PROVISIONING
     # T14 code review: outputs must carry the keys T15 PulumiUpHandler
-    # reads back.
+    # reads back. (No root_volume_gb here: spec carries none and the AMI
+    # lookup returned None, so nothing to floor.)
     assert result.outputs == {
         "ami_id": "ami-abc",
         "region": "us-east-1",
@@ -264,6 +270,7 @@ async def test_preflight_prefers_spec_ami_id(monkeypatch):
         raise AssertionError("resolve_ami must NOT be called when spec has ami_id")
 
     monkeypatch.setattr(pf, "resolve_ami", _must_not_call)
+    monkeypatch.setattr(pf, "ami_root_volume_gb", lambda *a, **k: None)
 
     job = _job(spec={
         "instance_class": "normal_gpu",
@@ -298,8 +305,65 @@ async def test_preflight_falls_back_to_resolve_ami_when_spec_has_no_ami_id():
             "orchestration.state_machine.phases."
             "preflight.resolve_ami",
             return_value="ami-auto-pick",
-        ) as mock_resolve:
+        ) as mock_resolve, \
+         patch(
+            "orchestration.state_machine.phases."
+            "preflight.ami_root_volume_gb", return_value=None,
+        ):
         result = await PreflightHandler().run(_job(), _ctx())
 
     mock_resolve.assert_called_once()
     assert result.outputs["ami_id"] == "ami-auto-pick"
+
+
+@pytest.mark.asyncio
+async def test_preflight_floors_root_volume_at_ami_snapshot():
+    """A baked engine AMI whose snapshot (130GB) exceeds the requested root
+    volume (100GB) must raise the launch root volume to 130 so RunInstances
+    doesn't fail InvalidBlockDeviceMapping. The corrected value is pinned into
+    outputs (build_program prefers it over spec)."""
+    job = _job(spec={
+        "instance_class": "normal_gpu", "instance_type": "g6.xlarge",
+        "region": "us-east-1", "ami_id": "ami-baked", "root_volume_gb": 100,
+    })
+    with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
+         patch(
+            "orchestration.state_machine.phases."
+            "preflight.verify_credentials", return_value={"Account": "123"},
+        ), \
+         patch(
+            "orchestration.state_machine.phases."
+            "preflight.ami_root_volume_gb", return_value=130,
+        ):
+        ctx = _ctx()
+        result = await PreflightHandler().run(job, ctx)
+
+    assert result.outputs["root_volume_gb"] == 130
+    # An operator-visible log row explains the bump.
+    msgs = [kw.get("message", "") for (_a, kw) in ctx.emit_event.await_args_list]
+    assert any("Root volume raised to 130GB" in m for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_preflight_keeps_requested_root_volume_when_larger():
+    """When the requested root volume already exceeds the AMI snapshot, keep
+    it (don't shrink) and don't emit a bump log."""
+    job = _job(spec={
+        "instance_class": "normal_gpu", "instance_type": "g6.xlarge",
+        "region": "us-east-1", "ami_id": "ami-baked", "root_volume_gb": 200,
+    })
+    with patch("shutil.which", return_value="/usr/local/bin/pulumi"), \
+         patch(
+            "orchestration.state_machine.phases."
+            "preflight.verify_credentials", return_value={"Account": "123"},
+        ), \
+         patch(
+            "orchestration.state_machine.phases."
+            "preflight.ami_root_volume_gb", return_value=130,
+        ):
+        ctx = _ctx()
+        result = await PreflightHandler().run(job, ctx)
+
+    assert result.outputs["root_volume_gb"] == 200
+    msgs = [kw.get("message", "") for (_a, kw) in ctx.emit_event.await_args_list]
+    assert not any("Root volume raised" in m for m in msgs)

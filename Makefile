@@ -2,9 +2,9 @@
 
 .PHONY: setup start test clean docker-build-unified docker-up-unified docker-down docker-clean
 
-# Setup the project (env, dependencies, init)
+# Setup the project: generate .env, bring up the stack, verify health + routing
 setup:
-	@./setup_project.sh
+	@./setup.sh
 
 # Start the API services using the installed CLI
 start:

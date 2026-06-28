@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 from orchestration.api.xds import (
     _parse_advertise_url,
     _build_cluster,
+    _health_checks,
+    DIFFUSION_ENGINES,
     build_resources,
     configure,
 )
@@ -20,12 +22,44 @@ def test_parse_advertise_url():
 
 def test_build_cluster_format():
     members = [{"host": "h1", "port": 8080}]
-    cluster = _build_cluster("test-cluster", members)
+    cluster = _build_cluster("test-cluster", members, engine="vllm")
     assert cluster["name"] == "test-cluster"
     assert cluster["type"] == "STRICT_DNS"
     assert cluster["@type"] == "type.googleapis.com/envoy.config.cluster.v3.Cluster"
     assert "load_assignment" in cluster
     assert cluster["load_assignment"]["cluster_name"] == "test-cluster"
+    hc = cluster["health_checks"][0]
+    assert hc["timeout"] == "10s"
+    assert hc["interval"] == "5s"
+
+
+def test_build_cluster_diffusion_health_checks():
+    members = [{"host": "h1", "port": 8080}]
+    cluster = _build_cluster("test-diffusion", members, engine="inferia-diffusion")
+    hc = cluster["health_checks"][0]
+    assert hc["timeout"] == "60s"
+    assert hc["interval"] == "60s"
+    assert hc["unhealthy_threshold"] == 30
+    assert cluster["connect_timeout"] == "120s"
+
+
+def test_health_checks_diffusion():
+    hc = _health_checks("inferia-diffusion")
+    assert hc[0]["timeout"] == "60s"
+    assert hc[0]["interval"] == "60s"
+    assert hc[0]["unhealthy_threshold"] == 30
+
+
+def test_health_checks_default():
+    hc = _health_checks("vllm")
+    assert hc[0]["timeout"] == "10s"
+    assert hc[0]["interval"] == "5s"
+    assert hc[0]["unhealthy_threshold"] == 2
+
+
+def test_health_checks_none():
+    hc = _health_checks(None)
+    assert hc[0]["timeout"] == "10s"
 
 
 
@@ -34,17 +68,17 @@ def test_build_cluster_format():
 @pytest.mark.asyncio
 async def test_build_resources_grouping():
     fake_nodes = [
-        {"id": "n1", "advertise_url": "h1:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": True},
-        {"id": "n2", "advertise_url": "h2:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": True},
-        {"id": "n3", "advertise_url": "h3:8080", "pool_id": "p1", "engine": "ollama", "model": "llama", "healthy": True},
-        {"id": "n4", "advertise_url": "h4:8080", "pool_id": None, "engine": "vllm", "model": "gemma", "healthy": True},
-        {"id": "n5", "advertise_url": "h5:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": False},
-        {"id": "n6", "advertise_url": "h6:8080", "pool_id": "p1", "engine": "vllm", "model": "__default__", "healthy": True},
-        {"id": "n7", "advertise_url": "h7:8080", "pool_id": None, "engine": "vllm", "model": "__default__", "healthy": True},
+        {"id": "n1", "advertise_url": "h1:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": True, "last_heartbeat": "2026-06-23T12:00:00"},
+        {"id": "n2", "advertise_url": "h2:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": True, "last_heartbeat": "2026-06-23T12:00:00"},
+        {"id": "n3", "advertise_url": "h3:8080", "pool_id": "p1", "engine": "ollama", "model": "llama", "healthy": True, "last_heartbeat": "2026-06-23T12:00:00"},
+        {"id": "n4", "advertise_url": "h4:8080", "pool_id": None, "engine": "vllm", "model": "gemma", "healthy": True, "last_heartbeat": "2026-06-23T12:00:00"},
+        {"id": "n5", "advertise_url": "h5:8080", "pool_id": "p1", "engine": "vllm", "model": "gemma", "healthy": False, "last_heartbeat": "2026-06-23T12:00:00"},
+        {"id": "n6", "advertise_url": "h6:8080", "pool_id": "p1", "engine": "vllm", "model": "__default__", "healthy": True, "last_heartbeat": "2026-06-23T12:00:00"},
+        {"id": "n7", "advertise_url": "h7:8080", "pool_id": None, "engine": "vllm", "model": "__default__", "healthy": True, "last_heartbeat": "2026-06-23T12:00:00"},
     ]
 
     mock_repo = AsyncMock()
-    mock_repo.list_xds_nodes.return_value = fake_nodes
+    mock_repo.get_ready_nodes.return_value = fake_nodes
     configure(inventory_repo=mock_repo)
 
     rs = await build_resources()

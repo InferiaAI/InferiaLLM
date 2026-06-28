@@ -1,3 +1,4 @@
+import os
 import secrets
 import logging
 import asyncio
@@ -126,9 +127,13 @@ class NosanaAdapter(ProviderAdapter):
         # from the control plane, so gate RUNNING on the endpoint actually
         # serving — not just on the job being scheduled (avoids the dashboard
         # showing RUNNING while the model is still pulling/loading and the
-        # endpoint 503s). Cold start = 9GB image pull + model load.
+        # endpoint 503s). On timeout the deploy is marked FAILED (not RUNNING)
+        # so a stuck node surfaces clearly and retry lands on a fresh node.
+        # Generous window: Nosana pulls the full vLLM image FRESH every time
+        # (no baked cache like the AWS engine AMI) — v0.22 is ~35GB — so 40min
+        # leaves headroom for a slow node before we declare it failed.
         endpoint_http_probeable=True,
-        endpoint_ready_timeout_seconds=1800,
+        endpoint_ready_timeout_seconds=2400,
         requires_sidecar=True,
         supports_direct_provisioning=True,
         pricing_model=PricingModel.FIXED,
@@ -697,7 +702,7 @@ class NosanaAdapter(ProviderAdapter):
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
-                        raise RuntimeError("Failed to fetch job details")
+                        raise RuntimeError(f"Failed to fetch job details")
                     job_data = await resp.json()
                     node_address = job_data.get("nodeAddress")
                     raw_state = job_data.get("jobState")

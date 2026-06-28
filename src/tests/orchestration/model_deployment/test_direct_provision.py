@@ -600,23 +600,30 @@ async def test_probe_crashed_marks_failed_and_deprovisions(_mock_endpoint_probe)
 
 
 @pytest.mark.asyncio
-async def test_probe_timeout_still_marks_running(_mock_endpoint_probe):
-    """A slow node that never served within the window is NOT failed (it may
-    still come up) — mark RUNNING and let the liveness worker reconcile."""
+async def test_probe_timeout_marks_failed_and_deprovisions(_mock_endpoint_probe):
+    """An endpoint that never serves within the window is marked FAILED (NOT
+    RUNNING). Marking RUNNING would strand a deploy the dashboard shows running
+    while the endpoint 503s — a DePIN job can report RUNNING while its container
+    never serves, so the liveness worker (terminal-jobs only) never reconciles
+    it. Fail clearly + tear down so retry/resume lands on a fresh node."""
     _mock_endpoint_probe.return_value = "timeout"
     adapter = _make_adapter()
     deps = _make_deps(deploy=_deploy())
 
-    node_id, deploy_id = await _run(adapter, deps)
+    node_id, deploy_id = await _run(adapter, deps, gpu=1)
 
-    transitions = [
-        (c.args[1], c.args[2]) for c in deps.deploys.update_state_if.await_args_list
-    ]
-    assert ("DEPLOYING", "RUNNING") in transitions
-    # not failed
-    for c in deps.deploys.update_state.await_args_list:
-        assert c.args[1] != "FAILED"
-    adapter.deprovision_node.assert_not_awaited()
+    # FAILED with a clear "never served within Ns" cause
+    failed = [c for c in deps.deploys.update_state.await_args_list if c.args[1] == "FAILED"]
+    assert failed, "expected a FAILED transition on readiness timeout"
+    msg = failed[-1].kwargs.get("error_message", "")
+    assert "never served" in msg.lower() or "did not become ready" in msg.lower()
+    # uniform teardown (release GPU + terminate node + deprovision the instance)
+    deps.inventory.release_gpu.assert_awaited_once_with(node_id, 1)
+    deps.inventory.mark_terminated.assert_awaited_once_with(node_id)
+    adapter.deprovision_node.assert_awaited_once()
+    # never reached the RUNNING transition
+    rs = [c for c in deps.deploys.update_state_if.await_args_list if c.args[2] == "RUNNING"]
+    assert not rs, "RUNNING must not be set when the endpoint never served"
 
 
 @pytest.mark.asyncio
@@ -651,6 +658,31 @@ async def test_non_probeable_provider_marks_running_unconditionally(_mock_endpoi
 
     deps.deploys.update_state.assert_awaited_once_with(deploy_id, "RUNNING")
     _mock_endpoint_probe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_probeable_provider_no_usable_url_marks_failed(_mock_endpoint_probe):
+    """A probeable provider (Nosana) whose readiness poll yields NO usable URL
+    (sentinel + no node_spec fallback) must FAIL + tear down — not silently mark
+    RUNNING with an unroutable endpoint (the dashboard-RUNNING/sandbox-503 state
+    this gate prevents). The endpoint probe is never even reached."""
+    adapter = _make_adapter(
+        node_spec=_node_spec(expose_url=None),
+        ready_url="job-running-confidential",  # confidential sentinel, no URL
+    )
+    deps = _make_deps(deploy=_deploy())
+
+    node_id, deploy_id = await _run(adapter, deps, gpu=1)
+
+    failed = [c for c in deps.deploys.update_state.await_args_list if c.args[1] == "FAILED"]
+    assert failed, "expected FAILED when no usable endpoint resolved"
+    msg = failed[-1].kwargs.get("error_message", "")
+    assert "no usable service url" in msg.lower() or "reachable endpoint" in msg.lower()
+    deps.inventory.release_gpu.assert_awaited_once_with(node_id, 1)
+    adapter.deprovision_node.assert_awaited_once()
+    _mock_endpoint_probe.assert_not_awaited()  # failed before the probe
+    rs = [c for c in deps.deploys.update_state_if.await_args_list if c.args[2] == "RUNNING"]
+    assert not rs
 
 
 # ---------------------------------------------------------------------------

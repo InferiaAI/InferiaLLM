@@ -69,10 +69,15 @@ class DepinLivenessWorker:
         pool_repo,
         interval_seconds: int = 45,
         # A DEPLOYING deploy whose endpoint has not served within this window is
-        # force-resolved (default 35min > worst-case 9GB pull + model load +
-        # the in-process probe's 1800s timeout, so a LIVE probe always acts
-        # first and this only fires for orphaned deploys).
-        deploying_max_seconds: int = 2100,
+        # force-resolved as orphaned. MUST stay GREATER than the largest
+        # probeable adapter's endpoint_ready_timeout_seconds (Nosana = 2400s, a
+        # ~35GB fresh vLLM image pull with no baked cache) so an in-process LIVE
+        # readiness probe always resolves the deploy (RUNNING or FAILED) FIRST
+        # and this backstop only fires for deploys whose provisioning coroutine
+        # died (no live probe). Inverting it (worker < probe) lets this
+        # false-FAIL + deprovision a slow-but-working deploy out from under a
+        # still-running probe.
+        deploying_max_seconds: int = 2700,
         # A PENDING_NODE deploy older than this is treated as orphaned (normal
         # PENDING_NODE lasts <~300s, the wait_for_ready window); below it the
         # in-process coroutine is likely still provisioning — don't interfere.
