@@ -1632,6 +1632,17 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             detail="ami_id is required for vLLM deployments on AWS",
         )
 
+    # 1b'. vLLM Omni and Inferia Diffusion are GPU container engines we only
+    # support on the AWS provisioning path (the dashboard restricts them to AWS
+    # pools too). Reject them on any other provider with an actionable 422
+    # rather than letting them provision a node that can't run the recipe.
+    # They deploy like sglang/ollama — no engine AMI required.
+    if (req.engine or "").lower() in ("vllm-omni", "inferia-diffusion") and _provider != "aws":
+        raise HTTPException(
+            status_code=422,
+            detail=f"engine '{req.engine}' is only supported on AWS pools",
+        )
+
     # 1c. Persist ami_id into configuration so the /start resume path can
     # reuse the operator's selected AMI instead of falling back to resolve_ami.
     if req.ami_id:

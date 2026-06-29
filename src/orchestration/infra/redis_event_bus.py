@@ -18,6 +18,7 @@ class RedisEventBus:
             password=os.getenv("REDIS_PASSWORD", ""),
             decode_responses=True,
             max_connections=int(os.getenv("REDIS_EVENT_BUS_POOL_SIZE", "20")),
+            socket_timeout=None,
         )
         self.redis = redis.Redis(connection_pool=pool)
 

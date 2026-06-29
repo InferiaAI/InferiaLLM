@@ -288,6 +288,8 @@ async def start_xds_event_subscription(app: FastAPI) -> None:
         logger.info("xDS event subscription skipped: no event bus configured")
         return
 
+    import redis.exceptions as _redis_exc
+
     logger.info("xDS event subscription started")
 
     while True:
@@ -301,6 +303,15 @@ async def start_xds_event_subscription(app: FastAPI) -> None:
                 # No explicit cache to invalidate — build_resources queries the
                 # DB fresh each time.  The subscription exists so the consumer
                 # group anchors progress; the DB is the source of truth.
+        except asyncio.CancelledError:
+            # Normal shutdown — propagate so the task can exit cleanly.
+            raise
+        except (_redis_exc.TimeoutError, _redis_exc.ConnectionError) as e:
+            logger.debug(
+                "xDS event subscription idle/transient (%s); resubscribing",
+                e.__class__.__name__,
+            )
+            await asyncio.sleep(1)
         except Exception:
             logger.exception("xDS event subscription crashed, retrying in 5s")
             await asyncio.sleep(5)

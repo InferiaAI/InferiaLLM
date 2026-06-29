@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { requiresAmi } from "../NewDeployment";
+import { requiresAmi, requiresAwsPool } from "../NewDeployment";
 
 // A minimal pool shape — only `provider` is needed by the helper.
 const awsPool = { provider: "aws" } as const;
@@ -75,5 +75,35 @@ describe("requiresAmi", () => {
   // ── Non-vLLM engines on non-AWS providers ─────────────────────────────────
   it("returns false for nosana pool with ollama engine", () => {
     expect(requiresAmi("ollama", nosanaPool)).toBe(false);
+  });
+
+  // vllm-omni / inferia-diffusion do NOT use an engine AMI (deploy like
+  // sglang/ollama), so requiresAmi is always false even on AWS.
+  it("returns false for aws pool with vllm-omni engine", () => {
+    expect(requiresAmi("vllm-omni", awsPool)).toBe(false);
+  });
+
+  it("returns false for aws pool with inferia-diffusion engine", () => {
+    expect(requiresAmi("inferia-diffusion", awsPool)).toBe(false);
+  });
+});
+
+describe("requiresAwsPool", () => {
+  it("returns true for vllm-omni", () => {
+    expect(requiresAwsPool("vllm-omni")).toBe(true);
+  });
+
+  it("returns true for inferia-diffusion", () => {
+    expect(requiresAwsPool("inferia-diffusion")).toBe(true);
+  });
+
+  it("returns false for vllm / sglang / ollama / tei / infinity / pytorch", () => {
+    for (const e of ["vllm", "sglang", "ollama", "tei", "infinity", "pytorch"]) {
+      expect(requiresAwsPool(e)).toBe(false);
+    }
+  });
+
+  it("returns false for an empty engine string", () => {
+    expect(requiresAwsPool("")).toBe(false);
   });
 });
