@@ -238,11 +238,42 @@ sequenceDiagram
 
 ## Quick Start
 
-The fastest way to a running stack is **Docker Compose** (below). You can also install the [PyPI package](#install-from-pypi) or [build from source](#build-from-source).
+Clone the repo and run the setup script — it does everything: generates a complete `.env` (all secrets included), builds and starts the whole stack (unified app + PostgreSQL + Redis), waits for health, and verifies routing.
+
+```bash
+git clone https://github.com/InferiaAI/InferiaLLM.git && cd InferiaLLM
+./setup.sh
+```
+
+That's it. Everything is served on one port:
+
+> **Dashboard, API, and inference:** `http://localhost:8000` (or whatever you set `APP_PORT` to)
+> — Dashboard at `/`, control plane at `/api`, inference at `/inf`, model mirror at `/v2`.
+
+Database migrations run automatically on boot. Log in with the superadmin credentials the script prints (or the ones you pass it).
+
+> **Requirements:** Docker (with the Compose plugin) and `python3`.
+
+<details>
+<summary><strong>Non-interactive & other flags</strong></summary>
+<br/>
+
+```bash
+# Fully unattended (CI / remote box) — a password is generated if you don't pass one
+./setup.sh --yes \
+  --public-url https://inferiallm.example.com \
+  --superadmin-email admin@example.com
+
+./setup.sh --build      # force an image rebuild
+./setup.sh --no-up      # only (re)generate .env, don't touch Docker
+./setup.sh --down       # stop the stack
+./setup.sh --help       # full list of flags
+```
+</details>
 
 ### Self-Hosting with Docker Compose
 
-The repository ships a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis).
+Prefer to wire it up by hand? `setup.sh` is just orchestration around a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis). You can drive it directly:
 
 ```bash
 # 1. Clone
@@ -262,11 +293,6 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 # 4. Launch
 docker compose up -d --build
 ```
-
-That's it. Everything is served on one port:
-
-> **Dashboard, API, and inference:** `http://localhost:8000` (or whatever you set `APP_PORT` to)
-> — Dashboard at `/`, control plane at `/api`, inference at `/inf`, model mirror at `/v2`.
 
 Database migrations run automatically on boot. Log in with the `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` you set.
 
