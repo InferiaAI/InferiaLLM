@@ -97,6 +97,56 @@ def test_validate_email_bad(bad):
 
 
 # --------------------------------------------------------------------------- #
+# free-form field validation — .env / compose-breaking characters
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("good", ["", "hf_abc123", "https://idp.example.com", "client-id.42"])
+def test_validate_no_env_breaking_ok(good):
+    assert mod.validate_no_env_breaking(good, "field") == good
+
+
+@pytest.mark.parametrize("char", ['"', "$", "'", "`"])
+def test_validate_no_env_breaking_rejects(char):
+    with pytest.raises(mod.SetupError):
+        mod.validate_no_env_breaking(f"a{char}b", "field")
+
+
+def test_build_env_rejects_quote_in_email():
+    with pytest.raises(mod.SetupError):
+        mod.build_env(origin="https://h.io", app_port=8000, auth_mode="local",
+                      email='a"b@c.co', password="password123", pg_password="pg123456",
+                      secrets_map=_SECRETS)
+
+
+def test_build_env_rejects_dollar_in_hf_token():
+    with pytest.raises(mod.SetupError):
+        mod.build_env(origin="https://h.io", app_port=8000, auth_mode="local",
+                      email="a@b.co", password="password123", pg_password="pg123456",
+                      secrets_map=_SECRETS, hf_token="hf_$X")
+
+
+def test_build_env_rejects_breaking_external_auth_url():
+    with pytest.raises(mod.SetupError):
+        mod.build_env(origin="https://h.io", app_port=8000, auth_mode="inferiaauth",
+                      email="a@b.co", password="password123", pg_password="pg123456",
+                      secrets_map=_SECRETS, external_auth_url="https://idp$x.co",
+                      oauth_client_id="cid")
+
+
+def test_build_env_rejects_breaking_oauth_client_id():
+    with pytest.raises(mod.SetupError):
+        mod.build_env(origin="https://h.io", app_port=8000, auth_mode="inferiaauth",
+                      email="a@b.co", password="password123", pg_password="pg123456",
+                      secrets_map=_SECRETS, external_auth_url="https://idp",
+                      oauth_client_id='c"id')
+
+
+def test_cli_breaking_email_exits_2():
+    r = _run(["generate-env", "--public-url", "https://h.io",
+              "--email", 'a"b@c.co', "--password", "password123"])
+    assert r.returncode == 2
+
+
+# --------------------------------------------------------------------------- #
 # URL parsing + derivation
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("url,origin", [
@@ -254,6 +304,151 @@ def test_merge_preserve_no_existing_keys_is_noop():
     fresh = {"JWT_SECRET_KEY": "j", "SECRET_ENCRYPTION_KEY": "new"}
     merged = mod.merge_preserve({}, fresh)
     assert merged == fresh
+
+
+# --------------------------------------------------------------------------- #
+# render_env_from_template — the line-for-line .env.example mirror
+# --------------------------------------------------------------------------- #
+_TEMPLATE = (
+    "# --- Section A ---\n"
+    "FOO=oldfoo\n"
+    "\n"
+    "# comment line\n"
+    "BAR=\n"
+    "  BAZ=indented\n"
+)
+
+
+def test_render_from_template_preserves_comments_and_blanks():
+    out = mod.render_env_from_template(_TEMPLATE, {"FOO": "x", "BAR": "y", "BAZ": "z"})
+    lines = out.splitlines()
+    assert lines[0] == "# --- Section A ---"   # comment kept verbatim
+    assert lines[1] == 'FOO="x"'               # value substituted + quoted
+    assert lines[2] == ""                       # blank line preserved
+    assert lines[3] == "# comment line"        # comment preserved
+    assert lines[4] == 'BAR="y"'
+    assert lines[5] == 'BAZ="z"'                # indentation normalized on rewrite
+
+
+def test_render_from_template_keeps_template_key_absent_from_env():
+    # FOO not generated -> its example line is kept verbatim
+    out = mod.render_env_from_template("FOO=keepme\nBAR=x\n", {"BAR": "new"})
+    assert "FOO=keepme" in out
+    assert 'BAR="new"' in out
+
+
+def test_render_from_template_keeps_non_assignment_lines_verbatim():
+    out = mod.render_env_from_template("this is not an assignment\nA=1\n", {"A": "v"})
+    assert "this is not an assignment" in out
+    assert 'A="v"' in out
+
+
+def test_render_from_template_appends_unknown_env_keys():
+    out = mod.render_env_from_template("A=1\n", {"A": "v", "EXTRA": "e", "MORE": "m"})
+    assert 'A="v"' in out
+    assert "# --- Additional (generated; not in .env.example) ---" in out
+    assert 'EXTRA="e"' in out and 'MORE="m"' in out
+    # appended block comes after the template body
+    assert out.index('A="v"') < out.index('EXTRA="e"')
+
+
+def test_render_from_template_no_append_when_all_keys_known():
+    out = mod.render_env_from_template("A=1\nB=2\n", {"A": "x", "B": "y"})
+    assert "Additional (generated" not in out
+
+
+def test_render_from_template_ends_with_single_newline():
+    out = mod.render_env_from_template("A=1\n", {"A": "v"})
+    assert out.endswith('A="v"\n')
+    assert not out.endswith("\n\n")
+
+
+def test_render_from_template_roundtrips_via_parse():
+    env = {"A": "1", "B": "x y", "C": "https://h.io/api"}
+    out = mod.render_env_from_template("# h\nA=\nB=\nC=\n", env)
+    assert mod.parse_env_text(out) == env
+
+
+def test_default_template_path_is_repo_env_example():
+    p = mod.default_template_path()
+    assert p.name == ".env.example"
+    assert p.is_file()  # the real example ships in the repo
+
+
+def test_render_from_template_mirrors_real_example_structure():
+    """Comment/blank lines and key order match .env.example exactly; values filled."""
+    example = mod.default_template_path().read_text()
+    env = mod.build_env(origin="https://h.io", app_port=8000, auth_mode="local",
+                        email="a@b.co", password="password123", pg_password="pg123456",
+                        secrets_map=_SECRETS)
+    out = mod.render_env_from_template(example, env)
+
+    def structural(text):
+        # comment + blank lines, with their positions, define the "shape"
+        return [ln for ln in text.splitlines() if not ln.strip() or ln.strip().startswith("#")]
+
+    assert structural(out) == structural(example)  # comments + blanks identical
+    # key order preserved
+    key_re = mod._ENV_ASSIGN_RE
+    keys_ex = [m.group(1) for ln in example.splitlines() if (m := key_re.match(ln))]
+    keys_out = [m.group(1) for ln in out.splitlines() if (m := key_re.match(ln))]
+    assert keys_out == keys_ex
+    # no example placeholder leaks through (real secret substituted)
+    assert "CHANGEME" not in out
+    parsed = mod.parse_env_text(out)
+    assert parsed["SECRET_ENCRYPTION_KEY"] == "s"
+    assert parsed["DATABASE_URL"].startswith("postgresql://inferia:pg123456@")
+
+
+# --------------------------------------------------------------------------- #
+# CLI template wiring
+# --------------------------------------------------------------------------- #
+def test_cli_default_template_mirrors_comments(capsys):
+    rc = mod.main(["generate-env", "--public-url", "https://h.io",
+                   "--email", "a@h.io", "--password", "password123"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # the real example's headers + a blank line survive into the generated .env
+    assert "# --- Application Core ---" in out
+    assert "\n\n" in out  # at least one preserved blank line
+    assert 'AUTH_PROVIDER="local"' in out
+
+
+def test_cli_explicit_template(tmp_path, capsys):
+    tpl = tmp_path / "tpl.example"
+    tpl.write_text("# my header\nAUTH_PROVIDER=placeholder\n")
+    rc = mod.main(["generate-env", "--public-url", "https://h.io", "--email", "a@h.io",
+                   "--password", "password123", "--template", str(tpl)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "# my header" in out
+    assert 'AUTH_PROVIDER="local"' in out          # value filled from build_env
+    # keys not in this tiny template are appended, never dropped
+    assert "# --- Additional (generated; not in .env.example) ---" in out
+    assert 'DATABASE_URL="postgresql://' in out
+
+
+def test_cli_missing_template_falls_back_to_flat(tmp_path, capsys):
+    rc = mod.main(["generate-env", "--public-url", "https://h.io", "--email", "a@h.io",
+                   "--password", "password123",
+                   "--template", str(tmp_path / "nope.example")])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # flat render has no comment lines but is still complete + parseable
+    assert not any(ln.strip().startswith("#") for ln in out.splitlines())
+    assert mod.parse_env_text(out)["AUTH_PROVIDER"] == "local"
+
+
+def test_cli_default_template_absent_falls_back_to_flat(tmp_path, capsys, monkeypatch):
+    # simulate a bare checkout without .env.example next to the helper
+    monkeypatch.setattr(mod, "default_template_path",
+                        lambda: tmp_path / "absent.example")
+    rc = mod.main(["generate-env", "--public-url", "https://h.io",
+                   "--email", "a@h.io", "--password", "password123"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert not any(ln.strip().startswith("#") for ln in out.splitlines())
+    assert mod.parse_env_text(out)["DATABASE_URL"].startswith("postgresql://")
 
 
 # --------------------------------------------------------------------------- #

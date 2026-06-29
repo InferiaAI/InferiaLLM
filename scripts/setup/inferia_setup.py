@@ -24,6 +24,7 @@ import os
 import re
 import secrets
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
 
 # bcrypt hashes only the first 72 bytes of a password; anything longer is
@@ -97,6 +98,24 @@ def validate_email(email: str) -> str:
     return email
 
 
+def validate_no_env_breaking(value: str, field: str) -> str:
+    """Reject ``$ " ' ```` in a value destined for the ``.env``.
+
+    The generated ``.env`` doubles as the docker-compose interpolation source, so
+    an unescaped double-quote breaks the quoted line and a ``$`` / backtick is
+    re-interpreted by compose. Passwords already enforce this; the other
+    user-supplied free-form fields (email, IdP URL, OAuth client id, HF token)
+    must too, or a stray character silently corrupts the file.
+    """
+    bad = sorted(_FORBIDDEN_PW & set(value or ""))
+    if bad:
+        raise SetupError(
+            f"{field} must not contain any of $ \" ' ` "
+            f"(found: {' '.join(bad)}) — these break the .env / compose interpolation."
+        )
+    return value
+
+
 def parse_origin(url: str) -> str:
     """Validate a public URL and return its origin (``scheme://netloc``)."""
     parsed = urlparse((url or "").strip())
@@ -147,13 +166,18 @@ def build_env(
     if auth_mode not in AUTH_MODES:
         raise SetupError(f"unknown auth mode {auth_mode!r}; choose one of {AUTH_MODES}")
     validate_email(email)
+    validate_no_env_breaking(email, "email")
     validate_password(password)
+    validate_no_env_breaking(hf_token, "hf-token")
 
     is_sso = auth_mode in ("inferiaauth", "oidc")
     if is_sso and not (external_auth_url and oauth_client_id):
         raise SetupError(
             f"auth mode {auth_mode!r} requires --external-auth-url and --oauth-client-id"
         )
+    if is_sso:
+        validate_no_env_breaking(external_auth_url, "external-auth-url")
+        validate_no_env_breaking(oauth_client_id, "oauth-client-id")
 
     urls = derive_urls(origin)
     ext_auth = external_auth_url if is_sso else "http://inferia-auth:3000"
@@ -256,8 +280,69 @@ def merge_preserve(existing: dict, fresh: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # render / parse
 # --------------------------------------------------------------------------- #
+# Matches an ``.env`` assignment line so we can rewrite just its value while
+# preserving comments / blank lines verbatim. Leading whitespace is tolerated.
+_ENV_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def default_template_path() -> Path:
+    """Return the repo-root ``.env.example`` relative to this helper's location.
+
+    The helper lives at ``<repo>/scripts/setup/inferia_setup.py``; the template
+    sits at ``<repo>/.env.example`` (``parents[2]``).
+    """
+    return Path(__file__).resolve().parents[2] / ".env.example"
+
+
 def render_env(env: dict) -> str:
+    """Flat fallback renderer: one quoted ``KEY="VALUE"`` per line, no comments.
+
+    Used when no ``.env.example`` template is available. The template-mirroring
+    :func:`render_env_from_template` is preferred so the generated ``.env`` stays
+    human-readable and aligned with the example.
+    """
     return "".join(f'{k}="{v}"\n' for k, v in env.items())
+
+
+def render_env_from_template(template: str, env: dict) -> str:
+    """Render a ``.env`` that mirrors ``template`` (``.env.example``) line by line.
+
+    * Comment lines (``# ...``) and blank lines are preserved **verbatim** and in
+      the same positions, so the generated file reads exactly like the example —
+      easy to scan and to edit by hand.
+    * Each ``KEY=...`` assignment whose ``KEY`` is in ``env`` is rewritten to
+      ``KEY="<value>"`` (always double-quoted). This is safe because every value
+      is either machine-generated (hex/base64/derived URLs — no quotes) or a
+      user-supplied free-form field that :func:`build_env` has already screened
+      with :func:`validate_no_env_breaking` / :func:`validate_password`, so no
+      value can contain a ``"`` / ``$`` / backtick that would break the quoted
+      line or docker-compose interpolation.
+    * A template ``KEY`` not present in ``env`` keeps its example line unchanged.
+    * Any ``env`` key **absent** from the template is appended in a clearly
+      labelled trailing block, so a value can never be silently dropped if the
+      template and :func:`build_env` ever drift out of sync.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in template.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            out.append(raw)
+            continue
+        m = _ENV_ASSIGN_RE.match(raw)
+        if m and m.group(1) in env:
+            key = m.group(1)
+            out.append(f'{key}="{env[key]}"')
+            seen.add(key)
+        else:
+            # not an assignment we generate (or an unrecognized line) — keep it
+            out.append(raw)
+    leftover = [k for k in env if k not in seen]
+    if leftover:
+        out.append("")
+        out.append("# --- Additional (generated; not in .env.example) ---")
+        out.extend(f'{k}="{env[k]}"' for k in leftover)
+    return "\n".join(out) + "\n"
 
 
 def parse_env_text(text: str) -> dict:
@@ -311,6 +396,18 @@ def _cmd_generate_env(a: argparse.Namespace) -> int:
         if a.merge and os.path.isfile(a.merge):
             with open(a.merge, "r", encoding="utf-8") as fh:
                 env = merge_preserve(parse_env_text(fh.read()), env)
+
+        # Resolve the template to mirror: explicit --template wins, else the
+        # repo-root .env.example next to this helper, if present.
+        template_path = a.template
+        if template_path is None:
+            dp = default_template_path()
+            if dp.is_file():
+                template_path = str(dp)
+        template_text = None
+        if template_path and os.path.isfile(template_path):
+            with open(template_path, "r", encoding="utf-8") as fh:
+                template_text = fh.read()
     except (SetupError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -319,7 +416,10 @@ def _cmd_generate_env(a: argparse.Namespace) -> int:
         # surface the auto-generated password to the orchestrator via stderr
         print(f"GENERATED_SUPERADMIN_PASSWORD={env['SUPERADMIN_PASSWORD']}",
               file=sys.stderr)
-    sys.stdout.write(render_env(env))
+    if template_text is not None:
+        sys.stdout.write(render_env_from_template(template_text, env))
+    else:
+        sys.stdout.write(render_env(env))
     return 0
 
 
@@ -339,6 +439,10 @@ def main(argv=None) -> int:
     g.add_argument("--worker-image-tag", default=DEFAULT_WORKER_IMAGE_TAG)
     g.add_argument("--hf-token", default="")
     g.add_argument("--merge", default=None, help="existing .env to preserve secrets from")
+    g.add_argument("--template", default=None,
+                   help="path to a .env.example to mirror line-for-line "
+                        "(default: repo-root .env.example; falls back to a flat "
+                        "render when absent)")
     g.set_defaults(func=_cmd_generate_env)
 
     args = parser.parse_args(argv)
