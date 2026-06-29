@@ -26,7 +26,7 @@ logger = setup_logging(
     level="INFO",
     service_name="orchestration-service",
     use_json=not settings.is_development,
-    logger_name="services.orchestration",
+    logger_name="orchestration",
 )
 
 # Import from absolute paths
@@ -42,6 +42,7 @@ from orchestration.api import admin_engine_ami as admin_engine_ami_api
 from orchestration.api import admin_aws_discovery as admin_aws_discovery_api
 from orchestration.api import nodes as nodes_api
 from orchestration.api import providers as providers_api
+from orchestration.api import xds as xds_api
 from orchestration.provisioning.engine.registry import (
     ADAPTER_REGISTRY,
 )
@@ -420,6 +421,11 @@ async def serve():
         db_pool=db_pool,
     )
 
+    xds_api.configure(
+        inventory_repo=inventory_repo,
+        event_bus=event_bus,
+    )
+
     # ---------------- FastAPI App ----------------
     app = FastAPI(
         title=settings.app_name,
@@ -441,6 +447,11 @@ async def serve():
             "/deployment/ws",
             "/v1/workers/register",
             "/v1/workers/channel",
+            "/v3/discovery:clusters",
+            "/v3/discovery:endpoints",
+            "/v3/healthz",
+            "/v3/route-table",
+            "/v3/debug/resources",
         ],
     )
 
@@ -456,6 +467,7 @@ async def serve():
     app.include_router(admin_aws_discovery_api.router)
     app.include_router(nodes_api.router)
     app.include_router(providers_api.router)
+    app.include_router(xds_api.router)
 
     # ---------------- Model Cache wiring ----------------
     # Instantiate model-cache singletons and wire them into the dep registry.
@@ -784,6 +796,21 @@ async def serve():
             logger.warning(
                 "Failed to start provisioning reconciler: %s", e
             )
+
+    # ---------------- xDS Event Subscription ----------------
+    # Listens for node state changes on the Redis event bus so the Envoy
+    # discovery service picks up new/deleted endpoints without waiting for
+    # the next DB poll cycle. Runs as a background task.
+    try:
+        await xds_api.reconcile_on_startup()
+    except Exception:
+        logger.warning("xDS startup reconciliation failed", exc_info=True)
+
+    _xds_subscription_task = asyncio.create_task(
+        xds_api.start_xds_event_subscription(app),
+    )
+    app.state.xds_subscription_task = _xds_subscription_task
+    logger.info("xDS event subscription started")
 
     # ---------------- Model-cache eviction loop ----------------
     # Runs once per minute; refreshes the in-use snapshot from the DB

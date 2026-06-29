@@ -611,6 +611,71 @@ async def test_deploy_vllm_nosana_pool_no_ami_id_not_gated(app_and_pool, monkeyp
     assert kw["pool_meta"] is not None
 
 
+@pytest.mark.parametrize("engine", ["vllm-omni", "inferia-diffusion"])
+async def test_deploy_aws_only_engine_on_nosana_returns_422(app_and_pool, engine):
+    """vllm-omni / inferia-diffusion are AWS-only: deploying them to a non-AWS
+    (nosana) pool must be rejected with 422 before any provisioning happens."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(
+        pool, provider="nosana", instance_type="nosana-gpu", region="global",
+    )
+    org_id = str(uuid4())
+
+    body = {
+        "model_name": f"{engine}-on-nosana",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "pool_id": str(pool_id),
+        "engine": engine,
+        "org_id": org_id,
+        "configuration": {"artifact_uri": "hf://some-model"},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=body)
+
+    assert r.status_code == 422, r.text
+    assert "aws" in r.text.lower()
+
+    # Nothing provisioned: zero placeholder nodes for this pool.
+    async with pool.acquire() as c:
+        inv_count = await c.fetchval(
+            "SELECT COUNT(*) FROM compute_inventory WHERE pool_id=$1", pool_id,
+        )
+    assert inv_count == 0
+
+
+@pytest.mark.parametrize("engine", ["vllm-omni", "inferia-diffusion"])
+async def test_deploy_aws_only_engine_on_aws_no_ami_succeeds(app_and_pool, engine):
+    """On an AWS pool, vllm-omni / inferia-diffusion deploy WITHOUT an ami_id
+    (they deploy like sglang/ollama — no engine AMI). ColdStart on an empty
+    pool → 202 PENDING_NODE, i.e. validation passed."""
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)  # provider defaults to aws
+    org_id = str(uuid4())
+
+    body = {
+        "model_name": f"{engine}-on-aws",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "pool_id": str(pool_id),
+        "engine": engine,
+        "org_id": org_id,
+        # no ami_id — must be accepted for these engines
+        "configuration": {"artifact_uri": "hf://some-model"},
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=body)
+
+    assert r.status_code == 202, r.text
+    assert r.json()["state"] == "PENDING_NODE"
+
+
 async def test_build_provisioning_spec_ami_id_override():
     """ami_id kwarg takes precedence over pool_meta.ami_id in the spec."""
     pool_row = {

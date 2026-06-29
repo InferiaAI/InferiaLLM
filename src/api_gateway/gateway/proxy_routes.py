@@ -118,8 +118,17 @@ async def proxy_request(
 ) -> Response:
     """Proxy a request to a downstream service."""
 
-    # Apply rate limiting to all proxy requests
-    await rate_limiter.check_rate_limit(request)
+    # Apply rate limiting to all proxy requests. A backend (Redis) failure must
+    # NOT take down proxying: a slow/unreachable rate-limit store would otherwise
+    # raise redis.TimeoutError here and 500 every dashboard→orchestration call.
+    # The legitimate "over limit" case is an HTTPException(429) and is re-raised;
+    # only unexpected backend errors are swallowed (fail open).
+    try:
+        await rate_limiter.check_rate_limit(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("Rate limit check unavailable, allowing request: %s", e)
 
     url = f"{target_url}/{path}"
 
