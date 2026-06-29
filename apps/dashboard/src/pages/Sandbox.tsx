@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { computeApi, INFERENCE_URL } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -18,10 +18,15 @@ import {
   Layers,
   Maximize2,
   Hash,
+  ChevronDown,
+  Trash2,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/tokenStore";
 import { ChatInterface } from "@/components/sandbox/ChatInterface";
+import { useSandboxChat } from "@/hooks/useSandboxChat";
+import type { ChatMessage } from "@/lib/sandboxChatStore";
 
 interface Deployment {
   id: string;
@@ -148,10 +153,12 @@ export default function Sandbox() {
     setSelectedDeploymentId(deployment.id);
   };
 
-  // The full-height / internal-scroll treatment only makes sense for the chat
-  // (inference) experience on large screens. Other categories keep their
-  // natural height and let the page scroll; mobile always uses document flow.
-  const fillHeight = !!selectedDeployment && effectiveCategory === "inference";
+  // Full-height / internal-scroll for chat-like interfaces (inference and
+  // vllm-omni image, which renders a prompt-thread like ChatInterface).
+  const fillHeight =
+    !!selectedDeployment &&
+    (effectiveCategory === "inference" ||
+      (effectiveCategory === "image" && selectedDeployment.engine === "vllm-omni"));
 
   return (
     <div className={cn("flex flex-col gap-4", fillHeight && "lg:h-[calc(100dvh-7rem)] lg:overflow-hidden")}>
@@ -212,7 +219,7 @@ export default function Sandbox() {
           </div>
 
           {selectedDeployment && effectiveCategory === "inference" && <ChatParamsPanel />}
-          {selectedDeployment && effectiveCategory === "image" && <ImageParamsPanel />}
+          {selectedDeployment && effectiveCategory === "image" && selectedDeployment.engine !== "vllm-omni" && <ImageParamsPanel />}
           {selectedDeployment && effectiveCategory === "video" && <VideoParamsPanel />}
           {selectedDeployment && effectiveCategory === "embedding" && <EmbeddingInfoPanel />}
 
@@ -568,7 +575,13 @@ function EmbeddingPanel({ deployment }: { deployment: Deployment }) {
 
 function ImagePanel({ deployment }: { deployment: Deployment }) {
   const [activeTab, setActiveTab] = useState<"generate" | "edit" | "variations">("generate");
-  
+
+  // vLLM-Omni uses /v1/chat/completions with extra_body for image generation —
+  // it doesn't support the standard /v1/images/* endpoints.
+  if (deployment.engine === "vllm-omni") {
+    return <OmniImageInterface deployment={deployment} />;
+  }
+
   return (
     <div>
       <div className="border-b">
@@ -1247,9 +1260,253 @@ function VideoExtensionInterface({ deployment }: { deployment: Deployment }) {
   );
 }
 
+interface OmniParams {
+  height: number;
+  width: number;
+  steps: number;
+  cfgScale: number;
+  seed: number;
+  negativePrompt: string;
+}
+
+/**
+ * Chat-thread interface for vLLM-Omni image generation.
+ * Sends prompts via POST /v1/chat/completions with extra_body generation params
+ * and displays the returned base64 image in the message thread.
+ */
+function OmniImageInterface({ deployment }: { deployment: Deployment }) {
+  const { messages, send, clear, isLoading } = useSandboxChat(deployment.id, {
+    modelName: deployment.modelName,
+  });
+  const [prompt, setPrompt] = useState("");
+  const [showParams, setShowParams] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [params, setParams] = useState<OmniParams>({
+    height: 1024,
+    width: 1024,
+    steps: 50,
+    cfgScale: 4.0,
+    seed: 0,
+    negativePrompt: "",
+  });
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  useEffect(() => setConfirmClear(false), [deployment.id, messages.length]);
+
+  const handleClear = () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3000);
+      return;
+    }
+    clear();
+    setConfirmClear(false);
+  };
+
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = prompt.trim();
+    if (!trimmed || isLoading) return;
+    setPrompt("");
+    const extraBody: Record<string, unknown> = {
+      height: params.height,
+      width: params.width,
+      num_inference_steps: params.steps,
+      true_cfg_scale: params.cfgScale,
+    };
+    if (params.seed > 0) extraBody.seed = params.seed;
+    if (params.negativePrompt.trim()) extraBody.negative_prompt = params.negativePrompt.trim();
+    await send(trimmed, extraBody);
+  };
+
+  const updateParam = <K extends keyof OmniParams>(key: K, value: OmniParams[K]) =>
+    setParams((prev) => ({ ...prev, [key]: value }));
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Header row: params toggle + clear button */}
+      <div className="flex items-center justify-between border-b">
+        <button
+          onClick={() => setShowParams((p) => !p)}
+          className="flex flex-1 items-center justify-between px-4 py-2 text-left text-sm hover:bg-muted/50"
+        >
+          <span className="flex items-center gap-2">
+            <Settings2 className="w-4 h-4" />
+            Generation Parameters
+          </span>
+          <ChevronDown className={cn("w-4 h-4 transition-transform", showParams && "rotate-180")} />
+        </button>
+        <button
+          onClick={handleClear}
+          disabled={messages.length === 0 && !confirmClear}
+          className={cn(
+            "mx-2 flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-40",
+            confirmClear
+              ? "bg-red-500/15 text-red-600 hover:bg-red-500/25"
+              : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {confirmClear ? "Confirm?" : "Clear"}
+        </button>
+      </div>
+
+      {/* Collapsible generation params */}
+      {showParams && (
+        <div className="border-b px-4 pb-3 pt-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium">Height</label>
+              <input
+                type="number" step="64" min="256" max="2048"
+                value={params.height}
+                onChange={(e) => updateParam("height", parseInt(e.target.value) || 1024)}
+                className="w-full rounded-lg border bg-background px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Width</label>
+              <input
+                type="number" step="64" min="256" max="2048"
+                value={params.width}
+                onChange={(e) => updateParam("width", parseInt(e.target.value) || 1024)}
+                className="w-full rounded-lg border bg-background px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Steps</label>
+              <input
+                type="number" min="1" max="100"
+                value={params.steps}
+                onChange={(e) => updateParam("steps", parseInt(e.target.value) || 50)}
+                className="w-full rounded-lg border bg-background px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">CFG Scale</label>
+              <input
+                type="number" min="1" max="20" step="0.1"
+                value={params.cfgScale}
+                onChange={(e) => updateParam("cfgScale", parseFloat(e.target.value) || 4.0)}
+                className="w-full rounded-lg border bg-background px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Seed (0 = random)</label>
+              <input
+                type="number" min="0"
+                value={params.seed}
+                onChange={(e) => updateParam("seed", parseInt(e.target.value) || 0)}
+                className="w-full rounded-lg border bg-background px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Negative Prompt</label>
+              <input
+                type="text"
+                value={params.negativePrompt}
+                onChange={(e) => updateParam("negativePrompt", e.target.value)}
+                placeholder="What to avoid..."
+                className="w-full rounded-lg border bg-background px-3 py-1.5 text-sm"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Message thread */}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        {messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <FileImage className="mb-3 h-12 w-12 text-muted-foreground/20" />
+            <p className="text-sm text-muted-foreground">Enter a prompt to generate an image</p>
+          </div>
+        ) : (
+          messages.map((msg) => <OmniImageMessage key={msg.id} message={msg} />)
+        )}
+        {isLoading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Generating image…
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Prompt input */}
+      <form onSubmit={handleGenerate} className="border-t p-4">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Describe the image you want to generate…"
+            disabled={isLoading}
+            className="flex-1 rounded-lg border bg-background px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-ember-500"
+          />
+          <button
+            type="submit"
+            disabled={!prompt.trim() || isLoading}
+            className="flex items-center gap-2 rounded-lg bg-ember-600 px-4 py-2 text-sm text-white transition-colors hover:bg-ember-700 disabled:opacity-50"
+          >
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            Generate
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function OmniImageMessage({ message }: { message: ChatMessage }) {
+  const isUser = message.role === "user";
+  return (
+    <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
+      <div
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+          isUser ? "bg-ember-100 dark:bg-ember-900/30" : "bg-muted dark:bg-card",
+        )}
+      >
+        {isUser ? (
+          <User className="h-4 w-4 text-ember-600" />
+        ) : (
+          <Bot className="h-4 w-4 text-muted-foreground" />
+        )}
+      </div>
+      <div
+        className={cn(
+          "max-w-[85%] flex-1 rounded-lg p-3",
+          isUser
+            ? "border border-ember-500/20 bg-ember-500/10"
+            : "border border-border bg-muted",
+        )}
+      >
+        {isUser ? (
+          <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+        ) : message.imageUrl ? (
+          <img
+            src={message.imageUrl}
+            alt="Generated"
+            className="max-w-full rounded-lg"
+          />
+        ) : (
+          <p className="text-sm italic text-muted-foreground">
+            {message.content || "No image generated"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function getCategoryFromModelType(modelType?: string, engine?: string, workloadType?: string): ModelCategory {
   if (modelType === "embedding" || engine === "infinity" || engine === "tei") return "embedding";
   if (modelType === "video_generation" || workloadType === "video") return "video";
-  if (modelType === "image_generation" || engine === "inferia-diffusion") return "image";
+  if (modelType === "image_generation" || engine === "inferia-diffusion" || engine === "vllm-omni") return "image";
   return "inference";
 }
