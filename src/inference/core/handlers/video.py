@@ -10,7 +10,8 @@ from fastapi import BackgroundTasks, HTTPException
 from inference.config import settings
 from ..http_client import http_client
 from ..pipeline import Pipeline, RequestContext
-from ..providers import get_adapter, is_external_engine
+from ..providers import get_adapter
+from ..worker_routing import envoy_route_headers, provider_auth
 from ..request_logger import RequestLogger
 from ..service import GatewayService
 
@@ -77,6 +78,11 @@ class VideoHandler:
             raise HTTPException(
                 status_code=400,
                 detail="'video' (base64) is required for video extensions",
+            )
+        if not body.get("prompt"):
+            raise HTTPException(
+                status_code=400,
+                detail="'prompt' is required for video extensions",
             )
         return await VideoHandler._handle(
             api_key=api_key,
@@ -179,34 +185,27 @@ class VideoHandler:
             )
 
         deployment = context["deployment"]
-        endpoint_url = deployment.get("endpoint")
         engine = deployment.get("engine", "inferia-diffusion")
+        adapter = get_adapter(engine)
 
-        if not endpoint_url or not endpoint_url.startswith(("http://", "https://")):
+        provider_key, extra_headers = provider_auth(
+            deployment, engine, settings.api_gateway_internal_key or "",
+        )
+        provider_headers = adapter.get_headers(provider_key)
+        provider_headers.update(extra_headers)
+
+        endpoint_url = deployment.get("endpoint", "")
+        envoy_url, envoy_headers = envoy_route_headers(deployment, settings.envoy_url)
+        if envoy_url:
+            endpoint_url = envoy_url
+            provider_headers.update(envoy_headers)
+        elif not endpoint_url or not endpoint_url.startswith(("http://", "https://")):
             raise HTTPException(
                 status_code=502,
                 detail="Video endpoint URL is invalid or missing",
             )
 
-        adapter = get_adapter(engine)
-
-        provider_key = settings.api_gateway_internal_key or ""
-        if is_external_engine(engine):
-            credentials = (
-                deployment.get("credentials_json")
-                or deployment.get("configuration")
-                or {}
-            )
-            provider_key = str(
-                credentials.get("api_key")
-                or credentials.get("key")
-                or credentials.get("token")
-                or ""
-            )
-
-        provider_headers = adapter.get_headers(provider_key)
-
-        status_url = f"{endpoint_url}/generate/v1/videos/{video_id}"
+        status_url = f"{endpoint_url.rstrip('/')}/generate/v1/videos/{video_id}"
 
         client = http_client.get_client()
 

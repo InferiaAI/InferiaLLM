@@ -7,6 +7,10 @@ import { clearChat, loadChat, saveChat, type ChatMessage } from "@/lib/sandboxCh
 export interface UseSandboxChatOpts {
   /** Model name sent in the `model` field of /v1/chat/completions requests. */
   modelName?: string;
+  /** Set true when the deployment is an image-generation model (inferia-diffusion).
+   *  Routes to /v1/images/generations and parses the images API response format
+   *  instead of the chat completions format. */
+  isImageModel?: boolean;
 }
 
 export interface UseSandboxChat {
@@ -76,15 +80,23 @@ export function useSandboxChat(deploymentId: string | null, opts?: UseSandboxCha
     try {
       const base = INFERENCE_URL.replace(/\/$/, "");
       const token = getToken();
-      const body: Record<string, unknown> = {
-        model: opts.modelName,
-        messages: [{ role: "user", content: prompt }],
-      };
-      if (extraBody && Object.keys(extraBody).length > 0) {
-        body.extra_body = extraBody;
-      }
+      const isImage = opts.isImageModel ?? false;
+      const endpoint = isImage ? "/v1/images/generations" : "/v1/chat/completions";
+      const body: Record<string, unknown> = isImage
+        ? {
+            model: opts.modelName,
+            prompt,
+            n: 1,
+            response_format: "b64_json",
+            ...extraBody,
+          }
+        : {
+            model: opts.modelName,
+            messages: [{ role: "user", content: prompt }],
+            ...(extraBody && Object.keys(extraBody).length > 0 ? { extra_body: extraBody } : {}),
+          };
 
-      const res = await fetch(`${base}/v1/chat/completions`, {
+      const res = await fetch(`${base}${endpoint}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -99,30 +111,44 @@ export function useSandboxChat(deploymentId: string | null, opts?: UseSandboxCha
         throw new Error(err.detail || `API Error: ${res.status}`);
       }
 
-      const data = await res.json() as {
-        choices?: Array<{ message?: { content?: unknown } }>;
-        usage?: { completion_tokens?: number };
-      };
-      const rawContent = data.choices?.[0]?.message?.content;
-
       let content = "";
       let imageUrl: string | undefined;
+      let tokens: number | undefined;
 
-      if (Array.isArray(rawContent)) {
-        // vLLM-Omni returns an array of typed content blocks.
-        const imgBlock = rawContent.find(
-          (c): c is { type: "image_url"; image_url: { url: string } } =>
-            typeof c === "object" && c !== null && (c as { type?: string }).type === "image_url",
-        );
-        if (imgBlock) {
-          imageUrl = imgBlock.image_url.url;
-        } else {
-          content = rawContent
-            .map((c) => (typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : ""))
-            .join("");
+      if (isImage) {
+        const data = await res.json() as {
+          data?: Array<{ url?: string; b64_json?: string }>;
+        };
+        const imgData = data.data?.[0];
+        if (imgData?.b64_json) {
+          imageUrl = `data:image/png;base64,${imgData.b64_json}`;
+        } else if (imgData?.url) {
+          imageUrl = imgData.url;
         }
       } else {
-        content = typeof rawContent === "string" ? rawContent : "";
+        const data = await res.json() as {
+          choices?: Array<{ message?: { content?: unknown } }>;
+          usage?: { completion_tokens?: number };
+        };
+        const rawContent = data.choices?.[0]?.message?.content;
+        tokens = typeof data.usage?.completion_tokens === "number" ? data.usage.completion_tokens : undefined;
+
+        if (Array.isArray(rawContent)) {
+          // vLLM-Omni returns an array of typed content blocks.
+          const imgBlock = rawContent.find(
+            (c): c is { type: "image_url"; image_url: { url: string } } =>
+              typeof c === "object" && c !== null && (c as { type?: string }).type === "image_url",
+          );
+          if (imgBlock) {
+            imageUrl = imgBlock.image_url.url;
+          } else {
+            content = rawContent
+              .map((c) => (typeof (c as { text?: unknown }).text === "string" ? (c as { text: string }).text : ""))
+              .join("");
+          }
+        } else {
+          content = typeof rawContent === "string" ? rawContent : "";
+        }
       }
 
       setMessages((prev) => [
@@ -132,7 +158,7 @@ export function useSandboxChat(deploymentId: string | null, opts?: UseSandboxCha
           role: "assistant",
           content,
           imageUrl,
-          tokens: typeof data.usage?.completion_tokens === "number" ? data.usage.completion_tokens : undefined,
+          tokens,
           timestamp: new Date(),
         },
       ]);
@@ -142,7 +168,7 @@ export function useSandboxChat(deploymentId: string | null, opts?: UseSandboxCha
       isLoadingRef.current = false;
       setIsLoading(false);
     }
-  }, [opts?.modelName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [opts?.modelName, opts?.isImageModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { messages, setMessages, clear, hydrated: loadedFor === deploymentId, isLoading, send };
 }
