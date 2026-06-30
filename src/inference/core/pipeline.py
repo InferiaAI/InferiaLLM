@@ -15,7 +15,7 @@ from fastapi import BackgroundTasks, HTTPException
 from inference.client import api_gateway_client
 from inference.config import settings
 from .providers import ProviderAdapter, is_external_engine, resolve_upstream
-from .worker_routing import envoy_route_headers
+from .worker_routing import envoy_route_headers, provider_auth
 from .rate_limiter import rate_limiter
 from .service import GatewayService
 
@@ -118,31 +118,22 @@ class Pipeline:
             engine, raw_endpoint, settings.external_proxy_url,
         )
 
-        # Resolve API key and model name from credentials
-        if is_external_engine(engine):
+        ctx.provider_key, extra_headers = provider_auth(
+            deployment, engine, settings.api_gateway_internal_key or "",
+        )
+        ctx.provider_headers = ctx.adapter.get_headers(ctx.provider_key)
+        ctx.provider_headers.update(extra_headers)
+
+        if deployment.get("inference_model"):
+            ctx.body["model"] = deployment["inference_model"]
+        elif is_external_engine(engine):
             credentials = (
                 deployment.get("credentials_json")
                 or deployment.get("configuration")
                 or {}
             )
-            ctx.provider_key = str(
-                credentials.get("api_key")
-                or credentials.get("key")
-                or credentials.get("token")
-                or ""
-            )
-            # Resolve model name: inference_model > credentials.model > original
-            if deployment.get("inference_model"):
-                ctx.body["model"] = deployment["inference_model"]
-            elif credentials.get("model"):
+            if credentials.get("model"):
                 ctx.body["model"] = credentials["model"]
-        else:
-            ctx.provider_key = settings.api_gateway_internal_key or ""
-            # For compute engines, override model name if specified
-            if deployment.get("inference_model"):
-                ctx.body["model"] = deployment["inference_model"]
-
-        ctx.provider_headers = ctx.adapter.get_headers(ctx.provider_key)
 
         # --- Envoy proxy routing ---
         _envoy_url, _envoy_headers = envoy_route_headers(

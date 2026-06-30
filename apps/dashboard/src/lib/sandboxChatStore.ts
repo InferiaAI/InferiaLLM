@@ -13,6 +13,8 @@ export interface ChatMessage {
   reasoning?: string;
   /** Optional completion token count (from usage), shown in the footer. */
   tokens?: number;
+  /** Base64 data URL or remote URL for generated images. Not persisted to localStorage. */
+  imageUrl?: string;
   timestamp: Date;
 }
 

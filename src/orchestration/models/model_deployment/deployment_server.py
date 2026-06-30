@@ -488,7 +488,7 @@ async def _build_provisioning_spec(
     # >= 75GB"). Default GPU tiers to 100GB; CPU (plain Ubuntu) to 30GB.
     # A per-pool root_volume_gb override above still wins.
     if "root_volume_gb" not in spec:
-        spec["root_volume_gb"] = 30 if instance_class == "cpu" else 130
+        spec["root_volume_gb"] = 30 if instance_class == "cpu" else 150
     return spec
 
 
