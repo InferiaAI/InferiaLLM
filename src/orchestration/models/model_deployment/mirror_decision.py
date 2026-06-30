@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-_HF_RECIPES = ("vllm", "tei", "infinity")
+_HF_RECIPES = ("vllm", "tei", "infinity", "inferia-diffusion")
 _MIRROR_STATES = ("cached", "downloading", "pending")
 
 

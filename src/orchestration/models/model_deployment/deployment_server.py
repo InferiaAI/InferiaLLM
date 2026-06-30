@@ -1632,12 +1632,14 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             detail="ami_id is required for vLLM deployments on AWS",
         )
 
-    # 1b'. vLLM Omni and Inferia Diffusion are GPU container engines we only
-    # support on the AWS provisioning path (the dashboard restricts them to AWS
-    # pools too). Reject them on any other provider with an actionable 422
-    # rather than letting them provision a node that can't run the recipe.
+    # 1b'. vLLM Omni is a GPU container engine we only support on the AWS
+    # provisioning path (the dashboard restricts it to AWS pools too). Reject
+    # it on any other provider with an actionable 422 rather than letting it
+    # provision a node that can't run the recipe.  Inferia Diffusion is no
+    # longer gated here — Nosana and other direct-provision providers handle
+    # it via their own job builder / adapter.
     # They deploy like sglang/ollama — no engine AMI required.
-    if (req.engine or "").lower() in ("vllm-omni", "inferia-diffusion") and _provider != "aws":
+    if (req.engine or "").lower() in ("vllm-omni",) and _provider != "aws":
         raise HTTPException(
             status_code=422,
             detail=f"engine '{req.engine}' is only supported on AWS pools",
@@ -1722,7 +1724,7 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             provider_prefers_origin_model_fetch,
         )
         _origin_fetch = provider_prefers_origin_model_fetch(pool_row.get("provider"))
-        if _dl and _uri and not _origin_fetch and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama"):
+        if _dl and _uri and not _origin_fetch and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama", "inferia-diffusion"):
             _src, _mid, _rev = derive_cache_key(req.engine or "vllm", str(_uri))
             _dl.start(source=_src, model_id=_mid, revision=_rev, engine_hint=req.engine)
     except Exception:

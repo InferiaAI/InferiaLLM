@@ -93,8 +93,8 @@ describe("requiresAwsPool", () => {
     expect(requiresAwsPool("vllm-omni")).toBe(true);
   });
 
-  it("returns true for inferia-diffusion", () => {
-    expect(requiresAwsPool("inferia-diffusion")).toBe(true);
+  it("returns false for inferia-diffusion (now deployable on any provider)", () => {
+    expect(requiresAwsPool("inferia-diffusion")).toBe(false);
   });
 
   it("returns false for vllm / sglang / ollama / tei / infinity / pytorch", () => {
