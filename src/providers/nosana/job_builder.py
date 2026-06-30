@@ -243,9 +243,10 @@ def create_vllm_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.1",
                 "12.4",
-                "12.6",
+                "12.8",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -334,9 +335,10 @@ def create_ollama_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.6",
+                "12.4",
                 "12.8",
-                "12.9",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -453,9 +455,10 @@ def create_vllm_omni_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.6",
+                "12.4",
                 "12.8",
-                "12.9",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -546,9 +549,10 @@ def create_triton_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.6",
+                "12.4",
                 "12.8",
-                "12.9",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -829,9 +833,10 @@ def create_localai_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.1",
                 "12.4",
-                "12.6",
+                "12.8",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -942,7 +947,7 @@ def create_inferia_diffusion_job(
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cuda": required_cuda or ["12.4"],
+            "required_cuda": required_cuda or ["12.4", "12.8", "13.0", "13.2"],
             "required_vram": min_vram,
         },
     }
@@ -1244,9 +1249,10 @@ def create_training_job(
             "system_requirements": {
                 "required_cuda": required_cuda
                 or [
-                    "12.6",
+                    "12.4",
                     "12.8",
-                    "12.9",
+                    "13.0",
+                    "13.2",
                 ],
                 "required_vram": min_vram,
                 "required_gpu": gpu_count,
