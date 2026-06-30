@@ -89,6 +89,7 @@ ENGINE_PIPELINE_MAP = {
         "text-to-video",
         "feature-extraction",
     },
+    "inferia-diffusion": {"text-to-image", "text-to-video"},
     "ollama": {"text-generation"},
 }
 

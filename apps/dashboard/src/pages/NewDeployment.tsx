@@ -142,7 +142,7 @@ const computeEngines = [
   {
     id: "inferia-diffusion",
     name: "Inferia Diffusion",
-    desc: "High-performance image & video generation engine powered by Inferia. AWS only.",
+    desc: "High-performance image & video generation engine powered by Inferia.",
     image: "docker.io/inferiaai/inferiadiffusion:latest",
     icon: Image,
     types: ["inference"],
@@ -374,12 +374,13 @@ export function requiresAmi(engine: string, pool: { provider?: string } | null |
 }
 
 /**
- * Engines that may only be deployed on AWS pools. vLLM Omni and Inferia
- * Diffusion run as GPU containers the worker pulls at runtime; we only support
- * (and validate) them on the AWS provisioning path. Used to filter pool
- * selection and to guard launch.
+ * Engines that may only be deployed on AWS pools. vLLM Omni runs as a GPU
+ * container the worker pulls at runtime; we only support (and validate) it
+ * on the AWS provisioning path. Inferia Diffusion is no longer gated here —
+ * Nosana and other direct-provision providers handle it via the adapter.
+ * Used to filter pool selection and to guard launch.
  */
-const AWS_ONLY_ENGINES = new Set(["vllm-omni", "inferia-diffusion"]);
+const AWS_ONLY_ENGINES = new Set(["vllm-omni"]);
 
 export function requiresAwsPool(engine: string): boolean {
   return AWS_ONLY_ENGINES.has(engine);

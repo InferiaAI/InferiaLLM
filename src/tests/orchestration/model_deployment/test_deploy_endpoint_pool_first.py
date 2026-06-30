@@ -611,10 +611,11 @@ async def test_deploy_vllm_nosana_pool_no_ami_id_not_gated(app_and_pool, monkeyp
     assert kw["pool_meta"] is not None
 
 
-@pytest.mark.parametrize("engine", ["vllm-omni", "inferia-diffusion"])
-async def test_deploy_aws_only_engine_on_nosana_returns_422(app_and_pool, engine):
-    """vllm-omni / inferia-diffusion are AWS-only: deploying them to a non-AWS
-    (nosana) pool must be rejected with 422 before any provisioning happens."""
+@pytest.mark.parametrize("engine", ["vllm-omni"])
+async def test_deploy_vllm_omni_on_nosana_returns_422(app_and_pool, engine):
+    """vllm-omni is AWS-only: deploying it to a non-AWS (nosana) pool must be
+    rejected with 422 before any provisioning happens.  inferia-diffusion is
+    no longer gated here — Nosana etc. handle it via the adapter."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(
         pool, provider="nosana", instance_type="nosana-gpu", region="global",
