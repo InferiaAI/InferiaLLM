@@ -340,6 +340,8 @@ class NosanaAdapter(ProviderAdapter):
                 "kv_cache_dtype": metadata.get("kv_cache_dtype", "auto"),
                 # CUDA versions from dashboard
                 "required_cuda": metadata.get("required_cuda"),
+                # HF Resource Preloading
+                "hf_preload": metadata.get("hf_preload", True),
                 # LocalAI / Image generation config
                 "threads": metadata.get("threads"),
                 "context_size": metadata.get("context_size"),

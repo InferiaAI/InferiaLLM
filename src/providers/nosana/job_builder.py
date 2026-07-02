@@ -5,12 +5,15 @@ Constructs container job definitions for Nosana DePIN deployments.
 Supports vLLM, Ollama, and vLLM-Omni engines.
 """
 
+import logging
 from typing import Dict, Any, Optional, List
 import json
 import os
 import re
 import shlex
 from orchestration.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Internal API key used for service-to-service auth and vLLM security
 INTERNAL_API_KEY = settings.internal_api_key or os.getenv("INTERNAL_API_KEY", "")
@@ -108,6 +111,8 @@ def create_vllm_job(
     kv_cache_dtype: str = "auto",
     # System Requirements
     required_cuda: Optional[List[str]] = None,
+    # HF Resource Preloading
+    hf_preload: bool = True,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for vLLM inference server.
@@ -169,8 +174,40 @@ def create_vllm_job(
     if token_to_use:
         envs["HF_TOKEN"] = token_to_use
 
+    # HF Resource Preloading: if enabled and no token is required (the Nosana
+    # HF resource loader cannot authenticate against gated repos), the node
+    # downloads the model from HuggingFace before the container starts so that
+    # vLLM loads from local disk instead of re-downloading at runtime.  This
+    # eliminates model-download time from cold start and leverages cross-job
+    # node caching (re-deploying the same model on the same market is near-
+    # instant).
+    resources = None
+    effective_model_path = model_id
+    if hf_preload:
+        if token_to_use:
+            logger.warning(
+                "hf_preload enabled but hf_token is set — skipping HF resource "
+                "preloading (Nosana HF resource loader cannot authenticate). "
+                "Model will be downloaded at container runtime as usual."
+            )
+        else:
+            safe_name = model_id.replace("/", "-")
+            target_path = f"/data-models/{safe_name}"
+            resources = [
+                {
+                    "type": "HF",
+                    "repo": model_id,
+                    "target": target_path + "/",
+                }
+            ]
+            effective_model_path = target_path
+            logger.info(
+                "HF resource preloading enabled: %s -> %s",
+                model_id, target_path,
+            )
+
     cmd_args = [
-        model_id,
+        effective_model_path,
         "--served-model-name",
         model_id,
         "--host",
@@ -238,14 +275,18 @@ def create_vllm_job(
         },
     }
 
+    if resources:
+        container_op["args"]["resources"] = resources
+
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.1",
                 "12.4",
-                "12.6",
+                "12.8",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -334,9 +375,10 @@ def create_ollama_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.6",
+                "12.4",
                 "12.8",
-                "12.9",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -453,9 +495,10 @@ def create_vllm_omni_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.6",
+                "12.4",
                 "12.8",
-                "12.9",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -546,9 +589,10 @@ def create_triton_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.6",
+                "12.4",
                 "12.8",
-                "12.9",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -829,9 +873,10 @@ def create_localai_job(
         "system_requirements": {
             "required_cuda": required_cuda
             or [
-                "12.1",
                 "12.4",
-                "12.6",
+                "12.8",
+                "13.0",
+                "13.2",
             ],
             "required_vram": min_vram,
         },
@@ -853,6 +898,8 @@ def create_inferia_diffusion_job(
     trust_remote_code: bool = False,
     model_offload: bool = False,
     group_offload: bool = False,
+    # HF Resource Preloading
+    hf_preload: bool = True,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for Inferia Diffusion engine.
@@ -879,11 +926,40 @@ def create_inferia_diffusion_job(
     if effective_api_key:
         health_headers["Authorization"] = f"Bearer {effective_api_key}"
 
+    # HF Resource Preloading: only for raw HF model IDs.  Config keys like
+    # "sdxl-turbo" (no "/") don't identify a HuggingFace repo, and local
+    # paths (start with "/") are already on disk — neither can be preloaded.
+    resources = None
+    effective_model = model_id
+    _is_hf_id = "/" in model_id and not model_id.startswith("/")
+    if hf_preload and _is_hf_id:
+        if hf_token:
+            logger.warning(
+                "hf_preload enabled but hf_token is set — skipping HF resource "
+                "preloading (Nosana HF resource loader cannot authenticate). "
+                "Model will be downloaded at container runtime as usual."
+            )
+        else:
+            safe_name = model_id.replace("/", "-")
+            target_path = f"/data-models/{safe_name}"
+            resources = [
+                {
+                    "type": "HF",
+                    "repo": model_id,
+                    "target": target_path + "/",
+                }
+            ]
+            effective_model = target_path
+            logger.info(
+                "HF resource preloading enabled: %s -> %s",
+                model_id, target_path,
+            )
+
     cmd_args = [
         "inferiadiffusion",
         "serve",
         "--model",
-        model_id,
+        effective_model,
         "--host",
         host,
         "--port",
@@ -939,10 +1015,13 @@ def create_inferia_diffusion_job(
         },
     }
 
+    if resources:
+        container_op["args"]["resources"] = resources
+
     meta_data = {
         "trigger": "dashboard",
         "system_requirements": {
-            "required_cuda": required_cuda or ["12.4"],
+            "required_cuda": required_cuda or ["12.4", "12.8", "13.0", "13.2"],
             "required_vram": min_vram,
         },
     }
@@ -1000,6 +1079,7 @@ def build_job_definition(
                     "nvidia_disable_cuda_compat",
                     "kv_cache_dtype",
                     "required_cuda",
+                    "hf_preload",
                 ]
                 and v is not None
             },
@@ -1102,6 +1182,7 @@ def build_job_definition(
                     "trust_remote_code",
                     "model_offload",
                     "group_offload",
+                    "hf_preload",
                 ]
                 and v is not None
             },
@@ -1244,9 +1325,10 @@ def create_training_job(
             "system_requirements": {
                 "required_cuda": required_cuda
                 or [
-                    "12.6",
+                    "12.4",
                     "12.8",
-                    "12.9",
+                    "13.0",
+                    "13.2",
                 ],
                 "required_vram": min_vram,
                 "required_gpu": gpu_count,

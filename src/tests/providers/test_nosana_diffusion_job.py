@@ -11,7 +11,7 @@ def test_diffusion_job_emits_model_type_and_flags():
     )
     cmd = job["op"]["args"]["cmd"]
     assert cmd[:2] == ["inferiadiffusion", "serve"]
-    assert "--model" in cmd and "stabilityai/sdxl-turbo" in cmd
+    assert "--model" in cmd and "/data-models/stabilityai-sdxl-turbo" in cmd
     i = cmd.index("--model-type")
     assert cmd[i + 1] == "image"
     assert "--trust-remote-code" in cmd

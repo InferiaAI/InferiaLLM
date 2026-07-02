@@ -853,7 +853,7 @@ function ImageGenerationInterface({ deployment }: { deployment: Deployment }) {
       <div className="flex-1 overflow-y-auto p-4">
         {images.length > 0 ? (
           <div className="grid grid-cols-2 gap-4">
-            {images.map((img, idx) => <img key={idx} src={img} alt={`Generated ${idx + 1}`} className="rounded-lg border w-full" />)}
+            {images.map((img, idx) => <img key={idx} src={img} alt={`Generated ${idx + 1}`} className="rounded-lg border w-full h-auto object-contain" />)}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center">
@@ -909,7 +909,7 @@ function ImageEditInterface({ deployment }: { deployment: Deployment }) {
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {images.length > 0 ? (
-          <div className="grid grid-cols-2 gap-4">{images.map((img, idx) => <img key={idx} src={img} alt={`Edited ${idx + 1}`} className="rounded-lg border" />)}</div>
+          <div className="grid grid-cols-2 gap-4">{images.map((img, idx) => <img key={idx} src={img} alt={`Edited ${idx + 1}`} className="rounded-lg border w-full h-auto object-contain" />)}</div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center"><Wand2 className="w-12 h-12 text-muted-foreground/20 mb-3" /><p className="text-sm text-muted-foreground">Upload an image to edit</p></div>
         )}
@@ -959,7 +959,7 @@ function ImageVariationInterface({ deployment }: { deployment: Deployment }) {
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {images.length > 0 ? (
-          <div className="grid grid-cols-2 gap-4">{images.map((img, idx) => <img key={idx} src={img} alt={`Variation ${idx + 1}`} className="rounded-lg border" />)}</div>
+          <div className="grid grid-cols-2 gap-4">{images.map((img, idx) => <img key={idx} src={img} alt={`Variation ${idx + 1}`} className="rounded-lg border w-full h-auto object-contain" />)}</div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center"><Layers className="w-12 h-12 text-muted-foreground/20 mb-3" /><p className="text-sm text-muted-foreground">Upload an image to create variations</p></div>
         )}

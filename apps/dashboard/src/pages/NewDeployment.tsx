@@ -1251,6 +1251,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
           amisLoading={amisLoading}
           amiRegion={amiRegion}
           hfTokenNames={hfTokenNames}
+          selectedPool={selectedPool}
         />
       )}
 

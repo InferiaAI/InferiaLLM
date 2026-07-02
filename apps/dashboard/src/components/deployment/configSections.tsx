@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { getFitColor } from "@/services/modelPlanner"
 import { CompatibilityProjectionChart } from "@/components/deployment/CompatibilityProjectionChart"
+import { requiresAmi } from "@/pages/NewDeployment"
 import type { State, Action } from "@/pages/NewDeployment"
 
 /**
@@ -346,11 +347,13 @@ export function VllmConfig({
   amisLoading,
   amiRegion,
   hfTokenNames,
+  selectedPool,
 }: SectionProps & {
   engineAmis: EngineAmi[]
   amisLoading: boolean
   amiRegion: string
   hfTokenNames: string[]
+  selectedPool?: any
 }) {
   const {
     selectedEngine, dtype, quantization, maxModelLen, gpuUtil, enforceEager,
@@ -362,8 +365,8 @@ export function VllmConfig({
     <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
       <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">{selectedEngine === "sglang" ? "SGLang" : "vLLM"} Configuration</h4></div>
 
-      {/* Engine AMI dropdown (required for vLLM only) */}
-      {selectedEngine === "vllm" && (
+      {/* Engine AMI dropdown (required for AWS vLLM only) */}
+      {requiresAmi(selectedEngine, selectedPool) && (
         <EngineAmiSelect
           selectedAmiId={selectedAmiId}
           dispatch={dispatch}

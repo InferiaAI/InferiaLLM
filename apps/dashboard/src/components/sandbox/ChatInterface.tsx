@@ -234,7 +234,9 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
         ) : (
           <>
             {parsed?.thinking && <ThinkingBlock thinking={parsed.thinking} />}
-            {answer ? (
+            {message.imageUrl ? (
+              <img src={message.imageUrl} alt="Generated" className="max-w-full h-auto object-contain rounded-lg" />
+            ) : answer ? (
               <MarkdownMessage content={answer} />
             ) : !hasThinking ? (
               <p className="text-sm italic text-muted-foreground">No response generated</p>
