@@ -898,6 +898,8 @@ def create_inferia_diffusion_job(
     trust_remote_code: bool = False,
     model_offload: bool = False,
     group_offload: bool = False,
+    # HF Resource Preloading
+    hf_preload: bool = True,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for Inferia Diffusion engine.
@@ -924,11 +926,40 @@ def create_inferia_diffusion_job(
     if effective_api_key:
         health_headers["Authorization"] = f"Bearer {effective_api_key}"
 
+    # HF Resource Preloading: only for raw HF model IDs.  Config keys like
+    # "sdxl-turbo" (no "/") don't identify a HuggingFace repo, and local
+    # paths (start with "/") are already on disk — neither can be preloaded.
+    resources = None
+    effective_model = model_id
+    _is_hf_id = "/" in model_id and not model_id.startswith("/")
+    if hf_preload and _is_hf_id:
+        if hf_token:
+            logger.warning(
+                "hf_preload enabled but hf_token is set — skipping HF resource "
+                "preloading (Nosana HF resource loader cannot authenticate). "
+                "Model will be downloaded at container runtime as usual."
+            )
+        else:
+            safe_name = model_id.replace("/", "-")
+            target_path = f"/data-models/{safe_name}"
+            resources = [
+                {
+                    "type": "HF",
+                    "repo": model_id,
+                    "target": target_path + "/",
+                }
+            ]
+            effective_model = target_path
+            logger.info(
+                "HF resource preloading enabled: %s -> %s",
+                model_id, target_path,
+            )
+
     cmd_args = [
         "inferiadiffusion",
         "serve",
         "--model",
-        model_id,
+        effective_model,
         "--host",
         host,
         "--port",
@@ -983,6 +1014,9 @@ def create_inferia_diffusion_job(
             ],
         },
     }
+
+    if resources:
+        container_op["args"]["resources"] = resources
 
     meta_data = {
         "trigger": "dashboard",
@@ -1148,6 +1182,7 @@ def build_job_definition(
                     "trust_remote_code",
                     "model_offload",
                     "group_offload",
+                    "hf_preload",
                 ]
                 and v is not None
             },
