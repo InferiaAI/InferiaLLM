@@ -5,12 +5,15 @@ Constructs container job definitions for Nosana DePIN deployments.
 Supports vLLM, Ollama, and vLLM-Omni engines.
 """
 
+import logging
 from typing import Dict, Any, Optional, List
 import json
 import os
 import re
 import shlex
 from orchestration.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Internal API key used for service-to-service auth and vLLM security
 INTERNAL_API_KEY = settings.internal_api_key or os.getenv("INTERNAL_API_KEY", "")
@@ -108,6 +111,8 @@ def create_vllm_job(
     kv_cache_dtype: str = "auto",
     # System Requirements
     required_cuda: Optional[List[str]] = None,
+    # HF Resource Preloading
+    hf_preload: bool = True,
 ) -> Dict[str, Any]:
     """
     Build a Nosana job definition for vLLM inference server.
@@ -169,8 +174,40 @@ def create_vllm_job(
     if token_to_use:
         envs["HF_TOKEN"] = token_to_use
 
+    # HF Resource Preloading: if enabled and no token is required (the Nosana
+    # HF resource loader cannot authenticate against gated repos), the node
+    # downloads the model from HuggingFace before the container starts so that
+    # vLLM loads from local disk instead of re-downloading at runtime.  This
+    # eliminates model-download time from cold start and leverages cross-job
+    # node caching (re-deploying the same model on the same market is near-
+    # instant).
+    resources = None
+    effective_model_path = model_id
+    if hf_preload:
+        if token_to_use:
+            logger.warning(
+                "hf_preload enabled but hf_token is set — skipping HF resource "
+                "preloading (Nosana HF resource loader cannot authenticate). "
+                "Model will be downloaded at container runtime as usual."
+            )
+        else:
+            safe_name = model_id.replace("/", "-")
+            target_path = f"/data-models/{safe_name}"
+            resources = [
+                {
+                    "type": "HF",
+                    "repo": model_id,
+                    "target": target_path + "/",
+                }
+            ]
+            effective_model_path = target_path
+            logger.info(
+                "HF resource preloading enabled: %s -> %s",
+                model_id, target_path,
+            )
+
     cmd_args = [
-        model_id,
+        effective_model_path,
         "--served-model-name",
         model_id,
         "--host",
@@ -237,6 +274,9 @@ def create_vllm_job(
             ],
         },
     }
+
+    if resources:
+        container_op["args"]["resources"] = resources
 
     meta_data = {
         "trigger": "dashboard",
@@ -1005,6 +1045,7 @@ def build_job_definition(
                     "nvidia_disable_cuda_compat",
                     "kv_cache_dtype",
                     "required_cuda",
+                    "hf_preload",
                 ]
                 and v is not None
             },
