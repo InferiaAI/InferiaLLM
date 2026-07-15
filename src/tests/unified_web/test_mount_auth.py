@@ -247,10 +247,15 @@ async def test_worker_register_not_401_under_mount(mounted_client):
 
 
 @pytest.mark.asyncio
-async def test_hf_passthrough_not_401_under_mount(mounted_client):
-    """GET /api/hf/* (engine model pulls) must NOT be 401/403 under the mount."""
+async def test_hf_passthrough_removed_now_requires_auth(mounted_client):
+    """The /hf model-mirror passthrough (and its auth skip) is GONE.
+
+    Engine nodes pull model weights straight from origin now, so an
+    unauthenticated GET /api/hf/* must be rejected by the auth middleware
+    (401) — no unauthenticated streaming surface may remain.
+    """
     resp = await mounted_client.get("/api/hf/whatever")
-    assert resp.status_code not in (401, 403), resp.text
+    assert resp.status_code == 401, resp.text
 
 
 @pytest.mark.asyncio

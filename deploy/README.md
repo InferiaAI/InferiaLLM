@@ -6,9 +6,8 @@ As of the single-port consolidation, the `inferia-app` container serves the
 | Path        | Served by                  | Notes |
 |-------------|----------------------------|-------|
 | `/`         | dashboard SPA              | client-side routes fall back to `index.html` |
-| `/api/...`  | API gateway                | `/api/auth`, `/api/v1/*` compute, `/api/v1/workers/*` (control **WebSocket** + shell/logs), `/api/hf` model mirror |
+| `/api/...`  | API gateway                | `/api/auth`, `/api/v1/*` compute, `/api/v1/workers/*` (control **WebSocket** + shell/logs) |
 | `/inf/...`  | inference API              | OpenAI-compatible `/inf/v1/*` (chat completions stream as **SSE**) |
-| `/v2/...`   | ollama OCI registry mirror | **must stay at the root** — the OCI spec hardcodes `<host>/v2`; a path-prefixed `/api/v2` will NOT work |
 
 Because it is all one origin, **there is no CORS to configure** and the proxy
 does **no** path rewriting. The app does all internal routing.
@@ -16,8 +15,8 @@ does **no** path rewriting. The app does all internal routing.
 ## The only rule
 
 > **Forward every path, verbatim, to `inferia-app:${APP_PORT}` (default 8000).**
-> Enable **WebSocket upgrades**, **disable response buffering** (SSE + multi-GB
-> model pulls), allow **large bodies**, and use **long timeouts**.
+> Enable **WebSocket upgrades**, **disable response buffering** (SSE streaming),
+> allow **large bodies**, and use **long timeouts**.
 
 That's the whole job. Everything below is that rule expressed for each tool.
 
@@ -27,7 +26,7 @@ That's the whole job. Everything below is that rule expressed for each tool.
 |---|---|
 | WebSocket upgrade (`Upgrade`/`Connection`) | worker control channel `/api/v1/workers/channel`, node shell/logs tunnels |
 | `proxy_buffering off` (+ `X-Accel-Buffering: no`) | SSE token streaming on `/inf/v1/chat/completions`; without it tokens arrive in one lump at the end |
-| `proxy_max_temp_file_size 0` + long timeouts | multi-GB model-weight downloads through `/api/hf` and `/v2` |
+| `proxy_max_temp_file_size 0` + long timeouts | long-lived streamed responses (deploy waits, log tails) |
 | large `client_max_body_size` (≈200m) | image/video generation + embedding batch requests |
 
 ---
@@ -48,15 +47,7 @@ DASHBOARD_INFERENCE_URL=https://inferia.example.com/inf
 
 # Worker-facing (must be reachable from the GPU hosts):
 INFERIA_CONTROL_PLANE_EXTERNAL_URL=https://inferia.example.com/api
-INFERIA_MODEL_MIRROR_BASE=https://inferia.example.com/api   # HF mirror -> /api/hf; ollama derives <host>/v2 at root
 ```
-
-> **`/v2` caveat (read this if you use ollama / cache-first mirroring):** the
-> ollama client takes the registry from the image-ref host and always requests
-> `https://<host>/v2/...`. Keep `INFERIA_MODEL_MIRROR_BASE` pointed at the host
-> with the `/api` suffix (HF needs `/api/hf`); the app derives the OCI host from
-> the origin so ollama hits `<host>/v2` at the **root**. Never put the OCI
-> registry behind a `/api/v2` (or any) prefix.
 
 ---
 
@@ -66,7 +57,7 @@ Just publish the port (compose already maps `${APP_PORT:-8000}`) and hit it dire
 
 ```bash
 docker compose up -d
-# → http://localhost:8000/  (dashboard, /api, /inf, /v2 all here)
+# → http://localhost:8000/  (dashboard, /api, /inf all here)
 ```
 
 No TLS, no host routing. Fine for local dev or a private network.
@@ -194,8 +185,8 @@ published port (`<docker-host-IP>:8000`).
 NPM already injects `Host` / `X-Forwarded-*` and (with **Websockets Support ON**)
 the `Upgrade`/`Connection` headers, so you do **not** add those in Advanced.
 
-> Do **not** create separate Proxy Hosts / custom locations for `/gw`, `/inf`,
-> or `/v2` — that was the old multi-port layout. One Proxy Host for the whole
+> Do **not** create separate Proxy Hosts / custom locations for `/gw` or
+> `/inf` — that was the old multi-port layout. One Proxy Host for the whole
 > domain → port 8000 is correct now.
 
 ---
@@ -233,8 +224,7 @@ ingress:
 
 WebSockets work over Tunnel by default. Note Cloudflare's **100 MB request body
 limit** (free/pro) — large image/video generation uploads may need an
-Enterprise plan or a direct origin; model weight *downloads* (`/v2`, `/api/hf`)
-are responses and are unaffected.
+Enterprise plan or a direct origin; download *responses* are unaffected.
 
 ---
 
@@ -246,7 +236,6 @@ curl -sf  $H/                       # 200, dashboard HTML
 curl -sf  $H/config.js              # contains window.__RUNTIME_CONFIG__ (/api, /inf)
 curl -sf  $H/api/health             # 200
 curl -s   $H/inf/v1/models          # routes to inference (200, or 401 if it requires a token)
-curl -s -o/dev/null -w '%{http_code}\n' $H/v2/   # NOT 404 (ollama mirror at root)
 # WebSocket (needs a token): wss://inferia.example.com/api/v1/workers/channel
 ```
 

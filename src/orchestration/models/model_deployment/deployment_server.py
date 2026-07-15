@@ -1436,21 +1436,6 @@ async def place_and_provision(
                 # deploy handler for hf_token_name) to the warm-path load spec.
                 "env": dict(_cfg.get("env") or {}),
             }
-            try:
-                from orchestration.config import settings as _s
-                _mirror_base = getattr(_s, "model_mirror_base", "") or ""
-                from orchestration.models.model_deployment.mirror_decision import (
-                    resolve_and_apply_mirror,
-                )
-                from orchestration.models.model_cache import deps as _mc_deps
-                await resolve_and_apply_mirror(
-                    spec, recipe=spec["recipe"],
-                    artifact_uri=spec["model"]["artifact_uri"],
-                    mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
-                    provider=pool_row.get("provider"),
-                )
-            except Exception:
-                pass  # mirror is best-effort; never block a warm deploy
             result = await controller.load_model(
                 node_id=str(node_id), spec=spec,
             )
@@ -1695,40 +1680,6 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         auto_replica_enabled=req.auto_replica_enabled,
         tokens_per_second_threshold=req.tokens_per_second_threshold,
     )
-
-    # 2b. Fire-and-forget pre-warm: start downloading weights to the CP cache
-    # in parallel with EC2 provisioning so the model is ready when the worker
-    # connects.  Best-effort: never block the deploy on cache failures.
-    try:
-        from orchestration.models.model_cache import deps as _mc_deps
-        from orchestration.models.model_deployment.mirror_decision import (
-            derive_cache_key,
-        )
-        _dl = _mc_deps.get("downloader")
-        # Key the pre-warm off the SAME (resolve_artifact_uri -> derive_cache_key)
-        # chain the mirror decision uses (resolve_and_apply_mirror), so the row
-        # the pre-warm writes is found by the mirror lookup. Keying off
-        # req.inference_model directly diverged (scheme prefix on HF, or a
-        # display name vs configuration.model_id on ollama) -> get_by_key miss
-        # -> worker re-downloaded from origin instead of the CP mirror.
-        _uri = resolve_artifact_uri(
-            configuration=req.configuration,
-            inference_model=req.inference_model,
-            model_name=req.model_name,
-        )
-        # Skip the CP cache pre-warm for public-cloud providers: their VMs pull
-        # weights from origin directly (the load spec also bypasses the mirror),
-        # so pre-warming would download to the CP for nothing — and over a
-        # home/tunnel uplink that is slow + wasteful.
-        from orchestration.provisioning.engine.registry import (
-            provider_prefers_origin_model_fetch,
-        )
-        _origin_fetch = provider_prefers_origin_model_fetch(pool_row.get("provider"))
-        if _dl and _uri and not _origin_fetch and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama", "inferia-diffusion"):
-            _src, _mid, _rev = derive_cache_key(req.engine or "vllm", str(_uri))
-            _dl.start(source=_src, model_id=_mid, revision=_rev, engine_hint=req.engine)
-    except Exception:
-        pass  # pre-warm is best-effort; never block a deploy
 
     # 3. Placement + provisioning (extracted, reused by /start resume).
     deps = SimpleNamespace(

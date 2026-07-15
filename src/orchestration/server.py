@@ -115,20 +115,6 @@ from orchestration.grpc_auth_interceptor import (
     InternalAPIKeyInterceptor,
 )
 
-# Model-cache imports — wired after db_pool is available in serve()
-from orchestration.models.model_cache import (
-    api as mc_api,
-    mirror_hf as mc_mirror_hf,
-    mirror_ollama as mc_mirror_ollama,
-    deps as mc_deps,
-    repo as mc_repo,
-    paths as mc_paths,
-    downloader as mc_downloader,
-    eviction as mc_eviction,
-)
-import httpx as _mc_httpx
-
-
 async def create_db_pool():
     """Create database connection pool."""
     return await asyncpg.create_pool(
@@ -469,72 +455,6 @@ async def serve():
     app.include_router(providers_api.router)
     app.include_router(xds_api.router)
 
-    # ---------------- Model Cache wiring ----------------
-    # Instantiate model-cache singletons and wire them into the dep registry.
-    _mc_repo_inst = mc_repo.ModelCacheRepo(db_pool)
-    _mc_paths_inst = mc_paths.CachePaths(settings.model_cache_dir)
-    _mc_http = _mc_httpx.AsyncClient(
-        timeout=_mc_httpx.Timeout(connect=10, read=None, write=None, pool=10),
-        follow_redirects=True,
-    )
-    _mc_dl = mc_downloader.DownloadManager(
-        repo=_mc_repo_inst,
-        paths=_mc_paths_inst,
-        http_client=_mc_http,
-        settings=settings,
-    )
-
-    async def _mc_in_use_model_ids() -> set:
-        """Return model_ids referenced by non-terminal deployments (async DB query)."""
-        try:
-            async with db_pool.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT DISTINCT inference_model FROM model_deployments "
-                    "WHERE state IN ('RUNNING','DEPLOYING','PENDING_NODE') AND inference_model IS NOT NULL"
-                )
-            return {r["inference_model"] for r in rows}
-        except Exception:
-            return set()  # fail-safe: if the query fails, evict nothing
-
-    # EvictionManager._in_use must be a SYNC callable.  We keep a module-level
-    # cache of the last-fetched set and refresh it at the start of each eviction
-    # tick in _mc_eviction_loop below, then patch _mc_evict._in_use to return
-    # the fresh snapshot.
-    _mc_evict = mc_eviction.EvictionManager(
-        repo=_mc_repo_inst,
-        paths=_mc_paths_inst,
-        max_bytes=settings.model_cache_max_gb * (1024 ** 3),
-        in_use=lambda: set(),  # placeholder — refreshed each tick in the loop
-    )
-
-    mc_deps.configure(
-        repo=_mc_repo_inst,
-        paths=_mc_paths_inst,
-        settings=settings,
-        http_client=_mc_http,
-        downloader=_mc_dl,
-        eviction=_mc_evict,
-    )
-
-    app.include_router(mc_api.router)
-    app.include_router(mc_mirror_hf.router)
-    app.include_router(mc_mirror_ollama.router)
-
-    # Reset any rows left in 'downloading' by a previous process: their
-    # in-flight tasks died with that process and would otherwise stay
-    # 'downloading' forever (never finishing, never eviction-eligible).
-    try:
-        _orphaned = await _mc_repo_inst.reconcile_orphaned_downloads(
-            message="download interrupted by control-plane restart; re-add to retry",
-        )
-        if _orphaned:
-            logger.warning(
-                "reset %d orphaned model-cache download(s) to error on startup",
-                _orphaned,
-            )
-    except Exception:
-        logger.warning("model-cache orphaned-download reconciliation failed", exc_info=True)
-
     # Share pool with routes
     app.state.pool = db_pool
     app.state.worker_controller = worker_controller
@@ -812,26 +732,6 @@ async def serve():
     app.state.xds_subscription_task = _xds_subscription_task
     logger.info("xDS event subscription started")
 
-    # ---------------- Model-cache eviction loop ----------------
-    # Runs once per minute; refreshes the in-use snapshot from the DB
-    # (async), then invokes a synchronous eviction pass.  Disabled via
-    # INFERIA_DISABLE_MODEL_CACHE_EVICTION=1 for local dev / unit tests.
-    if os.getenv("INFERIA_DISABLE_MODEL_CACHE_EVICTION", "0") != "1":
-        async def _mc_eviction_loop():
-            while True:
-                try:
-                    ids = await _mc_in_use_model_ids()
-                    # Patch the sync callable each tick with the fresh snapshot.
-                    _mc_evict._in_use = lambda ids=ids: ids
-                    await _mc_evict.run_once()
-                except Exception:
-                    logger.warning("model-cache eviction tick failed", exc_info=True)
-                await asyncio.sleep(60)
-
-        _mc_eviction_task = asyncio.create_task(_mc_eviction_loop())
-        app.state.mc_eviction_task = _mc_eviction_task
-        logger.info("Model-cache eviction loop started")
-
     # ---------------- DePIN liveness reconciler ----------------
     # Periodically polls the real Nosana/Akash job state for RUNNING
     # direct-adapter deployments and fails+deprovisions ones whose container
@@ -888,14 +788,6 @@ async def serve():
                 await reconciler_task
             except (asyncio.CancelledError, Exception):
                 pass
-
-    # Cancel the model-cache eviction loop and close its httpx client.
-    if getattr(app.state, "mc_eviction_task", None) is not None:
-        app.state.mc_eviction_task.cancel()
-    try:
-        await _mc_http.aclose()
-    except Exception:
-        pass
 
     await server.stop(grace=5)
     logger.info("Servers stopped gracefully")
