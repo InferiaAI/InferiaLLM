@@ -327,8 +327,8 @@ def _sidecar_api_gateway_url(env: dict) -> str:
 
 
 def run_unified_web(queue=None):
-    """Serve the entire web surface (/api gateway, /inf inference, root /v2 OCI
-    mirror, / dashboard SPA) from ONE uvicorn on APP_PORT. Replaces the separate
+    """Serve the entire web surface (/api gateway, /inf inference, / dashboard
+    SPA) from ONE uvicorn on APP_PORT. Replaces the separate
     api-gateway(:8000) + inference(:8001) + dashboard(:3001) processes."""
     port = int(os.environ.get("APP_PORT", "8000"))
     # Set inter-service loopback URLs BEFORE importing the configs (read at import).
@@ -351,7 +351,7 @@ def run_unified_web(queue=None):
         if fwd is not None:
             kwargs["forwarded_allow_ips"] = fwd
         if queue:
-            queue.put(ServiceStarted("Web", detail=f"http://0.0.0.0:{port} (/api /inf /v2 /)"))
+            queue.put(ServiceStarted("Web", detail=f"http://0.0.0.0:{port} (/api /inf /)"))
         uvicorn.run("unified_web.app:app", **kwargs)
     except Exception as e:
         print(f"[FATAL] Unified web failed to start: {e}", file=sys.stderr)

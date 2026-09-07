@@ -6,7 +6,6 @@ Handles dashboard → orchestration service proxying.
 import httpx
 import logging
 import asyncio
-import posixpath
 import websockets
 
 from fastapi import (
@@ -19,7 +18,6 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import StreamingResponse
 from api_gateway.rbac.middleware import (
     get_current_user_from_request,
     resolve_token_to_user_context,
@@ -40,12 +38,6 @@ router = APIRouter(prefix="/v1", tags=["Proxy API"])
 # worker hits the api_gateway at `/v1/workers/...` exactly, so we cannot
 # share the `/v1` prefix here. Mounted on the FastAPI app at root.
 worker_passthrough_router = APIRouter(tags=["Worker Passthrough"])
-
-# Dedicated router for the OCI registry mirror (/v2/*). The OCI spec
-# hard-codes <host>/v2, so this must live at the ROOT of the unified port,
-# NOT under /api. A later task registers this on the parent app at root;
-# it is intentionally NOT included in the gateway app.include_router calls.
-ollama_registry_router = APIRouter(tags=["Ollama OCI Mirror"])
 
 ORCHESTRATION_URL = settings.orchestration_url or orchestration_http_url()
 LLMFIT_URL = "http://llmfit:8787"
@@ -325,62 +317,6 @@ async def proxy_providers(
     )
 
 
-def _require_models_permission(user_context: UserContext, method: str) -> None:
-    """Method-aware RBAC for the model-cache management endpoints.
-
-      GET    → MODEL_LIST   — list cached models / progress
-      POST   → MODEL_ADD    — enqueue a model download
-      DELETE → MODEL_DELETE — remove a cached model
-    """
-    m = method.upper()
-    if m == "GET":
-        authz_service.require_permission(user_context, PermissionEnum.MODEL_LIST)
-    elif m == "POST":
-        authz_service.require_permission(user_context, PermissionEnum.MODEL_ADD)
-    elif m == "DELETE":
-        authz_service.require_permission(user_context, PermissionEnum.MODEL_DELETE)
-    else:
-        raise HTTPException(status_code=405, detail="method not allowed")
-
-
-# Bare collection (list + add). Registered WITHOUT a trailing slash so the
-# dashboard's `GET/POST /api/v1/models` matches directly instead of triggering
-# a 307 redirect (the `{path:path}` route below only matches `/models/...`),
-# which broke the add request. Forwards to orchestration's `/v1/models`.
-@router.api_route("/models", methods=["GET", "POST"])
-async def proxy_models_collection(
-    request: Request,
-    user_context: UserContext = Depends(get_current_user_from_request),
-):
-    """Proxy the model-cache collection (list/add) to the orchestration service."""
-    _require_models_permission(user_context, request.method)
-    return await proxy_request(
-        method=request.method,
-        path="v1/models",
-        request=request,
-        target_url=ORCHESTRATION_URL,
-        user_context=user_context,
-    )
-
-
-@router.api_route("/models/{path:path}", methods=["GET", "POST", "DELETE"])
-async def proxy_models(
-    request: Request,
-    path: str,
-    user_context: UserContext = Depends(get_current_user_from_request),
-):
-    """Proxy model-cache item endpoints ({id}/progress, {id} delete) to
-    the orchestration service."""
-    _require_models_permission(user_context, request.method)
-    return await proxy_request(
-        method=request.method,
-        path=f"v1/models/{path}",
-        request=request,
-        target_url=ORCHESTRATION_URL,
-        user_context=user_context,
-    )
-
-
 @router.api_route("/logs/{path:path}", methods=["GET"])
 async def proxy_logs(
     request: Request,
@@ -647,126 +583,6 @@ async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath
             await websocket.close()
         except Exception:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Streaming model-artifact passthroughs (UNAUTHENTICATED by design)
-# ---------------------------------------------------------------------------
-# Engine containers (ollama, vLLM, etc.) and worker processes pull model
-# files directly from the orchestration service's HF pull-through mirror and
-# OCI/v2 registry endpoint.  These callers have no dashboard JWT, so these
-# routes intentionally skip user authentication.
-#
-# Large files (multi-GB model weights) MUST be streamed; buffering the body
-# in memory would exhaust gateway RAM and break range-request resumption.
-# proxy_request() is not used here because it (a) buffers response.content
-# and (b) requires a UserContext.  Instead we open an httpx streaming context
-# and return a StreamingResponse that pipes bytes directly to the client.
-
-_STREAM_FORWARD_HEADERS = frozenset(
-    {
-        "content-type", "content-length", "content-range", "accept-ranges",
-        "etag", "last-modified",
-        # HuggingFace metadata huggingface_hub REQUIRES on the resolve HEAD.
-        # `X-Repo-Commit` is the commit hash: if it's absent huggingface_hub
-        # raises FileMetadataError("Distant resource does not seem to be on
-        # huggingface.co ...") and the vLLM/TEI container crashes before
-        # downloading any weights — so the whole HF cache-first path dies.
-        # `X-Linked-Etag`/`X-Linked-Size` carry the per-file etag/size for LFS
-        # pointer files. Forward them all verbatim from the orchestration mirror.
-        "x-repo-commit", "x-linked-etag", "x-linked-size",
-        # `Location` is required for the Ollama /v2 blob redirect: ollama's
-        # downloader calls resp.Location() on the blob GET and aborts without it.
-        "location",
-    }
-)
-
-
-async def _streaming_passthrough(method: str, upstream_url: str, request: Request) -> Response:
-    """Stream an upstream response byte-for-byte to the caller.
-
-    Forwards ``Range`` and ``Accept-Encoding`` request headers so that engine
-    clients can use HTTP range requests to resume interrupted downloads.
-    """
-    # Forward range / accept-encoding headers from the incoming request.
-    forward = {}
-    for h in ("range", "accept-encoding", "if-none-match", "if-modified-since"):
-        v = request.headers.get(h)
-        if v:
-            forward[h] = v
-    # Attach internal API key so orchestration's InternalAuthMiddleware accepts
-    # the request (the /hf and /v2 paths are not in the skip_paths list).
-    forward["X-Internal-API-Key"] = settings.internal_api_key
-    forward["X-Gateway-Request"] = "true"
-
-    try:
-        client = gateway_http_client.get_proxy_client()
-        upstream_ctx = client.stream(
-            method,
-            upstream_url,
-            headers=forward,
-            params=request.query_params,
-        )
-        up = await upstream_ctx.__aenter__()
-
-        async def _gen():
-            try:
-                async for chunk in up.aiter_bytes():
-                    yield chunk
-            finally:
-                await upstream_ctx.__aexit__(None, None, None)
-
-        # Propagate key headers to the caller.
-        resp_headers = {
-            k: v
-            for k, v in up.headers.items()
-            if k.lower() in _STREAM_FORWARD_HEADERS
-        }
-        return StreamingResponse(
-            _gen(),
-            status_code=up.status_code,
-            headers=resp_headers,
-            media_type=up.headers.get("content-type", "application/octet-stream"),
-        )
-    except httpx.RequestError as e:
-        logger.error("Streaming passthrough failed: %s", e)
-        raise HTTPException(status_code=503, detail=f"Service unavailable: {e}")
-
-
-@worker_passthrough_router.api_route("/hf/{path:path}", methods=["GET", "HEAD"])
-async def proxy_hf_mirror(request: Request, path: str):
-    """Stream HuggingFace model artifacts from the orchestration HF mirror.
-
-    Unauthenticated by design — engine containers have no dashboard JWT.
-    Large files are streamed, not buffered, to support range requests.
-
-    Path is normalized and confined to the /hf/* prefix to prevent path-
-    traversal attacks (e.g. ``%2e%2e`` → ``..``) that would forward the
-    internal API key to other orchestration routes.
-    """
-    normalized = posixpath.normpath(f"/hf/{path}")
-    if not (normalized == "/hf" or normalized.startswith("/hf/")):
-        raise HTTPException(status_code=400, detail="invalid path")
-    upstream_url = f"{ORCHESTRATION_URL}{normalized}"
-    return await _streaming_passthrough(request.method, upstream_url, request)
-
-
-@ollama_registry_router.api_route("/v2/{path:path}", methods=["GET", "HEAD"])
-async def proxy_v2_registry(request: Request, path: str):
-    """Stream OCI/v2 registry responses from the orchestration service.
-
-    Unauthenticated by design — engine containers have no dashboard JWT.
-    Large blobs are streamed, not buffered, to support range requests.
-
-    Path is normalized and confined to the /v2/* prefix to prevent path-
-    traversal attacks that would forward the internal API key to other
-    orchestration routes.
-    """
-    normalized = posixpath.normpath(f"/v2/{path}")
-    if not (normalized == "/v2" or normalized.startswith("/v2/")):
-        raise HTTPException(status_code=400, detail="invalid path")
-    upstream_url = f"{ORCHESTRATION_URL}{normalized}"
-    return await _streaming_passthrough(request.method, upstream_url, request)
 
 
 @router.api_route(

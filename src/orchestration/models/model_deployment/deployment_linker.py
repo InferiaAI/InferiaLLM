@@ -34,10 +34,6 @@ from orchestration.repositories.model_deployment_repo import (
 from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
-from orchestration.models.model_deployment.mirror_decision import (
-    resolve_and_apply_mirror,
-)
-from orchestration.models.model_cache import deps as _mc_deps
 
 logger = logging.getLogger(__name__)
 
@@ -141,14 +137,13 @@ class DeploymentLinker:
     async def on_worker_ready(self, node_id: UUID) -> None:
         async with self._db.acquire() as conn:
             node_row = await conn.fetchrow(
-                "SELECT pool_id, provider FROM compute_inventory WHERE id=$1",
+                "SELECT pool_id FROM compute_inventory WHERE id=$1",
                 node_id,
             )
             if node_row is None:
                 logger.warning("on_worker_ready: node %s not found", node_id)
                 return
             pool_id = node_row["pool_id"]
-            provider = node_row["provider"]
 
             bound: list[dict] = []
             async with conn.transaction():
@@ -189,7 +184,7 @@ class DeploymentLinker:
         # Transaction committed. Drive load_model OUTSIDE the transaction for
         # the deploys we just bound.
         for deploy in bound:
-            await self._drive_deploy(node_id, deploy, provider=provider)
+            await self._drive_deploy(node_id, deploy)
 
         # RE-DRIVE orphaned DEPLOYING deploys. A deploy whose load_model was
         # in flight when the control plane restarted (or whose linker task
@@ -217,7 +212,7 @@ class DeploymentLinker:
                 "(load_model never completed; control-plane restart?)",
                 deploy["id"], node_id,
             )
-            await self._drive_deploy(node_id, deploy, provider=provider)
+            await self._drive_deploy(node_id, deploy)
 
         if bound or orphaned:
             logger.info(
@@ -225,8 +220,7 @@ class DeploymentLinker:
                 len(bound), len(orphaned), node_id, pool_id,
             )
 
-    async def _drive_deploy(self, node_id: UUID, deploy: dict,
-                            *, provider: str | None = None) -> None:
+    async def _drive_deploy(self, node_id: UUID, deploy: dict) -> None:
         """Fire load_model for one already-bound deploy, then promote
         DEPLOYING → RUNNING (and publish the endpoint) on success, or release
         the GPU + mark FAILED on failure. The GPU was allocated at bind time, so
@@ -235,17 +229,6 @@ class DeploymentLinker:
         gpu_required = int(deploy.get("gpu_per_replica") or 1)
         try:
             spec = _spec_from_pending(deploy, gpu_required)
-            try:
-                from orchestration.config import settings as _s
-                _mirror_base = getattr(_s, "model_mirror_base", "") or ""
-            except Exception:
-                _mirror_base = ""
-            await resolve_and_apply_mirror(
-                spec, recipe=spec["recipe"],
-                artifact_uri=spec["model"]["artifact_uri"],
-                mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
-                provider=provider,
-            )
             result = await self._controller.load_model(
                 node_id=str(node_id), spec=spec,
             )
