@@ -182,7 +182,7 @@ describe("logout", () => {
     expect(calledUrl).toMatch(/\/auth\/logout$/);
     expect(calledUrl).not.toBe("/auth/logout");
     expect(calledOpts).toMatchObject({ method: "POST", credentials: "include" });
-    expect(assignMock).toHaveBeenCalledWith("/login");
+    expect(assignMock).toHaveBeenCalledWith("/auth/login");
   });
 
   it("external mode: redirects to the IdP /api/v1/auth/sso-logout with redirect_uri", async () => {
@@ -208,7 +208,7 @@ describe("logout", () => {
     fetchMock.mockRejectedValueOnce(new Error("network"));
     await expect(logout()).resolves.toBeUndefined();
     // User-facing redirect must still happen.
-    expect(assignMock).toHaveBeenCalledWith("/login");
+    expect(assignMock).toHaveBeenCalledWith("/auth/login");
     // Token store must still be cleared even when the audit POST fails.
     expect(clearSpy).toHaveBeenCalledTimes(1);
   });
@@ -217,7 +217,7 @@ describe("logout", () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "external");
     vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "");
     await logout();
-    expect(assignMock).toHaveBeenCalledWith("/login");
+    expect(assignMock).toHaveBeenCalledWith("/auth/login");
     expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -225,7 +225,7 @@ describe("logout", () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "external");
     vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "not a url");
     await logout();
-    expect(assignMock).toHaveBeenCalledWith("/login");
+    expect(assignMock).toHaveBeenCalledWith("/auth/login");
     expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 
