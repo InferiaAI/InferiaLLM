@@ -28,7 +28,6 @@ from api_gateway.rbac.local_identity_guard import require_local_identity
 from api_gateway.config import settings
 from sqlalchemy.future import select
 from sqlalchemy import func
-import os
 from datetime import datetime, timezone
 import pyotp
 import qrcode
@@ -104,8 +103,7 @@ async def login(
 
     if user:
         # 2FA check
-        enable_2fa = os.getenv("ENABLE_2FA", "true").lower() == "true"
-        if user.totp_enabled and enable_2fa:
+        if user.totp_enabled:
             if not request.totp_code:
                 raise HTTPException(status_code=403, detail="TOTP_REQUIRED")
             totp = pyotp.TOTP(user.totp_secret)
