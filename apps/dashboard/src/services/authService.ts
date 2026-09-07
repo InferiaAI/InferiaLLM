@@ -115,7 +115,7 @@ export async function logout(): Promise<void> {
     // rather than crashing the page during sign-out.
   }
 
-  window.location.assign("/login");
+  window.location.assign("/auth/login");
 }
 
 export interface RegisterRequest {
