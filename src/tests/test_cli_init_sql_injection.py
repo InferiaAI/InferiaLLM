@@ -93,7 +93,7 @@ class TestPasswordEscaping:
         ):
             mock_asyncpg.connect = AsyncMock(return_value=mock_conn)
 
-            asyncio.get_event_loop().run_until_complete(_init())
+            asyncio.run(_init())
 
             # Verify quote_literal was called with the raw password
             quote_literal_calls = [
@@ -147,7 +147,7 @@ class TestPasswordEscaping:
         ):
             mock_asyncpg.connect = AsyncMock(return_value=mock_conn)
 
-            asyncio.get_event_loop().run_until_complete(_init())
+            asyncio.run(_init())
 
             # Find the CREATE ROLE statement
             create_role_stmts = [
@@ -204,7 +204,7 @@ class TestPasswordEscaping:
         ):
             mock_asyncpg.connect = AsyncMock(return_value=mock_conn)
 
-            asyncio.get_event_loop().run_until_complete(_init())
+            asyncio.run(_init())
 
             create_role_stmts = [
                 s for s in executed_statements if "CREATE ROLE" in s

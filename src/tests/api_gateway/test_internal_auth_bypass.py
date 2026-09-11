@@ -58,7 +58,7 @@ class TestInternalPrefixMatch:
                 )
                 assert resp.json()["data"] == "not-internal"
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
     def test_internal_slash_path_requires_key(self):
         """Path /internal/secret MUST require the internal API key."""
@@ -81,7 +81,7 @@ class TestInternalPrefixMatch:
                 assert resp.status_code == 200
                 assert resp.json()["data"] == "secret"
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
 
 class TestFailClosedWhenKeyNotConfigured:
@@ -103,7 +103,7 @@ class TestFailClosedWhenKeyNotConfigured:
                 assert resp.status_code == 503
                 assert "not configured" in resp.json()["detail"]
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
     def test_empty_key_returns_503(self):
         """When internal_api_key is empty string, internal endpoints return 503."""
@@ -120,7 +120,7 @@ class TestFailClosedWhenKeyNotConfigured:
                 )
                 assert resp.status_code == 503
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
     def test_non_internal_paths_still_work_when_key_not_configured(self):
         """Public paths must work even when internal_api_key is None."""
@@ -135,7 +135,7 @@ class TestFailClosedWhenKeyNotConfigured:
                 assert resp.status_code == 200
                 assert resp.json()["data"] == "public"
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
 
 class TestInternalKeyValidation:
@@ -154,7 +154,7 @@ class TestInternalKeyValidation:
                 assert resp.status_code == 401
                 assert "Missing" in resp.json()["detail"]
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
     def test_wrong_key_returns_403(self):
         """Invalid X-Internal-API-Key header → 403."""
@@ -172,7 +172,7 @@ class TestInternalKeyValidation:
                 assert resp.status_code == 403
                 assert "Invalid" in resp.json()["detail"]
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
     def test_valid_key_returns_200(self):
         """Correct X-Internal-API-Key header → 200."""
@@ -189,7 +189,7 @@ class TestInternalKeyValidation:
                 )
                 assert resp.status_code == 200
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
     def test_alternative_header_name_works(self):
         """X-Internal-Key (alternative) header should also work."""
@@ -206,4 +206,4 @@ class TestInternalKeyValidation:
                 )
                 assert resp.status_code == 200
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())

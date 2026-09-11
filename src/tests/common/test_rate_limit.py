@@ -114,7 +114,7 @@ class TestRateLimiter:
 
         with pytest.raises(HTTPException) as exc_info:
             import asyncio
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 dummy_endpoint(request=mock_request, username="test")
             )
         assert exc_info.value.status_code == 429

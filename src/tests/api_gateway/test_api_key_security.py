@@ -61,7 +61,7 @@ class TestApiKeyHashStorage:
             assert result is None
             mock_db.execute.assert_not_called()
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 class TestApiKeyOrgScoping:
