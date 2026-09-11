@@ -641,7 +641,7 @@ class DeployModelRequest(BaseModel):
     replicas: int
     gpu_per_replica: int
     workload_type: str = "inference"
-    pool_id: str
+    pool_id: str | None = None
     job_definition: dict | None = None
 
     # Unified fields
@@ -1529,6 +1529,75 @@ async def place_and_provision(
     return response_body, response_status
 
 
+async def _reject_duplicate_deployment(db_pool, req) -> None:
+    """409 if a non-terminal deploy with this model_name already exists in the
+    same org. Shared by the compute and external create paths."""
+    if not (req.model_name and req.org_id):
+        return
+    async with db_pool.acquire() as _c:
+        dup_row = await _c.fetchrow(
+            """
+            SELECT deployment_id FROM model_deployments
+             WHERE model_name = $1
+               AND org_id = $2
+               AND state NOT IN ('STOPPED', 'TERMINATED', 'FAILED')
+            """,
+            req.model_name, str(req.org_id),
+        )
+    if dup_row is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"deployment '{req.model_name}' already exists "
+                f"in this org; stop it first"
+            ),
+        )
+
+
+async def _create_external_deployment(req, deploys) -> tuple[dict, int]:
+    """Create an external-provider deployment and return it RUNNING.
+
+    External workloads are a credential plus someone else's endpoint, so there
+    is no pool to place them in and nothing to provision. Mirrors the external
+    branch of ``_start_deployment_impl`` on the resume side.
+
+    ``workload_type`` is written into ``configuration`` because
+    ``model_deployments`` has no column for it and ``_resume_workload_type``
+    reads it from there. Without this, a resumed external deploy would resolve
+    to ``inference`` and be sent down the pool path.
+    """
+    from uuid import uuid4
+
+    deploy_id = uuid4()
+    cfg = dict(req.configuration or {})
+    cfg["workload_type"] = "external"
+
+    policies_val = req.policies
+    if isinstance(policies_val, dict):
+        policies_val = json.dumps(policies_val)
+
+    await deploys.create(
+        deployment_id=deploy_id,
+        model_id=None,
+        pool_id=None,
+        replicas=req.replicas,
+        gpu_per_replica=req.gpu_per_replica,
+        state="RUNNING",
+        engine=req.engine,
+        configuration=json.dumps(cfg),
+        endpoint=req.endpoint,
+        model_name=req.model_name,
+        owner_id=req.owner_id,
+        org_id=req.org_id,
+        policies=policies_val,
+        inference_model=req.inference_model,
+        model_type=req.model_type,
+        target_pool_id=None,
+        target_node_id=None,
+    )
+    return {"deployment_id": str(deploy_id), "state": "RUNNING"}, 200
+
+
 @router.post("/deploy")
 async def deploy_model(req: DeployModelRequest, request: Request):
     """Pool-first deploy.
@@ -1570,7 +1639,31 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     placer = PoolPlacer(db_pool)
     jobs_repo = ProvisioningJobRepository(db_pool)
 
+    # 0. External workloads have no pool and nothing to provision. The
+    # dashboard sends the nil UUID as pool_id, so validating it first
+    # returned 404.
+    if (req.workload_type or "").lower() == "external":
+        await _reject_duplicate_deployment(db_pool, req)
+        body, status = await _create_external_deployment(req, deploys)
+        await log_audit_event(
+            user_id=req.owner_id,
+            action="deployment.create",
+            resource_type="deployment",
+            resource_id=body["deployment_id"],
+            details={
+                "model_name": req.model_name,
+                "workload_type": "external",
+                "final_state": body["state"],
+            },
+            status="success",
+            org_id=str(req.org_id) if req.org_id else None,
+        )
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=status, content=body)
+
     # 1. Validate pool
+    if not req.pool_id:
+        raise HTTPException(status_code=422, detail="pool_id is required")
     try:
         pool_id_uuid = UUID(req.pool_id)
     except (TypeError, ValueError):
@@ -1597,27 +1690,7 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     if not isinstance(pool_meta, dict):
         pool_meta = {}
 
-    # Duplicate-name guard: 409 if any non-terminal deploy with this
-    # model_name already exists in the same org.
-    if req.model_name and req.org_id:
-        async with db_pool.acquire() as _c:
-            dup_row = await _c.fetchrow(
-                """
-                SELECT deployment_id FROM model_deployments
-                 WHERE model_name = $1
-                   AND org_id = $2
-                   AND state NOT IN ('STOPPED', 'TERMINATED', 'FAILED')
-                """,
-                req.model_name, str(req.org_id),
-            )
-        if dup_row is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"deployment '{req.model_name}' already exists "
-                    f"in this org; stop it first"
-                ),
-            )
+    await _reject_duplicate_deployment(db_pool, req)
 
     # 1b. vLLM on AWS requires an explicit ami_id (the DLAMI to boot); reject
     # early so the operator sees an actionable 422 instead of a provisioning
