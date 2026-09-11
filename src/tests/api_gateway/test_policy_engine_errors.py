@@ -78,7 +78,8 @@ class TestPolicyEngineErrors:
         auth_record.deployment_id = "dep-1"
         auth_record.org_id = "org-1"
         engine.verify_api_key = AsyncMock(return_value=auth_record)
-        engine._fetch_inference_token = AsyncMock(return_value=None)
+        # (None, None) when the pool has no token; resolve_context unpacks it.
+        engine._fetch_inference_token = AsyncMock(return_value=(None, None))
 
         deployment = MagicMock()
         deployment.id = "dep-1"

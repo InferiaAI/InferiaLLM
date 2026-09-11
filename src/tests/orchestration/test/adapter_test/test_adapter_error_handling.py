@@ -117,7 +117,7 @@ class TestNosanaAdapterErrors:
                         metadata=None,  # Missing required metadata
                     )
 
-            asyncio.get_event_loop().run_until_complete(run())
+            asyncio.run(run())
 
     def test_provision_node_missing_image_raises(self):
         """Training provision without image raises ValueError."""
@@ -146,4 +146,4 @@ class TestNosanaAdapterErrors:
                         metadata={"workload_type": "training"},  # No image
                     )
 
-            asyncio.get_event_loop().run_until_complete(run())
+            asyncio.run(run())

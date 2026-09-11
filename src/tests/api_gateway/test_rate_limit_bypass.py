@@ -48,7 +48,7 @@ class TestRateLimiterIgnoresForwardedFor:
                 f"Got {resp.status_code} instead of 429"
             )
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
     def test_different_xff_same_real_ip_shares_rate_limit(self, client):
         """
@@ -78,7 +78,7 @@ class TestRateLimiterIgnoresForwardedFor:
                 f"Got {resp.status_code} instead of 429"
             )
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
 
 class TestRateLimiterUnit:
@@ -174,4 +174,4 @@ class TestRateLimitDecoratorIgnoresXFF:
                     "rate_limit_auth decorator allowed bypass via X-Forwarded-For"
                 )
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())

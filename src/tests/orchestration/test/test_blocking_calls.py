@@ -230,6 +230,6 @@ class TestRunSyncHelper:
             time.sleep(0.05)
             return "done"
 
-        start = asyncio.get_event_loop().time()
+        start = asyncio.get_running_loop().time()
         result = await _run_sync(slow_func)
         assert result == "done"
