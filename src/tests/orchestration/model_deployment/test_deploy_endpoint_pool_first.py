@@ -988,3 +988,164 @@ async def test_deploy_vllm_ami_id_in_configuration_alongside_hf_token(app_and_po
     assert cfg.get("env", {}).get("HF_TOKEN") == "hf_combined_tok", (
         f"HF_TOKEN not persisted alongside ami_id; configuration={cfg}"
     )
+
+
+# ---------------------------------------------------------------------------
+# External workloads
+# ---------------------------------------------------------------------------
+
+async def test_deploy_external_workload_runs_without_pool(app_and_pool):
+    """An external provider deploy carries no compute pool.
+
+    The dashboard sends the nil UUID as ``pool_id``; looking it up returned
+    404 pool not found. The workload must short-circuit to RUNNING with a NULL
+    pool_id, no provisioning, and ``workload_type`` persisted into
+    ``configuration`` so the resume path recognises it too.
+    """
+    app, pool = app_and_pool
+    org_id = str(uuid4())
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO organizations(id, name) VALUES($1, $2) "
+            "ON CONFLICT DO NOTHING",
+            org_id, f"o-{org_id}",
+        )
+
+    payload = {
+        "model_name": f"ext-{uuid4()}",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 0,
+        "workload_type": "external",
+        "pool_id": "00000000-0000-0000-0000-000000000000",
+        "engine": "openai",
+        "configuration": {"provider": "openai", "model": "gpt-4o"},
+        "org_id": org_id,
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=payload)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "RUNNING"
+
+    deploy_id = UUID(r.json()["deployment_id"])
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT pool_id, target_pool_id, target_node_id, state, configuration "
+            "FROM model_deployments WHERE deployment_id=$1",
+            deploy_id,
+        )
+    assert row["state"] == "RUNNING"
+    assert row["pool_id"] is None
+    assert row["target_pool_id"] is None
+    assert row["target_node_id"] is None  # no placement happened
+
+    raw_cfg = row["configuration"]
+    cfg = json.loads(raw_cfg) if isinstance(raw_cfg, str) else raw_cfg
+    assert cfg["workload_type"] == "external", (
+        f"workload_type not persisted; /start would treat this as inference. "
+        f"configuration={cfg}"
+    )
+    assert cfg["provider"] == "openai"  # request config preserved
+
+    # Returning before place_and_provision must enqueue no provisioning job.
+    async with pool.acquire() as c:
+        jobs = await c.fetchval(
+            "SELECT COUNT(*) FROM provisioning_jobs WHERE org_id=$1", org_id,
+        )
+    assert jobs == 0, "external deploy enqueued a provisioning job"
+
+    app.state.worker_controller.load_model.assert_not_called()
+
+
+async def test_deploy_external_workload_ignores_missing_pool_id(app_and_pool):
+    """External deploys must not require pool_id at all, not just tolerate the
+    nil UUID the current dashboard happens to send."""
+    app, pool = app_and_pool
+    org_id = str(uuid4())
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO organizations(id, name) VALUES($1, $2) "
+            "ON CONFLICT DO NOTHING",
+            org_id, f"o-{org_id}",
+        )
+
+    payload = {
+        "model_name": f"ext-{uuid4()}",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 0,
+        "workload_type": "external",
+        "engine": "anthropic",
+        "configuration": {"provider": "anthropic"},
+        "org_id": org_id,
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=payload)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "RUNNING"
+
+
+async def test_deploy_external_workload_still_rejects_duplicate_name(app_and_pool):
+    """The short-circuit runs before the duplicate-name guard's old position,
+    so the guard has to be applied on the external path too. Second deploy of
+    the same name in the same org is a 409, not a second RUNNING row."""
+    app, pool = app_and_pool
+    org_id = str(uuid4())
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO organizations(id, name) VALUES($1, $2) "
+            "ON CONFLICT DO NOTHING",
+            org_id, f"o-{org_id}",
+        )
+
+    payload = {
+        "model_name": f"ext-dup-{uuid4()}",
+        "model_version": "latest",
+        "replicas": 1,
+        "gpu_per_replica": 0,
+        "workload_type": "external",
+        "engine": "openai",
+        "configuration": {"provider": "openai"},
+        "org_id": org_id,
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        first = await client.post("/deployment/deploy", json=payload)
+        second = await client.post("/deployment/deploy", json=payload)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409, second.text
+
+    async with pool.acquire() as c:
+        count = await c.fetchval(
+            "SELECT COUNT(*) FROM model_deployments "
+            "WHERE model_name=$1 AND org_id=$2",
+            payload["model_name"], org_id,
+        )
+    assert count == 1
+
+
+async def test_deploy_compute_workload_still_requires_pool_id(app_and_pool):
+    """The external branch must not weaken the compute path: an inference
+    deploy with no pool_id is still a 422."""
+    app, _pool = app_and_pool
+    payload = {
+        "model_name": "no-pool",
+        "model_version": "v1",
+        "replicas": 1,
+        "gpu_per_replica": 1,
+        "engine": "vllm",
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        r = await client.post("/deployment/deploy", json=payload)
+
+    assert r.status_code == 422, r.text

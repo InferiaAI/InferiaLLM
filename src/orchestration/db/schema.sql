@@ -355,7 +355,7 @@ CREATE TABLE IF NOT EXISTS public.model_deployments
     org_id text, -- Organization ID
     policies jsonb, -- Filtration policies
 
-    pool_id uuid NOT NULL,
+    pool_id uuid, -- nullable: external workloads have no pool
     replicas integer NOT NULL,
     gpu_per_replica integer NOT NULL,
     state text COLLATE pg_catalog."default" NOT NULL,

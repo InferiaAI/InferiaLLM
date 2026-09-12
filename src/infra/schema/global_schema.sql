@@ -385,7 +385,7 @@ CREATE TABLE IF NOT EXISTS public.model_deployments
     inference_model text, -- Backend model slug (e.g. 'meta-llama/...')
     model_type text DEFAULT 'inference', -- Model type: inference, embedding, image_generation, etc.
 
-    pool_id uuid NOT NULL,
+    pool_id uuid, -- nullable: external workloads have no pool
     replicas integer NOT NULL,
     gpu_per_replica integer NOT NULL,
     state text COLLATE pg_catalog."default" NOT NULL DEFAULT 'PENDING',
