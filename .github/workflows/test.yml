@@ -80,6 +80,7 @@ jobs:
             src/tests/inference/test_upstream_security.py \
             src/tests/inference/test_usage_tracking_logging.py \
             src/tests/orchestration/api/test_admin_workers_ws_proxy.py \
+            src/tests/orchestration/adapter_engine/test_k8s_adapter.py \
             src/tests/orchestration/compute_pool_engine/test_pool_manager.py \
             src/tests/orchestration/test/adapter_test/test_adapter_error_handling.py \
             src/tests/orchestration/test/adapter_test/test_command_injection.py \
