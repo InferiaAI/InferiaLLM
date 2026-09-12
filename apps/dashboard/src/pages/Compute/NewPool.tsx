@@ -707,6 +707,13 @@ export default function NewPool() {
                 payload.gpu_count = gpuCount;
                 payload.max_cost_per_hour = estimateGcpCost(selectedResource.gpu_type, useSpot) * gpuCount;
                 payload.provider_pool_id = `${selectedRegion}/${selectedResource.gpu_type}`;
+            } else if (selectedProvider === "k8s") {
+                // gpu_type is null on CPU-only nodes, so send the "any" hint
+                // the worker pool uses. allowed_gpu_types is only read as a
+                // real instance type on the AWS path.
+                payload.allowed_gpu_types = ["any"];
+                payload.max_cost_per_hour = 0;
+                payload.provider_pool_id = selectedResource.provider_resource_id;
             } else {
                 // Job-based provider (Nosana, Akash)
                 payload.allowed_gpu_types = [selectedResource.gpu_type];
@@ -1132,8 +1139,11 @@ export default function NewPool() {
 
                         const filteredResources = availableResources
                             .filter(res => {
-                                const matchesSearch = res.gpu_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                    res.provider_resource_id.toLowerCase().includes(searchQuery.toLowerCase());
+                                // gpu_type is null on CPU-only nodes (k8s discovery
+                                // reports it straight from node capacity), so guard
+                                // both fields before lowercasing.
+                                const matchesSearch = (res.gpu_type ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                    (res.provider_resource_id ?? "").toLowerCase().includes(searchQuery.toLowerCase());
                                 const matchesVram = res.gpu_memory_gb >= minVram;
                                 // gpu_vendor is set by the AWS adapter; for legacy
                                 // providers (Nosana/Akash) the field is missing —
