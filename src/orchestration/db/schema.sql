@@ -8,6 +8,7 @@ CREATE TYPE provider_type AS ENUM (
     'azure',
     'nosana',
     'on_prem',
+    'k8s',
     'other'
 );
 

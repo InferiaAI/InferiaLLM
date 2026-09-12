@@ -51,6 +51,7 @@ CREATE TYPE provider_type AS ENUM (
     'nosana',
     'akash',
     'on_prem',
+    'k8s',
     'other'
 );
 
