@@ -9,6 +9,7 @@ from typing import List, Dict, Optional
 import asyncio
 import functools
 import os
+import shlex
 import uuid
 import logging
 import time
@@ -28,6 +29,45 @@ _ENGINE_PORTS = {
     "vllm-omni": 8000,
 }
 _DEFAULT_ENGINE_PORT = 8000
+
+# Where each engine stores downloaded weights. Without a volume here the model
+# lives in the container's writable layer, so every replaced pod downloads it
+# again and self-healing takes as long as the original pull.
+_ENGINE_MODEL_DIRS = {
+    "ollama": "/root/.ollama",
+    "vllm": "/root/.cache/huggingface",
+    "vllm-omni": "/root/.cache/huggingface",
+}
+_DEFAULT_CACHE_SIZE = "50Gi"
+
+
+def _ollama_startup(model_id: str):
+    """Command, args and readiness probe for an Ollama container.
+
+    Ollama opens its port with no model loaded, so starting the image alone
+    gives a container that passes a port check and answers "model not found".
+    The model has to be pulled, and the server must already be running for the
+    pull to work. Readiness therefore checks the model is present rather than
+    the port being open, so RUNNING means the deployment can serve.
+
+    Engines that take the model as a start argument (vLLM) need none of this.
+    """
+    safe = shlex.quote(model_id)
+    script = (
+        "ollama serve & "
+        "until ollama list >/dev/null 2>&1; do sleep 1; done; "
+        f"ollama pull {safe}; "
+        "wait"
+    )
+    readiness = client.V1Probe(
+        _exec=client.V1ExecAction(
+            command=["/bin/sh", "-c", f"ollama show {safe} >/dev/null 2>&1"],
+        ),
+        initial_delay_seconds=5,
+        period_seconds=10,
+        failure_threshold=90,  # a model pull can be slow
+    )
+    return ["/bin/sh", "-c"], [script], readiness
 
 
 def _engine_port(metadata: Optional[Dict]) -> int:
@@ -197,6 +237,19 @@ class KubernetesAdapter(ProviderAdapter):
             "inferia-instance": pod_name,
         }
 
+        # TCP rather than an HTTP path: engines disagree on where their health
+        # endpoint lives, and an open socket is what the router needs.
+        readiness = client.V1Probe(
+            tcp_socket=client.V1TCPSocketAction(port=port),
+            initial_delay_seconds=10,
+            period_seconds=10,
+            failure_threshold=60,
+        )
+        _engine = str((metadata or {}).get("engine") or "").lower()
+        _model = (metadata or {}).get("model_id")
+        if _engine == "ollama" and _model:
+            command, args, readiness = _ollama_startup(_model)
+
         container = client.V1Container(
             name="worker",
             image=image,
@@ -207,15 +260,7 @@ class KubernetesAdapter(ProviderAdapter):
                 requests=resource_requests,
                 limits=resource_limits,
             ),
-            # TCP rather than an HTTP path: engines disagree on where their
-            # health endpoint lives, and an open socket is what the router
-            # needs. failure_threshold covers a slow model load.
-            readiness_probe=client.V1Probe(
-                tcp_socket=client.V1TCPSocketAction(port=port),
-                initial_delay_seconds=10,
-                period_seconds=10,
-                failure_threshold=60,
-            ),
+            readiness_probe=readiness,
             liveness_probe=client.V1Probe(
                 tcp_socket=client.V1TCPSocketAction(port=port),
                 initial_delay_seconds=120,
@@ -223,6 +268,39 @@ class KubernetesAdapter(ProviderAdapter):
                 failure_threshold=3,
             ),
         )
+
+        # Weights outlive the pod. ReadWriteOnce holds while replicas share a
+        # node; scaling across nodes needs ReadWriteMany or a claim per replica.
+        model_dir = _ENGINE_MODEL_DIRS.get(_engine)
+        volumes = None
+        volume_mounts = None
+        if model_dir:
+            size = str((metadata or {}).get("model_cache_size") or _DEFAULT_CACHE_SIZE)
+            claim = client.V1PersistentVolumeClaim(
+                metadata=client.V1ObjectMeta(name=pod_name, labels=labels),
+                spec=client.V1PersistentVolumeClaimSpec(
+                    access_modes=["ReadWriteOnce"],
+                    resources=client.V1VolumeResourceRequirements(
+                        requests={"storage": size},
+                    ),
+                ),
+            )
+            await _run_sync(
+                self.core.create_namespaced_persistent_volume_claim,
+                namespace=namespace, body=claim,
+            )
+            volumes = [
+                client.V1Volume(
+                    name="models",
+                    persistent_volume_claim=(
+                        client.V1PersistentVolumeClaimVolumeSource(claim_name=pod_name)
+                    ),
+                )
+            ]
+            volume_mounts = [
+                client.V1VolumeMount(name="models", mount_path=model_dir)
+            ]
+            container.volume_mounts = volume_mounts
 
         deployment = client.V1Deployment(
             metadata=client.V1ObjectMeta(name=pod_name, labels=labels),
@@ -233,7 +311,9 @@ class KubernetesAdapter(ProviderAdapter):
                 ),
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(labels=labels),
-                    spec=client.V1PodSpec(containers=[container]),
+                    spec=client.V1PodSpec(
+                        containers=[container], volumes=volumes,
+                    ),
                 ),
             ),
         )
@@ -255,10 +335,18 @@ class KubernetesAdapter(ProviderAdapter):
             ),
         )
 
-        await _run_sync(
-            self.apps.create_namespaced_deployment,
-            namespace=namespace, body=deployment,
-        )
+        try:
+            await _run_sync(
+                self.apps.create_namespaced_deployment,
+                namespace=namespace, body=deployment,
+            )
+        except Exception:
+            await self._delete_quietly(
+                self.core.delete_namespaced_persistent_volume_claim,
+                pod_name, namespace,
+            )
+            raise
+
         try:
             await _run_sync(
                 self.core.create_namespaced_service,
@@ -270,6 +358,10 @@ class KubernetesAdapter(ProviderAdapter):
             )
             await self._delete_quietly(
                 self.apps.delete_namespaced_deployment, pod_name, namespace,
+            )
+            await self._delete_quietly(
+                self.core.delete_namespaced_persistent_volume_claim,
+                pod_name, namespace,
             )
             raise
 
@@ -401,10 +493,10 @@ class KubernetesAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        """Delete the Deployment and its Service.
+        """Delete the Deployment, its Service and its model volume.
 
-        Both are removed even if one is already gone, so a partially created
-        node cannot leave a Service behind pointing at nothing.
+        All three are removed even if one is already gone, so a partially
+        created node leaves nothing behind.
         """
         namespace = "default"
         try:
@@ -414,6 +506,10 @@ class KubernetesAdapter(ProviderAdapter):
             )
             await self._delete_quietly(
                 self.core.delete_namespaced_service,
+                provider_instance_id, namespace,
+            )
+            await self._delete_quietly(
+                self.core.delete_namespaced_persistent_volume_claim,
                 provider_instance_id, namespace,
             )
         except Exception:
