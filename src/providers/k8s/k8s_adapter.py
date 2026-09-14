@@ -40,9 +40,13 @@ _ENGINE_MODEL_DIRS = {
 }
 _DEFAULT_CACHE_SIZE = "50Gi"
 
+# Ollama drops a model from memory 5 minutes after the last request, so the
+# next one reloads from disk: 14.9s cold against 0.34s resident on qwen2:0.5b.
+_DEFAULT_KEEP_ALIVE = "-1"
 
-def _ollama_startup(model_id: str):
-    """Command, args and readiness probe for an Ollama container.
+
+def _ollama_startup(model_id: str, keep_alive: str):
+    """Command, args, env and readiness probe for an Ollama container.
 
     Ollama opens its port with no model loaded, so starting the image alone
     gives a container that passes a port check and answers "model not found".
@@ -67,7 +71,8 @@ def _ollama_startup(model_id: str):
         period_seconds=10,
         failure_threshold=90,  # a model pull can be slow
     )
-    return ["/bin/sh", "-c"], [script], readiness
+    env = [client.V1EnvVar(name="OLLAMA_KEEP_ALIVE", value=keep_alive)]
+    return ["/bin/sh", "-c"], [script], env, readiness
 
 
 def _engine_port(metadata: Optional[Dict]) -> int:
@@ -247,14 +252,19 @@ class KubernetesAdapter(ProviderAdapter):
         )
         _engine = str((metadata or {}).get("engine") or "").lower()
         _model = (metadata or {}).get("model_id")
+        env = None
         if _engine == "ollama" and _model:
-            command, args, readiness = _ollama_startup(_model)
+            keep_alive = str(
+                (metadata or {}).get("keep_alive") or _DEFAULT_KEEP_ALIVE
+            )
+            command, args, env, readiness = _ollama_startup(_model, keep_alive)
 
         container = client.V1Container(
             name="worker",
             image=image,
             command=command,
             args=args,
+            env=env,
             ports=[client.V1ContainerPort(container_port=port, name="http")],
             resources=client.V1ResourceRequirements(
                 requests=resource_requests,

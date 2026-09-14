@@ -18,6 +18,7 @@ from providers.k8s.k8s_adapter import (
     _engine_port,
     _DEFAULT_ENGINE_PORT,
     _DEFAULT_CACHE_SIZE,
+    _DEFAULT_KEEP_ALIVE,
 )
 
 
@@ -646,3 +647,53 @@ async def test_failed_deployment_rolls_back_the_volume(monkeypatch):
 
     assert a.core.delete_namespaced_persistent_volume_claim.called
     assert not a.core.create_namespaced_service.called
+
+
+@pytest.mark.asyncio
+async def test_ollama_model_stays_resident(monkeypatch):
+    """Ollama unloads 5 minutes after the last request, so the next one waits
+    for a reload: 14.9s cold against 0.34s resident on a deployed qwen2:0.5b."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    env = {e.name: e.value for e in _container_of(a).env or []}
+
+    assert env.get("OLLAMA_KEEP_ALIVE") == _DEFAULT_KEEP_ALIVE
+    assert _DEFAULT_KEEP_ALIVE == "-1", "anything else still unloads"
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_is_overridable(monkeypatch):
+    """A node hosting many models may want them evicted."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b", keep_alive="10m"),
+    )
+
+    env = {e.name: e.value for e in _container_of(a).env or []}
+
+    assert env.get("OLLAMA_KEEP_ALIVE") == "10m"
+
+
+@pytest.mark.asyncio
+async def test_non_ollama_engine_gets_no_keep_alive(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(engine="vllm", cmd=["--model", "x"]),
+    )
+
+    assert _container_of(a).env is None
