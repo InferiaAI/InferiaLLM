@@ -70,6 +70,7 @@ jobs:
             src/tests/inference/test_circuit_breaker_wiring.py \
             src/tests/inference/test_concurrency_limiter_lazy_init.py \
             src/tests/inference/test_cors_config.py \
+            src/tests/inference/test_metrics.py \
             src/tests/inference/test_negative_cache.py \
             src/tests/inference/test_provider_error_sanitization.py \
             src/tests/inference/test_quota_cache_race.py \

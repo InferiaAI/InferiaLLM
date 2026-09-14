@@ -52,6 +52,9 @@ dependencies = [
   "greenlet",
   "jinja2",
 
+  # Observability
+  "prometheus-client>=0.20",
+
   # ML / Filtration Core
   "chromadb",
   "pypdf",

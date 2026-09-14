@@ -10,6 +10,7 @@ from cachetools import TTLCache
 from fastapi import HTTPException
 
 from inference.config import settings
+from inference.core import metrics
 
 
 class UpstreamConcurrencyLimiter:
@@ -63,8 +64,15 @@ class UpstreamConcurrencyLimiter:
         acquired_global = False
         acquired_deployment = False
         deployment_semaphore: Optional[asyncio.Semaphore] = None
+        counted_queued = False
+        counted_in_flight = False
 
         try:
+            # Counted before the acquire, not after: a request with no free
+            # slot blocks below, and that wait is the queue.
+            metrics.queued.labels(deployment=deployment_key).inc()
+            counted_queued = True
+
             if self._global_semaphore is not None:
                 await self._acquire_or_timeout(self._global_semaphore)
                 acquired_global = True
@@ -76,8 +84,17 @@ class UpstreamConcurrencyLimiter:
                 await self._acquire_or_timeout(deployment_semaphore)
                 acquired_deployment = True
 
+            metrics.queued.labels(deployment=deployment_key).dec()
+            counted_queued = False
+            metrics.in_flight.labels(deployment=deployment_key).inc()
+            counted_in_flight = True
+
             yield
         finally:
+            if counted_queued:
+                metrics.queued.labels(deployment=deployment_key).dec()
+            if counted_in_flight:
+                metrics.in_flight.labels(deployment=deployment_key).dec()
             if acquired_deployment and deployment_semaphore is not None:
                 deployment_semaphore.release()
             if acquired_global and self._global_semaphore is not None:
