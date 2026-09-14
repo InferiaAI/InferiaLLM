@@ -15,6 +15,8 @@ from inference.config import settings
 from inference.core.http_client import http_client
 from inference.core.orchestrator import OrchestrationService
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from common.exception_handlers import register_exception_handlers
 from common.logger import setup_logging
@@ -50,6 +52,22 @@ add_standard_health_routes(
     app_version=settings.app_version,
     environment=settings.environment,
 )
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint():
+    """Prometheus scrape target.
+
+    Unauthenticated because Prometheus has no credential to present. It exposes
+    counts and timings only, never prompts or responses, and the port is not
+    published outside the cluster.
+    """
+    # Set as a header rather than media_type: Starlette appends its own
+    # charset to a text/* media_type, and CONTENT_TYPE_LATEST already
+    # carries one.
+    return Response(
+        generate_latest(), headers={"Content-Type": CONTENT_TYPE_LATEST}
+    )
 
 
 @app.on_event("shutdown")

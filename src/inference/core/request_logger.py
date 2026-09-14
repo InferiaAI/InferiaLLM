@@ -12,6 +12,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from inference.client import api_gateway_client
+from inference.core import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,15 @@ class RequestLogger:
         total_duration_ms = int((end_time - start_time) * 1000)
         latency_ms = total_duration_ms
         total_tokens = prompt_tokens + completion_tokens
+
+        metrics.observe_request(
+            deployment_id=deployment_id,
+            model=model,
+            request_type=request_type,
+            status_code=status_code,
+            duration_seconds_value=end_time - start_time,
+            ttft_ms=ttft_ms,
+        )
 
         # Tokens per second (LLM only)
         tokens_per_second = None
