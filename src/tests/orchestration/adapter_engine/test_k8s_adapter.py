@@ -17,6 +17,8 @@ from providers.k8s.k8s_adapter import (
     KubernetesAdapter,
     _engine_port,
     _DEFAULT_ENGINE_PORT,
+    _DEFAULT_CACHE_SIZE,
+    _DEFAULT_KEEP_ALIVE,
 )
 
 
@@ -76,6 +78,12 @@ def _metadata(**over):
     }
     md.update(over)
     return md
+
+
+def _container_of(a):
+    """The container from the Deployment the adapter just created."""
+    body = a.apps.create_namespaced_deployment.call_args.kwargs["body"]
+    return body.spec.template.spec.containers[0]
 
 
 # ---------------------------------------------------------------------------
@@ -435,3 +443,257 @@ def test_readiness_timeout_allows_for_an_image_pull():
     pull, so the deploy failed and the pod was torn down mid-download."""
     caps = KubernetesAdapter.CAPABILITIES
     assert caps.readiness_timeout_seconds >= 600
+
+
+# ---------------------------------------------------------------------------
+# Model loading
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_ollama_pulls_the_model_on_start(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    container = _container_of(a)
+    script = " ".join(container.args or [])
+
+    assert "ollama pull" in script, "the model is never fetched otherwise"
+    assert "qwen2:0.5b" in script
+    assert container.command == ["/bin/sh", "-c"], \
+        "a pull needs a shell; the entrypoint cannot run one"
+
+
+@pytest.mark.asyncio
+async def test_ollama_model_name_is_shell_quoted(monkeypatch):
+    """The model id comes from user input and lands in a shell command."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="evil; rm -rf /"),
+    )
+
+    script = " ".join(_container_of(a).args or [])
+
+    assert "; rm -rf /" not in script.replace("'evil; rm -rf /'", ""), \
+        "an unquoted model id is command injection"
+    assert "'evil; rm -rf /'" in script
+
+
+@pytest.mark.asyncio
+async def test_ollama_readiness_checks_the_model_not_the_port(monkeypatch):
+    """A TCP check passes about a second after start, with no model loaded.
+    That is what let a deployment report RUNNING and serve nothing."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    probe = _container_of(a).readiness_probe
+
+    assert probe.tcp_socket is None, "a port check does not mean it can serve"
+    assert probe._exec is not None
+    assert "ollama show" in " ".join(probe._exec.command)
+
+
+@pytest.mark.asyncio
+async def test_non_ollama_engine_keeps_the_tcp_probe(monkeypatch):
+    """vLLM takes the model as a start argument and loads it itself."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(engine="vllm", cmd=["--model", "x"]),
+    )
+
+    container = _container_of(a)
+
+    assert container.readiness_probe.tcp_socket is not None
+    assert container.args == ["--model", "x"]
+
+
+# ---------------------------------------------------------------------------
+# Model persistence
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_volume_is_created_and_mounted_for_the_weights(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    spec = await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+    name = spec["provider_instance_id"]
+
+    assert a.core.create_namespaced_persistent_volume_claim.called, \
+        "without a claim every replaced pod re-downloads the model"
+
+    claim = a.core.create_namespaced_persistent_volume_claim \
+        .call_args.kwargs["body"]
+    assert claim.metadata.name == name
+    assert claim.spec.resources.requests["storage"] == _DEFAULT_CACHE_SIZE
+
+    mount = _container_of(a).volume_mounts[0]
+    assert mount.mount_path == "/root/.ollama", \
+        "mounting anywhere else caches nothing"
+
+    pod_spec = a.apps.create_namespaced_deployment \
+        .call_args.kwargs["body"].spec.template.spec
+    assert pod_spec.volumes[0].persistent_volume_claim.claim_name == name
+
+
+@pytest.mark.asyncio
+async def test_cache_size_is_overridable(monkeypatch):
+    """A 70B model does not fit the default."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_cache_size="200Gi"),
+    )
+
+    claim = a.core.create_namespaced_persistent_volume_claim \
+        .call_args.kwargs["body"]
+    assert claim.spec.resources.requests["storage"] == "200Gi"
+
+
+@pytest.mark.asyncio
+async def test_engine_with_no_known_model_dir_gets_no_volume(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(engine="something-new"),
+    )
+
+    assert not a.core.create_namespaced_persistent_volume_claim.called
+    pod_spec = a.apps.create_namespaced_deployment \
+        .call_args.kwargs["body"].spec.template.spec
+    assert pod_spec.volumes is None
+
+
+@pytest.mark.asyncio
+async def test_deprovision_removes_the_volume():
+    """A claim left behind holds storage no deployment can reach."""
+    a = _adapter()
+
+    await a.deprovision_node(provider_instance_id="dep-1")
+
+    assert a.core.delete_namespaced_persistent_volume_claim.called
+
+
+@pytest.mark.asyncio
+async def test_failed_service_rolls_back_the_volume_too(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.create_namespaced_service.side_effect = RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        await a.provision_node(
+            provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+        )
+
+    assert a.core.delete_namespaced_persistent_volume_claim.called
+
+
+@pytest.mark.asyncio
+async def test_ollama_without_a_model_id_is_left_alone(monkeypatch):
+    """Nothing to pull, so the startup override does not apply. The volume
+    still does, since the engine writes weights there either way."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    container = _container_of(a)
+
+    assert container.readiness_probe.tcp_socket is not None
+    assert a.core.create_namespaced_persistent_volume_claim.called
+
+
+@pytest.mark.asyncio
+async def test_failed_deployment_rolls_back_the_volume(monkeypatch):
+    """The claim is created first, so a Deployment that fails would strand
+    storage nothing can reach."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.apps.create_namespaced_deployment.side_effect = RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        await a.provision_node(
+            provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+        )
+
+    assert a.core.delete_namespaced_persistent_volume_claim.called
+    assert not a.core.create_namespaced_service.called
+
+
+@pytest.mark.asyncio
+async def test_ollama_model_stays_resident(monkeypatch):
+    """Ollama unloads 5 minutes after the last request, so the next one waits
+    for a reload: 14.9s cold against 0.34s resident on a deployed qwen2:0.5b."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    env = {e.name: e.value for e in _container_of(a).env or []}
+
+    assert env.get("OLLAMA_KEEP_ALIVE") == _DEFAULT_KEEP_ALIVE
+    assert _DEFAULT_KEEP_ALIVE == "-1", "anything else still unloads"
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_is_overridable(monkeypatch):
+    """A node hosting many models may want them evicted."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b", keep_alive="10m"),
+    )
+
+    env = {e.name: e.value for e in _container_of(a).env or []}
+
+    assert env.get("OLLAMA_KEEP_ALIVE") == "10m"
+
+
+@pytest.mark.asyncio
+async def test_non_ollama_engine_gets_no_keep_alive(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(engine="vllm", cmd=["--model", "x"]),
+    )
+
+    assert _container_of(a).env is None
