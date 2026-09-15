@@ -434,12 +434,20 @@ class ModelDeploymentRepository(BaseRepository):
             await c.execute(q, *args)
 
     async def list_auto_replica_deployments(self) -> list[dict]:
-        """List RUNNING deployments with auto_replica_enabled=true."""
+        """List RUNNING deployments the TPS autoscaler is responsible for.
+
+        Kubernetes deployments are excluded. KEDA changes the replica count on
+        their StatefulSet directly, while this autoscaler scales out by
+        provisioning a whole new deployment and node - on Kubernetes that
+        produces a second StatefulSet instead of a second replica.
+        """
         q = """
-        SELECT * FROM model_deployments
-        WHERE state IN ('RUNNING', 'DEPLOYING')
-          AND auto_replica_enabled = true
-        ORDER BY created_at DESC
+        SELECT d.* FROM model_deployments d
+        LEFT JOIN compute_pools p ON p.id = d.pool_id
+        WHERE d.state IN ('RUNNING', 'DEPLOYING')
+          AND d.auto_replica_enabled = true
+          AND (p.provider IS NULL OR p.provider <> 'k8s')
+        ORDER BY d.created_at DESC
         """
         async with self.db.acquire() as c:
             rows = await c.fetch(q)

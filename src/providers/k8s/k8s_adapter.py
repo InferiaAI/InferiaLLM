@@ -41,6 +41,20 @@ _ENGINE_MODEL_DIRS = {
 _DEFAULT_CACHE_SIZE = "50Gi"
 _MODEL_VOLUME_NAME = "models"
 
+_KEDA_GROUP = "keda.sh"
+_KEDA_VERSION = "v1alpha1"
+_KEDA_PLURAL = "scaledobjects"
+
+_DEFAULT_MAX_REPLICAS = 3
+_DEFAULT_IN_FLIGHT_PER_REPLICA = 3
+# A gate, not a goal: no scaling happens until P95 is past it.
+_DEFAULT_P95_TARGET_SECONDS = 10
+_DEFAULT_MIN_SAMPLES = 2
+_METRIC_WINDOW = "2m"
+# Overrides a Kubernetes default of 300s, which holds replicas long after
+# the load that caused them has gone.
+_SCALE_DOWN_STABILISATION_SECONDS = 30
+
 # Ollama drops a model from memory 5 minutes after the last request, so the
 # next one reloads from disk: 14.9s cold against 0.34s resident on qwen2:0.5b.
 _DEFAULT_KEEP_ALIVE = "-1"
@@ -74,6 +88,81 @@ def _ollama_startup(model_id: str, keep_alive: str):
     )
     env = [client.V1EnvVar(name="OLLAMA_KEEP_ALIVE", value=keep_alive)]
     return ["/bin/sh", "-c"], [script], env, readiness
+
+
+def _scaler_query(deployment_id: str, p95_target: int, min_samples: int) -> str:
+    """The Prometheus query KEDA scales on.
+
+    Three terms multiplied, not three triggers: KEDA takes the MAXIMUM across
+    triggers, so a second trigger could only raise the replica count and never
+    hold it down. A guard has to gate the value inside one query.
+
+    In-flight rather than a queue-depth metric because the engine reports no
+    queue of its own. Everything counted here is either generating or waiting
+    inside the engine, so it is where the queue is observable.
+    """
+    d = deployment_id
+    return (
+        f'sum(inferia_upstream_in_flight_requests{{deployment="{d}"}})'
+        " * (scalar(histogram_quantile(0.95, sum by (le) (rate("
+        f'inferia_inference_duration_seconds_bucket{{deployment="{d}"}}'
+        f"[{_METRIC_WINDOW}])))) > bool {p95_target})"
+        f' * (scalar(sum(increase(inferia_inference_requests_total{{deployment="{d}"}}'
+        f"[{_METRIC_WINDOW}]))) > bool {min_samples})"
+    )
+
+
+def _scaled_object_body(name: str, deployment_id: str, metadata: Optional[Dict]) -> Dict:
+    """A KEDA ScaledObject targeting the engine's StatefulSet."""
+    md = metadata or {}
+    max_replicas = int(md.get("autoscale_max_replicas") or _DEFAULT_MAX_REPLICAS)
+    per_replica = int(
+        md.get("autoscale_in_flight_per_replica") or _DEFAULT_IN_FLIGHT_PER_REPLICA
+    )
+    p95_target = int(md.get("autoscale_p95_seconds") or _DEFAULT_P95_TARGET_SECONDS)
+    min_samples = int(md.get("autoscale_min_samples") or _DEFAULT_MIN_SAMPLES)
+    prom = str(
+        md.get("prometheus_address")
+        or os.environ.get("KEDA_PROMETHEUS_ADDRESS")
+        or "http://prometheus.monitoring.svc.cluster.local:9090"
+    )
+
+    return {
+        "apiVersion": f"{_KEDA_GROUP}/{_KEDA_VERSION}",
+        "kind": "ScaledObject",
+        "metadata": {"name": name, "labels": {"inferia-instance": name}},
+        "spec": {
+            "scaleTargetRef": {"kind": "StatefulSet", "name": name},
+            "minReplicaCount": 1,
+            "maxReplicaCount": max_replicas,
+            "advanced": {
+                "horizontalPodAutoscalerConfig": {
+                    "behavior": {
+                        "scaleDown": {
+                            "stabilizationWindowSeconds": (
+                                _SCALE_DOWN_STABILISATION_SECONDS
+                            ),
+                        },
+                        "scaleUp": {"stabilizationWindowSeconds": 0},
+                    },
+                },
+            },
+            "triggers": [
+                {
+                    "type": "prometheus",
+                    "metadata": {
+                        "serverAddress": prom,
+                        # Per replica, not total: the HPA divides the query
+                        # result by the current replica count.
+                        "threshold": str(per_replica),
+                        "query": _scaler_query(
+                            deployment_id, p95_target, min_samples,
+                        ),
+                    },
+                }
+            ],
+        },
+    }
 
 
 def _engine_port(metadata: Optional[Dict]) -> int:
@@ -130,6 +219,7 @@ class KubernetesAdapter(ProviderAdapter):
 
         self.core = client.CoreV1Api()
         self.apps = client.AppsV1Api()
+        self.custom = client.CustomObjectsApi()
 
     # -----------------------------------------------------
     # DISCOVER RESOURCES
@@ -362,6 +452,9 @@ class KubernetesAdapter(ProviderAdapter):
             )
             raise
 
+        if (metadata or {}).get("autoscale"):
+            await self._create_scaled_object(pod_name, namespace, metadata)
+
         return {
             "provider": "k8s",
             "provider_instance_id": pod_name,
@@ -405,6 +498,52 @@ class KubernetesAdapter(ProviderAdapter):
                 if addr.type in ("InternalIP", "Hostname"):
                     return f"http://{addr.address}:{node_port}"
         raise RuntimeError(f"no node address found for NodePort service {name}")
+
+    async def _create_scaled_object(
+        self, name: str, namespace: str, metadata: Optional[Dict],
+    ) -> None:
+        """Hand the workload to KEDA.
+
+        Failure is logged, not raised: a cluster without KEDA installed should
+        still get a working deployment, just one that does not scale itself.
+        """
+        deployment_id = str((metadata or {}).get("deployment_id") or name)
+        try:
+            await _run_sync(
+                self.custom.create_namespaced_custom_object,
+                group=_KEDA_GROUP,
+                version=_KEDA_VERSION,
+                namespace=namespace,
+                plural=_KEDA_PLURAL,
+                body=_scaled_object_body(name, deployment_id, metadata),
+            )
+        except Exception:
+            logger.exception(
+                "k8s: could not create a ScaledObject for %s; the deployment "
+                "will run without autoscaling", name,
+            )
+
+    async def _delete_scaled_object(self, name: str, namespace: str) -> None:
+        """Remove it whether or not one was created.
+
+        A ScaledObject left behind keeps KEDA reconciling a workload that no
+        longer exists, and deprovision cannot tell whether autoscaling was on.
+        """
+        try:
+            await _run_sync(
+                self.custom.delete_namespaced_custom_object,
+                group=_KEDA_GROUP,
+                version=_KEDA_VERSION,
+                namespace=namespace,
+                plural=_KEDA_PLURAL,
+                name=name,
+            )
+        except client.exceptions.ApiException as e:
+            # 404 is the usual case: autoscaling was off, or KEDA is absent.
+            if e.status != 404:
+                raise
+        except Exception:
+            logger.exception("k8s: could not delete the ScaledObject for %s", name)
 
     async def _delete_quietly(self, fn, name: str, namespace: str) -> None:
         """Delete and swallow a 404. Used on rollback and deprovision, where a
@@ -490,13 +629,15 @@ class KubernetesAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        """Delete the StatefulSet, its Service and every model volume it made.
+        """Delete the ScaledObject, StatefulSet, Service and model volumes.
 
         All are removed even if one is already gone, so a partially created
         node leaves nothing behind.
         """
         namespace = "default"
         try:
+            # Before the workload: KEDA writes to a StatefulSet it still owns.
+            await self._delete_scaled_object(provider_instance_id, namespace)
             await self._delete_quietly(
                 self.apps.delete_namespaced_stateful_set,
                 provider_instance_id, namespace,
