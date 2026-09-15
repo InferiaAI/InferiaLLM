@@ -54,6 +54,7 @@ def _adapter():
         a = KubernetesAdapter()
     a.core = MagicMock()
     a.apps = MagicMock()
+    a.custom = MagicMock()
     return a
 
 
@@ -88,6 +89,12 @@ def _workload_of(a):
 
 def _container_of(a):
     return _workload_of(a).spec.template.spec.containers[0]
+
+
+def _scaled_object_of(a):
+    """The ScaledObject the adapter just created, or None."""
+    call = a.custom.create_namespaced_custom_object.call_args
+    return call.kwargs["body"] if call else None
 
 
 def _claims_of(a):
@@ -734,3 +741,173 @@ async def test_the_service_is_created_before_the_workload(monkeypatch):
     )
 
     assert order == ["service", "workload"]
+
+
+# ---------------------------------------------------------------------------
+# Autoscaling
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_no_scaled_object_unless_autoscaling_is_on(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    assert not a.custom.create_namespaced_custom_object.called
+
+
+@pytest.mark.asyncio
+async def test_autoscaling_creates_a_scaled_object(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    spec = await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(autoscale=True, deployment_id="dep-uuid"),
+    )
+    name = spec["provider_instance_id"]
+
+    call = a.custom.create_namespaced_custom_object.call_args
+    assert call.kwargs["plural"] == "scaledobjects"
+    body = call.kwargs["body"]
+
+    assert body["spec"]["scaleTargetRef"] == {
+        "kind": "StatefulSet", "name": name,
+    }, "scaling anything but the StatefulSet changes nothing"
+    assert body["spec"]["minReplicaCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_query_filters_on_the_deployment_id(monkeypatch):
+    """The metrics are labelled with the deployment id, not the node name, so
+    a query built from the wrong one matches no series and never scales."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(autoscale=True, deployment_id="dep-uuid"),
+    )
+
+    query = _scaled_object_of(a)["spec"]["triggers"][0]["metadata"]["query"]
+
+    assert 'deployment="dep-uuid"' in query
+    assert "inferia_upstream_in_flight_requests" in query
+
+
+@pytest.mark.asyncio
+async def test_the_query_carries_its_guards(monkeypatch):
+    """A latency guard and a minimum sample count, both as multipliers in the
+    one query. KEDA takes the maximum across triggers, so a second trigger
+    could only raise the replica count and never hold it down."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(
+            autoscale=True, deployment_id="d", autoscale_p95_seconds=7,
+            autoscale_min_samples=9,
+        ),
+    )
+
+    trigger = _scaled_object_of(a)["spec"]["triggers"][0]
+    query = trigger["metadata"]["query"]
+
+    assert "histogram_quantile(0.95" in query
+    assert "> bool 7" in query, "latency guard"
+    assert "> bool 9" in query, "minimum sample count"
+    assert len(_scaled_object_of(a)["spec"]["triggers"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_scaling_thresholds_are_overridable(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(
+            autoscale=True, deployment_id="d",
+            autoscale_max_replicas=9, autoscale_in_flight_per_replica=4,
+        ),
+    )
+
+    spec = _scaled_object_of(a)["spec"]
+    assert spec["maxReplicaCount"] == 9
+    assert spec["triggers"][0]["metadata"]["threshold"] == "4"
+
+
+@pytest.mark.asyncio
+async def test_scale_down_does_not_wait_five_minutes(monkeypatch):
+    """The Kubernetes default is 300s, which is slower than the load it is
+    reacting to."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(autoscale=True, deployment_id="d"),
+    )
+
+    behavior = (
+        _scaled_object_of(a)["spec"]["advanced"]
+        ["horizontalPodAutoscalerConfig"]["behavior"]
+    )
+    assert behavior["scaleDown"]["stabilizationWindowSeconds"] < 300
+
+
+@pytest.mark.asyncio
+async def test_a_cluster_without_keda_still_deploys(monkeypatch):
+    """Autoscaling is optional. Losing it must not cost the deployment."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+    a.custom.create_namespaced_custom_object.side_effect = RuntimeError("no crd")
+
+    spec = await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(autoscale=True, deployment_id="d"),
+    )
+
+    assert spec["provider_instance_id"].startswith("inferia-worker-")
+
+
+@pytest.mark.asyncio
+async def test_deprovision_removes_the_scaled_object_first():
+    """A ScaledObject outliving its workload leaves KEDA reconciling something
+    that is gone, and it writes to the StatefulSet while it still exists."""
+    a = _adapter()
+    order = []
+    a.custom.delete_namespaced_custom_object.side_effect = \
+        lambda **kw: order.append("scaledobject")
+    a.apps.delete_namespaced_stateful_set.side_effect = \
+        lambda **kw: order.append("statefulset")
+
+    await a.deprovision_node(provider_instance_id="dep-1")
+
+    assert order == ["scaledobject", "statefulset"]
+
+
+@pytest.mark.asyncio
+async def test_deprovision_tolerates_no_scaled_object():
+    """Deprovision cannot tell whether autoscaling was ever enabled, so it
+    always tries, and a 404 is the ordinary case."""
+    from kubernetes import client as k8s_client
+
+    a = _adapter()
+    a.custom.delete_namespaced_custom_object.side_effect = \
+        k8s_client.exceptions.ApiException(status=404)
+
+    await a.deprovision_node(provider_instance_id="dep-1")
+
+    assert a.apps.delete_namespaced_stateful_set.called, \
+        "the workload must still be removed"

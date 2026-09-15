@@ -145,6 +145,13 @@ def _build_metadata(d: dict) -> dict:
     if d.get("engine"):
         metadata["engine"] = d["engine"]
 
+    # Columns, not configuration, so they are not picked up above. The id
+    # matters because autoscaling metrics are labelled with it.
+    if d.get("deployment_id"):
+        metadata["deployment_id"] = str(d["deployment_id"])
+    if d.get("auto_replica_enabled"):
+        metadata["autoscale"] = True
+
     return metadata
 
 
