@@ -3,8 +3,8 @@
 These cover three layers:
 
 1. Routing STRUCTURE — hermetic, no lifespan, no DB. Inspect ``.routes`` to
-   prove ``/v2`` is at the ROOT (not under ``/api``), ``/api`` and ``/inf`` are
-   sub-app Mounts, and the SPA ``/`` catch-all is registered LAST.
+   prove ``/api`` and ``/inf`` are sub-app Mounts, the model-cache era /v2 OCI
+   mirror is GONE, and the SPA ``/`` catch-all is registered LAST.
 2. Request DISPATCH + SPA — a real ``TestClient`` round-trip. The gateway
    lifespan does a real DB seed + config polling, so we monkeypatch those (and
    the inference shutdown httpx closers) to no-ops before building the app.
@@ -43,8 +43,8 @@ def _is_root_mount(r) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def test_routing_structure_mounts_and_root_v2(monkeypatch, tmp_path):
-    """build_unified_app registers /v2 at root, /api + /inf as Mounts, / last."""
+def test_routing_structure_mounts(monkeypatch, tmp_path):
+    """build_unified_app registers /api + /inf as Mounts and the SPA / last."""
     # A dashboard dir so the SPA "/" mount is present.
     (tmp_path / "index.html").write_text("<!doctype html><html></html>")
     monkeypatch.setenv("INFERIA_DASHBOARD_DIR", str(tmp_path))
@@ -58,18 +58,13 @@ def test_routing_structure_mounts_and_root_v2(monkeypatch, tmp_path):
     # SPA catch-all present when a dash dir exists (root mount path is "").
     assert any(_is_root_mount(r) for r in routes)
 
-    # /v2/{path} lives at the parent ROOT (NOT a Mount, NOT under /api).
-    v2_routes = [r for r in routes if "/v2/" in _route_path(r)]
-    assert v2_routes, "expected a /v2/{path} route at the parent root"
-    for r in v2_routes:
-        assert not isinstance(r, Mount)
-        # The literal root path, never /api/v2 or /inf/v2.
-        assert not _route_path(r).startswith("/api")
-        assert not _route_path(r).startswith("/inf")
+    # The model-cache era /v2 OCI mirror is GONE — engine nodes pull from
+    # origin, so no /v2 route may exist at the parent root.
+    assert not any("/v2/" in _route_path(r) for r in routes)
 
 
-def test_v2_registered_before_spa_catchall(monkeypatch, tmp_path):
-    """The SPA '/' catch-all must be the LAST route or it shadows /v2,/api,/inf."""
+def test_mounts_registered_before_spa_catchall(monkeypatch, tmp_path):
+    """The SPA '/' catch-all must be the LAST route or it shadows /api,/inf."""
     (tmp_path / "index.html").write_text("<!doctype html><html></html>")
     monkeypatch.setenv("INFERIA_DASHBOARD_DIR", str(tmp_path))
 
@@ -89,12 +84,8 @@ def test_v2_registered_before_spa_catchall(monkeypatch, tmp_path):
         for i, r in enumerate(app.routes)
         if isinstance(r, Mount) and _route_path(r) == "/inf"
     )
-    v2_index = min(
-        i for i, r in enumerate(app.routes) if "/v2/" in _route_path(r)
-    )
 
     # Everything specific is registered before the "/" catch-all.
-    assert v2_index < spa_index
     assert api_index < spa_index
     assert inf_index < spa_index
     # Sanity: the catch-all is genuinely last.
@@ -110,10 +101,9 @@ def test_no_spa_mount_without_dashboard_dir(monkeypatch, tmp_path):
     mount_paths = {_route_path(r) for r in app.routes if isinstance(r, Mount)}
     # No SPA catch-all (root mount path would be "").
     assert not any(_is_root_mount(r) for r in app.routes)
-    # Sub-apps + root /v2 are still wired.
+    # Sub-apps are still wired.
     assert "/api" in mount_paths
     assert "/inf" in mount_paths
-    assert any("/v2/" in _route_path(r) for r in app.routes)
 
 
 def test_auth_routes_at_root_before_spa(monkeypatch, tmp_path):
@@ -222,20 +212,15 @@ async def unified_client(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_root_v2_route_exists_not_under_api(unified_client):
-    """/v2/* resolves at the ROOT; /api/v2/* does NOT (v2 lifted off /api)."""
-    # Reaches the root ollama mirror route; it tries to proxy to orchestration
-    # (absent here) so it errors 5xx — but the route EXISTS, so it is NOT a 404
-    # and NOT the SPA HTML shell.
+async def test_v2_mirror_removed_falls_back_to_spa(unified_client):
+    """The model-cache era /v2 OCI mirror is gone — a GET /v2/* no longer hits
+    a mirror route; it falls through to the SPA catch-all like any unknown
+    path (engine nodes pull model weights from origin now)."""
     root_v2 = await unified_client.get("/v2/anything")
-    assert root_v2.status_code != 404
-    assert "<!doctype html" not in root_v2.text.lower()
+    assert "<!doctype html" in root_v2.text.lower()
 
-    # Under /api there is no /v2 — the gateway no longer carries the mirror, so
-    # the request is handled by the gateway (its auth middleware runs before
-    # routing and rejects the unauthenticated request with a JSON error). The
-    # invariant: it is NOT the root mirror (no 5xx proxy attempt) and NOT the
-    # SPA — it is a gateway JSON response that never reached the v2 handler.
+    # Under /api there is no /v2 either — the gateway auth middleware rejects
+    # the unauthenticated request with a JSON error (no mirror auth-skip left).
     api_v2 = await unified_client.get("/api/v2/anything")
     assert api_v2.status_code in (401, 403, 404)
     assert "<!doctype html" not in api_v2.text.lower()

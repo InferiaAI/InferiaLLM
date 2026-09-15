@@ -4,13 +4,10 @@ Collapses the three historical web ports into one in-process app:
 
 * ``/api``  → the api_gateway app (control plane: auth, RBAC, proxy)
 * ``/inf``  → the inference app  (data plane: OpenAI-compatible endpoints)
-* ``/v2/*`` → the OCI registry mirror, at the ROOT (the OCI spec hard-codes
-              ``<host>/v2``, so it CANNOT live under ``/api``)
 * ``/``     → the built dashboard SPA (StaticFiles + index.html fallback)
 
-The route/mount registration ORDER is load-bearing: ``/v2``, ``/api`` and
-``/inf`` are all registered BEFORE the ``/`` catch-all, or the SPA mount would
-shadow them.
+The route/mount registration ORDER is load-bearing: ``/api`` and ``/inf`` are
+registered BEFORE the ``/`` catch-all, or the SPA mount would shadow them.
 """
 
 import os
@@ -19,7 +16,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api_gateway.app import app as gateway_app
-from api_gateway.gateway.proxy_routes import ollama_registry_router
 from api_gateway.rbac.oauth_router import router as oauth_router
 from inference.app import app as inference_app
 from unified_web.spa import SPAStaticFiles
@@ -59,8 +55,6 @@ def build_unified_app() -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
-    # /v2/{path} at the ROOT — registered FIRST so the SPA catch-all can't shadow it.
-    parent.include_router(ollama_registry_router)
     # /auth/start + /auth/callback at the ROOT. These are BROWSER redirect targets,
     # not XHR: OAUTH_REDIRECT_URI is configured as "<host>/auth/callback" (root) and
     # the IdP redirects the browser straight there, so the handler CANNOT live only

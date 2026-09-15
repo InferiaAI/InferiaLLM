@@ -14,7 +14,6 @@ import {
   Building2,
   Clock,
   Box,
-  Boxes,
   Sun,
   Moon,
   PanelLeftClose,
@@ -37,7 +36,6 @@ const navItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard/deployments", label: "Deployments", icon: Rocket, permission: "deployment:list" },
   { href: "/dashboard/sandbox", label: "Sandbox", icon: FlaskConical, permission: "deployment:list" },
   { href: "/dashboard/compute/pools", label: "Compute Pools", icon: Box, permission: "deployment:list" },
-  { href: "/dashboard/models", label: "Models", icon: Boxes, permission: "model:list" },
   { href: "/dashboard/api-keys", label: "API Keys", icon: Key, permission: "api_key:list" },
 ];
 
@@ -59,7 +57,6 @@ const breadcrumbLabels: Record<string, string> = {
   compute: "Compute",
   nodes: "Nodes",
   pools: "Pools",
-  models: "Models",
   "api-keys": "API Keys",
   settings: "Settings",
   organization: "Organization",
