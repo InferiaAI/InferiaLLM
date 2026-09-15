@@ -39,6 +39,7 @@ _ENGINE_MODEL_DIRS = {
     "vllm-omni": "/root/.cache/huggingface",
 }
 _DEFAULT_CACHE_SIZE = "50Gi"
+_MODEL_VOLUME_NAME = "models"
 
 # Ollama drops a model from memory 5 minutes after the last request, so the
 # next one reloads from disk: 14.9s cold against 0.34s resident on qwen2:0.5b.
@@ -237,8 +238,7 @@ class KubernetesAdapter(ProviderAdapter):
         labels = {
             "inferia": "worker",
             "pool_id": str(pool_id),
-            # Deployment-managed pod names are generated, so nothing can
-            # address a pod by name; everything selects on this.
+            # Nothing addresses a pod by name; everything selects on this.
             "inferia-instance": pod_name,
         }
 
@@ -279,52 +279,48 @@ class KubernetesAdapter(ProviderAdapter):
             ),
         )
 
-        # Weights outlive the pod. ReadWriteOnce holds while replicas share a
-        # node; scaling across nodes needs ReadWriteMany or a claim per replica.
+        # A template, not one shared claim: ReadWriteOnce binds to a single
+        # node, so replicas placed anywhere else could not start.
         model_dir = _ENGINE_MODEL_DIRS.get(_engine)
-        volumes = None
-        volume_mounts = None
+        claim_templates = None
         if model_dir:
             size = str((metadata or {}).get("model_cache_size") or _DEFAULT_CACHE_SIZE)
-            claim = client.V1PersistentVolumeClaim(
-                metadata=client.V1ObjectMeta(name=pod_name, labels=labels),
-                spec=client.V1PersistentVolumeClaimSpec(
-                    access_modes=["ReadWriteOnce"],
-                    resources=client.V1VolumeResourceRequirements(
-                        requests={"storage": size},
+            claim_templates = [
+                client.V1PersistentVolumeClaim(
+                    metadata=client.V1ObjectMeta(
+                        name=_MODEL_VOLUME_NAME, labels=labels,
                     ),
-                ),
-            )
-            await _run_sync(
-                self.core.create_namespaced_persistent_volume_claim,
-                namespace=namespace, body=claim,
-            )
-            volumes = [
-                client.V1Volume(
-                    name="models",
-                    persistent_volume_claim=(
-                        client.V1PersistentVolumeClaimVolumeSource(claim_name=pod_name)
+                    spec=client.V1PersistentVolumeClaimSpec(
+                        access_modes=["ReadWriteOnce"],
+                        resources=client.V1VolumeResourceRequirements(
+                            requests={"storage": size},
+                        ),
                     ),
                 )
             ]
-            volume_mounts = [
-                client.V1VolumeMount(name="models", mount_path=model_dir)
+            container.volume_mounts = [
+                client.V1VolumeMount(
+                    name=_MODEL_VOLUME_NAME, mount_path=model_dir,
+                )
             ]
-            container.volume_mounts = volume_mounts
 
-        deployment = client.V1Deployment(
+        # A StatefulSet only because a Deployment has no volumeClaimTemplates.
+        workload = client.V1StatefulSet(
             metadata=client.V1ObjectMeta(name=pod_name, labels=labels),
-            spec=client.V1DeploymentSpec(
+            spec=client.V1StatefulSetSpec(
                 replicas=1,
+                service_name=pod_name,
                 selector=client.V1LabelSelector(
                     match_labels={"inferia-instance": pod_name},
                 ),
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(labels=labels),
-                    spec=client.V1PodSpec(
-                        containers=[container], volumes=volumes,
-                    ),
+                    spec=client.V1PodSpec(containers=[container]),
                 ),
+                volume_claim_templates=claim_templates,
+                # The default waits for each ordinal in turn, which here
+                # would serialise one model load per replica.
+                pod_management_policy="Parallel",
             ),
         )
 
@@ -345,33 +341,24 @@ class KubernetesAdapter(ProviderAdapter):
             ),
         )
 
-        try:
-            await _run_sync(
-                self.apps.create_namespaced_deployment,
-                namespace=namespace, body=deployment,
-            )
-        except Exception:
-            await self._delete_quietly(
-                self.core.delete_namespaced_persistent_volume_claim,
-                pod_name, namespace,
-            )
-            raise
+        # First, so a failure below rolls back an empty Service rather than
+        # a running workload.
+        await _run_sync(
+            self.core.create_namespaced_service,
+            namespace=namespace, body=service,
+        )
 
         try:
             await _run_sync(
-                self.core.create_namespaced_service,
-                namespace=namespace, body=service,
+                self.apps.create_namespaced_stateful_set,
+                namespace=namespace, body=workload,
             )
         except Exception:
             logger.exception(
-                "k8s: service create failed for %s, rolling back", pod_name,
+                "k8s: statefulset create failed for %s, rolling back", pod_name,
             )
             await self._delete_quietly(
-                self.apps.delete_namespaced_deployment, pod_name, namespace,
-            )
-            await self._delete_quietly(
-                self.core.delete_namespaced_persistent_volume_claim,
-                pod_name, namespace,
+                self.core.delete_namespaced_service, pod_name, namespace,
             )
             raise
 
@@ -429,8 +416,8 @@ class KubernetesAdapter(ProviderAdapter):
                 raise
 
     async def _pod_name_for(self, provider_instance_id: str, namespace: str):
-        """Resolve the pod behind a Deployment. Pod names are generated, so
-        everything addresses them through the inferia-instance label."""
+        """Resolve a pod behind the workload. Selected by label rather than
+        by name, so it still returns one once there is more than one replica."""
         pods = await _run_sync(
             self.core.list_namespaced_pod,
             namespace=namespace,
@@ -450,7 +437,7 @@ class KubernetesAdapter(ProviderAdapter):
         timeout: int = 120,
         provider_credential_name: Optional[str] = None,
     ) -> str:
-        """Wait until the Deployment reports a ready replica.
+        """Wait until the StatefulSet reports a ready replica.
 
         Returns the Service address, which is what the router connects to.
         Readiness comes from the container probe, so a replica counted here has
@@ -465,12 +452,12 @@ class KubernetesAdapter(ProviderAdapter):
 
         while True:
             try:
-                dep = await _run_sync(
-                    self.apps.read_namespaced_deployment,
+                sts = await _run_sync(
+                    self.apps.read_namespaced_stateful_set,
                     name=provider_instance_id, namespace=namespace,
                 )
 
-                if (dep.status.ready_replicas or 0) >= 1:
+                if (sts.status.ready_replicas or 0) >= 1:
                     return await self._resolve_url(
                         provider_instance_id, namespace,
                     )
@@ -478,17 +465,17 @@ class KubernetesAdapter(ProviderAdapter):
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     logger.warning(
-                        "k8s: deployment %s not found yet, waiting",
+                        "k8s: statefulset %s not found yet, waiting",
                         provider_instance_id,
                     )
                 else:
                     raise
             except Exception as e:
-                logger.warning("k8s: error checking deployment status: %s", e)
+                logger.warning("k8s: error checking statefulset status: %s", e)
 
             if time.time() - start > timeout:
                 raise RuntimeError(
-                    f"Deployment {provider_instance_id} had no ready replica "
+                    f"StatefulSet {provider_instance_id} had no ready replica "
                     f"within {timeout}s"
                 )
 
@@ -503,24 +490,27 @@ class KubernetesAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> None:
-        """Delete the Deployment, its Service and its model volume.
+        """Delete the StatefulSet, its Service and every model volume it made.
 
-        All three are removed even if one is already gone, so a partially
-        created node leaves nothing behind.
+        All are removed even if one is already gone, so a partially created
+        node leaves nothing behind.
         """
         namespace = "default"
         try:
             await self._delete_quietly(
-                self.apps.delete_namespaced_deployment,
+                self.apps.delete_namespaced_stateful_set,
                 provider_instance_id, namespace,
             )
             await self._delete_quietly(
                 self.core.delete_namespaced_service,
                 provider_instance_id, namespace,
             )
-            await self._delete_quietly(
-                self.core.delete_namespaced_persistent_volume_claim,
-                provider_instance_id, namespace,
+            # Deleting a StatefulSet leaves its claims behind by design, and
+            # their names carry a replica ordinal, so they go by label.
+            await _run_sync(
+                self.core.delete_collection_namespaced_persistent_volume_claim,
+                namespace=namespace,
+                label_selector=f"inferia-instance={provider_instance_id}",
             )
         except Exception:
             logger.exception("Kubernetes deprovision error")
@@ -535,9 +525,9 @@ class KubernetesAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> Dict:
-        """Fetch logs from the pod behind the Deployment.
+        """Fetch logs from the pod behind the StatefulSet.
 
-        provider_instance_id names the Deployment, not a pod, so the pod is
+        provider_instance_id names the StatefulSet, not a pod, so the pod is
         resolved through its label.
         """
         namespace = "default"

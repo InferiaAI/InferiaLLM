@@ -1,4 +1,4 @@
-"""Tests for the Kubernetes adapter — Deployment + Service, not a bare pod.
+"""Tests for the Kubernetes adapter: StatefulSet + Service, not a bare pod.
 
 A Kubernetes deployment used to report RUNNING and then fail every request: the
 adapter created a pod with no ports and returned ``k8s://namespace/podname``,
@@ -19,6 +19,7 @@ from providers.k8s.k8s_adapter import (
     _DEFAULT_ENGINE_PORT,
     _DEFAULT_CACHE_SIZE,
     _DEFAULT_KEEP_ALIVE,
+    _MODEL_VOLUME_NAME,
 )
 
 
@@ -80,17 +81,25 @@ def _metadata(**over):
     return md
 
 
+def _workload_of(a):
+    """The StatefulSet the adapter just created."""
+    return a.apps.create_namespaced_stateful_set.call_args.kwargs["body"]
+
+
 def _container_of(a):
-    """The container from the Deployment the adapter just created."""
-    body = a.apps.create_namespaced_deployment.call_args.kwargs["body"]
-    return body.spec.template.spec.containers[0]
+    return _workload_of(a).spec.template.spec.containers[0]
+
+
+def _claims_of(a):
+    """The claim templates on that StatefulSet, or None when it has none."""
+    return _workload_of(a).spec.volume_claim_templates
 
 
 # ---------------------------------------------------------------------------
 # provision_node
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_provision_creates_deployment_and_service(monkeypatch):
+async def test_provision_creates_a_statefulset_and_service(monkeypatch):
     monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
@@ -99,14 +108,17 @@ async def test_provision_creates_deployment_and_service(monkeypatch):
         provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
     )
 
-    assert a.apps.create_namespaced_deployment.called, "must create a Deployment"
+    assert a.apps.create_namespaced_stateful_set.called, \
+        "must create a StatefulSet"
+    assert not a.apps.create_namespaced_deployment.called, \
+        "a Deployment cannot give each replica its own volume"
     assert a.core.create_namespaced_service.called, "must create a Service"
     assert not a.core.create_namespaced_pod.called, "must not create a bare pod"
     assert spec["provider_instance_id"].startswith("inferia-worker-")
 
 
 @pytest.mark.asyncio
-async def test_provisioned_deployment_has_port_and_probes(monkeypatch):
+async def test_provisioned_workload_has_port_and_probes(monkeypatch):
     monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
@@ -115,7 +127,7 @@ async def test_provisioned_deployment_has_port_and_probes(monkeypatch):
         provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
     )
 
-    body = a.apps.create_namespaced_deployment.call_args.kwargs["body"]
+    body = a.apps.create_namespaced_stateful_set.call_args.kwargs["body"]
     container = body.spec.template.spec.containers[0]
 
     assert container.ports, "a container with no ports cannot be reached"
@@ -127,11 +139,11 @@ async def test_provisioned_deployment_has_port_and_probes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cmd_becomes_args_so_the_entrypoint_survives(monkeypatch):
-    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     """Kubernetes ``command`` REPLACES the image entrypoint. ollama/ollama is
     ENTRYPOINT /bin/ollama + CMD ["serve"], so putting ["serve"] in command
     execs a binary named "serve" and crash-loops. Live-reproduced before this
     mapping was fixed."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
 
@@ -140,10 +152,12 @@ async def test_cmd_becomes_args_so_the_entrypoint_survives(monkeypatch):
         metadata=_metadata(cmd=["serve"]),
     )
 
-    container = a.apps.create_namespaced_deployment.call_args.kwargs["body"]         .spec.template.spec.containers[0]
+    container = a.apps.create_namespaced_stateful_set \
+        .call_args.kwargs["body"].spec.template.spec.containers[0]
 
     assert container.args == ["serve"]
-    assert container.command is None,         "setting command would discard the image entrypoint"
+    assert container.command is None, \
+        "setting command would discard the image entrypoint"
 
 
 @pytest.mark.asyncio
@@ -157,16 +171,17 @@ async def test_explicit_command_overrides_the_entrypoint(monkeypatch):
         metadata=_metadata(command=["/bin/sh", "-c", "true"], cmd=None),
     )
 
-    container = a.apps.create_namespaced_deployment.call_args.kwargs["body"]         .spec.template.spec.containers[0]
+    container = a.apps.create_namespaced_stateful_set \
+        .call_args.kwargs["body"].spec.template.spec.containers[0]
 
     assert container.command == ["/bin/sh", "-c", "true"]
 
 
 @pytest.mark.asyncio
 async def test_no_cmd_leaves_the_image_to_run_as_built(monkeypatch):
-    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     """The old default was ["sleep", "3600"], which as args to an engine image
     is nonsense. Omitting both is the correct default."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
 
@@ -176,16 +191,17 @@ async def test_no_cmd_leaves_the_image_to_run_as_built(monkeypatch):
         provider_resource_id="node-1", pool_id="p1", metadata=md,
     )
 
-    container = a.apps.create_namespaced_deployment.call_args.kwargs["body"]         .spec.template.spec.containers[0]
+    container = a.apps.create_namespaced_stateful_set \
+        .call_args.kwargs["body"].spec.template.spec.containers[0]
 
     assert container.command is None
     assert container.args is None
 
 
 @pytest.mark.asyncio
-async def test_deployment_and_service_share_a_selector(monkeypatch):
-    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+async def test_workload_and_service_share_a_selector(monkeypatch):
     """A Service whose selector misses the pods routes to nothing."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
 
@@ -193,7 +209,7 @@ async def test_deployment_and_service_share_a_selector(monkeypatch):
         provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
     )
 
-    dep = a.apps.create_namespaced_deployment.call_args.kwargs["body"]
+    dep = a.apps.create_namespaced_stateful_set.call_args.kwargs["body"]
     svc = a.core.create_namespaced_service.call_args.kwargs["body"]
 
     assert dep.spec.selector.match_labels == svc.spec.selector
@@ -249,19 +265,19 @@ async def test_metadata_beats_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_failed_service_rolls_back_the_deployment():
-    """Without a Service the workload has no address, so a half-created node
-    must not be left behind reporting healthy."""
+async def test_failed_workload_rolls_back_the_service(monkeypatch):
+    """The Service is created first, so it is what gets stranded."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
-    a.core.create_namespaced_service.side_effect = RuntimeError("boom")
+    a.apps.create_namespaced_stateful_set.side_effect = RuntimeError("boom")
 
     with pytest.raises(RuntimeError):
         await a.provision_node(
             provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
         )
 
-    assert a.apps.delete_namespaced_deployment.called, \
-        "Deployment must be removed when its Service could not be created"
+    assert a.core.delete_namespaced_service.called, \
+        "a Service with nothing behind it routes to nothing"
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +341,7 @@ async def test_wait_for_ready_returns_a_real_address():
     a = _adapter()
     dep = MagicMock()
     dep.status.ready_replicas = 1
-    a.apps.read_namespaced_deployment.return_value = dep
+    a.apps.read_namespaced_stateful_set.return_value = dep
     a.core.read_namespaced_service.return_value = _service(port=11434)
 
     url = await a.wait_for_ready(provider_instance_id="dep-1", timeout=5)
@@ -339,7 +355,7 @@ async def test_wait_for_ready_times_out_without_a_ready_replica():
     a = _adapter()
     dep = MagicMock()
     dep.status.ready_replicas = 0
-    a.apps.read_namespaced_deployment.return_value = dep
+    a.apps.read_namespaced_stateful_set.return_value = dep
 
     with pytest.raises(RuntimeError, match="no ready replica"):
         await a.wait_for_ready(provider_instance_id="dep-1", timeout=0)
@@ -352,7 +368,7 @@ async def test_wait_for_ready_ignores_scheduled_but_unready_replicas():
     a = _adapter()
     dep = MagicMock()
     dep.status.ready_replicas = None  # replicas exist, none ready
-    a.apps.read_namespaced_deployment.return_value = dep
+    a.apps.read_namespaced_stateful_set.return_value = dep
 
     with pytest.raises(RuntimeError):
         await a.wait_for_ready(provider_instance_id="dep-1", timeout=0)
@@ -362,29 +378,29 @@ async def test_wait_for_ready_ignores_scheduled_but_unready_replicas():
 # deprovision_node
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_deprovision_removes_both_objects():
+async def test_deprovision_removes_the_workload_and_its_service():
     a = _adapter()
 
     await a.deprovision_node(provider_instance_id="dep-1")
 
-    assert a.apps.delete_namespaced_deployment.called
+    assert a.apps.delete_namespaced_stateful_set.called
     assert a.core.delete_namespaced_service.called, \
         "a leftover Service points at nothing"
 
 
 @pytest.mark.asyncio
-async def test_deprovision_tolerates_a_missing_deployment():
+async def test_deprovision_tolerates_a_missing_workload():
     """Deprovision runs on rollback paths too, where one object may be gone."""
     from kubernetes import client as k8s_client
 
     a = _adapter()
-    a.apps.delete_namespaced_deployment.side_effect = \
+    a.apps.delete_namespaced_stateful_set.side_effect = \
         k8s_client.exceptions.ApiException(status=404)
 
     await a.deprovision_node(provider_instance_id="dep-1")
 
     assert a.core.delete_namespaced_service.called, \
-        "the Service must still be removed when the Deployment is already gone"
+        "the Service must still be removed when the workload is already gone"
 
 
 @pytest.mark.asyncio
@@ -392,7 +408,7 @@ async def test_deprovision_reraises_a_real_api_error():
     from kubernetes import client as k8s_client
 
     a = _adapter()
-    a.apps.delete_namespaced_deployment.side_effect = \
+    a.apps.delete_namespaced_stateful_set.side_effect = \
         k8s_client.exceptions.ApiException(status=403)
 
     with pytest.raises(k8s_client.exceptions.ApiException):
@@ -404,8 +420,8 @@ async def test_deprovision_reraises_a_real_api_error():
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_get_logs_resolves_the_pod_by_label():
-    """provider_instance_id names the Deployment. Pod names are generated, so
-    reading logs by that name returns nothing."""
+    """provider_instance_id names the workload, not a pod, and there may be
+    more than one pod behind it."""
     a = _adapter()
     pod = MagicMock()
     pod.metadata.name = "dep-1-5d4f7c9b8d-abcde"
@@ -529,31 +545,32 @@ async def test_non_ollama_engine_keeps_the_tcp_probe(monkeypatch):
 # Model persistence
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_a_volume_is_created_and_mounted_for_the_weights(monkeypatch):
+async def test_each_replica_gets_its_own_volume(monkeypatch):
+    """A shared ReadWriteOnce volume binds to one node and blocks every
+    replica placed anywhere else."""
     monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
 
-    spec = await a.provision_node(
+    await a.provision_node(
         provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
     )
-    name = spec["provider_instance_id"]
 
-    assert a.core.create_namespaced_persistent_volume_claim.called, \
-        "without a claim every replaced pod re-downloads the model"
+    claims = _claims_of(a)
+    assert claims, "without a claim every replaced pod re-downloads the model"
+    assert len(claims) == 1
+    assert claims[0].metadata.name == _MODEL_VOLUME_NAME
+    assert claims[0].spec.resources.requests["storage"] == _DEFAULT_CACHE_SIZE
+    assert claims[0].spec.access_modes == ["ReadWriteOnce"]
 
-    claim = a.core.create_namespaced_persistent_volume_claim \
-        .call_args.kwargs["body"]
-    assert claim.metadata.name == name
-    assert claim.spec.resources.requests["storage"] == _DEFAULT_CACHE_SIZE
+    assert not a.core.create_namespaced_persistent_volume_claim.called, \
+        "Kubernetes creates one claim per replica from the template"
 
     mount = _container_of(a).volume_mounts[0]
+    assert mount.name == _MODEL_VOLUME_NAME, \
+        "the mount name must match the template or nothing is mounted"
     assert mount.mount_path == "/root/.ollama", \
         "mounting anywhere else caches nothing"
-
-    pod_spec = a.apps.create_namespaced_deployment \
-        .call_args.kwargs["body"].spec.template.spec
-    assert pod_spec.volumes[0].persistent_volume_claim.claim_name == name
 
 
 @pytest.mark.asyncio
@@ -568,9 +585,7 @@ async def test_cache_size_is_overridable(monkeypatch):
         metadata=_metadata(model_cache_size="200Gi"),
     )
 
-    claim = a.core.create_namespaced_persistent_volume_claim \
-        .call_args.kwargs["body"]
-    assert claim.spec.resources.requests["storage"] == "200Gi"
+    assert _claims_of(a)[0].spec.resources.requests["storage"] == "200Gi"
 
 
 @pytest.mark.asyncio
@@ -584,34 +599,21 @@ async def test_engine_with_no_known_model_dir_gets_no_volume(monkeypatch):
         metadata=_metadata(engine="something-new"),
     )
 
-    assert not a.core.create_namespaced_persistent_volume_claim.called
-    pod_spec = a.apps.create_namespaced_deployment \
-        .call_args.kwargs["body"].spec.template.spec
-    assert pod_spec.volumes is None
+    assert _claims_of(a) is None
+    assert _container_of(a).volume_mounts is None
 
 
 @pytest.mark.asyncio
-async def test_deprovision_removes_the_volume():
-    """A claim left behind holds storage no deployment can reach."""
+async def test_deprovision_removes_every_replica_volume():
+    """Claims outlive the StatefulSet by design, and their names carry a
+    replica ordinal, so they go by label."""
     a = _adapter()
 
     await a.deprovision_node(provider_instance_id="dep-1")
 
-    assert a.core.delete_namespaced_persistent_volume_claim.called
-
-
-@pytest.mark.asyncio
-async def test_failed_service_rolls_back_the_volume_too(monkeypatch):
-    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
-    a = _adapter()
-    a.core.create_namespaced_service.side_effect = RuntimeError("boom")
-
-    with pytest.raises(RuntimeError):
-        await a.provision_node(
-            provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
-        )
-
-    assert a.core.delete_namespaced_persistent_volume_claim.called
+    call = a.core.delete_collection_namespaced_persistent_volume_claim.call_args
+    assert call is not None, "claims left behind leak their storage"
+    assert call.kwargs["label_selector"] == "inferia-instance=dep-1"
 
 
 @pytest.mark.asyncio
@@ -629,24 +631,7 @@ async def test_ollama_without_a_model_id_is_left_alone(monkeypatch):
     container = _container_of(a)
 
     assert container.readiness_probe.tcp_socket is not None
-    assert a.core.create_namespaced_persistent_volume_claim.called
-
-
-@pytest.mark.asyncio
-async def test_failed_deployment_rolls_back_the_volume(monkeypatch):
-    """The claim is created first, so a Deployment that fails would strand
-    storage nothing can reach."""
-    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
-    a = _adapter()
-    a.apps.create_namespaced_deployment.side_effect = RuntimeError("boom")
-
-    with pytest.raises(RuntimeError):
-        await a.provision_node(
-            provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
-        )
-
-    assert a.core.delete_namespaced_persistent_volume_claim.called
-    assert not a.core.create_namespaced_service.called
+    assert _claims_of(a), "the engine writes weights there either way"
 
 
 @pytest.mark.asyncio
@@ -697,3 +682,55 @@ async def test_non_ollama_engine_gets_no_keep_alive(monkeypatch):
     )
 
     assert _container_of(a).env is None
+
+
+# ---------------------------------------------------------------------------
+# Scaling
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_the_workload_names_a_service(monkeypatch):
+    """A StatefulSet without serviceName is rejected by the API server."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    spec = await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    svc = a.core.create_namespaced_service.call_args.kwargs["body"]
+    assert _workload_of(a).spec.service_name == spec["provider_instance_id"]
+    assert svc.metadata.name == spec["provider_instance_id"]
+
+
+@pytest.mark.asyncio
+async def test_replicas_start_in_parallel(monkeypatch):
+    """The default would serialise one model load per replica."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    assert _workload_of(a).spec.pod_management_policy == "Parallel"
+
+
+@pytest.mark.asyncio
+async def test_the_service_is_created_before_the_workload(monkeypatch):
+    """The other way round leaves a running workload to roll back."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+    order = []
+    a.core.create_namespaced_service.side_effect = \
+        lambda **kw: order.append("service")
+    a.apps.create_namespaced_stateful_set.side_effect = \
+        lambda **kw: order.append("workload")
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    assert order == ["service", "workload"]
