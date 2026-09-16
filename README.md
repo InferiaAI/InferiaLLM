@@ -271,6 +271,20 @@ Database migrations run automatically on boot. Log in with the superadmin creden
 ```
 </details>
 
+### Deploying models to Kubernetes
+
+The control plane runs in a container, so to deploy models onto a local
+[kind](https://kind.sigs.k8s.io) cluster it needs a route to the cluster's
+network and a kubeconfig whose address resolves from inside a container — the
+one on your host points at `127.0.0.1`, which in there means the container.
+
+```bash
+kind create cluster          # if you don't have one
+./setup.sh --k8s             # add --k8s-cluster NAME if you have several
+```
+
+Without this, Kubernetes deployments fail with `Service host/port is not set`.
+
 ### Self-Hosting with Docker Compose
 
 Prefer to wire it up by hand? `setup.sh` is just orchestration around a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis). You can drive it directly:
