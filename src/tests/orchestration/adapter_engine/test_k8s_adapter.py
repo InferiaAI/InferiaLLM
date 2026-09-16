@@ -13,10 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from orchestration import recipes
 from providers.k8s.k8s_adapter import (
     KubernetesAdapter,
     _engine_port,
-    _DEFAULT_ENGINE_PORT,
     _DEFAULT_CACHE_SIZE,
     _DEFAULT_KEEP_ALIVE,
     _MODEL_VOLUME_NAME,
@@ -32,7 +32,9 @@ def test_explicit_port_wins():
 
 def test_known_engines_have_ports():
     assert _engine_port({"engine": "ollama"}) == 11434
-    assert _engine_port({"engine": "vllm"}) == 8000
+    # vLLM is GPU-only, so asking for its port without one is not a question
+    # with an answer.
+    assert _engine_port({"engine": "vllm", "gpu_allocated": 1}) == 8000
 
 
 def test_engine_name_is_case_insensitive():
@@ -40,9 +42,11 @@ def test_engine_name_is_case_insensitive():
 
 
 def test_unknown_engine_falls_back():
-    assert _engine_port({"engine": "something-new"}) == _DEFAULT_ENGINE_PORT
-    assert _engine_port({}) == _DEFAULT_ENGINE_PORT
-    assert _engine_port(None) == _DEFAULT_ENGINE_PORT
+    """8000 is the default recipe's port, asserted as a literal so a change
+    to it has to be made deliberately here too."""
+    assert _engine_port({"engine": "something-new"}) == 8000
+    assert _engine_port({}) == 8000
+    assert _engine_port(None) == 8000
 
 
 # ---------------------------------------------------------------------------
@@ -979,3 +983,217 @@ async def test_deprovision_tolerates_no_scaled_object():
 
     assert a.apps.delete_namespaced_stateful_set.called, \
         "the workload must still be removed"
+
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_cpu_engine_reserves_little_and_is_not_capped(monkeypatch):
+    """A ceiling is what made this engine slow; the reservation is what stops
+    it scheduling. Only the ceiling needed removing."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    md = _metadata()
+    md["gpu_allocated"] = 0
+    md.pop("vcpu_allocated")
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=md,
+    )
+
+    res = _container_of(a).resources
+
+    assert "cpu" not in res.limits
+    assert res.requests["cpu"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_a_gpu_engine_gets_no_cpu_ceiling(monkeypatch):
+    """Throttling an engine whose CPU only does tokenisation and scheduling
+    produces the latency spikes an SLO exists to prevent, and buys nothing:
+    under contention the kernel already shares CPU in proportion to requests."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    res = _container_of(a).resources
+
+    assert "cpu" not in res.limits
+    assert res.requests["cpu"], "a reservation is still needed to schedule"
+
+
+@pytest.mark.asyncio
+async def test_a_recipe_can_ask_for_a_cpu_ceiling(tmp_path, monkeypatch):
+    """No shipped recipe sets this, because a ceiling only pays for itself
+    where the kubelet pins cores. A cluster configured for that opts in
+    through pool config, so the branch has to work."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    (tmp_path / "pinned.yaml").write_text(
+        "engines:\n"
+        "  ollama:\n"
+        "    port: 11434\n"
+        "    profiles:\n"
+        "      cpu:\n"
+        "        cpu_request: '3'\n"
+        "        cpu_burstable: false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("INFERIA_RECIPES_DIR", str(tmp_path))
+    recipes.reload()
+
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    md = _metadata()
+    md["gpu_allocated"] = 0
+    md.pop("vcpu_allocated")
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=md,
+    )
+    recipes.reload()
+
+    res = _container_of(a).resources
+
+    assert res.limits["cpu"] == "3"
+    assert res.requests["cpu"] == "3", "a ceiling below the floor is not a thing"
+
+
+@pytest.mark.asyncio
+async def test_memory_always_keeps_its_ceiling(monkeypatch):
+    """An OOM kill is contained; a node running out of memory is not."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    res = _container_of(a).resources
+
+    assert res.limits["memory"] == res.requests["memory"]
+
+
+@pytest.mark.asyncio
+async def test_the_gpu_limit_still_matches_the_request(monkeypatch):
+    """Extended resources are not burstable: Kubernetes requires request and
+    limit to be equal, so removing the CPU ceiling must not touch this."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(gpu_allocated=2),
+    )
+
+    assert _container_of(a).resources.limits["nvidia.com/gpu"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_deployment_config_still_wins_over_the_recipe(monkeypatch):
+    """The recipe carries a floor, not a sizing decision."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(vcpu_allocated=7),
+    )
+
+    assert _container_of(a).resources.requests["cpu"] == "7"
+
+
+@pytest.mark.asyncio
+async def test_the_spec_reports_a_whole_number_of_cores(monkeypatch):
+    """Kubernetes takes a quantity string and accepts fractions like "500m";
+    compute_inventory.vcpu_total is an integer column. Returning the quantity
+    here builds a working pod and then fails the row that records it, so the
+    deployment reaches Ready and is marked FAILED."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    md = _metadata()
+    md["gpu_allocated"] = 0
+    md.pop("vcpu_allocated")
+    spec = await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=md,
+    )
+
+    assert isinstance(spec["vcpu_total"], int)
+    assert isinstance(_container_of(a).resources.requests["cpu"], str)
+
+
+@pytest.mark.asyncio
+async def test_the_pull_policy_is_set_explicitly(monkeypatch):
+    """Left unset, Kubernetes infers it from the tag: `latest` means Always,
+    and Always fails the container when the registry cannot be reached even
+    if the image is already on the node."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_metadata(),
+    )
+
+    assert _container_of(a).image_pull_policy == "IfNotPresent"
+
+
+@pytest.mark.asyncio
+async def test_recipe_env_reaches_the_container(tmp_path, monkeypatch):
+    """Recipe env has to arrive alongside the engine's own, not replace it."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    (tmp_path / "env.yaml").write_text(
+        "engines:\n"
+        "  ollama:\n"
+        "    port: 11434\n"
+        "    env:\n"
+        "      FROM_RECIPE: 42\n"
+        "    profiles:\n"
+        "      cpu: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("INFERIA_RECIPES_DIR", str(tmp_path))
+    recipes.reload()
+
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    md = _metadata(model_id="qwen2:0.5b")
+    md["gpu_allocated"] = 0
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=md,
+    )
+    recipes.reload()
+
+    env = {e.name: e.value for e in (_container_of(a).env or [])}
+
+    assert env.get("FROM_RECIPE") == "42", \
+        "an unquoted YAML number is still a string to Kubernetes"
+    assert env.get("OLLAMA_KEEP_ALIVE") == "-1", "the engine's own env survives"
+
+
+@pytest.mark.asyncio
+async def test_an_engine_without_the_hardware_it_needs_is_rejected(monkeypatch):
+    """vLLM's CPU backend is a separate image. Provisioning must fail rather
+    than produce a pod that schedules and cannot start."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    with pytest.raises(recipes.UnknownProfile):
+        await a.provision_node(
+            provider_resource_id="node-1", pool_id="p1",
+            metadata=_metadata(engine="vllm", gpu_allocated=0, cmd=["--model", "x"]),
+        )
+
+    assert not a.apps.create_namespaced_stateful_set.called

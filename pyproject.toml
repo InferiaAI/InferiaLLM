@@ -131,6 +131,9 @@ orchestration = [
   "services/depin-sidecar/tsconfig.json",
   "services/depin-sidecar/src/**/*",
   "services/depin-sidecar/dist/**/*",
+  # The control plane runs from an installed wheel, so a recipe file that is
+  # only in the source tree is not there at runtime.
+  "recipes/*.yaml",
 ]
 
 [tool.setuptools.exclude-package-data]
