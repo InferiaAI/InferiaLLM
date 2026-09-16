@@ -41,6 +41,12 @@ _ENGINE_MODEL_DIRS = {
 _DEFAULT_CACHE_SIZE = "50Gi"
 _MODEL_VOLUME_NAME = "models"
 
+# Must answer while the engine is generating: 2-5ms on Ollama under load,
+# against 63-109ms for a model check. A model check here is the old bug.
+_ENGINE_HEALTH_PATHS = {
+    "ollama": "/api/version",
+}
+
 _KEDA_GROUP = "keda.sh"
 _KEDA_VERSION = "v1alpha1"
 _KEDA_PLURAL = "scaledobjects"
@@ -66,8 +72,8 @@ def _ollama_startup(model_id: str, keep_alive: str):
     Ollama opens its port with no model loaded, so starting the image alone
     gives a container that passes a port check and answers "model not found".
     The model has to be pulled, and the server must already be running for the
-    pull to work. Readiness therefore checks the model is present rather than
-    the port being open, so RUNNING means the deployment can serve.
+    pull to work. Whether the model arrived is checked by the startup probe,
+    not by readiness - see _probes.
 
     Engines that take the model as a start argument (vLLM) need none of this.
     """
@@ -78,16 +84,8 @@ def _ollama_startup(model_id: str, keep_alive: str):
         f"ollama pull {safe}; "
         "wait"
     )
-    readiness = client.V1Probe(
-        _exec=client.V1ExecAction(
-            command=["/bin/sh", "-c", f"ollama show {safe} >/dev/null 2>&1"],
-        ),
-        initial_delay_seconds=5,
-        period_seconds=10,
-        failure_threshold=90,  # a model pull can be slow
-    )
     env = [client.V1EnvVar(name="OLLAMA_KEEP_ALIVE", value=keep_alive)]
-    return ["/bin/sh", "-c"], [script], env, readiness
+    return ["/bin/sh", "-c"], [script], env
 
 
 def _scaler_query(deployment_id: str, p95_target: int, min_samples: int) -> str:
@@ -163,6 +161,62 @@ def _scaled_object_body(name: str, deployment_id: str, metadata: Optional[Dict])
             ],
         },
     }
+
+
+def _probes(engine: str, port: int, model_id: Optional[str]):
+    """Startup, readiness and liveness probes for one engine.
+
+    Three, because they answer different questions and want different budgets.
+
+    Startup asks whether the model is loaded. It gets 15 minutes, and
+    Kubernetes runs neither of the others until it passes, so the slow check
+    cannot interfere with the fast one.
+
+    Readiness asks only whether the process accepts connections. It must not
+    mean "is idle": a replica added under load that answers "busy" is removed
+    from the Service for being under load, which is what the autoscaler just
+    added it to handle. Backpressure belongs to the router, not the kubelet.
+
+    Liveness restarts the pod, and a restart costs a full model load, so it is
+    the most forgiving of the three.
+
+    Every probe sets timeout_seconds. The default is 1, which an exec probe
+    cannot meet on a busy node: the kubelet spawns a process through the
+    container runtime, and that overhead sits on top of the command itself.
+    """
+    path = _ENGINE_HEALTH_PATHS.get(engine)
+    if path:
+        def _action():
+            return {"http_get": client.V1HTTPGetAction(path=path, port=port)}
+    else:
+        def _action():
+            return {"tcp_socket": client.V1TCPSocketAction(port=port)}
+
+    # Ollama opens its port before the model exists, so a port check would
+    # pass with nothing served. Nothing else tells us the model arrived.
+    if engine == "ollama" and model_id:
+        safe = shlex.quote(model_id)
+        startup = client.V1Probe(
+            _exec=client.V1ExecAction(
+                command=["/bin/sh", "-c", f"ollama show {safe} >/dev/null 2>&1"],
+            ),
+            period_seconds=10,
+            timeout_seconds=5,
+            failure_threshold=90,
+        )
+    else:
+        startup = client.V1Probe(
+            period_seconds=10, timeout_seconds=5, failure_threshold=90,
+            **_action(),
+        )
+
+    readiness = client.V1Probe(
+        period_seconds=10, timeout_seconds=5, failure_threshold=3, **_action(),
+    )
+    liveness = client.V1Probe(
+        period_seconds=30, timeout_seconds=10, failure_threshold=5, **_action(),
+    )
+    return startup, readiness, liveness
 
 
 def _engine_port(metadata: Optional[Dict]) -> int:
@@ -332,14 +386,6 @@ class KubernetesAdapter(ProviderAdapter):
             "inferia-instance": pod_name,
         }
 
-        # TCP rather than an HTTP path: engines disagree on where their health
-        # endpoint lives, and an open socket is what the router needs.
-        readiness = client.V1Probe(
-            tcp_socket=client.V1TCPSocketAction(port=port),
-            initial_delay_seconds=10,
-            period_seconds=10,
-            failure_threshold=60,
-        )
         _engine = str((metadata or {}).get("engine") or "").lower()
         _model = (metadata or {}).get("model_id")
         env = None
@@ -347,7 +393,9 @@ class KubernetesAdapter(ProviderAdapter):
             keep_alive = str(
                 (metadata or {}).get("keep_alive") or _DEFAULT_KEEP_ALIVE
             )
-            command, args, env, readiness = _ollama_startup(_model, keep_alive)
+            command, args, env = _ollama_startup(_model, keep_alive)
+
+        startup, readiness, liveness = _probes(_engine, port, _model)
 
         container = client.V1Container(
             name="worker",
@@ -360,13 +408,9 @@ class KubernetesAdapter(ProviderAdapter):
                 requests=resource_requests,
                 limits=resource_limits,
             ),
+            startup_probe=startup,
             readiness_probe=readiness,
-            liveness_probe=client.V1Probe(
-                tcp_socket=client.V1TCPSocketAction(port=port),
-                initial_delay_seconds=120,
-                period_seconds=20,
-                failure_threshold=3,
-            ),
+            liveness_probe=liveness,
         )
 
         # A template, not one shared claim: ReadWriteOnce binds to a single

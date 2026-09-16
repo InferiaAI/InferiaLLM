@@ -511,9 +511,32 @@ async def test_ollama_model_name_is_shell_quoted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ollama_readiness_checks_the_model_not_the_port(monkeypatch):
-    """A TCP check passes about a second after start, with no model loaded.
-    That is what let a deployment report RUNNING and serve nothing."""
+async def test_ollama_startup_probe_checks_the_model(monkeypatch):
+    """Ollama opens its port before the model exists, so a port check would
+    pass with nothing served. Kubernetes runs no other probe until this one
+    passes, which is why the slow check belongs here."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    probe = _container_of(a).startup_probe
+
+    assert probe._exec is not None
+    assert "ollama show" in " ".join(probe._exec.command)
+    assert probe.failure_threshold * probe.period_seconds >= 600, \
+        "a first model pull takes minutes"
+
+
+@pytest.mark.asyncio
+async def test_readiness_does_not_check_the_model(monkeypatch):
+    """The regression this split exists for. Asking a busy engine whether it
+    can serve gets no answer in time, so the replica the autoscaler just added
+    is removed from the Service for being under load."""
     monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
@@ -525,9 +548,52 @@ async def test_ollama_readiness_checks_the_model_not_the_port(monkeypatch):
 
     probe = _container_of(a).readiness_probe
 
-    assert probe.tcp_socket is None, "a port check does not mean it can serve"
-    assert probe._exec is not None
-    assert "ollama show" in " ".join(probe._exec.command)
+    assert probe._exec is None, "readiness must not run a command in the container"
+    assert probe.http_get is not None
+    assert probe.http_get.path == "/api/version", \
+        "measured at 2-5ms under load, against 63-109ms for a model check"
+
+
+@pytest.mark.asyncio
+async def test_every_probe_sets_its_own_timeout(monkeypatch):
+    """Kubernetes defaults timeoutSeconds to 1. That is what the exec probe
+    could not meet on a loaded node."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    container = _container_of(a)
+
+    for name in ("startup_probe", "readiness_probe", "liveness_probe"):
+        probe = getattr(container, name)
+        assert probe.timeout_seconds and probe.timeout_seconds > 1, name
+
+
+@pytest.mark.asyncio
+async def test_liveness_is_slower_to_act_than_readiness(monkeypatch):
+    """Readiness removes a pod from the Service; liveness restarts it, which
+    costs a full model load. They should not react at the same rate."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    container = _container_of(a)
+    ready = container.readiness_probe
+    live = container.liveness_probe
+
+    ready_budget = ready.period_seconds * ready.failure_threshold
+    live_budget = live.period_seconds * live.failure_threshold
+    assert live_budget > ready_budget
 
 
 @pytest.mark.asyncio
@@ -637,7 +703,9 @@ async def test_ollama_without_a_model_id_is_left_alone(monkeypatch):
 
     container = _container_of(a)
 
-    assert container.readiness_probe.tcp_socket is not None
+    assert container.startup_probe._exec is None, \
+        "nothing to check for: no model was named"
+    assert container.readiness_probe.http_get.path == "/api/version"
     assert _claims_of(a), "the engine writes weights there either way"
 
 
