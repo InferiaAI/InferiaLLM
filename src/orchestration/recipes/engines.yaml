@@ -1,0 +1,68 @@
+# Engine recipes: what an engine needs to run, per hardware profile.
+#
+# Engine fields apply to all its profiles; a profile overrides them;
+# deployment configuration overrides both.
+#
+# An engine is deployable on a kind of hardware only if it has that profile.
+# Asking for one it does not ship is rejected, not given defaults.
+#
+# Files in INFERIA_RECIPES_DIR are merged over these by engine name.
+#
+# cpu_request is a reservation the scheduler packs on, so it is a floor that
+# lets a deployment schedule rather than a sizing estimate. cpu_burstable
+# false adds a matching limit, which is a ceiling the kernel throttles at;
+# that is only worth having where the kubelet is configured to pin cores, and
+# costs throughput where it is not.
+
+version: 1
+
+# Applied to an engine that is not listed below, so the values an
+# unrecognised engine gets are reviewable rather than hidden in code.
+default:
+  port: 8000
+  image_pull_policy: IfNotPresent
+  profiles:
+    cpu:
+      cpu_request: 500m
+      cpu_burstable: true
+    gpu:
+      cpu_request: 500m
+      cpu_burstable: true
+
+engines:
+  ollama:
+    port: 11434
+    # Where the volume mounts. Without it every replaced pod re-downloads.
+    model_dir: /root/.ollama
+    # Readiness checks this, so it must answer while the engine is generating.
+    # A model check here is what removed busy replicas from the Service.
+    health_path: /api/version
+    # Explicit: a `latest` tag otherwise means Always, which fails the
+    # container when the registry is unreachable even if the image is local.
+    image_pull_policy: IfNotPresent
+    profiles:
+      cpu:
+        cpu_request: "1"
+        cpu_burstable: true
+      gpu:
+        cpu_request: "1"
+        cpu_burstable: true
+
+  vllm:
+    port: 8000
+    model_dir: /root/.cache/huggingface
+    image_pull_policy: IfNotPresent
+    profiles:
+      # No cpu profile: vLLM's CPU backend is a different image.
+      gpu:
+        cpu_request: "2"
+        cpu_burstable: true
+
+  vllm-omni:
+    port: 8000
+    model_dir: /root/.cache/huggingface
+    image_pull_policy: IfNotPresent
+    profiles:
+      gpu:
+        cpu_request: "2"
+        cpu_burstable: true

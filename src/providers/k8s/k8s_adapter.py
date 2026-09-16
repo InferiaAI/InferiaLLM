@@ -1,4 +1,5 @@
 from kubernetes import client, config
+from orchestration import recipes
 from orchestration.provisioning.engine.base import (
     ProviderAdapter,
     AdapterType,
@@ -21,31 +22,8 @@ async def _run_sync(func, *args, **kwargs):
 
 logger = logging.getLogger(__name__)
 
-# Port each engine listens on, with metadata["port"] winning. Ports are
-# per-provider today; the Nosana job builder hardcodes 11434 the same way.
-_ENGINE_PORTS = {
-    "ollama": 11434,
-    "vllm": 8000,
-    "vllm-omni": 8000,
-}
-_DEFAULT_ENGINE_PORT = 8000
-
-# Where each engine stores downloaded weights. Without a volume here the model
-# lives in the container's writable layer, so every replaced pod downloads it
-# again and self-healing takes as long as the original pull.
-_ENGINE_MODEL_DIRS = {
-    "ollama": "/root/.ollama",
-    "vllm": "/root/.cache/huggingface",
-    "vllm-omni": "/root/.cache/huggingface",
-}
 _DEFAULT_CACHE_SIZE = "50Gi"
 _MODEL_VOLUME_NAME = "models"
-
-# Must answer while the engine is generating: 2-5ms on Ollama under load,
-# against 63-109ms for a model check. A model check here is the old bug.
-_ENGINE_HEALTH_PATHS = {
-    "ollama": "/api/version",
-}
 
 _KEDA_GROUP = "keda.sh"
 _KEDA_VERSION = "v1alpha1"
@@ -163,7 +141,10 @@ def _scaled_object_body(name: str, deployment_id: str, metadata: Optional[Dict])
     }
 
 
-def _probes(engine: str, port: int, model_id: Optional[str]):
+def _probes(
+    engine: str, port: int, model_id: Optional[str],
+    health_path: Optional[str],
+):
     """Startup, readiness and liveness probes for one engine.
 
     Three, because they answer different questions and want different budgets.
@@ -184,10 +165,11 @@ def _probes(engine: str, port: int, model_id: Optional[str]):
     cannot meet on a busy node: the kubelet spawns a process through the
     container runtime, and that overhead sits on top of the command itself.
     """
-    path = _ENGINE_HEALTH_PATHS.get(engine)
-    if path:
+    if health_path:
         def _action():
-            return {"http_get": client.V1HTTPGetAction(path=path, port=port)}
+            return {
+                "http_get": client.V1HTTPGetAction(path=health_path, port=port),
+            }
     else:
         def _action():
             return {"tcp_socket": client.V1TCPSocketAction(port=port)}
@@ -220,18 +202,18 @@ def _probes(engine: str, port: int, model_id: Optional[str]):
 
 
 def _engine_port(metadata: Optional[Dict]) -> int:
+    """The port to expose, with deployment configuration winning."""
     md = metadata or {}
     if md.get("port"):
         return int(md["port"])
-    engine = str(md.get("engine") or "").lower()
-    port = _ENGINE_PORTS.get(engine)
-    if port is None:
-        logger.warning(
-            "k8s: no known port for engine %r, defaulting to %d",
-            engine, _DEFAULT_ENGINE_PORT,
-        )
-        return _DEFAULT_ENGINE_PORT
-    return port
+    return _recipe_for(md).port
+
+
+def _recipe_for(metadata: Optional[Dict]) -> recipes.ResolvedRecipe:
+    md = metadata or {}
+    return recipes.resolve(
+        md.get("engine"), recipes.profile_for(md.get("gpu_allocated", 0)),
+    )
 
 
 class KubernetesAdapter(ProviderAdapter):
@@ -365,15 +347,26 @@ class KubernetesAdapter(ProviderAdapter):
 
         # Extract resource requirements from metadata
         gpu_allocated = (metadata or {}).get("gpu_allocated", 0)
-        vcpu_allocated = (metadata or {}).get("vcpu_allocated", 1)
         ram_gb_allocated = (metadata or {}).get("ram_gb_allocated", 1)
+        recipe = _recipe_for(metadata)
 
-        # Build resource requests
-        resource_requests = {
-            "cpu": str(vcpu_allocated),
-            "memory": f"{ram_gb_allocated}Gi",
-        }
-        resource_limits = dict(resource_requests)
+        # Two values, deliberately. Kubernetes takes a quantity string, which
+        # can be fractional ("500m"); compute_inventory.vcpu_total is a whole
+        # number of cores. Conflating them writes "500m" into an int column.
+        vcpu_allocated = (metadata or {}).get("vcpu_allocated") or 1
+        cpu_request = str(
+            (metadata or {}).get("vcpu_allocated") or recipe.cpu_request or "500m"
+        )
+        memory = f"{ram_gb_allocated}Gi"
+
+        resource_requests = {"cpu": cpu_request, "memory": memory}
+
+        # Memory keeps its ceiling: an OOM kill is contained, a node running
+        # out of memory is not. CPU gets one only where the CPU is the
+        # accelerator - see the recipe file for why.
+        resource_limits = {"memory": memory}
+        if not recipe.cpu_burstable:
+            resource_limits["cpu"] = cpu_request
 
         if gpu_allocated > 0:
             resource_limits["nvidia.com/gpu"] = str(gpu_allocated)
@@ -388,21 +381,30 @@ class KubernetesAdapter(ProviderAdapter):
 
         _engine = str((metadata or {}).get("engine") or "").lower()
         _model = (metadata or {}).get("model_id")
-        env = None
+        env = [
+            client.V1EnvVar(name=k, value=v) for k, v in sorted(recipe.env.items())
+        ]
         if _engine == "ollama" and _model:
             keep_alive = str(
                 (metadata or {}).get("keep_alive") or _DEFAULT_KEEP_ALIVE
             )
-            command, args, env = _ollama_startup(_model, keep_alive)
+            command, args, extra = _ollama_startup(_model, keep_alive)
+            env = env + extra
 
-        startup, readiness, liveness = _probes(_engine, port, _model)
+        startup, readiness, liveness = _probes(
+            _engine, port, _model, recipe.health_path,
+        )
 
         container = client.V1Container(
             name="worker",
             image=image,
+            # Explicit, because Kubernetes otherwise infers it from the tag:
+            # a `latest` tag means Always, and Always fails the container when
+            # the registry cannot be reached even if the image is on the node.
+            image_pull_policy=recipe.image_pull_policy,
             command=command,
             args=args,
-            env=env,
+            env=env or None,
             ports=[client.V1ContainerPort(container_port=port, name="http")],
             resources=client.V1ResourceRequirements(
                 requests=resource_requests,
@@ -415,7 +417,7 @@ class KubernetesAdapter(ProviderAdapter):
 
         # A template, not one shared claim: ReadWriteOnce binds to a single
         # node, so replicas placed anywhere else could not start.
-        model_dir = _ENGINE_MODEL_DIRS.get(_engine)
+        model_dir = recipe.model_dir
         claim_templates = None
         if model_dir:
             size = str((metadata or {}).get("model_cache_size") or _DEFAULT_CACHE_SIZE)
