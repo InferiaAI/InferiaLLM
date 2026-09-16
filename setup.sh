@@ -47,6 +47,11 @@ SKIP_PUBLIC=0
 HEALTH_TIMEOUT=180
 RESET_DB=0
 DO_DOWN=0
+SETUP_K8S=0
+K8S_CLUSTER=""
+K8S_NETWORK="kind"
+# Matches container_name in docker-compose.yml.
+APP_CONTAINER="inferia-app"
 FOLLOW_LOGS=0
 GEN_PW=""
 NO_INSTALL_DOCKER=0
@@ -122,6 +127,12 @@ Lifecycle:
   --no-install-docker       Do not auto-install Docker; fail if it is missing
   --reset-db                docker compose down -v before bringing up (DESTROYS data)
   --down                    Stop the stack and exit
+
+Kubernetes (optional):
+  --k8s                     Give the control plane access to a local kind
+                            cluster, so it can deploy models to Kubernetes
+  --k8s-cluster NAME        Which kind cluster to use (implies --k8s).
+                            Only needed when more than one exists
   --logs                    Follow app logs after a successful start
 
 Verification:
@@ -156,6 +167,8 @@ parse_args() {
       --no-install-docker) NO_INSTALL_DOCKER=1; shift ;;
       --reset-db) RESET_DB=1; shift ;;
       --down) DO_DOWN=1; shift ;;
+      --k8s) SETUP_K8S=1; shift ;;
+      --k8s-cluster) K8S_CLUSTER="$2"; SETUP_K8S=1; shift 2 ;;
       --logs) FOLLOW_LOGS=1; shift ;;
       --require-public) REQUIRE_PUBLIC=1; shift ;;
       --skip-public-check) SKIP_PUBLIC=1; shift ;;
@@ -555,6 +568,89 @@ compose_up() {
   ok "Containers started (app, postgres, redis)"
 }
 
+# ---- kubernetes access ------------------------------------------------------
+# Without the network and an internal kubeconfig, every Kubernetes deployment
+# fails with "Service host/port is not set".
+k8s_setup() {
+  [[ $SETUP_K8S -eq 1 ]] || return 0
+  section "Kubernetes access"
+
+  if ! command -v kind >/dev/null 2>&1; then
+    err "kind is not installed, so there is no local cluster to connect to."
+    err "Install it from https://kind.sigs.k8s.io, or drop --k8s."
+    return 1
+  fi
+
+  local clusters cluster
+  clusters="$(kind get clusters 2>/dev/null)"
+  if [[ -z "$clusters" ]]; then
+    err "No kind clusters exist. Create one with: kind create cluster"
+    return 1
+  fi
+
+  cluster="$K8S_CLUSTER"
+  if [[ -z "$cluster" ]]; then
+    if [[ "$(wc -l <<<"$clusters")" -gt 1 ]]; then
+      err "More than one kind cluster exists:"
+      while IFS= read -r c; do err "  $c"; done <<<"$clusters"
+      err "Choose one with --k8s-cluster NAME"
+      return 1
+    fi
+    cluster="$clusters"
+  elif ! grep -qx "$cluster" <<<"$clusters"; then
+    err "No kind cluster named '$cluster'. Found:"
+    while IFS= read -r c; do err "  $c"; done <<<"$clusters"
+    return 1
+  fi
+  K8S_CLUSTER="$cluster"
+  ok "Using kind cluster '$cluster'"
+
+  if ! docker inspect "$APP_CONTAINER" >/dev/null 2>&1; then
+    err "Container '$APP_CONTAINER' is not running; bring the stack up first."
+    return 1
+  fi
+
+  # Already-connected is an error we do not care about: this is re-runnable.
+  step "Connecting $APP_CONTAINER to the '$K8S_NETWORK' network"
+  docker network connect "$K8S_NETWORK" "$APP_CONTAINER" >/dev/null 2>&1 || true
+  ok "Connected"
+
+  step "Installing a kubeconfig the container can use"
+  local tmp
+  tmp="$(mktemp)"
+  if ! kind get kubeconfig --internal --name "$cluster" >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    err "Could not read the kubeconfig for cluster '$cluster'."
+    return 1
+  fi
+  # sh -c stops Git Bash rewriting /root/.kube into a Windows path.
+  docker exec "$APP_CONTAINER" sh -c 'mkdir -p /root/.kube' \
+    || { rm -f "$tmp"; err "Could not write to the container."; return 1; }
+  docker cp "$tmp" "$APP_CONTAINER:/root/.kube/config" >/dev/null \
+    || { rm -f "$tmp"; err "Could not copy the kubeconfig in."; return 1; }
+  rm -f "$tmp"
+  ok "Installed at /root/.kube/config"
+
+  # The adapter reads the kubeconfig only at startup.
+  step "Restarting $APP_CONTAINER"
+  docker restart "$APP_CONTAINER" >/dev/null
+  wait_local_health || return 1
+
+  step "Checking the control plane can reach the cluster"
+  if docker exec "$APP_CONTAINER" python -c "
+from kubernetes import client, config
+config.load_kube_config()
+client.CoreV1Api().list_node()
+" >/dev/null 2>&1; then
+    ok "Control plane can reach '$cluster'"
+  else
+    err "The control plane still cannot reach the cluster."
+    err "Check that '$K8S_NETWORK' is the network your kind node is on:"
+    err "  docker inspect ${cluster}-control-plane --format '{{json .NetworkSettings.Networks}}'"
+    return 1
+  fi
+}
+
 # ---- health + routing -------------------------------------------------------
 wait_local_health() {
   section "Health check"
@@ -642,6 +738,7 @@ summary() {
   kv "Superadmin" "${SUPERADMIN_EMAIL}"
   [[ -n "$GEN_PW" ]] && kv "Password" "${GEN_PW}  ${C_DIM}(generated — change after login)${C_RESET}"
   kv "Env file"   "${ENV_FILE}"
+  [[ $SETUP_K8S -eq 1 ]] && kv "Kubernetes" "kind cluster ${K8S_CLUSTER}"
   echo
   kv "Reverse proxy" "deploy/README.md — forward all paths to inferia-app:${APP_PORT}"
   kv "Manage"     "./setup.sh --down   ·   ./setup.sh --logs"
@@ -677,6 +774,7 @@ main() {
   preflight
   compose_up
   wait_local_health
+  k8s_setup
   check_public_routes
   summary
 
