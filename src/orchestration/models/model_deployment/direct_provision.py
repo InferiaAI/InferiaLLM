@@ -151,6 +151,9 @@ def _build_metadata(d: dict) -> dict:
         metadata["deployment_id"] = str(d["deployment_id"])
     if d.get("auto_replica_enabled"):
         metadata["autoscale"] = True
+    # Adapters read the GPU count from here; without it they assume none.
+    if d.get("gpu_per_replica") is not None:
+        metadata.setdefault("gpu_allocated", int(d["gpu_per_replica"]))
 
     return metadata
 

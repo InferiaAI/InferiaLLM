@@ -64,6 +64,9 @@ engines:
       gpu:
         cpu_request: "2"
         cpu_burstable: true
+        # The memory limit, not only the request: at 1 GiB vLLM is killed
+        # while starting. Deployment configuration can raise it.
+        memory_gb: 8
 
   vllm-omni:
     port: 8000

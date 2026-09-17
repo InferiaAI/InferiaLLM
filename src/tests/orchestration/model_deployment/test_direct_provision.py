@@ -545,6 +545,32 @@ async def test_hf_token_flows_from_configuration_env():
     assert md.get("env", {}).get("HF_TOKEN") == "hf_x"
 
 
+@pytest.mark.asyncio
+async def test_gpu_count_reaches_the_adapter():
+    """gpu_per_replica is a column, not configuration. Without it the
+    Kubernetes adapter assumed no GPU and rejected vLLM."""
+    adapter = _make_adapter()
+    deps = _make_deps(deploy=_deploy(gpu_per_replica=2))
+
+    await _run(adapter, deps, gpu=2)
+
+    md = adapter.provision_node.await_args.kwargs["metadata"]
+    assert md["gpu_allocated"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_gpu_count_in_configuration_is_kept():
+    adapter = _make_adapter()
+    deps = _make_deps(
+        deploy=_deploy(gpu_per_replica=1, configuration={"gpu_allocated": 4})
+    )
+
+    await _run(adapter, deps)
+
+    md = adapter.provision_node.await_args.kwargs["metadata"]
+    assert md["gpu_allocated"] == 4
+
+
 # ---------------------------------------------------------------------------
 # NEW: 15. Cancellation and finalize-False paths do NOT release_gpu / mark_terminated
 # ---------------------------------------------------------------------------

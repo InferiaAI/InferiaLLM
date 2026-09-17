@@ -55,6 +55,7 @@ class EngineProfile(BaseModel):
     # A boolean rather than an optional cpu_limit, because null would have to
     # mean both "inherit" and "deliberately no ceiling".
     cpu_burstable: Optional[bool] = None
+    memory_gb: Optional[int] = None
     env: Dict[str, str] = Field(default_factory=dict)
 
     _env_str = field_validator("env", mode="before")(_stringify)
@@ -68,6 +69,7 @@ class EngineRecipe(BaseModel):
     image_pull_policy: Optional[str] = None
     cpu_request: Optional[str] = None
     cpu_burstable: Optional[bool] = None
+    memory_gb: Optional[int] = None
     env: Dict[str, str] = Field(default_factory=dict)
     profiles: Dict[str, EngineProfile] = Field(default_factory=dict)
 
@@ -86,6 +88,7 @@ class ResolvedRecipe(BaseModel):
     image_pull_policy: str = "IfNotPresent"
     cpu_request: Optional[str] = None
     cpu_burstable: bool = True
+    memory_gb: Optional[int] = None
     env: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -194,6 +197,7 @@ def resolve(engine: Optional[str], profile: str) -> ResolvedRecipe:
         image_pull_policy=pick("image_pull_policy", "IfNotPresent"),
         cpu_request=pick("cpu_request"),
         cpu_burstable=pick("cpu_burstable", True),
+        memory_gb=pick("memory_gb"),
         env={**recipe.env, **over.env},
     )
 
