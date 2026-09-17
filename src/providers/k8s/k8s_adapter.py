@@ -66,6 +66,19 @@ def _ollama_startup(model_id: str, keep_alive: str):
     return ["/bin/sh", "-c"], [script], env
 
 
+def _vllm_args(model_id: str, port: int, max_model_len=None):
+    """Args only: the image's entrypoint is already `vllm serve`."""
+    args = [
+        model_id,
+        "--served-model-name", model_id,
+        "--host", "0.0.0.0",
+        "--port", str(port),
+    ]
+    if max_model_len:
+        args += ["--max-model-len", str(max_model_len)]
+    return args
+
+
 def _scaler_query(deployment_id: str, p95_target: int, min_samples: int) -> str:
     """The Prometheus query KEDA scales on.
 
@@ -333,7 +346,6 @@ class KubernetesAdapter(ProviderAdapter):
         """
         pod_name = f"inferia-worker-{uuid.uuid4().hex[:6]}"
         namespace = (metadata or {}).get("namespace", "default")
-        image = (metadata or {}).get("image", "busybox")
         # Kubernetes "command" REPLACES the image entrypoint, so "cmd" maps to
         # args instead: ollama/ollama is ENTRYPOINT /bin/ollama + CMD ["serve"],
         # and passing ["serve"] as command execs a binary named "serve".
@@ -349,6 +361,7 @@ class KubernetesAdapter(ProviderAdapter):
         gpu_allocated = (metadata or {}).get("gpu_allocated", 0)
         ram_gb_allocated = (metadata or {}).get("ram_gb_allocated", 1)
         recipe = _recipe_for(metadata)
+        image = (metadata or {}).get("image") or recipe.image or "busybox"
 
         # Two values, deliberately. Kubernetes takes a quantity string, which
         # can be fractional ("500m"); compute_inventory.vcpu_total is a whole
@@ -381,15 +394,23 @@ class KubernetesAdapter(ProviderAdapter):
 
         _engine = str((metadata or {}).get("engine") or "").lower()
         _model = (metadata or {}).get("model_id")
-        env = [
-            client.V1EnvVar(name=k, value=v) for k, v in sorted(recipe.env.items())
-        ]
+        env_values = dict(recipe.env)
         if _engine == "ollama" and _model:
             keep_alive = str(
                 (metadata or {}).get("keep_alive") or _DEFAULT_KEEP_ALIVE
             )
             command, args, extra = _ollama_startup(_model, keep_alive)
-            env = env + extra
+            env_values.update({e.name: e.value for e in extra})
+        elif _engine == "vllm" and _model and args is None and command is None:
+            args = _vllm_args(_model, port, (metadata or {}).get("max_model_len"))
+
+        # Last, so the deployment's values win.
+        config_env = (metadata or {}).get("env")
+        if isinstance(config_env, dict):
+            env_values.update({str(k): str(v) for k, v in config_env.items()})
+        env = [
+            client.V1EnvVar(name=k, value=v) for k, v in sorted(env_values.items())
+        ]
 
         startup, readiness, liveness = _probes(
             _engine, port, _model, recipe.health_path,
