@@ -1373,3 +1373,100 @@ def test_vllm_matches_the_nosana_path():
 
     assert recipe.image == nosana_image
     assert recipe.env["LD_LIBRARY_PATH"] == CUDA_DRIVER_LD_LIBRARY_PATH
+
+
+# ---------------------------------------------------------------------------
+# GPU and memory from a real deployment row
+# ---------------------------------------------------------------------------
+def _dashboard_row(engine, model_id, gpu_per_replica=1, **config):
+    """A deployment row as the dashboard creates it: the GPU count is a
+    column, and the configuration carries no resource fields."""
+    import json
+    import uuid
+
+    cfg = {"model_id": model_id, "engine": engine, "gpu": True, **config}
+    return {
+        "configuration": json.dumps(cfg),
+        "inference_model": model_id,
+        "engine": engine,
+        "model_name": "test",
+        "deployment_id": uuid.uuid4(),
+        "gpu_per_replica": gpu_per_replica,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_dashboard_vllm_deployment_gets_a_gpu(monkeypatch):
+    """Through the real metadata builder: this raised UnknownProfile because
+    the GPU count never arrived."""
+    from orchestration.models.model_deployment.direct_provision import (
+        _build_metadata,
+    )
+
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    md = _build_metadata(_dashboard_row("vllm", "Qwen/Qwen2.5-0.5B-Instruct"))
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=md)
+
+    res = _container_of(a).resources
+
+    assert res.limits["nvidia.com/gpu"] == "1"
+    assert res.limits["memory"] == "8Gi"
+
+
+@pytest.mark.asyncio
+async def test_a_dashboard_ollama_deployment_gets_its_gpu(monkeypatch):
+    """It ran on CPU on a GPU node, with nothing to show for it."""
+    from orchestration.models.model_deployment.direct_provision import (
+        _build_metadata,
+    )
+
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    md = _build_metadata(_dashboard_row("ollama", "qwen2:0.5b"))
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=md)
+
+    assert _container_of(a).resources.limits["nvidia.com/gpu"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_deployment_memory_wins_over_the_recipe(monkeypatch):
+    from orchestration.models.model_deployment.direct_provision import (
+        _build_metadata,
+    )
+
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    md = _build_metadata(
+        _dashboard_row("vllm", "Qwen/Qwen3-32B", ram_gb_allocated=48)
+    )
+    spec = await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=md,
+    )
+
+    assert _container_of(a).resources.limits["memory"] == "48Gi"
+    assert spec["ram_gb_total"] == 48
+
+
+@pytest.mark.asyncio
+async def test_an_engine_without_a_memory_floor_keeps_the_old_default(monkeypatch):
+    """Ollama replicas share one node when KEDA scales them, so its memory
+    is not raised here."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    md = _metadata()
+    md.pop("ram_gb_allocated")
+    spec = await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=md,
+    )
+
+    assert _container_of(a).resources.limits["memory"] == "1Gi"
+    assert isinstance(spec["ram_gb_total"], int)

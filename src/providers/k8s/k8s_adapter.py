@@ -359,9 +359,11 @@ class KubernetesAdapter(ProviderAdapter):
 
         # Extract resource requirements from metadata
         gpu_allocated = (metadata or {}).get("gpu_allocated", 0)
-        ram_gb_allocated = (metadata or {}).get("ram_gb_allocated", 1)
         recipe = _recipe_for(metadata)
         image = (metadata or {}).get("image") or recipe.image or "busybox"
+        ram_gb_allocated = (
+            (metadata or {}).get("ram_gb_allocated") or recipe.memory_gb or 1
+        )
 
         # Two values, deliberately. Kubernetes takes a quantity string, which
         # can be fractional ("500m"); compute_inventory.vcpu_total is a whole
