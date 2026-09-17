@@ -47,6 +47,7 @@ class EngineProfile(BaseModel):
     """Per-profile overrides. Empty means the engine's own values apply."""
 
     port: Optional[int] = None
+    image: Optional[str] = None
     model_dir: Optional[str] = None
     health_path: Optional[str] = None
     image_pull_policy: Optional[str] = None
@@ -61,6 +62,7 @@ class EngineProfile(BaseModel):
 
 class EngineRecipe(BaseModel):
     port: int
+    image: Optional[str] = None
     model_dir: Optional[str] = None
     health_path: Optional[str] = None
     image_pull_policy: Optional[str] = None
@@ -78,6 +80,7 @@ class ResolvedRecipe(BaseModel):
     engine: str
     profile: str
     port: int
+    image: Optional[str] = None
     model_dir: Optional[str] = None
     health_path: Optional[str] = None
     image_pull_policy: str = "IfNotPresent"
@@ -185,6 +188,7 @@ def resolve(engine: Optional[str], profile: str) -> ResolvedRecipe:
         engine=name,
         profile=profile,
         port=pick("port", recipe.port),
+        image=pick("image"),
         model_dir=pick("model_dir"),
         health_path=pick("health_path"),
         image_pull_policy=pick("image_pull_policy", "IfNotPresent"),

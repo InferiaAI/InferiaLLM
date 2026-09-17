@@ -32,6 +32,7 @@ default:
 engines:
   ollama:
     port: 11434
+    image: ollama/ollama:latest
     # Where the volume mounts. Without it every replaced pod re-downloads.
     model_dir: /root/.ollama
     # Readiness checks this, so it must answer while the engine is generating.
@@ -50,8 +51,14 @@ engines:
 
   vllm:
     port: 8000
+    # Keep in step with the Nosana and AWS worker paths.
+    image: docker.io/vllm/vllm-openai:v0.22.1
     model_dir: /root/.cache/huggingface
     image_pull_policy: IfNotPresent
+    env:
+      # Use the machine's own libcuda; the image's copy crashes (CUDA Error 803)
+      # on newer drivers. Same fix as the Nosana job builder.
+      LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/lib64:/usr/lib:/lib/x86_64-linux-gnu:/lib64:/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64"
     profiles:
       # No cpu profile: vLLM's CPU backend is a different image.
       gpu:

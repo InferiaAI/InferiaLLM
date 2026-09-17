@@ -760,7 +760,9 @@ async def test_non_ollama_engine_gets_no_keep_alive(monkeypatch):
         metadata=_metadata(engine="vllm", cmd=["--model", "x"]),
     )
 
-    assert _container_of(a).env is None
+    env = {e.name for e in (_container_of(a).env or [])}
+
+    assert "OLLAMA_KEEP_ALIVE" not in env
 
 
 # ---------------------------------------------------------------------------
@@ -1197,3 +1199,177 @@ async def test_an_engine_without_the_hardware_it_needs_is_rejected(monkeypatch):
         )
 
     assert not a.apps.create_namespaced_stateful_set.called
+
+
+# ---------------------------------------------------------------------------
+# vLLM
+# ---------------------------------------------------------------------------
+def _vllm_metadata(**over):
+    """What a dashboard vLLM deployment sends: no image and no cmd."""
+    md = {
+        "namespace": "default",
+        "engine": "vllm",
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "gpu": True,
+        "gpu_allocated": 1,
+        "vcpu_allocated": 2,
+        "ram_gb_allocated": 8,
+    }
+    md.update(over)
+    return md
+
+
+@pytest.mark.asyncio
+async def test_vllm_runs_its_image_when_the_deployment_names_none(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_vllm_metadata(),
+    )
+
+    container = _container_of(a)
+
+    assert container.image == "docker.io/vllm/vllm-openai:v0.22.1"
+    assert container.command is None, "the image entrypoint is `vllm serve`"
+    assert container.args == [
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        "--served-model-name", "Qwen/Qwen2.5-0.5B-Instruct",
+        "--host", "0.0.0.0",
+        "--port", "8000",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vllm_is_served_under_the_name_the_router_sends(monkeypatch):
+    """vLLM answers 404 to any other name."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    md = _vllm_metadata()
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=md)
+
+    args = _container_of(a).args
+    served = args[args.index("--served-model-name") + 1]
+
+    assert served == md["model_id"]
+
+
+@pytest.mark.asyncio
+async def test_vllm_max_model_len_is_passed_only_when_set(monkeypatch):
+    """A value above the model's own context stops vLLM from starting."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1", metadata=_vllm_metadata(),
+    )
+    assert "--max-model-len" not in _container_of(a).args
+
+    await a.provision_node(
+        provider_resource_id="node-2", pool_id="p1",
+        metadata=_vllm_metadata(max_model_len=4096),
+    )
+    args = _container_of(a).args
+    assert args[args.index("--max-model-len") + 1] == "4096"
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_image_wins_over_the_recipe(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_vllm_metadata(image="registry.local/vllm:pinned"),
+    )
+
+    assert _container_of(a).image == "registry.local/vllm:pinned"
+
+
+@pytest.mark.asyncio
+async def test_ollama_gets_its_image_without_the_dashboard(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    md = _metadata(model_id="qwen2:0.5b")
+    md.pop("image")
+    md.pop("cmd")
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=md)
+
+    assert _container_of(a).image == "ollama/ollama:latest"
+
+
+@pytest.mark.asyncio
+async def test_deployment_env_reaches_the_container(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_vllm_metadata(env={"HF_TOKEN": "hf_x", "BATCH": 8}),
+    )
+
+    env = {e.name: e.value for e in _container_of(a).env}
+
+    assert env["HF_TOKEN"] == "hf_x"
+    assert env["BATCH"] == "8", "Kubernetes takes env values as strings"
+    assert "LD_LIBRARY_PATH" in env, "recipe env is kept alongside"
+
+
+@pytest.mark.asyncio
+async def test_deployment_env_wins_over_the_recipe(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_vllm_metadata(env={"LD_LIBRARY_PATH": "/opt/driver"}),
+    )
+
+    names = [e.name for e in _container_of(a).env]
+    env = {e.name: e.value for e in _container_of(a).env}
+
+    assert env["LD_LIBRARY_PATH"] == "/opt/driver"
+    assert names.count("LD_LIBRARY_PATH") == 1, "one value, not two to guess between"
+
+
+@pytest.mark.asyncio
+async def test_deployment_env_can_set_the_ollama_keep_alive(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b", env={"OLLAMA_KEEP_ALIVE": "10m"}),
+    )
+
+    names = [e.name for e in _container_of(a).env]
+    env = {e.name: e.value for e in _container_of(a).env}
+
+    assert env["OLLAMA_KEEP_ALIVE"] == "10m"
+    assert names.count("OLLAMA_KEEP_ALIVE") == 1
+
+
+def test_vllm_matches_the_nosana_path():
+    """The library path works around a bug in this exact image."""
+    import inspect
+
+    from providers.nosana.job_builder import (
+        CUDA_DRIVER_LD_LIBRARY_PATH,
+        create_vllm_job,
+    )
+
+    recipe = recipes.resolve("vllm", "gpu")
+    nosana_image = inspect.signature(create_vllm_job).parameters["image"].default
+
+    assert recipe.image == nosana_image
+    assert recipe.env["LD_LIBRARY_PATH"] == CUDA_DRIVER_LD_LIBRARY_PATH
