@@ -180,17 +180,7 @@ class Settings(BaseSettings):
         description="PULUMI_CONFIG_PASSPHRASE — empty disables stack-config secrets.",
     )
 
-    # Model Cache
-    model_cache_dir: str = Field(
-        default="/var/lib/inferia/models", validation_alias="INFERIA_MODEL_CACHE_DIR"
-    )
-    model_cache_max_gb: int = Field(
-        default=100, validation_alias="INFERIA_MODEL_CACHE_MAX_GB"
-    )
     hf_token: str = Field(default="", validation_alias="INFERIA_HF_TOKEN")
-    model_mirror_base: str = Field(
-        default="", validation_alias="INFERIA_MODEL_MIRROR_BASE"
-    )
 
     @property
     def is_development(self) -> bool:

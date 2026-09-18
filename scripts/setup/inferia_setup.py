@@ -137,7 +137,6 @@ def derive_urls(origin: str) -> dict:
         "DASHBOARD_INFERENCE_URL": f"{origin}/inf",
         "OAUTH_REDIRECT_URI": f"{origin}/auth/callback",
         "INFERIA_CONTROL_PLANE_EXTERNAL_URL": f"{origin}/api",
-        "INFERIA_MODEL_MIRROR_BASE": f"{origin}/api",
     }
 
 
@@ -220,7 +219,6 @@ def build_env(
     env["DASHBOARD_WEB_SOCKET_URL"] = ""
     env["DASHBOARD_SIDECAR_URL"] = ""
     env["INFERIA_CONTROL_PLANE_EXTERNAL_URL"] = urls["INFERIA_CONTROL_PLANE_EXTERNAL_URL"]
-    env["INFERIA_MODEL_MIRROR_BASE"] = urls["INFERIA_MODEL_MIRROR_BASE"]
     # --- Internal service ports (loopback) ---
     env["HTTP_PORT"] = "8080"
     env["GRPC_PORT"] = "50051"
@@ -250,9 +248,6 @@ def build_env(
     env["REDIS_USERNAME"] = "default"
     env["REDIS_PASSWORD"] = ""
     env["REDIS_SSL"] = "false"
-    # --- Model cache ---
-    env["INFERIA_MODEL_CACHE_DIR"] = ""
-    env["INFERIA_MODEL_CACHE_MAX_GB"] = "100"
     return env
 
 

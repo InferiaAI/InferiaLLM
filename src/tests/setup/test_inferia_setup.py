@@ -171,7 +171,6 @@ def test_derive_urls():
     assert u["DASHBOARD_INFERENCE_URL"] == "https://h.io/inf"
     assert u["OAUTH_REDIRECT_URI"] == "https://h.io/auth/callback"
     assert u["INFERIA_CONTROL_PLANE_EXTERNAL_URL"] == "https://h.io/api"
-    assert u["INFERIA_MODEL_MIRROR_BASE"] == "https://h.io/api"
     assert "https://h.io" in u["ALLOWED_ORIGINS"]
     assert "http://localhost:3001" in u["ALLOWED_ORIGINS"]
 
