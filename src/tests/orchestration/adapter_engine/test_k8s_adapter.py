@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchestration import recipes
+from providers.k8s import k8s_adapter as k8s_adapter_module
 from providers.k8s.k8s_adapter import (
     KubernetesAdapter,
     _engine_port,
@@ -383,6 +384,93 @@ async def test_wait_for_ready_ignores_scheduled_but_unready_replicas():
 
     with pytest.raises(RuntimeError):
         await a.wait_for_ready(provider_instance_id="dep-1", timeout=0)
+
+
+def _pod_waiting(reason, message=""):
+    """A pod list whose only container is waiting for the given reason."""
+    pod = MagicMock()
+    pod.status.container_statuses[0].state.waiting.reason = reason
+    pod.status.container_statuses[0].state.waiting.message = message
+    pods = MagicMock()
+    pods.items = [pod]
+    return pods
+
+
+def _fast_clock(monkeypatch, seconds_per_poll):
+    """Advance time by a fixed step per poll, and do not really sleep."""
+    import asyncio
+
+    ticks = [0.0]
+
+    def _now():
+        return ticks[0]
+
+    async def _sleep(_):
+        ticks[0] += seconds_per_poll
+
+    monkeypatch.setattr(k8s_adapter_module.time, "time", _now)
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    return ticks
+
+
+@pytest.mark.asyncio
+async def test_pulling_an_image_does_not_spend_the_readiness_budget(monkeypatch):
+    """The vLLM image is tens of GB. Charging the pull to the readiness budget
+    failed a deployment that was working: live-reproduced on a GPU node, where
+    the pod was killed mid-pull and the deployment marked FAILED."""
+    a = _adapter()
+    sts = MagicMock()
+    sts.status.ready_replicas = 0
+    a.apps.read_namespaced_stateful_set.return_value = sts
+    a.core.list_namespaced_pod.return_value = _pod_waiting("ContainerCreating")
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+    _fast_clock(monkeypatch, seconds_per_poll=400)
+
+    polls = []
+
+    def _ready_after_four(**_):
+        polls.append(1)
+        if len(polls) > 4:
+            sts.status.ready_replicas = 1
+            a.core.list_namespaced_pod.return_value = MagicMock(items=[])
+        return sts
+
+    a.apps.read_namespaced_stateful_set.side_effect = _ready_after_four
+
+    url = await a.wait_for_ready(provider_instance_id="dep-1", timeout=900)
+
+    assert url.startswith("http://"), "1600s of pulling must not fail a 900s wait"
+
+
+@pytest.mark.asyncio
+async def test_an_image_that_cannot_be_pulled_fails_at_once(monkeypatch):
+    """Waiting out the budget turns a typo in a tag into a 15-minute wait."""
+    a = _adapter()
+    sts = MagicMock()
+    sts.status.ready_replicas = 0
+    a.apps.read_namespaced_stateful_set.return_value = sts
+    a.core.list_namespaced_pod.return_value = _pod_waiting(
+        "ImagePullBackOff", "Back-off pulling image",
+    )
+    ticks = _fast_clock(monkeypatch, seconds_per_poll=300)
+
+    with pytest.raises(RuntimeError, match="cannot pull its image"):
+        await a.wait_for_ready(provider_instance_id="dep-1", timeout=900)
+
+    assert ticks[0] == 0, "it must not wait before reporting a failed pull"
+
+
+@pytest.mark.asyncio
+async def test_a_pull_that_never_finishes_still_gives_up(monkeypatch):
+    a = _adapter()
+    sts = MagicMock()
+    sts.status.ready_replicas = 0
+    a.apps.read_namespaced_stateful_set.return_value = sts
+    a.core.list_namespaced_pod.return_value = _pod_waiting("ContainerCreating")
+    _fast_clock(monkeypatch, seconds_per_poll=600)
+
+    with pytest.raises(RuntimeError, match="had not started its container"):
+        await a.wait_for_ready(provider_instance_id="dep-1", timeout=900)
 
 
 # ---------------------------------------------------------------------------
