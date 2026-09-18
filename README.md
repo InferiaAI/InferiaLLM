@@ -285,6 +285,11 @@ kind create cluster          # if you don't have one
 
 Without this, Kubernetes deployments fail with `Service host/port is not set`.
 
+It also sets `K8S_SERVICE_TYPE=NodePort` and adds the cluster's node addresses
+to `UPSTREAM_ALLOWED_INTERNAL_HOSTS` in `.env`. Without those, deployments
+reach RUNNING but chat requests fail with `Invalid upstream configuration`.
+Run it again if a node's address changes, for example after Docker restarts.
+
 ### Self-Hosting with Docker Compose
 
 Prefer to wire it up by hand? `setup.sh` is just orchestration around a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis). You can drive it directly:

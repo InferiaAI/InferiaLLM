@@ -127,13 +127,13 @@ Lifecycle:
   --no-install-docker       Do not auto-install Docker; fail if it is missing
   --reset-db                docker compose down -v before bringing up (DESTROYS data)
   --down                    Stop the stack and exit
+  --logs                    Follow app logs after a successful start
 
 Kubernetes (optional):
   --k8s                     Give the control plane access to a local kind
                             cluster, so it can deploy models to Kubernetes
   --k8s-cluster NAME        Which kind cluster to use (implies --k8s).
                             Only needed when more than one exists
-  --logs                    Follow app logs after a successful start
 
 Verification:
   --timeout N               Seconds to wait for local /api/health (default 180)
@@ -569,11 +569,24 @@ compose_up() {
 }
 
 # ---- kubernetes access ------------------------------------------------------
-# Without the network and an internal kubeconfig, every Kubernetes deployment
-# fails with "Service host/port is not set".
-k8s_setup() {
+# Replace KEY in ENV_FILE, or add it.
+_env_put() {
+  local key="$1" val="$2" tmp="${ENV_FILE}.tmp.$$"
+  (
+    umask 077
+    grep -v -E "^$key=" "$ENV_FILE" >"$tmp" 2>/dev/null || true
+    [[ -s "$tmp" && -n "$(tail -c1 "$tmp")" ]] && echo >>"$tmp"
+    printf '%s=%s\n' "$key" "$val" >>"$tmp"
+  )
+  mv -f "$tmp" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+}
+
+# Runs before the stack starts: env_file is read when a container is created,
+# not when it restarts.
+k8s_prepare() {
   [[ $SETUP_K8S -eq 1 ]] || return 0
-  section "Kubernetes access"
+  section "Kubernetes settings"
 
   if ! command -v kind >/dev/null 2>&1; then
     err "kind is not installed, so there is no local cluster to connect to."
@@ -604,6 +617,60 @@ k8s_setup() {
   fi
   K8S_CLUSTER="$cluster"
   ok "Using kind cluster '$cluster'"
+
+  # The control plane is outside the cluster, where a ClusterIP name does not
+  # resolve.
+  local svc_type
+  svc_type="$(_env_get K8S_SERVICE_TYPE)"
+  if [[ -z "$svc_type" ]]; then
+    _env_put K8S_SERVICE_TYPE NodePort
+    ok "Set K8S_SERVICE_TYPE=NodePort"
+  elif [[ "$svc_type" != "NodePort" ]]; then
+    warn "K8S_SERVICE_TYPE is $svc_type; from outside the cluster only NodePort is reachable"
+  fi
+
+  # Node addresses are private, and the router refuses those unless listed.
+  local node ip ips=""
+  for node in $(docker ps --filter "label=io.x-k8s.kind.cluster=$cluster" --format '{{.Names}}'); do
+    ip="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$K8S_NETWORK\"}}{{.IPAddress}}{{end}}" "$node" 2>/dev/null)"
+    [[ -n "$ip" ]] && ips="$ips $ip"
+  done
+  if [[ -z "$ips" ]]; then
+    err "No running nodes for cluster '$cluster'. Start them with: docker start ${cluster}-control-plane"
+    return 1
+  fi
+
+  # Addresses from this network are replaced, not added to: they move when
+  # Docker restarts, and a stale one allows whatever holds it next.
+  local subnet octets prefix="" current kept merged
+  # The IPv4 one: kind networks list an IPv6 subnet first.
+  subnet="$(docker network inspect "$K8S_NETWORK" \
+    -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' 2>/dev/null \
+    | grep -m1 '\.' || true)"
+  octets=$(( ${subnet#*/} / 8 ))
+  if [[ "$subnet" == */* && $octets -ge 1 && $octets -le 3 ]]; then
+    prefix="$(cut -d. -f"1-$octets" <<<"${subnet%/*}")."
+  fi
+  current="$(_env_get UPSTREAM_ALLOWED_INTERNAL_HOSTS)"
+  # shellcheck disable=SC2086
+  kept="$(printf '%s\n' ${current//,/ } \
+    | awk -v p="$prefix" 'NF && (p == "" || index($0, p) != 1)')"
+  # shellcheck disable=SC2086
+  merged="$(printf '%s\n' $kept $ips | awk 'NF && !seen[$0]++' | paste -sd, -)"
+  if [[ "$merged" != "$current" ]]; then
+    _env_put UPSTREAM_ALLOWED_INTERNAL_HOSTS "$merged"
+    ok "Allowed the node addresses:$ips"
+  else
+    ok "Node addresses already allowed"
+  fi
+}
+
+# Without the network and an internal kubeconfig, every Kubernetes deployment
+# fails with "Service host/port is not set".
+k8s_setup() {
+  [[ $SETUP_K8S -eq 1 ]] || return 0
+  section "Kubernetes access"
+  local cluster="$K8S_CLUSTER"
 
   if ! docker inspect "$APP_CONTAINER" >/dev/null 2>&1; then
     err "Container '$APP_CONTAINER' is not running; bring the stack up first."
@@ -772,6 +839,7 @@ main() {
   fi
 
   preflight
+  k8s_prepare
   compose_up
   wait_local_health
   k8s_setup
