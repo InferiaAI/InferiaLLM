@@ -229,6 +229,25 @@ def _recipe_for(metadata: Optional[Dict]) -> recipes.ResolvedRecipe:
     )
 
 
+# An engine image is tens of gigabytes: a first pull outlasts any readiness
+# budget worth setting, so it gets its own.
+_IMAGE_PULL_TIMEOUT_SECONDS = 2700
+
+# Not started, nothing wrong: pulling the image or attaching the volume.
+# Kubernetes offers no more specific status than this.
+_PULL_WAITING_REASONS = {"ContainerCreating", "PodInitializing"}
+
+# Pulls that will not succeed on their own, so waiting out the budget only
+# delays the report.
+_PULL_FAILED_REASONS = {
+    "ErrImagePull",
+    "ImagePullBackOff",
+    "InvalidImageName",
+    "ImageInspectError",
+    "RegistryUnavailable",
+}
+
+
 class KubernetesAdapter(ProviderAdapter):
     """
     Kubernetes Adapter
@@ -246,7 +265,7 @@ class KubernetesAdapter(ProviderAdapter):
         supports_multi_gpu=True,
         is_ephemeral=False,  # On-prem nodes are managed by cluster admin
         requires_readiness_poll=True,
-        readiness_timeout_seconds=900,  # a first engine image pull is GBs
+        readiness_timeout_seconds=900,  # loading a model, not pulling an image
         polling_interval_seconds=5,
         requires_sidecar=False,
         supports_direct_provisioning=True,
@@ -650,6 +669,9 @@ class KubernetesAdapter(ProviderAdapter):
         Returns the Service address, which is what the router connects to.
         Readiness comes from the container probe, so a replica counted here has
         an open port rather than merely a scheduled pod.
+
+        ``timeout`` covers loading the model, not pulling the image: that is
+        excluded and capped separately.
         """
         import asyncio
 
@@ -657,6 +679,8 @@ class KubernetesAdapter(ProviderAdapter):
         start = time.time()
         poll_interval = capabilities.polling_interval_seconds
         namespace = "default"
+        pulling_seconds = 0.0
+        last_poll = start
 
         while True:
             try:
@@ -681,13 +705,55 @@ class KubernetesAdapter(ProviderAdapter):
             except Exception as e:
                 logger.warning("k8s: error checking statefulset status: %s", e)
 
-            if time.time() - start > timeout:
+            now = time.time()
+            state, detail = await self._image_pull_state(
+                provider_instance_id, namespace,
+            )
+            if state == "failed":
+                raise RuntimeError(
+                    f"StatefulSet {provider_instance_id} cannot pull its "
+                    f"image: {detail}"
+                )
+            if state == "pulling":
+                pulling_seconds += now - last_poll
+                if pulling_seconds > _IMAGE_PULL_TIMEOUT_SECONDS:
+                    raise RuntimeError(
+                        f"StatefulSet {provider_instance_id} had not started "
+                        f"its container after {_IMAGE_PULL_TIMEOUT_SECONDS}s "
+                        f"(image pull or volume)"
+                    )
+            last_poll = now
+
+            if now - start - pulling_seconds > timeout:
                 raise RuntimeError(
                     f"StatefulSet {provider_instance_id} had no ready replica "
                     f"within {timeout}s"
                 )
 
             await asyncio.sleep(poll_interval)
+
+    async def _image_pull_state(self, name: str, namespace: str):
+        """("pulling" | "failed" | "running", detail) for the first replica.
+
+        An unreadable pod returns "running", which is the old behaviour.
+        """
+        try:
+            pods = await _run_sync(
+                self.core.list_namespaced_pod,
+                namespace=namespace,
+                label_selector=f"inferia-instance={name}",
+            )
+            statuses = pods.items[0].status.container_statuses or []
+            waiting = statuses[0].state.waiting
+            reason = waiting.reason
+        except Exception:
+            return "running", ""
+
+        if reason in _PULL_FAILED_REASONS:
+            return "failed", f"{reason}: {waiting.message or ''}".strip(": ")
+        if reason in _PULL_WAITING_REASONS:
+            return "pulling", ""
+        return "running", ""
 
     # -----------------------------------------------------
     # DEPROVISION NODE
