@@ -44,18 +44,23 @@ avail=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
 ok "GPU, docker and ${avail}G free disk"
 
 # ---- 2. tools ---------------------------------------------------------------
+# type -P, not command -v: the kubectl wrapper above is a shell function, and
+# command -v would find it and skip installing the binary it calls.
 step "Installing kind, kubectl and helm if missing"
-if ! command -v kind >/dev/null; then
+if ! type -P kind >/dev/null; then
   curl -fsSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
   sudo install -m 0755 /tmp/kind /usr/local/bin/kind
 fi
-if ! command -v kubectl >/dev/null; then
+if ! type -P kubectl >/dev/null; then
   curl -fsSLo /tmp/kubectl \
     "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
   sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
 fi
-command -v helm >/dev/null \
+type -P helm >/dev/null \
   || curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+for tool in kind kubectl helm; do
+  type -P "$tool" >/dev/null || die "$tool did not install"
+done
 ok "kind, kubectl and helm are present"
 
 # ---- 3. let a container see the GPU ----------------------------------------
@@ -108,8 +113,9 @@ helm upgrade --install gpu-operator nvidia/gpu-operator \
   --set toolkit.enabled=true \
   --wait --timeout 15m
 
-echo "  waiting for the node to advertise a GPU (up to 5 minutes)"
-for _ in $(seq 60); do
+# Minutes, not seconds: the operator pulls several GB first.
+echo "  waiting for the node to advertise a GPU (up to 15 minutes)"
+for _ in $(seq 180); do
   gpus=$(kubectl get node "${CLUSTER}-control-plane" \
     -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 2>/dev/null || true)
   [[ -n "$gpus" && "$gpus" != "0" ]] && break
