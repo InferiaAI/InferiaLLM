@@ -1,0 +1,92 @@
+# Prometheus for the Kubernetes path: it is what KEDA reads to decide when an
+# engine needs another replica. Single replica, no persistence — this exists to
+# drive a scaler, not to keep history.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+      evaluation_interval: 10s
+
+    scrape_configs:
+      # The control plane runs outside this cluster, so the target is however
+      # a pod reaches it. On kind that is the cluster network's gateway, which
+      # gpu-kind.sh substitutes here; on another cluster, set it yourself.
+      - job_name: inferia-gateway
+        metrics_path: /inf/metrics
+        static_configs:
+          - targets: ["CONTROL_PLANE_ADDRESS"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.1.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=2h
+          ports:
+            - containerPort: 9090
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        # emptyDir, not a claim: losing two hours of scaler data on a restart
+        # costs one scrape interval.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: http
