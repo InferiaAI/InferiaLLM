@@ -171,21 +171,18 @@ kubectl -n monitoring rollout status deploy/prometheus --timeout=300s
 ok "Prometheus is up"
 
 # ---- 8. the engine image ----------------------------------------------------
-# About 9 GB to fetch. Pulled here so the first deployment does not spend its
-# startup budget on it.
+# About 9 GB, fetched now so the first deployment does not wait for it. The
+# node pulls it itself: `kind load` fails converting docker's image format.
 if [[ $PULL_ENGINE -eq 1 ]]; then
-  step "Pre-loading $ENGINE_IMAGE into the cluster (several minutes)"
+  step "Pulling $ENGINE_IMAGE onto the node (several minutes)"
   # crictl prints repository and tag in separate columns.
   if docker exec "${CLUSTER}-control-plane" crictl images 2>/dev/null \
       | awk '{print $1":"$2}' | grep -qx "$ENGINE_IMAGE"; then
     ok "already on the node"
   else
-    docker image inspect "$ENGINE_IMAGE" >/dev/null 2>&1 \
-      || docker pull "$ENGINE_IMAGE"
-    kind load docker-image "$ENGINE_IMAGE" --name "$CLUSTER"
-    # The node has its own copy now; the host's is just disk.
-    docker image rm "$ENGINE_IMAGE" >/dev/null 2>&1 || true
-    ok "loaded onto the node"
+    docker exec "${CLUSTER}-control-plane" crictl pull "$ENGINE_IMAGE" \
+      || die "the node could not pull $ENGINE_IMAGE"
+    ok "pulled onto the node"
   fi
 fi
 
