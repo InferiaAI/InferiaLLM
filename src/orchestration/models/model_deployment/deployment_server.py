@@ -665,7 +665,8 @@ class PreflightRequest(BaseModel):
     hf_token_name: str | None = None
     engine: str | None = None
     gpu_per_replica: int = 1
-    gpu_vram_gb: float = 24.0
+    # None means "not known": the VRAM estimate is then reported, not enforced.
+    gpu_vram_gb: float | None = None
     pool_id: str | None = None
     model_type: str = "inference"
     max_model_len: int | None = None
@@ -1012,6 +1013,16 @@ async def deployment_preflight(req: PreflightRequest):
                     check="vram_estimate",
                     passed=True,
                     message="VRAM check skipped — parameter count unavailable.",
+                ))
+            elif vram.gpu_unknown:
+                checks.append(PreflightCheckResult(
+                    check="vram_estimate",
+                    passed=True,
+                    message=(
+                        f"Needs ~{vram.estimated_vram_gb} GB VRAM "
+                        f"({vram.param_count / 1e9:.1f}B parameters). The GPU "
+                        f"this pool runs on is not known, so check it fits."
+                    ),
                 ))
             elif vram.ok:
                 checks.append(PreflightCheckResult(

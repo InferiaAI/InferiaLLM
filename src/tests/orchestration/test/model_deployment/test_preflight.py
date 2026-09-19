@@ -177,6 +177,56 @@ class TestCheckVRAMFit:
         assert result.ok is True
         assert result.skipped is True
 
+    def test_an_unknown_gpu_reports_rather_than_blocks(self):
+        """Assuming a GPU size refused models that fit the real one: a 27B
+        model was rejected on a 48 GB card because nothing said how big the
+        card was."""
+        hf_info = {"safetensors": {"parameters": {"BF16": 27_000_000_000}}}
+
+        result = check_vram_fit(hf_info, gpu_per_replica=1)
+
+        assert result.ok is True
+        assert result.gpu_unknown is True
+        assert result.estimated_vram_gb > 0, "the estimate is still reported"
+
+    def test_a_known_gpu_still_blocks_a_model_that_cannot_fit(self):
+        hf_info = {"safetensors": {"parameters": {"BF16": 70_000_000_000}}}
+
+        result = check_vram_fit(hf_info, gpu_per_replica=1, gpu_vram_gb=24)
+
+        assert result.ok is False
+        assert result.gpu_unknown is False
+
+    def test_an_fp8_model_is_priced_at_one_byte_per_weight(self):
+        """Real dtype counts from HuggingFace for Qwen3-32B-FP8. At a flat
+        2 bytes it estimates 76 GB and does not fit an 80 GB card with KV
+        cache; the weights are really ~34 GB."""
+        hf_info = {
+            "safetensors": {
+                "parameters": {"F8_E4M3": 31_205_621_760, "BF16": 1_558_406_144},
+            },
+        }
+
+        result = check_vram_fit(hf_info, gpu_per_replica=1, gpu_vram_gb=48)
+
+        assert result.ok is True
+        assert 35 < result.estimated_vram_gb < 50, result.estimated_vram_gb
+
+    def test_an_awq_model_is_priced_at_its_quantized_bits(self):
+        """Real dtype counts for Qwen2.5-32B-Instruct-AWQ: 4-bit weights are
+        reported as I32, so the count is logical, not a byte count."""
+        hf_info = {
+            "config": {"quantization_config": {"bits": 4}},
+            "safetensors": {
+                "parameters": {"I32": 31_205_621_760, "F16": 1_558_254_592},
+            },
+        }
+
+        result = check_vram_fit(hf_info, gpu_per_replica=1, gpu_vram_gb=48)
+
+        assert result.ok is True
+        assert 15 < result.estimated_vram_gb < 30, result.estimated_vram_gb
+
 
 class TestCheckPipelineCompatibility:
 

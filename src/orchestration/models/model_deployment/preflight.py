@@ -95,6 +95,16 @@ ENGINE_PIPELINE_MAP = {
 
 # Approximate VRAM per parameter in bytes (BF16/FP16 = 2 bytes/param)
 BYTES_PER_PARAM_FP16 = 2.0
+
+# HuggingFace reports a parameter count per dtype, so a quantized model can be
+# priced at what it actually weighs rather than at FP16 throughout.
+BYTES_PER_DTYPE = {
+    "F64": 8.0, "I64": 8.0,
+    "F32": 4.0, "I32": 4.0, "U32": 4.0,
+    "BF16": 2.0, "F16": 2.0, "I16": 2.0, "U16": 2.0,
+    "F8_E4M3": 1.0, "F8_E5M2": 1.0, "I8": 1.0, "U8": 1.0,
+    "I4": 0.5, "U4": 0.5,
+}
 # KV cache and overhead multiplier (vLLM needs ~20-30% overhead)
 VRAM_OVERHEAD_MULTIPLIER = 1.25
 # Common GPU VRAM sizes in GB
@@ -323,6 +333,8 @@ class VRAMCheckResult:
     estimated_vram_gb: float = 0.0
     available_vram_gb: float = 0.0
     param_count: int = 0
+    # No GPU size was given, so the estimate is reported and not enforced.
+    gpu_unknown: bool = False
 
 
 def estimate_vram_gb(param_count: int) -> float:
@@ -333,12 +345,55 @@ def estimate_vram_gb(param_count: int) -> float:
     return round(raw_gb * VRAM_OVERHEAD_MULTIPLIER, 1)
 
 
+def estimate_vram_gb_by_dtype(params: Dict[str, Any], quant_bits: int = 0) -> float:
+    """Same estimate, but priced per dtype rather than at FP16 throughout.
+
+    ``quant_bits`` covers models whose packed weights are reported as an
+    integer dtype: AWQ lists 4-bit weights as I32, so its parameter count is
+    logical rather than a byte count.
+    """
+    if not isinstance(params, dict):
+        return 0.0
+    total_bytes = 0.0
+    for dtype, count in params.items():
+        if not isinstance(count, (int, float)) or count <= 0:
+            continue
+        if quant_bits and dtype.startswith(("I", "U")):
+            per_param = quant_bits / 8
+        else:
+            per_param = BYTES_PER_DTYPE.get(dtype, BYTES_PER_PARAM_FP16)
+        total_bytes += count * per_param
+    if total_bytes <= 0:
+        return 0.0
+    return round(total_bytes / (1024**3) * VRAM_OVERHEAD_MULTIPLIER, 1)
+
+
+def _quant_bits(hf_info: Dict[str, Any]) -> int:
+    """Bits per weight from the model's own quantization config, or 0.
+
+    Everything here comes from a third-party API, so each level is checked
+    rather than assumed: a surprise shape would otherwise fail the whole
+    preflight call.
+    """
+    config = hf_info.get("config")
+    quant = config.get("quantization_config") if isinstance(config, dict) else None
+    if not isinstance(quant, dict):
+        return 0
+    bits = quant.get("bits") or quant.get("w_bit")
+    return int(bits) if isinstance(bits, (int, float)) else 0
+
+
 def check_vram_fit(
     hf_info: Optional[Dict[str, Any]],
     gpu_per_replica: int = 1,
-    gpu_vram_gb: float = GPU_VRAM_GB,
+    gpu_vram_gb: Optional[float] = None,
 ) -> VRAMCheckResult:
-    """Check if model fits in available VRAM based on parameter count."""
+    """Check if model fits in available VRAM based on parameter count.
+
+    ``gpu_vram_gb`` is the size of the GPU the deployment will run on. Without
+    it the estimate is reported but not enforced: refusing a model because of
+    an assumed GPU size blocks models that fit the real one.
+    """
     if not hf_info:
         return VRAMCheckResult(ok=True, skipped=True)
 
@@ -346,8 +401,10 @@ def check_vram_fit(
     if gpu_per_replica <= 0:
         return VRAMCheckResult(ok=True, skipped=True)
 
-    safetensors = hf_info.get("safetensors", {})
-    params = safetensors.get("parameters", {})
+    safetensors = hf_info.get("safetensors")
+    params = safetensors.get("parameters") if isinstance(safetensors, dict) else None
+    if not isinstance(params, dict):
+        return VRAMCheckResult(ok=True, skipped=True)
 
     # Get total param count — prefer BF16/F16, fall back to any dtype
     param_count = params.get("BF16") or params.get("F16") or 0
@@ -358,7 +415,18 @@ def check_vram_fit(
     if param_count <= 0:
         return VRAMCheckResult(ok=True, skipped=True)
 
-    estimated = estimate_vram_gb(param_count)
+    estimated = estimate_vram_gb_by_dtype(params, _quant_bits(hf_info))
+    if estimated <= 0:
+        estimated = estimate_vram_gb(param_count)
+
+    if gpu_vram_gb is None:
+        return VRAMCheckResult(
+            ok=True,
+            gpu_unknown=True,
+            estimated_vram_gb=estimated,
+            param_count=param_count,
+        )
+
     available = gpu_per_replica * gpu_vram_gb
 
     if estimated > available:
