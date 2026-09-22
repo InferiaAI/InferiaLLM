@@ -290,6 +290,36 @@ to `UPSTREAM_ALLOWED_INTERNAL_HOSTS` in `.env`. Without those, deployments
 reach RUNNING but chat requests fail with `Invalid upstream configuration`.
 Run it again if a node's address changes, for example after Docker restarts.
 
+#### On a GPU machine
+
+`deploy/gpu-kind.sh` takes a GPU machine from nothing to a cluster models can
+be deployed on: the NVIDIA runtime for Docker, a kind cluster that can see the
+GPU, the GPU operator and device plugin, KEDA, Prometheus, `setup.sh --k8s`,
+and the vLLM image pre-loaded onto the node.
+
+```bash
+./deploy/gpu-kind.sh              # everything
+./deploy/gpu-kind.sh --no-engine  # skip pre-loading the vLLM image
+```
+
+It expects Linux x86_64 with an NVIDIA GPU, and the driver, Docker and NVIDIA
+container toolkit present already — an AWS Deep Learning Base AMI (Ubuntu) has
+all three. It stops with a clear message if any of them is missing. Every step
+checks before it acts, so it is safe to re-run.
+
+This is one way to get a cluster, not a requirement: the control plane only
+uses the standard Kubernetes API, so any cluster works. The automation here is
+kind-specific though — on k3s, EKS or OpenShift, give the app container a
+kubeconfig for that cluster yourself, and set the Prometheus scrape target in
+`deploy/k8s/prometheus.yaml` to an address its pods can reach the control
+plane on.
+
+The dashboard listens on the machine, so reach it over a tunnel:
+
+```bash
+ssh -i <key.pem> -L 8000:localhost:8000 ubuntu@<machine>
+```
+
 ### Self-Hosting with Docker Compose
 
 Prefer to wire it up by hand? `setup.sh` is just orchestration around a single `docker-compose.yml` that builds and runs the whole platform (unified app + PostgreSQL + Redis). You can drive it directly:
