@@ -1865,6 +1865,17 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     return JSONResponse(status_code=response_status, content=response_body)
 
 
+_SECRET_CONFIG_KEYS = {"api_key", "credentials", "token", "secret", "password"}
+
+
+def _without_secrets(configuration: dict) -> dict:
+    return {
+        k: v
+        for k, v in configuration.items()
+        if k.lower() not in _SECRET_CONFIG_KEYS
+    }
+
+
 @router.get("/status/{deployment_id}")
 async def get_deployment_status(deployment_id: str):
     async with _auth_channel() as channel:
@@ -1911,7 +1922,11 @@ async def get_deployment_status(deployment_id: str):
         "pool_id": resp.pool_id,
         "model_name": resp.model_name,
         "model_version": resp.model_version,
-        "configuration": json.loads(resp.configuration) if resp.configuration else {},
+        "configuration": (
+            _without_secrets(json.loads(resp.configuration))
+            if resp.configuration
+            else {}
+        ),
         "owner_id": resp.owner_id,
         "endpoint": resp.endpoint,
         "org_id": resp.org_id,
