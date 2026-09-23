@@ -346,11 +346,14 @@ function ChatParamsPanel() {
           <button
             onClick={() => updateParam("stream", !params.stream)}
             className={cn(
-              "w-10 h-5 rounded-full transition-colors relative",
-              params.stream ? "bg-ember-500" : "bg-muted"
+              "w-10 h-5 rounded-full transition-colors relative border",
+              params.stream ? "bg-ember-500 border-ember-500" : "bg-muted border-border"
             )}
           >
-            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-card transition-transform", params.stream ? "left-5" : "left-0.5")} />
+            <span className={cn(
+              "absolute top-0.5 w-4 h-4 rounded-full transition-transform",
+              params.stream ? "bg-card left-5" : "bg-muted-foreground left-0.5"
+            )} />
           </button>
         </div>
       </div>
