@@ -11,6 +11,7 @@ import asyncio
 import functools
 import os
 import shlex
+import threading
 import uuid
 import logging
 import time
@@ -827,16 +828,81 @@ class KubernetesAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> Dict:
-    # -----------------------------------------------------
+        """Point the dashboard at the control plane's log socket.
+
+        The instance is named rather than the pod: a StatefulSet replaces its
+        pod, so the name is resolved when the socket opens and again on a
+        reconnect. The /api prefix belongs to the dashboard's toWsUrl.
         """
-        Returns info for K8s log streaming.
-        TODO: Implement WebSocket streaming via K8s API.
-        """
-        # Standardize for future K8s WS logs
         return {
-            "ws_url": None,
+            "ws_url": "/v1/deployment/ws",
             "provider": "k8s",
-            "subscription": {"pod_name": provider_instance_id},
-            "supported": False,
-            "message": "Native K8s log streaming via WebSocket not yet implemented",
+            "subscription": {
+                "type": "subscribe_logs",
+                "provider": "k8s",
+                "instance": provider_instance_id,
+                "namespace": "default",
+            },
+            "supported": True,
         }
+
+    async def stream_logs(
+        self,
+        *,
+        instance: str,
+        namespace: str = "default",
+        tail_lines: int = 200,
+    ):
+        """Yield log lines from the instance's pod until the caller stops.
+
+        The client's follow stream blocks, so it is read on a thread and handed
+        back through a queue. Closing the response is what unblocks that read,
+        so the thread ends when the caller goes away rather than outliving it.
+        """
+        pod = await self._pod_name_for(instance, namespace)
+        if not pod:
+            raise RuntimeError(f"no pod found for {instance} in {namespace}")
+
+        response = await _run_sync(
+            self.core.read_namespaced_pod_log,
+            name=pod,
+            namespace=namespace,
+            follow=True,
+            tail_lines=tail_lines,
+            _preload_content=False,
+        )
+
+        loop = asyncio.get_running_loop()
+        lines: asyncio.Queue = asyncio.Queue(maxsize=2000)
+
+        def offer(line):
+            try:
+                lines.put_nowait(line)
+            except asyncio.QueueFull:
+                # A reader slower than the engine loses lines, not the stream.
+                pass
+
+        def pump():
+            try:
+                for chunk in response.stream():
+                    for line in chunk.decode("utf-8", "replace").splitlines():
+                        loop.call_soon_threadsafe(offer, line)
+            except Exception:
+                pass
+            finally:
+                loop.call_soon_threadsafe(offer, None)
+
+        worker = threading.Thread(
+            target=pump, name=f"k8s-logs-{pod}", daemon=True
+        )
+        worker.start()
+
+        try:
+            while True:
+                line = await lines.get()
+                if line is None:
+                    return
+                yield line
+        finally:
+            response.close()
+            response.release_conn()

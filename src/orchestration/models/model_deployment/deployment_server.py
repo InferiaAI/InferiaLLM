@@ -3975,7 +3975,7 @@ async def list_models(model_name: str | None = None):
 async def websocket_logs_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for log streaming.
-    Supported providers: skypilot
+    Supported providers: skypilot, k8s, nosana
     """
     await websocket.accept()
     logger.info("WebSocket connection accepted")
@@ -4048,6 +4048,51 @@ async def websocket_logs_endpoint(websocket: WebSocket):
 
             try:
                 # Wait for client to close or process to end
+                while True:
+                    try:
+                        await websocket.receive_text()
+                    except WebSocketDisconnect:
+                        break
+            finally:
+                stream_task.cancel()
+
+        elif provider == "k8s":
+            instance = data.get("instance")
+            namespace = data.get("namespace") or "default"
+
+            if not instance:
+                await websocket.send_json(
+                    {"type": "error", "message": "Missing instance"}
+                )
+                await websocket.close()
+                return
+
+            logger.info("Streaming logs for k8s instance %s", instance)
+
+            from orchestration.provisioning.engine.registry import get_adapter
+
+            adapter = get_adapter("k8s")
+
+            async def read_logs():
+                try:
+                    async for line in adapter.stream_logs(
+                        instance=instance, namespace=namespace
+                    ):
+                        await websocket.send_json({"type": "log", "data": line})
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error reading k8s logs: {e}")
+                    try:
+                        await websocket.send_json(
+                            {"type": "error", "message": str(e)}
+                        )
+                    except Exception:
+                        pass
+
+            stream_task = asyncio.create_task(read_logs())
+
+            try:
                 while True:
                     try:
                         await websocket.receive_text()
