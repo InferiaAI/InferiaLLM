@@ -16,6 +16,8 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
     const [error, setError] = useState<string | null>(null)
     const [autoScroll, setAutoScroll] = useState(true)
     const [logSource, setLogSource] = useState<"live" | "persisted" | null>(null)
+    const [streamNote, setStreamNote] = useState<string | null>(null)
+    const [prompt, setPrompt] = useState("node@runtime:~")
     const wsRef = useRef<WebSocket | null>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -86,9 +88,22 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
     const connect = async () => {
         setStatus("connecting")
         setError(null)
+        setStreamNote(null)
 
         try {
             const { data } = await computeApi.get(`/deployment/logs/${deploymentId}/stream`)
+
+            if (data.provider) {
+                setPrompt(`node@${data.provider}:~`)
+            }
+
+            // An adapter without live streaming says so rather than failing.
+            if (data.supported === false) {
+                setStreamNote(data.message || "Live streaming is not available for this provider.")
+                setStatus("disconnected")
+                await fetchPersistedLogs()
+                return
+            }
 
             if (data.error) {
                 throw new Error(data.error)
@@ -256,7 +271,7 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                         <Terminal className="w-4 h-4 text-zinc-400" />
-                        <span className="text-xs font-mono font-medium text-zinc-400">node@nosana-runtime:~</span>
+                        <span className="text-xs font-mono font-medium text-zinc-400">{prompt}</span>
                     </div>
                     {status === "connected" ? (
                         <div className="flex items-center gap-1.5 ml-2 transition-colors duration-500">
@@ -283,6 +298,9 @@ export default function TerminalLogs({ deploymentId }: TerminalLogsProps) {
                             <WifiOff className="w-3.5 h-3.5 text-red-500" />
                             <span className="text-[10px] font-mono text-red-500 uppercase tracking-widest font-bold">Stopped</span>
                         </div>
+                    )}
+                    {streamNote && (
+                        <span className="text-[10px] font-mono text-zinc-500 ml-2">{streamNote}</span>
                     )}
                 </div>
 
