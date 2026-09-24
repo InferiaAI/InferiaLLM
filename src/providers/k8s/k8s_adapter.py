@@ -931,6 +931,11 @@ class KubernetesAdapter(ProviderAdapter):
                 if not batch:
                     await asyncio.sleep(_LOG_POLL_SECONDS)
         finally:
-            # Closing the response is what unblocks a thread waiting on the
-            # next chunk; without it the reader outlives the caller.
-            _close_quietly(holder.get("response"))
+            # Closing unblocks a reader waiting on the next chunk, but it
+            # blocks on a socket that reader is inside, so it cannot run on
+            # the event loop: doing that deadlocks the whole service.
+            threading.Thread(
+                target=_close_quietly,
+                args=(holder.get("response"),),
+                daemon=True,
+            ).start()

@@ -8,6 +8,8 @@ pod fails rather than hanging.
 The kubernetes client is mocked; streaming from a live pod is integration
 territory and not reachable from CI.
 """
+import asyncio
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -105,8 +107,41 @@ async def test_closes_the_response_when_the_caller_stops():
     assert await stream.__anext__() == "a"
     await stream.aclose()
 
+    # Closed off the loop, so give the thread a moment to get there.
+    for _ in range(50):
+        if resp.close.called and resp.release_conn.called:
+            break
+        await asyncio.sleep(0.02)
+
     assert resp.close.called
     assert resp.release_conn.called
+
+
+@pytest.mark.asyncio
+async def test_closing_never_runs_on_the_event_loop():
+    """close() blocks on a socket the reader is inside. On the loop that
+    deadlocks the service, so it has to happen on a thread."""
+    a = _adapter()
+    a.core.list_namespaced_pod.return_value = _pods("inferia-worker-abc-0")
+
+    closing_threads = []
+    resp = _response(b"a\n", b"b\n")
+    resp.close.side_effect = lambda: closing_threads.append(
+        threading.current_thread().name
+    )
+    a.core.read_namespaced_pod_log.return_value = resp
+
+    stream = a.stream_logs(instance="inferia-worker-abc")
+    assert await stream.__anext__() == "a"
+    await stream.aclose()
+
+    for _ in range(50):
+        if closing_threads:
+            break
+        await asyncio.sleep(0.02)
+
+    assert closing_threads
+    assert "MainThread" not in closing_threads
 
 
 @pytest.mark.asyncio
