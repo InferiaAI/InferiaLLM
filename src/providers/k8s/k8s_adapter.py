@@ -10,7 +10,9 @@ from typing import List, Dict, Optional
 import asyncio
 import functools
 import os
+import queue
 import shlex
+import threading
 import uuid
 import logging
 import time
@@ -24,6 +26,20 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_SIZE = "50Gi"
 _MODEL_VOLUME_NAME = "models"
+
+_LOG_QUEUE_LIMIT = 2000
+_LOG_BATCH_LIMIT = 500
+_LOG_POLL_SECONDS = 0.1
+
+
+def _close_quietly(response) -> None:
+    if response is None:
+        return
+    for close in (response.close, response.release_conn):
+        try:
+            close()
+        except Exception:
+            pass
 
 _KEDA_GROUP = "keda.sh"
 _KEDA_VERSION = "v1alpha1"
@@ -827,16 +843,99 @@ class KubernetesAdapter(ProviderAdapter):
         provider_instance_id: str,
         provider_credential_name: Optional[str] = None,
     ) -> Dict:
-    # -----------------------------------------------------
+        """Point the dashboard at the control plane's log socket.
+
+        The instance is named rather than the pod: a StatefulSet replaces its
+        pod, so the name is resolved when the socket opens and again on a
+        reconnect. The /api prefix belongs to the dashboard's toWsUrl.
         """
-        Returns info for K8s log streaming.
-        TODO: Implement WebSocket streaming via K8s API.
-        """
-        # Standardize for future K8s WS logs
         return {
-            "ws_url": None,
+            "ws_url": "/v1/deployment/ws",
             "provider": "k8s",
-            "subscription": {"pod_name": provider_instance_id},
-            "supported": False,
-            "message": "Native K8s log streaming via WebSocket not yet implemented",
+            "subscription": {
+                "type": "subscribe_logs",
+                "provider": "k8s",
+                "instance": provider_instance_id,
+                "namespace": "default",
+            },
+            "supported": True,
         }
+
+    async def stream_logs(
+        self,
+        *,
+        instance: str,
+        namespace: str = "default",
+        tail_lines: int = 200,
+    ):
+        """Yield log lines from the instance's pod until the caller stops.
+
+        The client's follow stream blocks, so one dedicated thread opens it and
+        reads it, handing lines over through a queue the caller drains in
+        batches. Nothing here touches the shared executor or schedules work on
+        the event loop per line, so a stream cannot starve the rest of the
+        service however long it runs.
+        """
+        pod = await self._pod_name_for(instance, namespace)
+        if not pod:
+            raise RuntimeError(f"no pod found for {instance} in {namespace}")
+
+        lines: queue.Queue = queue.Queue(maxsize=_LOG_QUEUE_LIMIT)
+        ended = threading.Event()
+        holder: Dict = {}
+
+        def pump():
+            response = None
+            try:
+                # Not _run_sync: that shares asyncio's default executor with
+                # every other Kubernetes call, and a follow stream would hold
+                # one of those threads for its whole lifetime.
+                response = self.core.read_namespaced_pod_log(
+                    name=pod,
+                    namespace=namespace,
+                    follow=True,
+                    tail_lines=tail_lines,
+                    _preload_content=False,
+                )
+                holder["response"] = response
+                for chunk in response.stream():
+                    for line in chunk.decode("utf-8", "replace").splitlines():
+                        try:
+                            lines.put_nowait(line)
+                        except queue.Full:
+                            # A slow reader loses lines, not the stream.
+                            pass
+            except Exception:
+                pass
+            finally:
+                _close_quietly(response)
+                ended.set()
+
+        worker = threading.Thread(
+            target=pump, name=f"k8s-logs-{pod}", daemon=True
+        )
+        worker.start()
+
+        try:
+            while True:
+                batch = []
+                while len(batch) < _LOG_BATCH_LIMIT:
+                    try:
+                        batch.append(lines.get_nowait())
+                    except queue.Empty:
+                        break
+                for line in batch:
+                    yield line
+                if ended.is_set() and lines.empty():
+                    return
+                if not batch:
+                    await asyncio.sleep(_LOG_POLL_SECONDS)
+        finally:
+            # Closing unblocks a reader waiting on the next chunk, but it
+            # blocks on a socket that reader is inside, so it cannot run on
+            # the event loop: doing that deadlocks the whole service.
+            threading.Thread(
+                target=_close_quietly,
+                args=(holder.get("response"),),
+                daemon=True,
+            ).start()
