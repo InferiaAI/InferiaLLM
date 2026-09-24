@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from providers.k8s import k8s_adapter as k8s_adapter_module
 from providers.k8s.k8s_adapter import KubernetesAdapter
 
 
@@ -104,8 +105,30 @@ async def test_closes_the_response_when_the_caller_stops():
     assert await stream.__anext__() == "a"
     await stream.aclose()
 
-    resp.close.assert_called_once()
-    resp.release_conn.assert_called_once()
+    assert resp.close.called
+    assert resp.release_conn.called
+
+
+@pytest.mark.asyncio
+async def test_the_follow_stream_never_uses_the_shared_executor(monkeypatch):
+    """A follow stream on asyncio's default executor holds one of the threads
+    every other Kubernetes call needs, and starves the service."""
+    a = _adapter()
+    a.core.list_namespaced_pod.return_value = _pods("inferia-worker-abc-0")
+    a.core.read_namespaced_pod_log.return_value = _response(b"x\n")
+
+    dispatched = []
+    original = k8s_adapter_module._run_sync
+
+    async def recording(func, *args, **kwargs):
+        dispatched.append(getattr(func, "_mock_name", None) or repr(func))
+        return await original(func, *args, **kwargs)
+
+    monkeypatch.setattr(k8s_adapter_module, "_run_sync", recording)
+
+    [line async for line in a.stream_logs(instance="inferia-worker-abc")]
+
+    assert not any("read_namespaced_pod_log" in d for d in dispatched)
 
 
 @pytest.mark.asyncio

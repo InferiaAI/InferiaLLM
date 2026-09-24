@@ -10,6 +10,7 @@ from typing import List, Dict, Optional
 import asyncio
 import functools
 import os
+import queue
 import shlex
 import threading
 import uuid
@@ -25,6 +26,20 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_SIZE = "50Gi"
 _MODEL_VOLUME_NAME = "models"
+
+_LOG_QUEUE_LIMIT = 2000
+_LOG_BATCH_LIMIT = 500
+_LOG_POLL_SECONDS = 0.1
+
+
+def _close_quietly(response) -> None:
+    if response is None:
+        return
+    for close in (response.close, response.release_conn):
+        try:
+            close()
+        except Exception:
+            pass
 
 _KEDA_GROUP = "keda.sh"
 _KEDA_VERSION = "v1alpha1"
@@ -855,42 +870,46 @@ class KubernetesAdapter(ProviderAdapter):
     ):
         """Yield log lines from the instance's pod until the caller stops.
 
-        The client's follow stream blocks, so it is read on a thread and handed
-        back through a queue. Closing the response is what unblocks that read,
-        so the thread ends when the caller goes away rather than outliving it.
+        The client's follow stream blocks, so one dedicated thread opens it and
+        reads it, handing lines over through a queue the caller drains in
+        batches. Nothing here touches the shared executor or schedules work on
+        the event loop per line, so a stream cannot starve the rest of the
+        service however long it runs.
         """
         pod = await self._pod_name_for(instance, namespace)
         if not pod:
             raise RuntimeError(f"no pod found for {instance} in {namespace}")
 
-        response = await _run_sync(
-            self.core.read_namespaced_pod_log,
-            name=pod,
-            namespace=namespace,
-            follow=True,
-            tail_lines=tail_lines,
-            _preload_content=False,
-        )
-
-        loop = asyncio.get_running_loop()
-        lines: asyncio.Queue = asyncio.Queue(maxsize=2000)
-
-        def offer(line):
-            try:
-                lines.put_nowait(line)
-            except asyncio.QueueFull:
-                # A reader slower than the engine loses lines, not the stream.
-                pass
+        lines: queue.Queue = queue.Queue(maxsize=_LOG_QUEUE_LIMIT)
+        ended = threading.Event()
+        holder: Dict = {}
 
         def pump():
+            response = None
             try:
+                # Not _run_sync: that shares asyncio's default executor with
+                # every other Kubernetes call, and a follow stream would hold
+                # one of those threads for its whole lifetime.
+                response = self.core.read_namespaced_pod_log(
+                    name=pod,
+                    namespace=namespace,
+                    follow=True,
+                    tail_lines=tail_lines,
+                    _preload_content=False,
+                )
+                holder["response"] = response
                 for chunk in response.stream():
                     for line in chunk.decode("utf-8", "replace").splitlines():
-                        loop.call_soon_threadsafe(offer, line)
+                        try:
+                            lines.put_nowait(line)
+                        except queue.Full:
+                            # A slow reader loses lines, not the stream.
+                            pass
             except Exception:
                 pass
             finally:
-                loop.call_soon_threadsafe(offer, None)
+                _close_quietly(response)
+                ended.set()
 
         worker = threading.Thread(
             target=pump, name=f"k8s-logs-{pod}", daemon=True
@@ -899,10 +918,19 @@ class KubernetesAdapter(ProviderAdapter):
 
         try:
             while True:
-                line = await lines.get()
-                if line is None:
+                batch = []
+                while len(batch) < _LOG_BATCH_LIMIT:
+                    try:
+                        batch.append(lines.get_nowait())
+                    except queue.Empty:
+                        break
+                for line in batch:
+                    yield line
+                if ended.is_set() and lines.empty():
                     return
-                yield line
+                if not batch:
+                    await asyncio.sleep(_LOG_POLL_SECONDS)
         finally:
-            response.close()
-            response.release_conn()
+            # Closing the response is what unblocks a thread waiting on the
+            # next chunk; without it the reader outlives the caller.
+            _close_quietly(holder.get("response"))
