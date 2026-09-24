@@ -6,24 +6,10 @@ the right arguments, that lines are framed the way the dashboard expects, and
 that a subscription missing its instance is refused rather than hanging.
 """
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
-# Same version skew as test_admin_workers_ws_proxy.py: starlette 0.35.1 passes
-# ``app=`` to ``httpx.Client``, which httpx 0.28+ removed.
-import httpx as _httpx
-_orig_client_init = _httpx.Client.__init__
-
-
-def _patched_client_init(self, *args, **kwargs):
-    kwargs.pop("app", None)
-    return _orig_client_init(self, *args, **kwargs)
-
-
-_httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
-
-from fastapi.testclient import TestClient  # noqa: E402
-
-from orchestration.models.model_deployment import deployment_server  # noqa: E402
-from orchestration.provisioning.engine import registry  # noqa: E402
+from orchestration.models.model_deployment import deployment_server
+from orchestration.provisioning.engine import registry
 
 
 class FakeAdapter:
