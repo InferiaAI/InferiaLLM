@@ -226,16 +226,25 @@ async def list_models(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Without this the query below becomes `org_id IS NULL`, handing a key
+    # with no organization every orgless deployment. The management endpoint
+    # returns nothing in this case; match it.
+    if not key_record.org_id:
+        return ModelsListResponse(data=[])
+
     # Check cache after authentication (include org_id to avoid cross-org leaks)
     cache_key = (key_record.org_id, skip, limit)
     if cache_key in models_cache:
         return models_cache[cache_key]
 
-    # Get available models from database (real deployments) with pagination
-    # Only return models that are in a 'running' state (READY or RUNNING)
+    # Get this org's models from the database (real deployments) with
+    # pagination. Only return models in a 'running' state (READY or RUNNING).
     result = await db.execute(
         select(Deployment)
-        .where(Deployment.state.in_(["RUNNING", "READY", "ready"]))
+        .where(
+            (Deployment.org_id == key_record.org_id)
+            & (Deployment.state.in_(["RUNNING", "READY", "ready"]))
+        )
         .offset(skip)
         .limit(limit)
     )

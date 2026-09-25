@@ -147,3 +147,99 @@ class TestModelsList:
             with pytest.raises(HTTPException) as exc:
                 await list_models(mock_request, db=mock_db)
             assert exc.value.status_code == 401
+
+    @staticmethod
+    def _key(org_id):
+        record = MagicMock()
+        record.org_id = org_id
+        return record
+
+    @staticmethod
+    def _db_with_no_rows():
+        """A session whose execute() is awaited but whose result is not:
+        scalars() is sync, so it cannot be the AsyncMock default."""
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        db.execute.return_value = result
+        return db
+
+    @staticmethod
+    def _emitted_sql(mock_db):
+        """The SELECT the endpoint handed to the database, as text."""
+        statement = mock_db.execute.call_args.args[0]
+        return str(statement.compile(compile_kwargs={"literal_binds": True}))
+
+    @pytest.mark.asyncio
+    async def test_query_is_scoped_to_the_callers_org(self):
+        """The filter lives in SQL, so this asserts on the emitted statement.
+        Without it the endpoint returned every org's running deployments to
+        any valid API key."""
+        from api_gateway.gateway.router import list_models, models_cache
+
+        models_cache.clear()
+        mock_request = MagicMock()
+        mock_request.headers = {"Authorization": "Bearer sk-good"}
+
+        with patch("api_gateway.gateway.router.rate_limiter") as mock_rl, patch(
+            "api_gateway.gateway.router.policy_engine"
+        ) as mock_pe, patch(
+            "api_gateway.gateway.router.gateway_http_client"
+        ):
+            mock_rl.check_rate_limit = AsyncMock()
+            mock_pe.verify_api_key = AsyncMock(return_value=self._key("org-alpha"))
+            mock_db = self._db_with_no_rows()
+
+            await list_models(mock_request, skip=0, limit=50, db=mock_db)
+
+        sql = self._emitted_sql(mock_db)
+        assert "org_id" in sql
+        assert "org-alpha" in sql
+
+    @pytest.mark.asyncio
+    async def test_a_key_with_no_org_gets_nothing(self):
+        """Otherwise the query matches `org_id IS NULL` and returns every
+        orgless deployment."""
+        from api_gateway.gateway.router import list_models, models_cache
+
+        models_cache.clear()
+        mock_request = MagicMock()
+        mock_request.headers = {"Authorization": "Bearer sk-good"}
+
+        with patch("api_gateway.gateway.router.rate_limiter") as mock_rl, patch(
+            "api_gateway.gateway.router.policy_engine"
+        ) as mock_pe:
+            mock_rl.check_rate_limit = AsyncMock()
+            mock_pe.verify_api_key = AsyncMock(return_value=self._key(None))
+            mock_db = AsyncMock()
+
+            response = await list_models(mock_request, skip=0, limit=50, db=mock_db)
+
+        assert response.data == []
+        assert mock_db.execute.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_one_orgs_cached_response_is_not_served_to_another(self):
+        """The 30s cache is shared process-wide, so its key carries the org."""
+        from api_gateway.gateway.router import list_models, models_cache
+
+        models_cache.clear()
+        mock_request = MagicMock()
+        mock_request.headers = {"Authorization": "Bearer sk-good"}
+
+        with patch("api_gateway.gateway.router.rate_limiter") as mock_rl, patch(
+            "api_gateway.gateway.router.policy_engine"
+        ) as mock_pe, patch(
+            "api_gateway.gateway.router.gateway_http_client"
+        ):
+            mock_rl.check_rate_limit = AsyncMock()
+            mock_db = self._db_with_no_rows()
+
+            mock_pe.verify_api_key = AsyncMock(return_value=self._key("org-alpha"))
+            await list_models(mock_request, skip=0, limit=50, db=mock_db)
+
+            mock_pe.verify_api_key = AsyncMock(return_value=self._key("org-beta"))
+            await list_models(mock_request, skip=0, limit=50, db=mock_db)
+
+        assert mock_db.execute.await_count == 2
+        assert "org-beta" in self._emitted_sql(mock_db)
