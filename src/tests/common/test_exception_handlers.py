@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from httpx import AsyncClient, ASGITransport
+from pydantic import BaseModel
 
 from common.errors import (
     BadRequestError,
@@ -95,6 +96,64 @@ class TestValidationErrorHandler:
             body = resp.json()
             assert body["error"]["code"] == "VALIDATION_ERROR"
             assert "errors" in body["error"]["details"]
+
+    async def test_a_submitted_password_is_not_echoed_back(self):
+        """A login that fails validation used to return the whole body,
+        password and all, to anyone who could see the response."""
+        app = _build_app()
+
+        class Login(BaseModel):
+            username: str
+            password: str
+            totp: str
+
+        @app.post("/login")
+        async def login(body: Login):
+            return {"ok": True}
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post(
+                "/login",
+                json={"username": "admin", "password": "s3cret-pass"},
+            )
+            assert resp.status_code == 422
+            assert "s3cret-pass" not in resp.text
+
+    async def test_input_is_dropped_from_every_error(self):
+        app = _build_app()
+
+        @app.get("/validate-many")
+        async def validate_many(count: int, size: int):
+            return {"count": count, "size": size}
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/validate-many?count=nope&size=also-nope")
+            errors = resp.json()["error"]["details"]["errors"]
+            assert len(errors) == 2
+            assert all("input" not in e for e in errors)
+
+    async def test_the_client_can_still_tell_which_field_failed(self):
+        app = _build_app()
+
+        @app.get("/validate-loc")
+        async def validate_loc(count: int):
+            return {"count": count}
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/validate-loc?count=not-a-number")
+            error = resp.json()["error"]["details"]["errors"][0]
+            assert "count" in error["loc"]
+            assert error["msg"]
+            assert error["type"]
 
 
 @pytest.mark.asyncio
