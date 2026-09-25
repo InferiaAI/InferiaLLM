@@ -116,6 +116,36 @@ def test_no_spa_mount_without_dashboard_dir(monkeypatch, tmp_path):
     assert any("/v2/" in _route_path(r) for r in app.routes)
 
 
+def test_parent_routes_do_not_echo_the_submitted_value(monkeypatch, tmp_path):
+    """Routes on the parent get no handlers from the mounted sub-apps, so
+    without ours a validation error returns the request body in `input`."""
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.testclient import TestClient
+    from pydantic import BaseModel
+
+    # Built without the SPA mount: its "/" catch-all would shadow a route
+    # added here, since matching follows registration order.
+    monkeypatch.setenv("INFERIA_DASHBOARD_DIR", str(tmp_path / "does-not-exist"))
+
+    app = uw.build_unified_app()
+    assert RequestValidationError in app.exception_handlers
+
+    class Body(BaseModel):
+        username: str
+        password: str
+        totp: str
+
+    @app.post("/parent-route")
+    async def parent_route(body: Body):
+        return {"ok": True}
+
+    resp = TestClient(app).post(
+        "/parent-route", json={"username": "admin", "password": "s3cret-pass"}
+    )
+    assert resp.status_code == 422
+    assert "s3cret-pass" not in resp.text
+
+
 def test_auth_routes_at_root_before_spa(monkeypatch, tmp_path):
     """/auth/start + /auth/callback are ROOT routes (not Mounts, not under /api),
     registered before the SPA catch-all.

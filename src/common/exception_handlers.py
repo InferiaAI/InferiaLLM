@@ -19,6 +19,17 @@ async def api_error_handler(request: Request, exc: APIError):
         headers=exc.headers,
     )
 
+def errors_without_input(errors):
+    """Strip the `input` key from Pydantic validation errors.
+
+    Pydantic reports the value that failed under `input`, and for a body-level
+    error that value is the whole request body, password fields included.
+    """
+    return [
+        {key: value for key, value in error.items() if key != "input"}
+        for error in errors
+    ]
+
 async def validation_error_handler(request: Request, exc: RequestValidationError):
     """Handler for FastAPI/Pydantic validation errors."""
     error_response = {
@@ -27,7 +38,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         "error": {
             "code": "VALIDATION_ERROR",
             "message": "Validation failed for the request",
-            "details": {"errors": exc.errors()},
+            "details": {"errors": errors_without_input(exc.errors())},
         },
     }
     return JSONResponse(

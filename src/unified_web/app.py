@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from api_gateway.app import app as gateway_app
 from api_gateway.gateway.proxy_routes import ollama_registry_router
 from api_gateway.rbac.oauth_router import router as oauth_router
+from common.exception_handlers import register_exception_handlers
 from inference.app import app as inference_app
 from unified_web.spa import SPAStaticFiles
 
@@ -59,6 +60,11 @@ def build_unified_app() -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
+    # The routers below run on the parent, not on a mount, so they get no
+    # handlers from gateway_app or inference_app. Without this a validation
+    # error on a parent route falls through to FastAPI's default handler,
+    # which echoes the submitted value back in `input`.
+    register_exception_handlers(parent)
     # /v2/{path} at the ROOT — registered FIRST so the SPA catch-all can't shadow it.
     parent.include_router(ollama_registry_router)
     # /auth/start + /auth/callback at the ROOT. These are BROWSER redirect targets,

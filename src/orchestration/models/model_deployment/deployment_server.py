@@ -21,6 +21,7 @@ from orchestration.v1 import (
 )
 
 from common.service_ports import orchestration_grpc_addr, depin_sidecar_url
+from common.exception_handlers import errors_without_input
 
 from orchestration.repositories.provider_repo import (
     ProviderResourceRepository,
@@ -2691,7 +2692,7 @@ async def create_pool(req: CreatePoolRequest, request: Request):
         try:
             AWSPoolMetadata(**req.metadata)
         except _ValidationError as e:
-            raise HTTPException(status_code=422, detail={"errors": e.errors()})
+            raise HTTPException(status_code=422, detail={"errors": errors_without_input(e.errors())})
 
     # 2b. Require region_constraint for AWS pools. Since the account-wide AWS
     #     region was removed (Task 3), region MUST come from the pool. Accepting
@@ -3061,7 +3062,7 @@ async def update_pool_metadata(pool_id: str, req: UpdatePoolMetadataRequest, req
         except _ValidationError as e:
             if conn:
                 await conn.close()
-            raise HTTPException(status_code=422, detail={"errors": e.errors()})
+            raise HTTPException(status_code=422, detail={"errors": errors_without_input(e.errors())})
     elif provider != "aws" and req.metadata is not None:
         # Reject AWS-specific metadata keys sent to non-AWS pools to prevent
         # operator confusion (spec section "Failure modes").
