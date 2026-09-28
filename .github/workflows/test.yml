@@ -67,9 +67,7 @@ jobs:
             # Currently failing.
             --ignore=src/tests/api_gateway/test_app_startup_catalog.py
             --ignore=src/tests/api_gateway/test_config_modes.py
-            --ignore=src/tests/api_gateway/test_oauth_router.py
             --ignore=src/tests/api_gateway/test_oidc_role_mapping.py
-            --ignore=src/tests/api_gateway/test_rate_limiter_ttl.py
             --ignore=src/tests/cli/test_dashboard_config.py
             --ignore=src/tests/common/test_cli_providers.py
             --ignore=src/tests/common/test_cluster_naming.py

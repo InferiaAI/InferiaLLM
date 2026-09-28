@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 
-def _build_app(monkeypatch, *, auth_provider="external", base="https://auth.example.test",
+def _build_app(monkeypatch, *, auth_provider="oidc", base="https://auth.example.test",
                redirect_uri="https://app.example.test/auth/callback",
                client_id="inferiallm-dashboard") -> FastAPI:
     """Wire the oauth_router into a clean FastAPI app with patched settings."""
