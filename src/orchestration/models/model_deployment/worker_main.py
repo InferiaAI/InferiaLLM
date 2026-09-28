@@ -15,7 +15,6 @@ from orchestration.repositories.placement_repo import PlacementRepository
 from orchestration.repositories.scheduler_repo import SchedulerRepository
 from orchestration.repositories.inventory_repo import InventoryRepository
 from orchestration.repositories.quota_repo import QuotaRepository
-from orchestration.repositories.terminal_log_repo import TerminalLogRepository
 
 from orchestration.scheduling.scheduler import SchedulerService
 from orchestration.models.model_deployment.runtime_resolver import RuntimeResolver
@@ -155,7 +154,6 @@ async def main():
     placement_repo = PlacementRepository(db_pool)
     inventory_repo = InventoryRepository(db_pool)
     quota_repo = QuotaRepository(db_pool)
-    terminal_log_repo = TerminalLogRepository(db_pool)
     scheduler_repo = SchedulerRepository(db_pool, quota_repo=quota_repo)
 
     # ---------------- Services ----------------

@@ -2046,6 +2046,71 @@ def _build_terminate_deps(
     )
 
 
+_TERMINAL_LOG_TIMEOUT_SECONDS = 10
+# These rows go into the termination transaction, so the tail is capped.
+_TERMINAL_LOG_MAX_LINES = 500
+
+
+def _as_log_lines(logs_data) -> list:
+    """Adapters return either a list of strings or a list of dicts."""
+    lines = ((logs_data or {}).get("logs") or [])[-_TERMINAL_LOG_MAX_LINES:]
+    return [ln if isinstance(ln, str) else json.dumps(ln, default=str) for ln in lines]
+
+
+async def _capture_terminal_logs(db_pool, deploy_uuid) -> list:
+    """Read a deployment's engine logs from its provider.
+
+    Called before the engine is stopped, because once the pod or container is
+    gone the logs go with it. Best-effort throughout: a termination must never
+    fail because the logs could not be read.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT p.provider::text AS provider,
+                       p.provider_credential_name,
+                       d.node_ids,
+                       d.target_node_id
+                FROM model_deployments d
+                JOIN compute_pools p ON d.pool_id = p.id
+                WHERE d.deployment_id = $1
+                """,
+                deploy_uuid,
+            )
+            if not row or not row["provider"]:
+                return []
+            # node_ids is only set at RUNNING; fall back to the bound node.
+            node_ids = row["node_ids"] or []
+            node_id = node_ids[0] if node_ids else row["target_node_id"]
+            if node_id is None:
+                return []
+            instance_id = await conn.fetchval(
+                "SELECT provider_instance_id FROM compute_inventory WHERE id=$1",
+                node_id,
+            )
+        if not instance_id:
+            return []
+
+        adapter = get_adapter(row["provider"])
+        if not hasattr(adapter, "get_logs"):
+            return []
+        # The Kubernetes read is a blocking call on a shared thread with no
+        # timeout of its own.
+        return _as_log_lines(await asyncio.wait_for(
+            adapter.get_logs(
+                provider_instance_id=instance_id,
+                provider_credential_name=row["provider_credential_name"],
+            ),
+            timeout=_TERMINAL_LOG_TIMEOUT_SECONDS,
+        ))
+    except Exception:
+        logger.warning(
+            "terminal log capture failed for %s", deploy_uuid, exc_info=True,
+        )
+        return []
+
+
 async def terminate_deployment_core(deploy_uuid, *, deps) -> dict:
     """Refcount-aware deploy termination (shared by REST + gRPC delete paths).
 
@@ -2193,6 +2258,11 @@ async def terminate_deployment_core(deploy_uuid, *, deps) -> dict:
         return {"deployment_id": str(deploy_uuid), "status": "TERMINATED"}
 
     # DEPLOYING / RUNNING / CREATED
+
+    # Read the logs before unload_model stops the engine. Afterwards the pod
+    # is gone and so are they.
+    terminal_log_lines = await _capture_terminal_logs(db_pool, deploy_uuid)
+
     if target_node_id is not None and controller is not None:
         try:
             await controller.unload_model(
@@ -2218,6 +2288,16 @@ async def terminate_deployment_core(deploy_uuid, *, deps) -> dict:
                 new_state="TERMINATED", tx=conn,
             )
             if won:
+                if terminal_log_lines:
+                    from orchestration.repositories.terminal_log_repo import (
+                        TerminalLogRepository,
+                    )
+                    await TerminalLogRepository(db_pool).save(
+                        deployment_id=deploy_uuid,
+                        log_lines=terminal_log_lines,
+                        trigger_event="TERMINATED",
+                        tx=conn,
+                    )
                 await deploys.unbind(deploy_uuid, tx=conn)
                 if target_node_id is not None and gpu_per_replica > 0:
                     result = await inventory.release_gpu(
