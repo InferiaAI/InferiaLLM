@@ -8,8 +8,10 @@ class TerminalLogRepository(BaseRepository):
     """
     Repository for persisting deployment terminal logs.
 
-    Logs are captured when a deployment transitions to FAILED, STOPPED,
-    or TERMINATED so that they remain accessible after the live stream ends.
+    Logs are captured when a deployment is terminated, so that they remain
+    accessible after the pod carrying them is gone. FAILED and STOPPED do not
+    capture: STOPPED is set after cleanup has already removed the engine, and
+    most FAILED transitions happen during provisioning, before one exists.
     """
 
     async def save(
