@@ -1,7 +1,8 @@
+import codecs
 import json
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from cachetools import LRUCache
 
 logger = logging.getLogger(__name__)
@@ -18,10 +19,36 @@ class StreamProcessor:
     _encoder_cache: LRUCache = LRUCache(maxsize=128)
 
     @staticmethod
+    def _rewrite_model_line(line: str, model: str) -> str:
+        """Replace the `model` field of one SSE line with the requested name.
+
+        Anything that is not a JSON `data:` event is returned untouched, which
+        covers blank separators, comments and the `[DONE]` sentinel.
+        """
+        carriage = "\r" if line.endswith("\r") else ""
+        stripped = line.rstrip("\r")
+        if not stripped.startswith("data: "):
+            return line
+
+        payload = stripped[6:].strip()
+        if not payload or payload == "[DONE]":
+            return line
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            return line
+        if not isinstance(event, dict) or "model" not in event:
+            return line
+
+        event["model"] = model
+        return f"data: {json.dumps(event, separators=(',', ':'))}{carriage}"
+
+    @staticmethod
     async def process_stream(
         stream_generator: AsyncGenerator,
         start_time: float,
         usage_tracker: Dict[str, Any],
+        rewrite_model: Optional[str] = None,
     ) -> AsyncGenerator[bytes, None]:
         """
         Wraps a stream generator to track usage.
@@ -30,8 +57,38 @@ class StreamProcessor:
             stream_generator: The raw byte stream from upstream
             start_time: Request start time (for TTFT)
             usage_tracker: Dict to update with 'prompt_tokens', 'completion_tokens', 'ttft_ms'
+            rewrite_model: When set, every event's `model` is replaced with this
+                name. Clients address a deployment by name and some OpenAI
+                client libraries assert the response echoes back what they sent,
+                but upstream reports its own id. Rewriting forces the stream to
+                be re-framed into whole lines: upstream is read with
+                `aiter_raw`, so one `data:` line can arrive split across chunks
+                and a chunk cannot be rewritten on its own.
         """
         buffer = ""
+        pending = ""
+        # Incremental, so a multibyte character split across two chunks is held
+        # until its remaining bytes arrive. A plain bytes.decode(errors="ignore")
+        # per chunk silently drops the leading part and eats the character.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
+
+        def _framed(text: str, flush: bool = False) -> str:
+            """Whole rewritten lines, holding back any trailing fragment."""
+            nonlocal pending
+            pending += text
+            if flush:
+                out, pending = pending, ""
+                if not out:
+                    return ""
+                return StreamProcessor._rewrite_model_line(out, rewrite_model)
+            lines = pending.split("\n")
+            pending = lines.pop()
+            if not lines:
+                return ""
+            return "".join(
+                StreamProcessor._rewrite_model_line(ln, rewrite_model) + "\n"
+                for ln in lines
+            )
 
         try:
             async for chunk in stream_generator:
@@ -42,7 +99,18 @@ class StreamProcessor:
                 if has_content and usage_tracker.get("ttft_ms") is None:
                     usage_tracker["ttft_ms"] = int((time.time() - start_time) * 1000)
 
-                yield chunk
+                if rewrite_model is None:
+                    yield chunk
+                    continue
+
+                text = (
+                    decoder.decode(chunk)
+                    if isinstance(chunk, bytes)
+                    else str(chunk)
+                )
+                out = _framed(text)
+                if out:
+                    yield out.encode("utf-8")
 
             # Parse any trailing partial line.
             if buffer:
@@ -51,6 +119,11 @@ class StreamProcessor:
                 )
                 if has_content and usage_tracker.get("ttft_ms") is None:
                     usage_tracker["ttft_ms"] = int((time.time() - start_time) * 1000)
+
+            if rewrite_model is not None:
+                out = _framed(decoder.decode(b"", final=True), flush=True)
+                if out:
+                    yield out.encode("utf-8")
         except Exception as e:
             logger.error(f"Stream processing error: {e}")
             raise e

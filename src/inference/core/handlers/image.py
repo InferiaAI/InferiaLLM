@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from fastapi import BackgroundTasks, HTTPException
 
 from ..pipeline import Pipeline, RequestContext
+from ..worker_routing import echo_requested_model
 from ..request_logger import RequestLogger
 from ..service import GatewayService
 
@@ -128,7 +129,7 @@ class ImageHandler:
                 concurrency_key=ctx.concurrency_key,
             )
 
-            return response_data
+            return echo_requested_model(response_data, ctx.model)
         except HTTPException as e:
             status_code = e.status_code
             error_message = str(e.detail) if hasattr(e, "detail") else str(e)
