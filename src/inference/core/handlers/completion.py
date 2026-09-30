@@ -14,7 +14,12 @@ from fastapi.responses import StreamingResponse
 from inference.client import api_gateway_client
 from inference.config import settings
 from ..providers import resolve_upstream
-from ..worker_routing import envoy_route_headers, provider_auth, upstream_model
+from ..worker_routing import (
+    echo_requested_model,
+    envoy_route_headers,
+    provider_auth,
+    upstream_model,
+)
 from ..rate_limiter import rate_limiter
 from ..request_logger import RequestLogger
 from ..service import GatewayService
@@ -194,7 +199,7 @@ class CompletionHandler:
         )
 
         processed_stream = StreamProcessor.process_stream(
-            stream_gen, start_time, tracker
+            stream_gen, start_time, tracker, rewrite_model=model
         )
 
         async def logging_generator_wrapper():
@@ -288,7 +293,7 @@ class CompletionHandler:
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
 
-            return response_data
+            return echo_requested_model(response_data, model)
         except HTTPException as e:
             status_code = e.status_code
             error_message = str(e.detail) if hasattr(e, "detail") else str(e)

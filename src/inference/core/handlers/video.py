@@ -11,7 +11,7 @@ from inference.config import settings
 from ..http_client import http_client
 from ..pipeline import Pipeline, RequestContext
 from ..providers import get_adapter
-from ..worker_routing import envoy_route_headers, provider_auth
+from ..worker_routing import echo_requested_model, envoy_route_headers, provider_auth
 from ..request_logger import RequestLogger
 from ..service import GatewayService
 
@@ -142,7 +142,7 @@ class VideoHandler:
                 timeout=settings.upstream_video_timeout_seconds,
             )
 
-            return response_data
+            return echo_requested_model(response_data, ctx.model)
         except HTTPException as e:
             status_code = e.status_code
             error_message = str(e.detail) if hasattr(e, "detail") else str(e)

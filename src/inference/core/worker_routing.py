@@ -27,7 +27,12 @@ from .providers import is_external_engine
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["provider_auth", "upstream_model", "envoy_route_headers"]
+__all__ = [
+    "provider_auth",
+    "upstream_model",
+    "echo_requested_model",
+    "envoy_route_headers",
+]
 
 DEPLOYMENT_ID_HEADER = "X-Inferia-Deployment-Id"
 ROUTE_CLUSTER_HEADER = "X-Inferia-Route-Cluster"
@@ -70,6 +75,20 @@ def provider_auth(
     if not provider_key and not is_external_engine(engine):
         provider_key = internal_key
     return provider_key, {}
+
+
+def echo_requested_model(response_data: Any, requested: str) -> Any:
+    """Put the name the client sent back on an upstream response.
+
+    Clients address a deployment by name and the pipeline swaps in the real
+    upstream id before forwarding, so upstream answers with its own id. Some
+    OpenAI client libraries assert the response echoes what they sent.
+
+    A no-op for engines whose response carries no model field.
+    """
+    if isinstance(response_data, dict) and "model" in response_data:
+        response_data["model"] = requested
+    return response_data
 
 
 def upstream_model(deployment: Dict[str, Any]) -> Optional[str]:

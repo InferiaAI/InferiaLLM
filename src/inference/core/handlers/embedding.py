@@ -7,6 +7,7 @@ from typing import Dict, Optional
 from fastapi import BackgroundTasks, HTTPException
 
 from ..pipeline import Pipeline, RequestContext
+from ..worker_routing import echo_requested_model
 from ..request_logger import RequestLogger
 from ..service import GatewayService
 
@@ -64,7 +65,7 @@ class EmbeddingHandler:
             usage = response_data.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
 
-            return response_data
+            return echo_requested_model(response_data, ctx.model)
         except HTTPException as e:
             status_code = e.status_code
             error_message = str(e.detail) if hasattr(e, "detail") else str(e)
