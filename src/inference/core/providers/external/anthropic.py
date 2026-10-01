@@ -2,7 +2,8 @@
 Adapter for Anthropic Claude API.
 """
 
-from typing import Dict, Any, Optional
+import time
+from typing import Any, Dict, List, Optional
 
 from ..base import ProviderAdapter
 
@@ -12,6 +13,8 @@ class AnthropicAdapter(ProviderAdapter):
     Adapter for Anthropic Claude API.
     Transforms between OpenAI format and Anthropic's /v1/messages format.
     """
+
+    stream_is_openai_format = False
 
     def get_chat_path(self) -> str:
         return "/v1/messages"
@@ -98,6 +101,61 @@ class AnthropicAdapter(ProviderAdapter):
                 ),
             },
         }
+
+    def _chunk(
+        self,
+        state: Dict[str, Any],
+        delta: Dict[str, Any],
+        finish_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """One OpenAI chat.completion.chunk, built from what the stream has seen."""
+        return {
+            "id": state.get("id", ""),
+            "object": "chat.completion.chunk",
+            "created": state.setdefault("created", int(time.time())),
+            "model": state.get("model", ""),
+            "choices": [
+                {"index": 0, "delta": delta, "finish_reason": finish_reason}
+            ],
+        }
+
+    def transform_stream_event(
+        self, event: Dict[str, Any], state: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Translate one Anthropic SSE event into OpenAI chunks.
+
+        Anthropic opens with a message envelope, streams text as deltas on a
+        content block, and closes with a stop reason. OpenAI carries all of
+        that on one chunk shape, so several Anthropic event types have no
+        OpenAI equivalent and are dropped.
+        """
+        etype = event.get("type")
+
+        if etype == "message_start":
+            message = event.get("message") or {}
+            # Held for the rest of the stream: later events do not repeat them.
+            state["id"] = message.get("id", "")
+            state["model"] = message.get("model", "")
+            return [self._chunk(state, {"role": "assistant"})]
+
+        if etype == "content_block_delta":
+            delta = event.get("delta") or {}
+            if delta.get("type") == "text_delta":
+                text = delta.get("text", "")
+                if text:
+                    return [self._chunk(state, {"content": text})]
+            return []
+
+        if etype == "message_delta":
+            reason = (event.get("delta") or {}).get("stop_reason")
+            return [self._chunk(state, {}, self._map_stop_reason(reason))]
+
+        # ping, content_block_start, content_block_stop, message_stop.
+        return []
+
+    def finalize_stream(self, state: Dict[str, Any]) -> List[Any]:
+        """Anthropic never sends `[DONE]`, and an OpenAI client waits for it."""
+        return ["[DONE]"]
 
     def _map_stop_reason(self, anthropic_reason: Optional[str]) -> str:
         """Map Anthropic stop reasons to OpenAI finish_reason."""
