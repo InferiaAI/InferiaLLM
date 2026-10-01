@@ -19,15 +19,33 @@ class StreamProcessor:
     _encoder_cache: LRUCache = LRUCache(maxsize=128)
 
     @staticmethod
-    def _rewrite_model_line(line: str, model: str) -> str:
-        """Replace the `model` field of one SSE line with the requested name.
+    def _transform_line(
+        line: str,
+        model: Optional[str] = None,
+        adapter: Any = None,
+        state: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Rewrite one SSE line. None means drop it entirely.
 
         Anything that is not a JSON `data:` event is returned untouched, which
         covers blank separators, comments and the `[DONE]` sentinel.
+
+        An adapter may turn one event into none or several, so the result can
+        hold more than one `data:` event separated by a blank line, or nothing
+        at all when the provider sent something with no OpenAI equivalent.
         """
         carriage = "\r" if line.endswith("\r") else ""
         stripped = line.rstrip("\r")
         if not stripped.startswith("data: "):
+            # While translating, the output is a fresh OpenAI stream, so the
+            # provider's own SSE field lines (`event: message_start` and the
+            # like) must not reach the client. Blank lines stay: they separate
+            # events.
+            translating = adapter is not None and not getattr(
+                adapter, "stream_is_openai_format", True
+            )
+            if translating and stripped.strip():
+                return None
             return line
 
         payload = stripped[6:].strip()
@@ -37,11 +55,43 @@ class StreamProcessor:
             event = json.loads(payload)
         except json.JSONDecodeError:
             return line
-        if not isinstance(event, dict) or "model" not in event:
+        if not isinstance(event, dict):
             return line
 
-        event["model"] = model
-        return f"data: {json.dumps(event, separators=(',', ':'))}{carriage}"
+        events = [event]
+        if adapter is not None and not getattr(
+            adapter, "stream_is_openai_format", True
+        ):
+            try:
+                events = adapter.transform_stream_event(event, state) or []
+            except Exception:
+                # Drop it. Passing the provider's own event through would hand
+                # the client a chunk it cannot parse, mid-stream and silently;
+                # raising would throw away a response already half-read.
+                logger.warning("stream transform failed", exc_info=True)
+                events = []
+
+        if model is not None:
+            for ev in events:
+                if isinstance(ev, dict) and "model" in ev:
+                    ev["model"] = model
+
+        if not events:
+            return None
+        return "\n\n".join(
+            f"data: {json.dumps(ev, separators=(',', ':'))}{carriage}"
+            for ev in events
+        )
+
+    @staticmethod
+    def _sse(event: Any) -> bytes:
+        """One event as an SSE frame. A string is emitted verbatim, for `[DONE]`."""
+        body = (
+            event
+            if isinstance(event, str)
+            else json.dumps(event, separators=(",", ":"))
+        )
+        return f"data: {body}\n\n".encode("utf-8")
 
     @staticmethod
     async def process_stream(
@@ -49,6 +99,7 @@ class StreamProcessor:
         start_time: float,
         usage_tracker: Dict[str, Any],
         rewrite_model: Optional[str] = None,
+        adapter: Any = None,
     ) -> AsyncGenerator[bytes, None]:
         """
         Wraps a stream generator to track usage.
@@ -64,13 +115,27 @@ class StreamProcessor:
                 be re-framed into whole lines: upstream is read with
                 `aiter_raw`, so one `data:` line can arrive split across chunks
                 and a chunk cannot be rewritten on its own.
+            adapter: When set, each event is passed through the provider
+                adapter's `transform_stream_event` so the client receives
+                OpenAI-format chunks whatever the provider sent. Without this
+                a streaming request to a provider with its own SSE format
+                returns that format verbatim, while the same request
+                non-streaming is translated by `transform_response`.
         """
         buffer = ""
         pending = ""
+        # One per stream. Adapters are shared singletons, so a translator that
+        # needs to remember anything between events keeps it here.
+        stream_state: Dict[str, Any] = {}
         # Incremental, so a multibyte character split across two chunks is held
         # until its remaining bytes arrive. A plain bytes.decode(errors="ignore")
         # per chunk silently drops the leading part and eats the character.
         decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
+
+        def _one(line: str) -> Optional[str]:
+            return StreamProcessor._transform_line(
+                line, rewrite_model, adapter, stream_state
+            )
 
         def _framed(text: str, flush: bool = False) -> str:
             """Whole rewritten lines, holding back any trailing fragment."""
@@ -80,14 +145,16 @@ class StreamProcessor:
                 out, pending = pending, ""
                 if not out:
                     return ""
-                return StreamProcessor._rewrite_model_line(out, rewrite_model)
+                return _one(out) or ""
             lines = pending.split("\n")
             pending = lines.pop()
             if not lines:
                 return ""
+            # A dropped line takes its newline with it, or the stream fills
+            # with blank frames.
             return "".join(
-                StreamProcessor._rewrite_model_line(ln, rewrite_model) + "\n"
-                for ln in lines
+                done + "\n" for done in (_one(ln) for ln in lines)
+                if done is not None
             )
 
         try:
@@ -99,7 +166,7 @@ class StreamProcessor:
                 if has_content and usage_tracker.get("ttft_ms") is None:
                     usage_tracker["ttft_ms"] = int((time.time() - start_time) * 1000)
 
-                if rewrite_model is None:
+                if rewrite_model is None and adapter is None:
                     yield chunk
                     continue
 
@@ -120,10 +187,16 @@ class StreamProcessor:
                 if has_content and usage_tracker.get("ttft_ms") is None:
                     usage_tracker["ttft_ms"] = int((time.time() - start_time) * 1000)
 
-            if rewrite_model is not None:
+            if rewrite_model is not None or adapter is not None:
                 out = _framed(decoder.decode(b"", final=True), flush=True)
                 if out:
                     yield out.encode("utf-8")
+
+            if adapter is not None and not getattr(
+                adapter, "stream_is_openai_format", True
+            ):
+                for event in adapter.finalize_stream(stream_state):
+                    yield StreamProcessor._sse(event)
         except Exception as e:
             logger.error(f"Stream processing error: {e}")
             raise e

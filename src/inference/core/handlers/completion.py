@@ -131,6 +131,7 @@ class CompletionHandler:
                 provider_payload,
                 provider_headers,
                 engine,
+                adapter,
                 deployment_id,
                 user_context_id,
                 model,
@@ -166,6 +167,7 @@ class CompletionHandler:
         provider_payload,
         provider_headers,
         engine,
+        adapter,
         deployment_id,
         user_context_id,
         model,
@@ -199,7 +201,7 @@ class CompletionHandler:
         )
 
         processed_stream = StreamProcessor.process_stream(
-            stream_gen, start_time, tracker, rewrite_model=model
+            stream_gen, start_time, tracker, rewrite_model=model, adapter=adapter
         )
 
         async def logging_generator_wrapper():
