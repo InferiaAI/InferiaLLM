@@ -412,7 +412,7 @@ export default function Insights() {
             log.prompt_tokens,
             log.completion_tokens,
             log.total_tokens,
-            log.ttft_ms ?? log.latency_ms ?? "",
+            log.latency_ms ?? "",
             log.status_code,
         ]);
         const csvContent = [headers, ...rows].map((row) => row.join(",")).join("\n");
@@ -626,9 +626,15 @@ export default function Insights() {
                 />
                 <MetricCard
                     icon={Gauge}
-                    title={isEmbedding ? "Avg Latency" : "Avg Latency (TTFT)"}
+                    title="Avg Latency"
                     value={isInitialLoading ? "…" : `${formatNumber(summary?.latency_ms.avg || 0)} ms`}
-                    subtitle={`${formatNumber(summary?.throughput.requests_per_minute || 0)} req/min (active time)`}
+                    subtitle={
+                        // ttft_ms is guarded as well as summary: it is a new
+                        // field, so a response from an older backend has none.
+                        isEmbedding || !summary?.ttft_ms?.samples
+                            ? `${formatNumber(summary?.throughput.requests_per_minute || 0)} req/min (active time)`
+                            : `TTFT ${formatNumber(summary.ttft_ms.avg)} ms over ${formatNumber(summary.ttft_ms.samples, 0)} streamed`
+                    }
                 />
                 <MetricCard
                     icon={Zap}
@@ -745,9 +751,9 @@ export default function Insights() {
 
                     <ChartCard
                         title="Average Latency Trend"
-                        subtitle={isEmbedding ? "Average response latency over time" : "Average TTFT over time (fallback: total latency when TTFT missing)"}
+                        subtitle="Average total request latency over time"
                     >
-                        <ChartLegend items={[{ label: isEmbedding ? "Avg Latency (ms)" : "Avg Latency (TTFT, ms)", colorClass: "bg-sky-500" }]} />
+                        <ChartLegend items={[{ label: "Avg Latency (ms)", colorClass: "bg-sky-500" }]} />
                         <ResponsiveContainer width="100%" height={300}>
                             <LineChart data={chartData}>
                                 <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
@@ -761,7 +767,7 @@ export default function Insights() {
                                     stroke="#0ea5e9"
                                     strokeWidth={2}
                                     dot={false}
-                                    name={isEmbedding ? "Avg Latency (ms)" : "Avg Latency (TTFT, ms)"}
+                                    name="Avg Latency (ms)"
                                 />
                             </LineChart>
                         </ResponsiveContainer>
@@ -796,7 +802,7 @@ export default function Insights() {
                                         <th className="px-4 py-3 text-left font-medium">Bucket</th>
                                         <th className="px-4 py-3 text-left font-medium">Requests</th>
                                         <th className="px-4 py-3 text-left font-medium">Success %</th>
-                                        <th className="px-4 py-3 text-left font-medium">Avg Latency (TTFT)</th>
+                                        <th className="px-4 py-3 text-left font-medium">Avg Latency</th>
                                         <th className="px-4 py-3 text-left font-medium">Total Tokens</th>
                                     </tr>
                                 </thead>
@@ -851,7 +857,7 @@ export default function Insights() {
                                 <th className="px-4 py-3 text-left font-medium">Model</th>
                                 <th className="px-4 py-3 text-left font-medium">IP</th>
                                 <th className="px-4 py-3 text-left font-medium">{isEmbedding ? "Tokens" : "Tokens (In/Out)"}</th>
-                                <th className="px-4 py-3 text-left font-medium">{isEmbedding ? "Latency" : "Latency (TTFT)"}</th>
+                                <th className="px-4 py-3 text-left font-medium">Latency</th>
                                 <th className="px-4 py-3 text-left font-medium">Status</th>
                             </tr>
                         </thead>
@@ -873,11 +879,9 @@ export default function Insights() {
                                         }
                                     </td>
                                     <td className="px-4 py-3 font-mono text-xs">
-                                        {log.ttft_ms !== null && log.ttft_ms !== undefined
-                                            ? `${formatNumber(log.ttft_ms)} ms`
-                                            : log.latency_ms !== null && log.latency_ms !== undefined
-                                                ? `${formatNumber(log.latency_ms)} ms`
-                                                : "-"}
+                                        {log.latency_ms !== null && log.latency_ms !== undefined
+                                            ? `${formatNumber(log.latency_ms)} ms`
+                                            : "-"}
                                     </td>
                                     <td className="px-4 py-3">
                                         <span

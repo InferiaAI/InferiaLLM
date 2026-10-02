@@ -32,6 +32,9 @@ class InsightsTotals(BaseModel):
 
 class InsightsLatency(BaseModel):
     avg: float = 0.0
+    # Coverage of the average. Two streaming rows in a hundred otherwise
+    # look the same as a hundred out of a hundred.
+    samples: int = 0
 
 
 class InsightsThroughput(BaseModel):
@@ -43,6 +46,9 @@ class InsightsThroughput(BaseModel):
 class InsightsSummaryResponse(BaseModel):
     totals: InsightsTotals
     latency_ms: InsightsLatency
+    # Separate from latency: it is a fraction of a request's duration, not a
+    # kind of it, and only streaming requests have one.
+    ttft_ms: InsightsLatency = InsightsLatency()
     throughput: InsightsThroughput
 
 
@@ -55,6 +61,10 @@ class InsightsTimeseriesBucket(BaseModel):
     completion_tokens: int = 0
     total_tokens: int = 0
     avg_latency_ms: float = 0.0
+    # None when nothing streamed in this bucket. Zero would claim a first token
+    # arrived instantly, and anything summing these would dilute the average
+    # with every bucket that had no streaming traffic.
+    avg_ttft_ms: Optional[float] = None
 
 
 class InsightsTimeseriesResponse(BaseModel):
