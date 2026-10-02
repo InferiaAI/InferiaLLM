@@ -121,13 +121,24 @@ def _to_int(value: Any) -> int:
 
 
 def _latency_expr():
-    # Treat TTFT as latency for insights; fallback keeps non-streaming rows meaningful.
-    return func.coalesce(DBInferenceLog.ttft_ms, DBInferenceLog.latency_ms)
+    """Total request duration. Recorded for every request, streaming or not."""
+    return DBInferenceLog.latency_ms
+
+
+def _ttft_expr():
+    """Time to first token, which only a streaming request has.
+
+    Averaged over the rows that have one rather than filled in from latency.
+    TTFT is a fraction of a request's duration, so mixing the two produces a
+    number that moves with the streaming share of traffic instead of with
+    performance.
+    """
+    return DBInferenceLog.ttft_ms
 
 
 def _active_duration_expr():
-    # Throughput uses full request duration when available.
-    return func.coalesce(DBInferenceLog.latency_ms, DBInferenceLog.ttft_ms)
+    """Summed request duration, used for the throughput figures."""
+    return DBInferenceLog.latency_ms
 
 
 @router.get("/summary", response_model=InsightsSummaryResponse)
@@ -186,6 +197,12 @@ async def get_insights_summary(
             func.avg(_latency_expr())
             .filter(_latency_expr().isnot(None))
             .label("avg_latency_ms"),
+            func.avg(_ttft_expr())
+            .filter(_ttft_expr().isnot(None))
+            .label("avg_ttft_ms"),
+            # count() skips nulls, so this is the coverage of each average.
+            func.count(_latency_expr()).label("latency_samples"),
+            func.count(_ttft_expr()).label("ttft_samples"),
             func.coalesce(func.sum(_active_duration_expr()), 0).label(
                 "active_duration_ms"
             ),
@@ -208,6 +225,9 @@ async def get_insights_summary(
     completion_tokens = _to_int(summary.completion_tokens)
     total_tokens = _to_int(summary.total_tokens)
     avg_latency = _to_float(summary.avg_latency_ms)
+    avg_ttft = _to_float(getattr(summary, "avg_ttft_ms", 0.0))
+    latency_samples = _to_int(getattr(summary, "latency_samples", 0))
+    ttft_samples = _to_int(getattr(summary, "ttft_samples", 0))
     active_duration_ms = _to_float(getattr(summary, "active_duration_ms", 0.0))
     avg_tokens_per_second = _to_float(getattr(summary, "avg_tokens_per_second", 0.0))
 
@@ -230,7 +250,8 @@ async def get_insights_summary(
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
         ),
-        latency_ms=InsightsLatency(avg=avg_latency),
+        latency_ms=InsightsLatency(avg=avg_latency, samples=latency_samples),
+        ttft_ms=InsightsLatency(avg=avg_ttft, samples=ttft_samples),
         throughput=InsightsThroughput(
             requests_per_minute=requests_per_minute,
             tokens_per_second=tokens_per_second,
@@ -297,6 +318,9 @@ async def get_insights_timeseries(
             func.avg(_latency_expr())
             .filter(_latency_expr().isnot(None))
             .label("avg_latency_ms"),
+            func.avg(_ttft_expr())
+            .filter(_ttft_expr().isnot(None))
+            .label("avg_ttft_ms"),
             func.count(DBInferenceLog.id)
             .filter(success_condition)
             .label("successful_requests"),
@@ -329,6 +353,13 @@ async def get_insights_timeseries(
                 completion_tokens=_to_int(row.completion_tokens),
                 total_tokens=_to_int(row.total_tokens),
                 avg_latency_ms=_to_float(row.avg_latency_ms),
+                # Deliberately not _to_float: None here means nothing
+                # streamed in this bucket, which is not the same as 0 ms.
+                avg_ttft_ms=(
+                    float(row.avg_ttft_ms)
+                    if getattr(row, "avg_ttft_ms", None) is not None
+                    else None
+                ),
             )
         )
 

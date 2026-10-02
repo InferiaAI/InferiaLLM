@@ -26,6 +26,7 @@ export interface InsightsTotals {
 
 export interface InsightsLatency {
     avg: number;
+    samples: number;
 }
 
 export interface InsightsThroughput {
@@ -37,6 +38,7 @@ export interface InsightsThroughput {
 export interface InsightsSummaryResponse {
     totals: InsightsTotals;
     latency_ms: InsightsLatency;
+    ttft_ms: InsightsLatency;
     throughput: InsightsThroughput;
 }
 
@@ -49,6 +51,8 @@ export interface InsightsTimeseriesBucket {
     completion_tokens: number;
     total_tokens: number;
     avg_latency_ms: number;
+    /** null when nothing streamed in this bucket. */
+    avg_ttft_ms: number | null;
 }
 
 export interface InsightsTimeseriesResponse {
