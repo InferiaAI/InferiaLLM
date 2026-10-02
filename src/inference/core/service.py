@@ -2,7 +2,8 @@ from fastapi import HTTPException
 from inference.client import api_gateway_client
 from inference.config import settings
 from common.circuit_breaker import circuit_breaker_registry
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator, Optional
+import json
 import logging
 import httpx
 from .http_client import http_client
@@ -11,6 +12,22 @@ from .concurrency_limiter import upstream_concurrency_limiter
 from .validators import validate_upstream_url, sanitize_headers, check_response_size
 
 logger = logging.getLogger(__name__)
+
+
+def _upstream_error(
+    sink: Optional[Dict[str, Any]], status_code: int, message: str
+) -> bytes:
+    """One error frame for the client, and a record of it for the caller.
+
+    An upstream failure cannot be raised past the consumer without ending the
+    stream, so it is sent as data. That leaves the caller unable to see it, and
+    matching the frame's text would rot the moment someone rewords a message.
+    The sink carries it out of band instead.
+    """
+    if sink is not None:
+        sink["status_code"] = status_code
+        sink["message"] = message
+    return f"data: {json.dumps({'error': message})}\n\n".encode("utf-8")
 
 
 class GatewayService:
@@ -85,6 +102,7 @@ class GatewayService:
         headers: Dict,
         engine: str = "vllm",
         concurrency_key: str = "default",
+        error_sink: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[bytes, None]:
         adapter = get_adapter(engine)
         chat_path = adapter.get_chat_path()
@@ -99,7 +117,7 @@ class GatewayService:
             headers = sanitize_headers(headers)
         except ValueError as e:
             logger.error(f"Upstream validation failed: {e}")
-            yield b'data: {"error": "Invalid upstream configuration"}\n\n'
+            yield _upstream_error(error_sink, 500, "Invalid upstream configuration")
             return
 
         breaker = circuit_breaker_registry.get_or_create(
@@ -110,7 +128,11 @@ class GatewayService:
         )
 
         if not await breaker._can_execute():
-            yield b'data: {"error": "Upstream temporarily unavailable (circuit breaker open)"}\n\n'
+            yield _upstream_error(
+                error_sink,
+                503,
+                "Upstream temporarily unavailable (circuit breaker open)",
+            )
             return
 
         max_bytes = settings.upstream_max_response_bytes
@@ -131,7 +153,9 @@ class GatewayService:
                 async for chunk in response.aiter_raw():
                     total_bytes += len(chunk)
                     if total_bytes > max_bytes:
-                        yield b'data: {"error": "Upstream response exceeded size limit"}\n\n'
+                        yield _upstream_error(
+                            error_sink, 502, "Upstream response exceeded size limit"
+                        )
                         return
                     yield chunk
             finally:
@@ -139,11 +163,13 @@ class GatewayService:
         except httpx.HTTPStatusError as e:
             await breaker._record_failure()
             logger.error(f"Upstream Error {e.response.status_code}: {e.response.text}")
-            yield b'data: {"error": "Upstream provider returned an error"}\n\n'
+            yield _upstream_error(
+                error_sink, 502, "Upstream provider returned an error"
+            )
         except Exception as e:
             await breaker._record_failure()
             logger.error(f"Streaming Exception: {e}")
-            yield b'data: {"error": "Streaming connection failed"}\n\n'
+            yield _upstream_error(error_sink, 502, "Streaming connection failed")
 
     @staticmethod
     async def call_upstream(

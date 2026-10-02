@@ -192,12 +192,14 @@ class CompletionHandler:
             "_tokenizer_model": tokenizer_model,
         }
 
+        upstream_error: Dict = {}
         stream_gen = GatewayService.stream_upstream(
             endpoint_url,
             provider_payload,
             provider_headers,
             engine,
             concurrency_key=concurrency_key,
+            error_sink=upstream_error,
         )
 
         processed_stream = StreamProcessor.process_stream(
@@ -209,9 +211,6 @@ class CompletionHandler:
             error_message = None
             try:
                 async for chunk in processed_stream:
-                    if b'"error":' in chunk and b"Upstream Error" in chunk:
-                        status_code = 502
-                        error_message = chunk.decode("utf-8", errors="ignore")
                     yield chunk
             except HTTPException as e:
                 status_code = e.status_code
@@ -222,6 +221,10 @@ class CompletionHandler:
                 error_message = str(e)
                 raise
             finally:
+                # An upstream failure never raises, so nothing above sees it.
+                if status_code == 200 and upstream_error:
+                    status_code = upstream_error.get("status_code", 502)
+                    error_message = upstream_error.get("message")
                 try:
                     task = asyncio.create_task(
                         RequestLogger.log(
