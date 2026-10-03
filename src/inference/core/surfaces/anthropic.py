@@ -94,6 +94,11 @@ def request_to_openai(body: Dict[str, Any]) -> Dict[str, Any]:
     if body.get("stop_sequences"):
         openai_body["stop"] = body["stop_sequences"]
 
+    # Without this, upstream sends no usage and output_tokens falls back to
+    # counting deltas, which is short by every chunk that carries no text.
+    if openai_body.get("stream"):
+        openai_body["stream_options"] = {"include_usage": True}
+
     return openai_body
 
 
@@ -141,6 +146,7 @@ class StreamTranslator:
         self._opened = False
         self._stop_reason = "end_turn"
         self._deltas = 0
+        self._usage: Dict[str, Any] = {}
 
     @staticmethod
     def _sse(event_type: str, data: Dict[str, Any]) -> bytes:
@@ -179,6 +185,12 @@ class StreamTranslator:
         if self._model == "" and chunk.get("model"):
             self._model = chunk["model"]
 
+        # The usage chunk carries no choices, so it has to be read before the
+        # empty-text return below, which it would otherwise fall through.
+        usage = chunk.get("usage")
+        if isinstance(usage, dict) and usage:
+            self._usage = usage
+
         choices = chunk.get("choices") or []
         choice = choices[0] if choices and isinstance(choices[0], dict) else {}
         delta = choice.get("delta") or {}
@@ -202,6 +214,20 @@ class StreamTranslator:
         }))
         return out
 
+    def _output_tokens(self) -> int:
+        """What upstream counted, or the delta count when it counted nothing.
+
+        Counting deltas undercounts. The chunk carrying the role, the chunk
+        carrying finish_reason and the stop token all arrive with no text, so
+        none of them becomes a delta: measured against vLLM, 83 deltas for 86
+        generated tokens. This number is what quota and billing read, so it
+        comes from upstream wherever upstream reports it.
+        """
+        counted = self._usage.get("completion_tokens")
+        if isinstance(counted, int) and counted >= 0:
+            return counted
+        return self._deltas
+
     def finish(self) -> List[bytes]:
         """Close the envelope. Emitted whether or not any text arrived."""
         out: List[bytes] = []
@@ -213,11 +239,7 @@ class StreamTranslator:
         out.append(self._sse("message_delta", {
             "type": "message_delta",
             "delta": {"stop_reason": self._stop_reason, "stop_sequence": None},
-            # Deltas, not tokens. Upstream only reports an exact count when
-            # `stream_options.include_usage` is requested, which the surface
-            # does not control. One delta is one token on vLLM and an
-            # approximation anywhere that batches.
-            "usage": {"output_tokens": self._deltas},
+            "usage": {"output_tokens": self._output_tokens()},
         }))
         out.append(self._sse("message_stop", {"type": "message_stop"}))
         return out

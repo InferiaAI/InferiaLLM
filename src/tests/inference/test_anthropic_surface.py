@@ -194,6 +194,83 @@ class TestStreamOut:
             assert text.endswith("\n\n")
 
 
+class TestStreamUsage:
+    """`output_tokens` is what quota reads, so it has to be upstream's number."""
+
+    def _chunk(self, content=None, finish=None):
+        return {
+            "model": "m",
+            "choices": [{
+                "index": 0,
+                "delta": {"content": content} if content else {},
+                "finish_reason": finish,
+            }],
+        }
+
+    def _usage_chunk(self, prompt, completion):
+        """What upstream sends last when include_usage is on: no choices."""
+        return {
+            "model": "m",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": prompt + completion,
+            },
+        }
+
+    def _message_delta(self, chunks):
+        t = surface.StreamTranslator(model="m")
+        frames = []
+        for c in chunks:
+            frames.extend(t.chunk(c))
+        frames.extend(t.finish())
+        return next(b for e, b in _events(frames) if e == "message_delta")
+
+    def test_a_streaming_request_asks_upstream_to_count(self):
+        body = surface.request_to_openai({
+            "model": "m", "stream": True,
+            "messages": [{"role": "user", "content": "hi"}],
+        })
+        assert body["stream_options"] == {"include_usage": True}
+
+    def test_a_non_streaming_request_does_not(self):
+        body = surface.request_to_openai({
+            "model": "m", "messages": [{"role": "user", "content": "hi"}],
+        })
+        assert "stream_options" not in body
+
+    def test_output_tokens_are_upstreams_not_the_delta_count(self):
+        """Three deltas, upstream says six. Six is the answer.
+
+        The gap is real: the role chunk, the finish_reason chunk and the stop
+        token carry no text, so none of them is a delta.
+        """
+        delta = self._message_delta([
+            self._chunk("a"), self._chunk("b"), self._chunk("c"),
+            self._chunk(finish="stop"),
+            self._usage_chunk(10, 6),
+        ])
+        assert delta["usage"]["output_tokens"] == 6
+
+    def test_the_delta_count_is_only_a_fallback(self):
+        """An engine that reports nothing still gets an approximate number."""
+        delta = self._message_delta([self._chunk("a"), self._chunk("b")])
+        assert delta["usage"]["output_tokens"] == 2
+
+    def test_the_usage_chunk_emits_no_text(self):
+        """It carries no choices, so it must not open a block or add a delta."""
+        t = surface.StreamTranslator(model="m")
+        assert t.chunk(self._usage_chunk(10, 6)) == []
+
+    def test_a_zero_count_from_upstream_is_still_upstreams(self):
+        """Falling back on 0 would report deltas for an engine that said zero."""
+        delta = self._message_delta([
+            self._chunk("a"), self._usage_chunk(10, 0),
+        ])
+        assert delta["usage"]["output_tokens"] == 0
+
+
 class TestEventParsing:
 
     def test_done_is_reported_as_none(self):
