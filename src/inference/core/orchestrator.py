@@ -8,7 +8,13 @@ app.py and existing consumers require zero changes.
 import logging
 
 from inference.client import api_gateway_client
-from .handlers import CompletionHandler, EmbeddingHandler, ImageHandler, VideoHandler
+from .handlers import (
+    CompletionHandler,
+    EmbeddingHandler,
+    ImageHandler,
+    MessagesHandler,
+    VideoHandler,
+)
 
 # Re-export dependencies that tests patch via this module's namespace.
 from .service import GatewayService  # noqa: F401
@@ -33,6 +39,9 @@ class OrchestrationService:
 
     # --- Chat Completion ---
     handle_completion = CompletionHandler.handle
+
+    # --- Anthropic Messages surface ---
+    handle_messages = MessagesHandler.handle
 
     # --- Embeddings ---
     handle_embeddings = EmbeddingHandler.handle

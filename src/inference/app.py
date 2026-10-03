@@ -232,6 +232,38 @@ async def create_completion(
     )
 
 
+@app.post("/v1/messages")
+async def create_message(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+    x_api_key: str = Header(None, alias="x-api-key"),
+    sandbox: str = Header(None, alias="x-sandbox"),
+):
+    """
+    Anthropic Messages API surface.
+    Translates in, runs the ordinary completion path, translates out.
+    """
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    # Anthropic clients send the key as x-api-key rather than a bearer token.
+    # Sandbox still goes through extract_api_key, which verifies the JWT in the
+    # bearer header; x-api-key must not be a way around that.
+    if is_sandbox:
+        api_key = extract_api_key(authorization, True)
+    else:
+        api_key = x_api_key or extract_api_key(authorization, False)
+    body = await parse_json_body(request)
+    client_ip = extract_client_ip(request)
+
+    return await OrchestrationService.handle_messages(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=client_ip,
+        sandbox=is_sandbox,
+    )
+
+
 @app.post("/v1/embeddings")
 async def create_embeddings(
     request: Request,
