@@ -357,6 +357,59 @@ class PolicyEngine:
         # Placeholder for complex policy logic
         return True
 
+    async def _resolve_org_id(self, db: AsyncSession, user_id: str):
+        """The organisation an API key belongs to, or None.
+
+        Cached, because the quota check and the usage increment both need it
+        and they arrive as separate requests.
+        """
+        if not user_id.startswith("apikey:"):
+            return None
+        try:
+            api_key_id = user_id.split(":")[1]
+        except (ValueError, IndexError):
+            return None
+        if not api_key_id:
+            return None
+
+        async with self._cache_lock:
+            cached = self.org_id_cache.get(api_key_id)
+        if cached is not None:
+            return cached
+
+        stmt = select(DBApiKey.org_id).where(DBApiKey.id == api_key_id)
+        result = await db.execute(stmt)
+        org_id = result.scalars().first()
+        if org_id:
+            async with self._cache_lock:
+                self.org_id_cache[api_key_id] = org_id
+        return org_id
+
+    @staticmethod
+    def _quota_keys(scope: str, today_str: str, model: str) -> tuple:
+        """The pair of daily counter keys for one quota scope.
+
+        Built in one place because the check and the increment have to agree:
+        a limit counted against a different key than it is enforced on is not
+        a limit. The scope is the organisation, since that is what the quota
+        policy is attached to — counting per API key let an org multiply its
+        own limit by the number of keys it had issued.
+        """
+        return (
+            f"usage:{scope}:{today_str}:{model}:requests",
+            f"usage:{scope}:{today_str}:{model}:tokens",
+        )
+
+    async def _quota_scope(self, db: AsyncSession, user_id: str) -> str:
+        """What the daily counters are counted against.
+
+        The organisation where there is one. Anything else — a sandbox token,
+        a malformed key — falls back to the caller's own identity, which is
+        narrower than the org and so cannot overspend someone else's quota.
+        """
+        org_id = await self._resolve_org_id(db, user_id)
+        return f"org:{org_id}" if org_id else user_id
+
     async def check_quota(
         self, db: AsyncSession, user_id: str, model: str = "default"
     ) -> None:
@@ -366,36 +419,14 @@ class PolicyEngine:
         """
         today_str = date.today().isoformat()
 
-        # Redis Keys
-        req_key = f"usage:{user_id}:{today_str}:{model}:requests"
-        tok_key = f"usage:{user_id}:{today_str}:{model}:tokens"
-
         # Initialize limits with defaults
         limit_requests = DEFAULT_DAILY_REQUEST_LIMIT
         limit_tokens = DEFAULT_DAILY_TOKEN_LIMIT
 
-        # Resolve Org ID for Policy Lookup (Optimized: only if needed to overwrite defaults)
-        # Note: We still access DB here for Policy Config, which is cacheable or less frequent than Usage write.
-        # Ideally Policy Config should also be part of the cached context passed in, but signature is fixed for now.
-
-        # 1. Extract API Key ID from user_id and find Org ID
-        org_id = None
-        if user_id.startswith("apikey:"):
-            try:
-                api_key_id = user_id.split(":")[1]
-                async with self._cache_lock:
-                    cached_org = self.org_id_cache.get(api_key_id)
-                if cached_org is not None:
-                    org_id = cached_org
-                else:
-                    stmt = select(DBApiKey.org_id).where(DBApiKey.id == api_key_id)
-                    result = await db.execute(stmt)
-                    org_id = result.scalars().first()
-                    if org_id:
-                        async with self._cache_lock:
-                            self.org_id_cache[api_key_id] = org_id
-            except (ValueError, IndexError):
-                pass
+        # 1. The org owns both the limit and the counters it is enforced on.
+        org_id = await self._resolve_org_id(db, user_id)
+        scope = f"org:{org_id}" if org_id else user_id
+        req_key, tok_key = self._quota_keys(scope, today_str, model)
 
         # 2. If Org ID found, fetch quota policy
         if org_id:
@@ -471,20 +502,29 @@ class PolicyEngine:
         Increment user's quota usage in Redis (Primary) and Async Postgres (Secondary).
         """
         # 1. Redis Increment (Atomic & Immediate)
-        await self.increment_redis_only(user_id, model, usage_data)
+        await self.increment_redis_only(db, user_id, model, usage_data)
 
         # 2. Postgres Persistence (Ideally backgrounded, but keeping signature for now)
         await self.persist_usage_db(db, user_id, model, usage_data)
 
     async def increment_redis_only(
-        self, user_id: str, model: str, usage_data: Dict[str, int]
+        self,
+        db: AsyncSession,
+        user_id: str,
+        model: str,
+        usage_data: Dict[str, int],
     ) -> None:
-        """Increment usage in Redis for real-time quota checks with circuit breaker."""
+        """Increment usage in Redis for real-time quota checks with circuit breaker.
+
+        Takes a session because the counters are keyed by organisation, and the
+        caller only knows the API key. `check_quota` resolves the same thing on
+        the read side; the two must agree or the limit does not bind.
+        """
         today_str = date.today().isoformat()
         total_incr = usage_data.get("total_tokens", 0)
 
-        req_key = f"usage:{user_id}:{today_str}:{model}:requests"
-        tok_key = f"usage:{user_id}:{today_str}:{model}:tokens"
+        scope = await self._quota_scope(db, user_id)
+        req_key, tok_key = self._quota_keys(scope, today_str, model)
 
         try:
             await self._increment_redis_with_breaker(req_key, tok_key, total_incr)

@@ -134,7 +134,7 @@ class TestPolicyEngineErrors:
 
         # Should NOT raise
         await engine.increment_redis_only(
-            "user-1", "model", {"total_tokens": 100}
+            AsyncMock(), "user-1", "model", {"total_tokens": 100}
         )
 
     @pytest.mark.asyncio
