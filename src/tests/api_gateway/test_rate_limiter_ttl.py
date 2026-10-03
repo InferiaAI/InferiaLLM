@@ -48,9 +48,15 @@ class TestInMemoryRateLimiterTTLCache:
     @pytest.mark.asyncio
     async def test_rate_limit_exhaustion(self):
         limiter = InMemoryRateLimiter()
-        # Exhaust all tokens
+        # The defaults refill 166 tokens a second, which is faster than the
+        # loop below drains 1000 of them, so the bucket never empties. Both
+        # are set here to measure exhaustion rather than loop speed.
+        limiter.burst_size = 5
+        limiter.requests_per_minute = 0
+
         for _ in range(limiter.burst_size):
             allowed, _ = await limiter.is_allowed("user:exhaust")
+            assert allowed is True
         # Next request should be denied
         allowed, metadata = await limiter.is_allowed("user:exhaust")
         assert allowed is False
