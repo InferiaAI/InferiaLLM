@@ -99,7 +99,7 @@ async def track_user_usage(
     """
     # 1. Immediate Redis update for quota enforcement
     await policy_engine.increment_redis_only(
-        request.user_id, request.model, request.usage
+        db, request.user_id, request.model, request.usage
     )
 
     # 2. Background DB persistence
