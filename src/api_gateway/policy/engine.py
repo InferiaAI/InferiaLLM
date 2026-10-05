@@ -234,15 +234,18 @@ class PolicyEngine:
             DBOrganization, DBDeployment.org_id == DBOrganization.id
         )
 
-        if auth_key_record.deployment_id:
+        key_is_bound = bool(auth_key_record.deployment_id)
+        if key_is_bound:
             stmt = stmt.where(DBDeployment.id == auth_key_record.deployment_id)
         else:
-            # Org scoped lookup with model_type filter
+            # Three columns because three fields hold names a user might send.
+            # `inference_model` is the model id, which is what the dashboard shows.
             stmt = stmt.where(
                 (DBDeployment.org_id == auth_key_record.org_id)
                 & (
                     (DBDeployment.model_name == model)
                     | (DBDeployment.llmd_resource_name == model)
+                    | (DBDeployment.inference_model == model)
                 )
                 & (DBDeployment.model_type == model_type)
             )
@@ -251,10 +254,16 @@ class PolicyEngine:
         row = result.first()
 
         if not row:
-            return {
-                "valid": False,
-                "error": "Deployment or Organization not found for model/key combination",
-            }
+            # The two branches above fail for unrelated reasons, and one message
+            # for both sends the reader looking in the wrong place.
+            if key_is_bound:
+                error = "This API key is bound to a deployment that no longer exists"
+            else:
+                error = (
+                    f"No deployment for model '{model}' of type '{model_type}' "
+                    "in this organization"
+                )
+            return {"valid": False, "error": error}
 
         deployment, organization = row
 
