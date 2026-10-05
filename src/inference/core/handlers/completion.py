@@ -192,6 +192,15 @@ class CompletionHandler:
             "_tokenizer_model": tokenizer_model,
         }
 
+        # Without this the counts are an estimate over the message text, which
+        # misses the chat template. Quota reads these numbers.
+        asked_for_usage = False
+        if provider_payload.get("stream") and not provider_payload.get(
+            "stream_options"
+        ):
+            provider_payload["stream_options"] = {"include_usage": True}
+            asked_for_usage = True
+
         upstream_error: Dict = {}
         stream_gen = GatewayService.stream_upstream(
             endpoint_url,
@@ -203,7 +212,12 @@ class CompletionHandler:
         )
 
         processed_stream = StreamProcessor.process_stream(
-            stream_gen, start_time, tracker, rewrite_model=model, adapter=adapter
+            stream_gen,
+            start_time,
+            tracker,
+            rewrite_model=model,
+            adapter=adapter,
+            drop_usage_chunk=asked_for_usage,
         )
 
         async def logging_generator_wrapper():

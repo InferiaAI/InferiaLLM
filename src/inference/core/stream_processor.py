@@ -24,6 +24,7 @@ class StreamProcessor:
         model: Optional[str] = None,
         adapter: Any = None,
         state: Optional[Dict[str, Any]] = None,
+        drop_usage_only: bool = False,
     ) -> Optional[str]:
         """Rewrite one SSE line. None means drop it entirely.
 
@@ -57,6 +58,11 @@ class StreamProcessor:
             return line
         if not isinstance(event, dict):
             return line
+
+        # `_parse_usage` has already taken the numbers from the raw chunk, so
+        # this drops nothing. The client never asked for the frame.
+        if drop_usage_only and event.get("usage") and not event.get("choices"):
+            return None
 
         events = [event]
         if adapter is not None and not getattr(
@@ -100,6 +106,7 @@ class StreamProcessor:
         usage_tracker: Dict[str, Any],
         rewrite_model: Optional[str] = None,
         adapter: Any = None,
+        drop_usage_chunk: bool = False,
     ) -> AsyncGenerator[bytes, None]:
         """
         Wraps a stream generator to track usage.
@@ -121,6 +128,10 @@ class StreamProcessor:
                 a streaming request to a provider with its own SSE format
                 returns that format verbatim, while the same request
                 non-streaming is translated by `transform_response`.
+            drop_usage_chunk: Set when the caller added
+                `stream_options.include_usage` itself. The usage the flag
+                produces is still recorded, but the chunk carrying it is not
+                forwarded, because the client did not ask for it.
         """
         buffer = ""
         pending = ""
@@ -134,7 +145,7 @@ class StreamProcessor:
 
         def _one(line: str) -> Optional[str]:
             return StreamProcessor._transform_line(
-                line, rewrite_model, adapter, stream_state
+                line, rewrite_model, adapter, stream_state, drop_usage_chunk
             )
 
         def _framed(text: str, flush: bool = False) -> str:
