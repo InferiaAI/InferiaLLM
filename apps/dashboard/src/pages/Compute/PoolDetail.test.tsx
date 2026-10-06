@@ -24,6 +24,17 @@ vi.mock("@/services/nodeService", () => ({
   deleteNode: vi.fn(),
 }));
 
+vi.mock("@/services/workerService", () => ({
+  listWorkers: vi.fn(),
+  revokeWorker: vi.fn(),
+}));
+
+vi.mock("@/components/workers/AddWorkerModal", () => ({
+  default: ({ poolId }: { poolId: string }) => (
+    <div data-testid="add-worker-modal">{poolId}</div>
+  ),
+}));
+
 vi.mock("@/lib/api", () => ({
   computeApi: {
     get: vi.fn(),
@@ -144,6 +155,10 @@ describe("PoolDetail", () => {
     (nodeService.deleteNode as ReturnType<typeof vi.fn>).mockResolvedValue({
       terminating: false,
     });
+
+    const workerService = await import("@/services/workerService");
+    (workerService.listWorkers as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workerService.revokeWorker as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     const api = await import("@/lib/api");
     (api.computeApi.get as ReturnType<typeof vi.fn>).mockResolvedValue({ data: { deployments: [] } });
@@ -417,5 +432,173 @@ describe("PoolDetail", () => {
     // give the initial fetch a tick to settle
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(toast.error).not.toHaveBeenCalledWith("Failed to load nodes");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workers tab
+// ---------------------------------------------------------------------------
+
+const WORKER_POOL = { ...MOCK_POOL, provider: "on_prem", provider_pool_id: "worker:test-pool" };
+
+const MOCK_WORKER: import("@/services/workerService").WorkerView = {
+  node_id: "worker-node-1",
+  node_name: "gpu-host-1",
+  advertise_url: "http://gpu-host-1:8080",
+  agent_kind: "worker",
+  state: "ready",
+  connected: true,
+  last_heartbeat: "2026-01-01T00:00:00Z",
+  used: {},
+  loaded_models: ["qwen3:4b"],
+  allocatable: {},
+};
+
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/dashboard/compute/pools/:id/*" element={<PoolDetail />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+async function useWorkerPool() {
+  const poolService = await import("@/services/poolService");
+  (poolService.getPool as ReturnType<typeof vi.fn>).mockResolvedValue(WORKER_POOL);
+}
+
+describe("PoolDetail — Workers tab", () => {
+  // This block has its own setup: a describe does not inherit the beforeEach of
+  // its sibling, and leaning on leaked mock state makes the order significant.
+  beforeEach(async () => {
+    vi.clearAllMocks();
+
+    const authCtx = await import("@/context/AuthContext");
+    (authCtx.useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      hasPermission: () => true,
+      user: { org_id: "org-1", user_id: "u1", username: "test", permissions: [] },
+      organizations: [],
+    });
+
+    const poolService = await import("@/services/poolService");
+    (poolService.getPool as ReturnType<typeof vi.fn>).mockResolvedValue(MOCK_POOL);
+
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const workerService = await import("@/services/workerService");
+    (workerService.listWorkers as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (workerService.revokeWorker as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const api = await import("@/lib/api");
+    (api.computeApi.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { deployments: [] },
+    });
+  });
+
+  it("is hidden on a pool whose provider creates its own nodes", async () => {
+    renderPoolDetail();
+    await waitForPoolLoad();
+    expect(screen.queryByRole("button", { name: "Workers" })).not.toBeInTheDocument();
+  });
+
+  it("does not poll the worker endpoint for such a pool", async () => {
+    const { listWorkers } = await import("@/services/workerService");
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    // Polling every pool every 15s also toasts on every failure, so an
+    // ungated fetch here is a user-visible bug, not just a wasted request.
+    expect(listWorkers).not.toHaveBeenCalled();
+  });
+
+  it("appears on a self-hosted pool", async () => {
+    await useWorkerPool();
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Workers" })).toBeInTheDocument();
+    });
+  });
+
+  it("tells you how to get a worker when the pool is empty", async () => {
+    await useWorkerPool();
+    renderPoolDetail();
+    await waitForPoolLoad();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Workers" }));
+    expect(await screen.findByText(/No workers yet/)).toBeInTheDocument();
+  });
+
+  it("lists a registered worker", async () => {
+    await useWorkerPool();
+    const { listWorkers } = await import("@/services/workerService");
+    (listWorkers as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_WORKER]);
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await userEvent.click(await screen.findByRole("button", { name: "Workers" }));
+
+    expect(await screen.findByText("gpu-host-1")).toBeInTheDocument();
+    expect(screen.getByText("online")).toBeInTheDocument();
+    expect(screen.getByText("qwen3:4b")).toBeInTheDocument();
+  });
+
+  it("opens the mint modal from Add worker", async () => {
+    await useWorkerPool();
+    renderPoolDetail();
+    await waitForPoolLoad();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Workers" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add worker" }));
+
+    expect(await screen.findByTestId("add-worker-modal")).toHaveTextContent("pool-123");
+  });
+
+  it("revokes a worker and refetches", async () => {
+    await useWorkerPool();
+    const { listWorkers, revokeWorker } = await import("@/services/workerService");
+    (listWorkers as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_WORKER]);
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await userEvent.click(await screen.findByRole("button", { name: "Workers" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+
+    await waitFor(() => expect(revokeWorker).toHaveBeenCalledWith("worker-node-1"));
+  });
+
+  it("offers no Revoke on an already-revoked worker", async () => {
+    await useWorkerPool();
+    const { listWorkers } = await import("@/services/workerService");
+    (listWorkers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...MOCK_WORKER, state: "terminated", connected: false },
+    ]);
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await userEvent.click(await screen.findByRole("button", { name: "Workers" }));
+
+    expect(await screen.findByText("gpu-host-1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument();
+  });
+
+  it("opens on the Workers tab when linked to directly", async () => {
+    // Creating a pool navigates straight here, so the deep link has to select
+    // the tab rather than falling back to Overview.
+    await useWorkerPool();
+    renderAt("/dashboard/compute/pools/pool-123/workers");
+    await waitForPoolLoad();
+
+    // The pool load and the worker fetch each re-render the panel, so re-query
+    // rather than holding on to an element from an earlier pass.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add worker" })).toBeInTheDocument();
+      expect(screen.getByText(/No workers yet/)).toBeInTheDocument();
+    });
   });
 });

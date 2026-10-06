@@ -2,14 +2,14 @@
 inferiallm node — operator CLI for the node-centric surface.
 
 The CLI hits orchestration directly using the shared ``INTERNAL_API_KEY``.
-It mirrors the web flow (POST /v1/nodes/add/{provider}, GET /v1/nodes,
-PATCH /v1/nodes/{id}/labels, DELETE /v1/nodes/{id}).
+It mirrors the web flow (GET /v1/nodes, PATCH /v1/nodes/{id}/labels,
+DELETE /v1/nodes/{id}).
+
+There is no ``node add``: the add-node routes were retired in T11 and nodes are
+now created at deploy time by PoolPlacer.
 
 Subcommands
 -----------
-* ``node add worker --name NAME [--label k=v ...]``        → mints token + .env snippet
-* ``node add nosana --gpu-type T --market M [--label ...]`` → submits one Nosana job
-* ``node add akash  --gpu-type T [--label ...]``           → submits one Akash deployment
 * ``node list [--label k=v ...] [--org-id ORG]``           → table view
 * ``node labels set <id> k=v ...``                          → upsert labels
 * ``node labels del <id> KEY ...``                          → unset labels
@@ -88,59 +88,6 @@ def _parse_labels(items: Iterable[str] | None) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Subcommands.
 # ---------------------------------------------------------------------------
-
-
-def _cmd_add_worker(args) -> None:
-    if not args.org_id and not os.getenv("INFERIA_ORG_ID"):
-        sys.exit("error: --org-id required (or set INFERIA_ORG_ID)")
-    base = _orchestration_base(args)
-    payload = json.dumps({
-        "node_name": args.name,
-        "advertise_url": args.advertise_url or "",
-        "labels": _parse_labels(args.label),
-    }).encode("utf-8")
-    status, body = _http(
-        "POST", f"{base}/v1/nodes/add/worker",
-        headers=_internal_headers(args), body=payload,
-    )
-    if status != 200:
-        sys.stderr.write(f"add failed (status={status}):\n{body.decode('utf-8', 'replace')}\n")
-        sys.exit(1)
-    data = json.loads(body)
-    print(f"# node_id        : {data['node_id']}")
-    print(f"# bootstrap_token: {data['bootstrap_token']}")
-    print(f"# expires_at     : {data['expires_at']}")
-    print()
-    print("# --- worker .env (paste into the GPU host) ---")
-    print(data["env_snippet"])
-
-
-def _cmd_add_provider(args, provider: str) -> None:
-    if not args.org_id and not os.getenv("INFERIA_ORG_ID"):
-        sys.exit("error: --org-id required (or set INFERIA_ORG_ID)")
-    base = _orchestration_base(args)
-    spec: dict = {}
-    if getattr(args, "gpu_type", None):
-        spec["gpu_type"] = args.gpu_type
-    if getattr(args, "market_address", None):
-        spec["market_address"] = args.market_address
-    if getattr(args, "credential_name", None):
-        spec["credential_name"] = args.credential_name
-    payload = json.dumps({
-        "node_name": args.name,
-        "labels": _parse_labels(args.label),
-        "spec": spec,
-        "credential_name": getattr(args, "credential_name", None),
-    }).encode("utf-8")
-    status, body = _http(
-        "POST", f"{base}/v1/nodes/add/{provider}",
-        headers=_internal_headers(args), body=payload,
-    )
-    if status != 200:
-        sys.stderr.write(f"add failed (status={status}):\n{body.decode('utf-8', 'replace')}\n")
-        sys.exit(1)
-    data = json.loads(body)
-    print(json.dumps(data, indent=2))
 
 
 def _cmd_list(args) -> None:
@@ -404,15 +351,7 @@ def cmd_pool_show(args) -> None:
 
 def run_node_command(args) -> None:
     action = getattr(args, "node_action", None)
-    if action == "add":
-        provider = args.node_add_provider
-        if provider == "worker":
-            _cmd_add_worker(args)
-        elif provider in ("nosana", "akash"):
-            _cmd_add_provider(args, provider)
-        else:
-            sys.exit(f"error: unknown add provider: {provider}")
-    elif action == "list":
+    if action == "list":
         _cmd_list(args)
     elif action == "labels":
         sub = args.labels_action

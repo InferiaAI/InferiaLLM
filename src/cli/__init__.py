@@ -891,47 +891,11 @@ def main(argv=None):
     # --- node sub-command (node-centric API) -------------------------------
     node_parser = sub.add_parser(
         "node",
-        help="Manage compute nodes (add, list, label, remove)",
+        help="Manage compute nodes (list, label, remove)",
     )
     node_sub = node_parser.add_subparsers(
         dest="node_action", required=True, help="Action",
     )
-
-    # node add ...
-    node_add = node_sub.add_parser("add", help="Add a node to a pool")
-    node_add_sub = node_add.add_subparsers(
-        dest="node_add_provider", required=True, help="Provider",
-    )
-
-    def _add_common_flags(p):
-        p.add_argument("--name", required=True, help="Node name")
-        p.add_argument(
-            "--label",
-            action="append",
-            default=[],
-            help="Label key=value (repeat for multiple)",
-        )
-        p.add_argument("--org-id", default=None, help="Organization id (or INFERIA_ORG_ID env)")
-        p.add_argument("--orchestration-url", default=None,
-                       help="Orchestration URL (default: http://localhost:8080)")
-        p.add_argument("--internal-api-key", default=None,
-                       help="Internal API key (default: INTERNAL_API_KEY env)")
-
-    nw = node_add_sub.add_parser("worker", help="Add a self-hosted inferia-worker node")
-    _add_common_flags(nw)
-    nw.add_argument("--advertise-url", default=None,
-                    help="URL the control plane should use to reach this worker (operator can fill later)")
-
-    nn = node_add_sub.add_parser("nosana", help="Add a Nosana node")
-    _add_common_flags(nn)
-    nn.add_argument("--gpu-type", required=True)
-    nn.add_argument("--market-address", required=True)
-    nn.add_argument("--credential-name", default="default")
-
-    na = node_add_sub.add_parser("akash", help="Add an Akash node")
-    _add_common_flags(na)
-    na.add_argument("--gpu-type", required=True)
-    na.add_argument("--credential-name", default="default")
 
     # node list
     nl = node_sub.add_parser("list", help="List nodes (optionally filter by labels)")
