@@ -122,10 +122,6 @@ vi.mock("@/services/configService", () => ({
     },
 }));
 
-vi.mock("@/services/nodeService", () => ({
-    addWorkerNode: vi.fn(),
-}));
-
 vi.mock("@/context/AuthContext", () => ({
     useAuth: () => ({
         user: { user_id: "u1", org_id: "org-1", username: "t", email: "t@example.com", roles: [], permissions: [], totp_enabled: false },

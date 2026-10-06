@@ -1,5 +1,5 @@
-import { useReducer, useEffect, useMemo, useState } from "react"
-import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud, HardDrive, Copy, CheckCircle2, X } from "lucide-react"
+import { useReducer, useEffect, useMemo } from "react"
+import { Cpu, Server, Check, Zap, Globe, ArrowRight, Search, Key, Cloud, HardDrive } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate, Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
@@ -7,7 +7,6 @@ import { useAuth } from "@/context/AuthContext"
 import { computeApi } from "@/lib/api"
 import { useQuery } from "@tanstack/react-query"
 import { ConfigService, type NosanaApiKeyResponse } from "@/services/configService"
-import { addWorkerNode, type AddWorkerNodeResponse } from "@/services/nodeService"
 import { useInstanceCatalog, type InstanceType } from "@/hooks/useInstanceCatalog"
 import { InstanceDropdown } from "@/components/compute/InstanceDropdown"
 
@@ -38,7 +37,7 @@ const providerDescriptions: Record<string, string> = {
     aws: "Managed EC2 instances. High reliability, higher cost.",
     gcp: "Google Cloud Platform with Pulumi. Unified multi-cloud orchestration.",
     k8s: "On-premises Kubernetes cluster. Full control and privacy.",
-    worker: "Self-hosted GPU hosts running the inferia-worker agent. Bare-metal, your own server, or a cloud VM you spin up. After creating the pool, click 'Add Worker' to register hosts.",
+    worker: "Self-hosted GPU hosts running the inferia-worker agent. Bare-metal, your own server, or a cloud VM you spin up. After creating the pool, add each host from its Workers tab.",
 }
 
 // GCP regions for Pulumi-managed clusters
@@ -314,7 +313,6 @@ export default function NewPool() {
     const navigate = useNavigate()
     const { user, organizations } = useAuth()
     const [state, dispatch] = useReducer(poolReducer, initialState);
-    const [workerResult, setWorkerResult] = useState<AddWorkerNodeResponse | null>(null);
     const {
         step,
         selectedProvider,
@@ -636,20 +634,6 @@ export default function NewPool() {
         dispatch({ type: "SET_CREATING", payload: true })
 
         try {
-            // Self-hosted (inferia-worker) takes the node-centric path: the
-            // node is added to the org's hidden default pool and the
-            // endpoint returns the bootstrap env_snippet to paste into a
-            // GPU host's compose file.
-            if (selectedProvider === "worker") {
-                const r = await addWorkerNode({
-                    node_name: poolName,
-                    labels: {},
-                });
-                setWorkerResult(r);
-                toast.success("Worker node created — copy the .env snippet below.");
-                return;
-            }
-
             // Build payload based on provider type
             const isWorkerPool = selectedProvider === "worker";
             const payload: any = {
@@ -671,6 +655,9 @@ export default function NewPool() {
                 payload.allowed_gpu_types = ["any"];
                 payload.max_cost_per_hour = 0;
                 payload.provider_pool_id = `worker:${poolName}`;
+                // PoolPlacer routes on this: agent_kind "worker" means wait for
+                // a self-registration rather than provision a node.
+                payload.metadata = { agent_kind: "worker" };
             } else if (selectedProvider === "aws" && isClusterProvider) {
                 // AWS via Pulumi — allowed_gpu_types[0] must be the EC2
                 // instance type (e.g. "g6.xlarge"), NOT the semantic GPU
@@ -733,10 +720,16 @@ export default function NewPool() {
             const newPoolId = createRes?.data?.pool_id || createRes?.data?.id;
 
             toast.success("Pool created");
+            if (!newPoolId) {
+                navigate("/dashboard/compute/pools");
+                return;
+            }
+            // A worker pool starts empty: the Workers tab is where a token is
+            // minted for each host, so land there rather than on Overview.
             navigate(
-                newPoolId
-                    ? `/dashboard/compute/pools/${newPoolId}`
-                    : "/dashboard/compute/pools",
+                isWorkerPool
+                    ? `/dashboard/compute/pools/${newPoolId}/workers`
+                    : `/dashboard/compute/pools/${newPoolId}`,
             );
         } catch (error: any) {
             const errorDetail = error.response?.data?.detail || error.message
@@ -867,7 +860,7 @@ export default function NewPool() {
 
                         <div className="mt-6 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
                             Make sure your GPU host has Docker + (if you want GPU) the NVIDIA
-                            Container Toolkit installed before clicking <span className="font-mono">Add Worker</span>.
+                            Container Toolkit installed before clicking <span className="font-mono">Add worker</span>.
                             Pool credentials are not needed — each worker registers with a
                             short-lived bootstrap token you mint from the pool's Workers tab.
                         </div>
@@ -1286,96 +1279,8 @@ export default function NewPool() {
                 </div>
             )}
 
-            {workerResult && (
-                <WorkerResultModal
-                    result={workerResult}
-                    onClose={() => {
-                        setWorkerResult(null);
-                        navigate("/dashboard/compute/pools");
-                    }}
-                />
-            )}
         </div>
     )
-}
-
-function WorkerResultModal({
-    result,
-    onClose,
-}: {
-    result: AddWorkerNodeResponse;
-    onClose: () => void;
-}) {
-    const copy = async (text: string, label: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            toast.success(`${label} copied`);
-        } catch {
-            toast.error("Clipboard unavailable; select and copy manually");
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="w-full max-w-2xl rounded-xl border bg-background shadow-xl p-6 max-h-[90vh] overflow-y-auto">
-                <div className="flex items-start justify-between gap-3 mb-4">
-                    <div className="flex items-start gap-3">
-                        <div className="mt-0.5 rounded-full bg-emerald-500/10 p-2">
-                            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-semibold">Worker node created</h3>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                                Paste this <span className="font-mono">.env</span> into the GPU
-                                host's <span className="font-mono">inferia-worker</span> deploy and run{" "}
-                                <span className="font-mono">docker compose up -d</span>. The node
-                                appears in the Compute Nodes list as soon as the worker registers.
-                            </p>
-                        </div>
-                    </div>
-                    <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-                        <X className="h-5 w-5" />
-                    </button>
-                </div>
-
-                <div className="text-xs text-muted-foreground mb-3">
-                    Token expires{" "}
-                    <span className="font-mono">
-                        {new Date(result.expires_at * 1000).toLocaleString()}
-                    </span>.
-                </div>
-
-                <div className="mb-4">
-                    <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-sm font-medium">Worker .env</label>
-                        <button
-                            onClick={() => copy(result.env_snippet, ".env snippet")}
-                            className="text-xs inline-flex items-center gap-1.5 text-ember-600 hover:text-ember-700"
-                        >
-                            <Copy className="h-3.5 w-3.5" /> Copy
-                        </button>
-                    </div>
-                    <pre className="rounded-md border bg-muted/30 p-3 text-xs font-mono whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
-                        {result.env_snippet}
-                    </pre>
-                </div>
-
-                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400 mb-4">
-                    Treat the bootstrap token as a secret. Anyone with the resulting
-                    worker JWT can serve inference on behalf of this organisation.
-                </div>
-
-                <div className="flex justify-end">
-                    <button
-                        onClick={onClose}
-                        className="px-3 py-1.5 text-sm rounded-md bg-ember-600 hover:bg-ember-700 text-white"
-                    >
-                        Done
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
 }
 
 function StepProgress({ currentStep }: { currentStep: number }) {

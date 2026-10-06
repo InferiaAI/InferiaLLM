@@ -30,35 +30,6 @@ export interface NodeView {
   provider_instance_id: string | null;
 }
 
-export interface AddWorkerNodeRequest {
-  node_name: string;
-  advertise_url?: string;
-  labels?: Record<string, string>;
-}
-
-export interface AddWorkerNodeResponse {
-  node_id: string;
-  bootstrap_token: string;
-  expires_at: number;
-  control_plane_url: string;
-  inference_token: string;
-  env_snippet: string;
-}
-
-export interface AddProviderNodeRequest {
-  node_name?: string;
-  labels?: Record<string, string>;
-  spec?: Record<string, unknown>;
-  credential_name?: string;
-}
-
-export interface AddProviderNodeResponse {
-  node_id: string;
-  provider: string;
-  provider_instance_id?: string | null;
-  state: string;
-}
-
 export interface PatchLabelsRequest {
   add?: Record<string, string>;
   remove?: string[];
@@ -115,27 +86,6 @@ export async function deleteNode(nodeId: string): Promise<DeleteNodeResult> {
     };
   }
   return { terminating: false };
-}
-
-export async function addWorkerNode(
-  body: AddWorkerNodeRequest,
-): Promise<AddWorkerNodeResponse> {
-  const res = await computeApi.post<AddWorkerNodeResponse>(
-    "/nodes/add/worker",
-    body,
-  );
-  return res.data;
-}
-
-export async function addProviderNode(
-  provider: "nosana" | "akash",
-  body: AddProviderNodeRequest,
-): Promise<AddProviderNodeResponse> {
-  const res = await computeApi.post<AddProviderNodeResponse>(
-    `/nodes/add/${provider}`,
-    body,
-  );
-  return res.data;
 }
 
 /**

@@ -13,13 +13,19 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { getPool, deletePool, type PoolView } from "@/services/poolService";
 import { listNodes, deleteNode, type NodeView } from "@/services/nodeService";
+import {
+  listWorkers,
+  revokeWorker,
+  type WorkerView,
+} from "@/services/workerService";
+import AddWorkerModal from "@/components/workers/AddWorkerModal";
 import { computeApi } from "@/lib/api";
 import NodeDetail from "./NodeDetail";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-type Tab = "overview" | "nodes" | "deployments" | "settings";
+type Tab = "overview" | "nodes" | "workers" | "deployments" | "settings";
 
 interface DeploymentRow {
   deployment_id: string;
@@ -53,11 +59,25 @@ export default function PoolDetail() {
 function PoolDetailContent() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { hasPermission } = useAuth();
   const canDelete = hasPermission("deployment:delete");
 
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  // A pool is created and then linked straight to /pools/:id/workers, so the
+  // tab has to survive a deep link rather than always opening on Overview.
+  const tabFromUrl = location.pathname.split("/").pop() as Tab;
+  const [activeTab, setActiveTab] = useState<Tab>(
+    ["overview", "nodes", "workers", "deployments", "settings"].includes(tabFromUrl)
+      ? tabFromUrl
+      : "overview",
+  );
+  const [workers, setWorkers] = useState<WorkerView[]>([]);
+  const [showAddWorker, setShowAddWorker] = useState(false);
   const [pool, setPool] = useState<PoolView | null>(null);
+
+  // Only self-hosted pools take workers; every other provider creates its own
+  // nodes, so there is nothing to list and nothing to poll for.
+  const isWorkerPool = pool?.provider === "on_prem";
   const [nodes, setNodes] = useState<NodeView[]>([]);
   const [deployments, setDeployments] = useState<DeploymentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +86,7 @@ function PoolDetailContent() {
   // Tracks whether the last fetchNodes call errored, so we only toast on an
   // error transition (not on every 15s poll while the backend stays down).
   const nodesErroredRef = useRef(false);
+  const workersErroredRef = useRef(false);
 
   // ---------------------------------------------------------------------------
   // Fetch
@@ -92,6 +113,23 @@ function PoolDetailContent() {
     },
     [id, navigate],
   );
+
+  const fetchWorkers = useCallback(async () => {
+    if (!id || !isWorkerPool) return;
+    try {
+      // A malformed response must not put undefined in state: the table reads
+      // workers.length, so that blanks the whole page.
+      setWorkers((await listWorkers(id)) ?? []);
+      workersErroredRef.current = false;
+    } catch {
+      // Latched like fetchNodes: without this a persistent failure toasts on
+      // every 15s poll.
+      if (!workersErroredRef.current) {
+        workersErroredRef.current = true;
+        toast.error("Failed to load workers");
+      }
+    }
+  }, [id, isWorkerPool]);
 
   const fetchNodes = useCallback(async () => {
     if (!id) return;
@@ -127,12 +165,14 @@ function PoolDetailContent() {
     void fetchPool();
     void fetchNodes();
     void fetchDeployments();
+    void fetchWorkers();
     const interval = window.setInterval(() => {
       void fetchPool(true);
       void fetchNodes();
+      void fetchWorkers();
     }, 15_000);
     return () => window.clearInterval(interval);
-  }, [fetchPool, fetchNodes, fetchDeployments]);
+  }, [fetchPool, fetchNodes, fetchDeployments, fetchWorkers]);
 
   // ---------------------------------------------------------------------------
   // Delete
@@ -188,6 +228,7 @@ function PoolDetailContent() {
   const tabs: { label: string; value: Tab }[] = [
     { label: "Overview", value: "overview" },
     { label: "Nodes", value: "nodes" },
+    ...(isWorkerPool ? [{ label: "Workers", value: "workers" as Tab }] : []),
     { label: "Deployments", value: "deployments" },
     { label: "Settings", value: "settings" },
   ];
@@ -339,6 +380,108 @@ function PoolDetailContent() {
         )}
 
         {/* ----------------------------------------------------------------- */}
+        {/* Workers tab                                                        */}
+        {/* ----------------------------------------------------------------- */}
+        {activeTab === "workers" && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Each host runs the inferia-worker agent and registers itself
+                with a bootstrap token. Tokens are short-lived; mint a fresh
+                one per host.
+              </p>
+              <button
+                onClick={() => setShowAddWorker(true)}
+                className="shrink-0 px-4 py-1.5 rounded-md bg-ember-600 hover:bg-ember-700 text-white text-sm font-medium transition-colors"
+              >
+                Add worker
+              </button>
+            </div>
+
+            <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40 text-xs text-muted-foreground uppercase tracking-wider">
+                    <tr>
+                      <th className="px-6 py-3 text-left font-mono">Node</th>
+                      <th className="px-6 py-3 text-left font-mono">State</th>
+                      <th className="px-6 py-3 text-left font-mono">Connected</th>
+                      <th className="px-6 py-3 text-left font-mono">Models</th>
+                      {canDelete && <th className="px-6 py-3" />}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {workers.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={canDelete ? 5 : 4}
+                          className="px-6 py-8 text-center text-muted-foreground"
+                        >
+                          No workers yet. Add one to get an{" "}
+                          <span className="font-mono">.env</span> snippet for
+                          the GPU host.
+                        </td>
+                      </tr>
+                    ) : (
+                      workers.map((w) => (
+                        <tr
+                          key={w.node_id}
+                          className="bg-background hover:bg-muted/50 transition-colors"
+                        >
+                          <td className="px-6 py-4 font-mono text-xs">
+                            {w.node_name || w.node_id.slice(0, 8)}
+                          </td>
+                          <td className="px-6 py-4 text-xs">{w.state}</td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={cn(
+                                "inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium",
+                                w.connected
+                                  ? "border-ember-500/20 text-ember-600 bg-ember-500/10"
+                                  : "border-muted-foreground/20 text-muted-foreground bg-muted-foreground/10",
+                              )}
+                            >
+                              {w.connected ? "online" : "offline"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-xs font-mono">
+                            {w.loaded_models.length
+                              ? w.loaded_models.join(", ")
+                              : "—"}
+                          </td>
+                          {canDelete && (
+                            <td className="px-6 py-4 text-right">
+                              {/* A revoked worker keeps its row as a record,
+                                  but there is nothing left to revoke. */}
+                              {w.state !== "terminated" && (
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await revokeWorker(w.node_id);
+                                    toast.success("Worker revoked");
+                                    fetchWorkers();
+                                  } catch {
+                                    toast.error("Failed to revoke worker");
+                                  }
+                                }}
+                                className="text-xs text-red-600 hover:text-red-700"
+                              >
+                                Revoke
+                              </button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------------- */}
         {/* Deployments tab                                                    */}
         {/* ----------------------------------------------------------------- */}
         {activeTab === "deployments" && (
@@ -464,6 +607,17 @@ function PoolDetailContent() {
           </div>
         )}
       </div>
+
+      {showAddWorker && (
+        <AddWorkerModal
+          poolId={id ?? ""}
+          poolName={pool?.pool_name}
+          onClose={() => {
+            setShowAddWorker(false);
+            void fetchWorkers();
+          }}
+        />
+      )}
     </div>
   );
 }
