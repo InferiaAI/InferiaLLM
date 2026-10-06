@@ -11,7 +11,8 @@ from orchestration.config import Settings
 
 def _dsn(value: str) -> str:
     # init kwargs are highest precedence and run through the field validator.
-    return Settings(DATABASE_URL=value).postgres_dsn
+    # _env_file keeps the repo's .env out of it, as the other config tests do.
+    return Settings(_env_file=None, DATABASE_URL=value).postgres_dsn
 
 
 def test_strips_asyncpg_driver():

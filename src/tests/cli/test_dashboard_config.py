@@ -14,7 +14,17 @@ Covers:
 import json
 from pathlib import Path
 
+import pytest
+
 import cli as cli_module
+
+
+@pytest.fixture(autouse=True)
+def _no_dotenv(monkeypatch):
+    """main() calls _load_env(), which reads the repo's .env and puts back the
+    variables these tests just cleared. Each test states its own environment.
+    """
+    monkeypatch.setattr(cli_module, "_load_env", lambda: None)
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
