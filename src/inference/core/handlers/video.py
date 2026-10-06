@@ -188,9 +188,7 @@ class VideoHandler:
         engine = deployment.get("engine", "inferia-diffusion")
         adapter = get_adapter(engine)
 
-        provider_key, extra_headers = provider_auth(
-            deployment, engine, settings.api_gateway_internal_key or "",
-        )
+        provider_key, extra_headers = provider_auth(deployment, engine)
         provider_headers = adapter.get_headers(provider_key)
         provider_headers.update(extra_headers)
 

@@ -97,9 +97,7 @@ class CompletionHandler:
         # worker's :8080 proxy with that token and must carry the
         # X-Inferia-Deployment-Id header so the worker routes to the right
         # model container; external providers keep their own api_key.
-        provider_key, extra_headers = provider_auth(
-            deployment, engine, settings.api_gateway_internal_key,
-        )
+        provider_key, extra_headers = provider_auth(deployment, engine)
         provider_headers = adapter.get_headers(provider_key)
         provider_headers.update(extra_headers)
 
