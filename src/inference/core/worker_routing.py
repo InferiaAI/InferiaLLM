@@ -47,7 +47,7 @@ def _credentials(deployment: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def provider_auth(
-    deployment: Dict[str, Any], engine: str, internal_key: str,
+    deployment: Dict[str, Any], engine: str,
 ) -> Tuple[str, Dict[str, str]]:
     """Return (provider_key, extra_headers) for the upstream request.
 
@@ -59,8 +59,10 @@ def provider_auth(
         api_key must not be used to auth to our own worker proxy.
       * Else an external provider's own api_key/key/token (from
         credentials_json/configuration) is used.
-      * Else, for a non-external engine with no key, fall back to the internal
-        key (legacy behaviour).
+      * Else no credential is sent. There is deliberately no fallback to the
+        internal key: it authenticates `/internal/`, which includes the route
+        returning every provider credential unmasked, and the endpoint here
+        belongs to whoever created the deployment.
     """
     inference_token = deployment.get("inference_token")
     if inference_token:
@@ -72,8 +74,6 @@ def provider_auth(
     provider_key = str(
         creds.get("api_key") or creds.get("key") or creds.get("token") or ""
     )
-    if not provider_key and not is_external_engine(engine):
-        provider_key = internal_key
     return provider_key, {}
 
 

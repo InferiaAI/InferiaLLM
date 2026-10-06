@@ -192,6 +192,30 @@ async def create_inference_log(
 models_cache = cachetools.TTLCache(maxsize=100, ttl=30)
 
 
+def _health_check_headers(d: Deployment) -> dict:
+    """Auth header for a deployment's health check, or none if it has no key.
+
+    There is deliberately no fallback to `settings.internal_api_key`. That key
+    only authenticates routes under `/internal/`, so it could never authorise a
+    health check anyway, and the endpoint is chosen by whoever created the
+    deployment — sending it there hands the platform's service credential to
+    them.
+    """
+    # configuration is automatically decrypted JSON from EncryptedJSON column
+    config = d.configuration or {}
+    provider_key = (
+        config.get("api_key") or config.get("key") or config.get("token")
+    )
+    if not provider_key:
+        logger.warning(
+            "Deployment %s has no api_key in its configuration; "
+            "health-checking %s without authentication",
+            d.id, d.endpoint,
+        )
+        return {}
+    return {"Authorization": f"Bearer {provider_key}"}
+
+
 @router.get("/models", response_model=ModelsListResponse)
 async def list_models(
     request: Request,
@@ -269,22 +293,7 @@ async def list_models(
             return None
 
         try:
-            # 1. Resolve API key for health check
-            provider_key = None
-            if d.configuration:
-                config = d.configuration
-                # configuration is automatically decrypted JSON from EncryptedJSON column
-                provider_key = (
-                    config.get("api_key") or config.get("key") or config.get("token")
-                )
-
-            # Fallback to internal key if no specific key provided for Depin engine
-            if not provider_key:
-                provider_key = settings.internal_api_key
-
-            headers = {}
-            if provider_key:
-                headers["Authorization"] = f"Bearer {provider_key}"
+            headers = _health_check_headers(d)
 
             # 2. Perform health check to /v1/models as requested
             health_url = f"{d.endpoint.rstrip('/')}/v1/models"

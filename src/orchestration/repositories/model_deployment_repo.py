@@ -1,9 +1,39 @@
 from __future__ import annotations
 
+import json
+import secrets
 from datetime import datetime
 from uuid import UUID
 from typing import List, Optional
 from orchestration.repositories.base_repo import BaseRepository
+
+
+def _with_engine_key(configuration):
+    """The deployment's configuration, carrying an engine credential of its own.
+
+    Every path that talks to a deployment's engine — the health check, the
+    inference proxy, and the Nosana job builder — falls back to
+    `settings.internal_api_key` when the configuration holds no key. That key
+    authenticates `/internal/`, including the route that returns every provider
+    credential unmasked, and the endpoint it reaches is chosen by whoever created
+    the deployment. Giving each deployment its own key is what removes the
+    fallback rather than just the symptom.
+
+    An external deployment is someone else's endpoint plus their own credential,
+    so it is skipped rather than given one of ours. `setdefault` covers the rest.
+    """
+    config = configuration
+    if isinstance(config, str):
+        try:
+            config = json.loads(config)
+        except json.JSONDecodeError:
+            config = {}
+    if not isinstance(config, dict):
+        config = {}
+
+    if config.get("workload_type") != "external":
+        config.setdefault("api_key", f"dep_{secrets.token_urlsafe(32)}")
+    return json.dumps(config)
 
 
 class ModelDeploymentRepository(BaseRepository):
@@ -60,11 +90,7 @@ class ModelDeploymentRepository(BaseRepository):
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         """
-        # Ensure configuration is passed as json
-        import json
-
-        if configuration and isinstance(configuration, dict):
-            configuration = json.dumps(configuration)
+        configuration = _with_engine_key(configuration)
 
         if policies and isinstance(policies, str):
             # Ensure policies is valid json if string

@@ -30,7 +30,7 @@ def _dep(**over):
 
 
 def test_worker_hosted_uses_inference_token_and_deployment_id_header():
-    pk, extra = provider_auth(_dep(inference_token="tok-abc"), "ollama", "internal-key")
+    pk, extra = provider_auth(_dep(inference_token="tok-abc"), "ollama")
     assert pk == "tok-abc"
     assert extra["X-Inferia-Deployment-Id"] == "dep-123"
 
@@ -38,16 +38,25 @@ def test_worker_hosted_uses_inference_token_and_deployment_id_header():
 def test_external_engine_keeps_its_own_api_key_and_no_routing_header():
     pk, extra = provider_auth(
         _dep(engine="openai", configuration={"api_key": "sk-xx"}, inference_token=None),
-        "openai", "internal-key",
+        "openai",
     )
     assert pk == "sk-xx"
     assert "X-Inferia-Deployment-Id" not in extra
 
 
-def test_non_external_no_token_falls_back_to_internal_key():
-    pk, extra = provider_auth(_dep(inference_token=None), "vllm", "internal-key")
-    assert pk == "internal-key"
+def test_non_external_with_no_key_sends_no_credential():
+    """It used to fall back to the internal service key. See #365."""
+    pk, extra = provider_auth(_dep(inference_token=None), "vllm")
+    assert pk == ""
     assert extra == {}
+
+
+def test_a_deployments_own_key_is_used():
+    """Every deployment is given one at creation, so this is the normal path."""
+    pk, _ = provider_auth(
+        _dep(inference_token=None, configuration={"api_key": "dep_abc"}), "vllm",
+    )
+    assert pk == "dep_abc"
 
 
 def test_inference_token_wins_even_if_a_stale_config_key_exists():
@@ -55,7 +64,7 @@ def test_inference_token_wins_even_if_a_stale_config_key_exists():
     # api_key — the pool token is authoritative.
     pk, extra = provider_auth(
         _dep(inference_token="tok-abc", configuration={"model_id": "gemma3:4b", "api_key": "ignored"}),
-        "ollama", "internal-key",
+        "ollama",
     )
     assert pk == "tok-abc"
     assert extra["X-Inferia-Deployment-Id"] == "dep-123"

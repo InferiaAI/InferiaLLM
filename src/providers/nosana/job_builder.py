@@ -13,7 +13,6 @@ import shlex
 from orchestration.config import settings
 
 # Internal API key used for service-to-service auth and vLLM security
-INTERNAL_API_KEY = settings.internal_api_key or os.getenv("INTERNAL_API_KEY", "")
 
 # CUDA forward-compat fix for the vllm/vllm-openai (and vllm-omni) images.
 #
@@ -133,7 +132,7 @@ def create_vllm_job(
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
     # Use provided key or fall back to global
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     # Construct the Health Check Body
     health_body = json.dumps(
@@ -276,7 +275,7 @@ def create_ollama_job(
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
     # Use provided key or fall back to global
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     ollama_image = image if "ollama" in image else "docker.io/ollama/ollama:latest"
     safe_model_id = shlex.quote(model_id)
@@ -383,7 +382,7 @@ def create_vllm_omni_job(
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
     # Use provided key or fall back to global
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     health_body = json.dumps(
         {
@@ -483,7 +482,7 @@ def create_triton_job(
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     # Triton default ports
     http_port = 8000
@@ -584,7 +583,7 @@ def create_infinity_job(
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     # Prepare Environment Variables
     envs: Dict[str, str] = {
@@ -659,7 +658,7 @@ def create_tei_job(
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     # Prepare Environment Variables
     envs: Dict[str, str] = {}
@@ -754,7 +753,7 @@ def create_localai_job(
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     # LocalAI container docs: https://localai.io/installation/containers/
     # The official image has its own ENTRYPOINT baked into the Dockerfile.
@@ -873,7 +872,7 @@ def create_inferia_diffusion_job(
     Returns:
         Dict with 'op' (container operation) and 'meta' (job metadata)
     """
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     health_headers: Dict[str, str] = {}
     if effective_api_key:
@@ -1148,7 +1147,7 @@ def create_training_job(
     Returns:
         Dict with 'op' and 'meta'
     """
-    effective_api_key = api_key or INTERNAL_API_KEY
+    effective_api_key = api_key
 
     envs: Dict[str, str] = {}
     token_to_use = hf_token or os.getenv("HF_TOKEN")

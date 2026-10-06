@@ -118,9 +118,7 @@ class Pipeline:
             engine, raw_endpoint, settings.external_proxy_url,
         )
 
-        ctx.provider_key, extra_headers = provider_auth(
-            deployment, engine, settings.api_gateway_internal_key or "",
-        )
+        ctx.provider_key, extra_headers = provider_auth(deployment, engine)
         ctx.provider_headers = ctx.adapter.get_headers(ctx.provider_key)
         ctx.provider_headers.update(extra_headers)
 

@@ -1,5 +1,4 @@
 import os
-import secrets
 import logging
 import asyncio
 from typing import List, Dict, Optional
@@ -15,7 +14,6 @@ from orchestration.provisioning.engine.base import (
 from providers.nosana.job_builder import (
     build_job_definition,
     create_training_job,
-    INTERNAL_API_KEY,
 )
 from orchestration.config import settings
 from orchestration.models.model_deployment.preflight import fetch_native_max_len
@@ -77,11 +75,6 @@ NOSANA_SIDECAR_URL = settings.nosana_sidecar_url
 NOSANA_DISCOVERY_URL = getattr(
     settings, "nosana_discovery_url", "https://dashboard.k8s.prd.nos.ci/api/markets"
 )
-
-
-def generate_api_key(prefix: str = "nos") -> str:
-    """Generate a secure API key for Caddy authentication."""
-    return f"{prefix}_{secrets.token_urlsafe(32)}"
 
 
 def _diffusion_job_overrides(metadata: dict) -> dict:
@@ -283,7 +276,7 @@ class NosanaAdapter(ProviderAdapter):
                 dataset_url=metadata.get("dataset_url"),
                 base_model=metadata.get("base_model"),
                 hf_token=hf_token,
-                api_key=INTERNAL_API_KEY,
+                api_key=metadata.get("api_key"),
                 min_vram=metadata.get("min_vram", 24),
                 gpu_count=gpu_allocated,
             )
@@ -356,7 +349,7 @@ class NosanaAdapter(ProviderAdapter):
                 model_id=model_id,
                 image=image,
                 hf_token=hf_token,
-                api_key=metadata.get("api_key") or INTERNAL_API_KEY,
+                api_key=metadata.get("api_key"),
                 **job_config,
             )
         else:
