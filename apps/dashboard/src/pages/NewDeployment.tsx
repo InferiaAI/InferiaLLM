@@ -1172,7 +1172,9 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
 
   // Compatibility planning (uses llmfit server when available, falls back to local calculation)
   const { data: compatibility } = useQuery({
-    queryKey: ['compat', modelId, selectedPool?.pool_id || selectedPool?.pool_name, quantization, dtype, selectedEngine],
+    // hfConfig arrives after this query first runs, and without it in the key
+    // the result keeps the defaults it was computed with.
+    queryKey: ['compat', modelId, selectedPool?.pool_id || selectedPool?.pool_name, quantization, dtype, selectedEngine, hfConfig],
     queryFn: () => calculatePoolCompatibilityWithFit(
       modelId,
       selectedPool,

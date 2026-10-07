@@ -10,6 +10,7 @@ export interface PoolGpuResources {
   aggregatedVram: number | undefined;
   singleGpuBandwidth: number | undefined;
   aggregatedBandwidth: number | undefined;
+  vramKnown: boolean;
 }
 
 export interface ModelArchitecture {
@@ -76,7 +77,11 @@ export function resolvePoolGpuResources(pool: any): PoolGpuResources {
   const aggregatedBandwidth = (gpuCount > 1 && singleGpuBandwidth)
     ? singleGpuBandwidth * gpuCount * 0.85
     : undefined;
-  return { gpuCount, gpuKey, gpuSpecKey, singleGpuVram, aggregatedVram, singleGpuBandwidth, aggregatedBandwidth };
+  return {
+    gpuCount, gpuKey, gpuSpecKey, singleGpuVram, aggregatedVram,
+    singleGpuBandwidth, aggregatedBandwidth,
+    vramKnown: singleGpuVram > 0,
+  };
 }
 
 // ---- Model Architecture Extraction ----
@@ -110,7 +115,9 @@ export function calculatePoolCompatibility(
     pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
     quantization || dtype,
     {
-      vram: resources.aggregatedVram,
+      vram: resources.vramKnown
+        ? (resources.aggregatedVram ?? resources.singleGpuVram)
+        : undefined,
       bandwidth: resources.aggregatedBandwidth,
       contextLength: arch.contextLength,
       hiddenSize: arch.hiddenSize,
@@ -288,7 +295,9 @@ export async function calculatePoolCompatibilityWithFit(
 
   const llmfitUp = await checkLlmfitHealth();
 
-  if (llmfitUp) {
+  // llmfit's answer overwrites fitLevel and availableVram, and an unknown size
+  // reaches it as the query's 1GB floor.
+  if (llmfitUp && resources.vramKnown) {
     const fit = await queryLlmfitModelFit(
       modelId,
       vramGb,
@@ -303,7 +312,7 @@ export async function calculatePoolCompatibilityWithFit(
         pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
         quantization || dtype,
         {
-          vram: resources.aggregatedVram,
+          vram: resources.aggregatedVram ?? resources.singleGpuVram,
           bandwidth: resources.aggregatedBandwidth,
           contextLength: arch.contextLength,
           hiddenSize: arch.hiddenSize,

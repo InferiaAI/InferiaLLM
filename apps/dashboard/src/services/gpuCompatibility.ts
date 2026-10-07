@@ -100,7 +100,7 @@ const QUANTIZATION_THROUGHPUT_EFFICIENCY: Record<string, number> = {
     "auto": 0.20,
 };
 
-export type FitLevel = "Perfect" | "Good" | "Marginal" | "TooTight";
+export type FitLevel = "Perfect" | "Good" | "Marginal" | "TooTight" | "Unknown";
 
 export interface CompatibilityResult {
     fitLevel: FitLevel;
@@ -145,6 +145,7 @@ const FIT_LEVEL_CONCURRENCY_PENALTY: Record<FitLevel, number> = {
     Good: 1.0,
     Marginal: 1.25,
     TooTight: 1.55,
+    Unknown: 1.0,
 };
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -319,10 +320,14 @@ export function calculateCompatibility(
 
     // 3. Get GPU Data
     const normalizedId = gpuId.toUpperCase().replace(/[\s-]/g, "");
-    const matchKey = Object.keys(GPU_SPECS).find(k => {
+    const matchedKey = Object.keys(GPU_SPECS).find(k => {
         const normalizedKey = k.toUpperCase().replace(/[\s-]/g, "");
         return normalizedId.includes(normalizedKey) || normalizedKey.includes(normalizedId);
-    }) || "GENERIC-GPU";
+    });
+    // allowed_gpu_types is a scheduling constraint, so it is often "any",
+    // which names no card to measure against.
+    const gpuUnknown = !matchedKey && !(overrides?.vram && overrides.vram > 0);
+    const matchKey = matchedKey || "GENERIC-GPU";
     const gpuSpecFromRegistry = GPU_SPECS[matchKey];
     const rawGpuSpec = {
         name: gpuSpecFromRegistry.name,
@@ -419,6 +424,7 @@ export function calculateCompatibility(
         Good: 0.75,
         Marginal: 0.72,
         TooTight: 0.68,
+        Unknown: 0.75,
     };
     let recommendedGpuUtil = baseGpuUtilByFit[fitLevel];
     // Only allow up to 0.85 for super-confident: Perfect fit + very low utilization + large VRAM
@@ -478,6 +484,21 @@ export function calculateCompatibility(
 
     if (!canFitWeightsSafely) {
         reason = `Model weights (${totalModelSizeGB.toFixed(1)}GB) exceed safe single-GPU budget (${safeBudgetGB.toFixed(1)}GB). Use smaller model/stronger quantization.`;
+    }
+
+    if (gpuUnknown) {
+        return {
+            fitLevel: "Unknown",
+            requiredVram: idealRequiredVram,
+            availableVram: 0,
+            isCompatible: true,
+            score: 0,
+            estimatedTps: 0,
+            reason: `This pool does not say which GPU it runs on, so no fit estimate is possible. The model needs about ${totalModelSizeGB.toFixed(1)}GB of weights.`,
+            // Quality and context come from the model; only speed and fit
+            // needed a GPU.
+            details: { qualityScore, speedScore: 0, fitScore: 0, contextScore },
+        };
     }
 
     return {
