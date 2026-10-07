@@ -127,6 +127,7 @@ export function CompatibilityPanel({
   selectedEngine: string
   dispatch: React.Dispatch<Action>
 }) {
+  const gpuUnknown = compatibility.fitLevel === "Unknown";
   return (
     <div className={cn("mt-4 p-5 rounded-xl border-2 transition-colors animate-in fade-in slide-in-from-top-4", getFitColor(compatibility.fitLevel))}>
       <div className="flex items-center justify-between mb-4">
@@ -136,30 +137,30 @@ export function CompatibilityPanel({
           </div>
           <div>
             <span className="font-bold text-base block tracking-tight underline decoration-current/30 underline-offset-4 decoration-2">Compatibility: {compatibility.fitLevel}</span>
-            <span className="text-[10px] uppercase font-semibold opacity-60">Engine Assessment • {compatibility.score}/100</span>
+            <span className="text-[10px] uppercase font-semibold opacity-60">Engine Assessment • {gpuUnknown ? "no estimate" : `${compatibility.score}/100`}</span>
           </div>
         </div>
       </div>
 
       <p className="text-sm font-medium opacity-90 leading-snug mb-5 decoration-current/20">{compatibility.reason}</p>
 
-      <div className="mb-6">
+      {!gpuUnknown && <div className="mb-6">
         <CompatibilityProjectionChart
           compatibility={compatibility}
           poolName={selectedPool?.pool_name}
           inputTokens={200}
           outputTokens={200}
         />
-      </div>
+      </div>}
 
       {/* Multi-Dimensional Breakdown */}
       <div className="space-y-3 mb-6">
         {[
           { label: 'Quality', value: compatibility.details.qualityScore, icon: '💎' },
-          { label: 'Speed', value: compatibility.details.speedScore, icon: '🏎️' },
-          { label: 'Fit', value: compatibility.details.fitScore, icon: '🧩' },
+          { label: 'Speed', value: compatibility.details.speedScore, icon: '🏎️', needsGpu: true },
+          { label: 'Fit', value: compatibility.details.fitScore, icon: '🧩', needsGpu: true },
           { label: 'Context', value: compatibility.details.contextScore, icon: '📏' }
-        ].map((stat) => (
+        ].filter((stat) => !(gpuUnknown && stat.needsGpu)).map((stat) => (
           <div key={stat.label} className="space-y-1">
             <div className="flex justify-between text-[11px] font-bold uppercase tracking-wider">
               <span className="flex items-center gap-1.5 opacity-80">{stat.icon} {stat.label}</span>
@@ -178,11 +179,11 @@ export function CompatibilityPanel({
       <div className="grid grid-cols-2 gap-6 pt-5 border-t border-current/15">
         <div className="bg-current/5 p-3 rounded-lg border border-current/10">
           <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Est. Throughput (Single GPU)</div>
-          <div className="text-lg font-black">{compatibility.estimatedTps.toFixed(1)} <span className="text-xs font-normal opacity-70">tokens/s (estimated)</span></div>
+          <div className="text-lg font-black">{gpuUnknown ? "—" : <>{compatibility.estimatedTps.toFixed(1)} <span className="text-xs font-normal opacity-70">tokens/s (estimated)</span></>}</div>
         </div>
         <div className="bg-current/5 p-3 rounded-lg border border-current/10">
           <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">VRAM Allocation</div>
-          <div className="text-lg font-black">{compatibility.requiredVram.toFixed(1)} <span className="text-xs font-normal opacity-70">/ {compatibility.availableVram} GB</span></div>
+          <div className="text-lg font-black">{gpuUnknown ? "—" : <>{compatibility.requiredVram.toFixed(1)} <span className="text-xs font-normal opacity-70">/ {compatibility.availableVram} GB</span></>}</div>
         </div>
         <div className="bg-current/5 p-3 rounded-lg border border-current/10">
           <div className="text-[10px] uppercase font-black tracking-widest opacity-50 mb-1">Max Context Length</div>

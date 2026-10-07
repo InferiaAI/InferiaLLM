@@ -107,8 +107,6 @@ BYTES_PER_DTYPE = {
 }
 # KV cache and overhead multiplier (vLLM needs ~20-30% overhead)
 VRAM_OVERHEAD_MULTIPLIER = 1.25
-# Common GPU VRAM sizes in GB
-GPU_VRAM_GB = 24  # Default assumption (A10G, RTX 4090, L4)
 
 
 @dataclass
