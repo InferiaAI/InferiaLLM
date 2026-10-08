@@ -5,7 +5,57 @@ import secrets
 from datetime import datetime
 from uuid import UUID
 from typing import List, Optional
+from cryptography.fernet import Fernet
+
+from orchestration.config import settings
 from orchestration.repositories.base_repo import BaseRepository
+
+_fernet = Fernet(settings.secret_encryption_key.encode()) if settings.secret_encryption_key else None
+
+
+def _encrypt_configuration(configuration):
+    """The configuration as the column should hold it.
+
+    The api_gateway's EncryptedJSON column stores {"data": "<fernet token>"}
+    and reads anything else as plaintext, so writing the same envelope here
+    leaves existing rows readable and needs no migration.
+    """
+    if configuration is None:
+        return None
+    plain = (
+        json.dumps(configuration)
+        if isinstance(configuration, (dict, list))
+        else str(configuration)
+    )
+    if _fernet is None:
+        return plain
+    return json.dumps({"data": _fernet.encrypt(plain.encode()).decode()})
+
+
+def _decrypted(row):
+    """A row with its configuration in the plaintext JSON string callers expect.
+
+    Returns the row unchanged when the value is not an envelope, which covers
+    rows written before this and rows written without a key configured.
+    """
+    if not row:
+        return row
+    value = row.get("configuration")
+    if not value:
+        return row
+    parsed = value
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except json.JSONDecodeError:
+            return row
+    if not (isinstance(parsed, dict) and set(parsed) == {"data"} and _fernet):
+        return row
+    try:
+        row["configuration"] = _fernet.decrypt(parsed["data"].encode()).decode()
+    except Exception:
+        pass
+    return row
 
 
 def _with_engine_key(configuration):
@@ -90,7 +140,7 @@ class ModelDeploymentRepository(BaseRepository):
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         """
-        configuration = _with_engine_key(configuration)
+        configuration = _encrypt_configuration(_with_engine_key(configuration))
 
         if policies and isinstance(policies, str):
             # Ensure policies is valid json if string
@@ -313,9 +363,7 @@ class ModelDeploymentRepository(BaseRepository):
         idx = 2
 
         if configuration is not None:
-            if isinstance(configuration, dict):
-                import json
-                configuration = json.dumps(configuration)
+            configuration = _encrypt_configuration(configuration)
             fields.append(f"configuration=${idx}")
             args.append(configuration)
             idx += 1
@@ -362,7 +410,7 @@ class ModelDeploymentRepository(BaseRepository):
         q = "SELECT * FROM model_deployments WHERE deployment_id=$1"
         async with self.db.acquire() as c:
             row = await c.fetchrow(q, deployment_id)
-            return dict(row) if row else None
+            return _decrypted(dict(row)) if row else None
 
     async def list(
         self,
@@ -398,7 +446,7 @@ class ModelDeploymentRepository(BaseRepository):
 
         async with self.db.acquire() as c:
             rows = await c.fetch(q, *args)
-            return [dict(r) for r in rows]
+            return [_decrypted(dict(r)) for r in rows]
 
     async def list_by_state(self, state: str):
         q = """
@@ -408,7 +456,7 @@ class ModelDeploymentRepository(BaseRepository):
         """
         async with self.db.acquire() as c:
             rows = await c.fetch(q, state)
-            return [dict(r) for r in rows]
+            return [_decrypted(dict(r)) for r in rows]
 
     async def delete(self, deployment_id: UUID):
         """Permanently delete a deployment from the database."""
@@ -477,7 +525,7 @@ class ModelDeploymentRepository(BaseRepository):
         """
         async with self.db.acquire() as c:
             rows = await c.fetch(q)
-            return [dict(r) for r in rows]
+            return [_decrypted(dict(r)) for r in rows]
 
     async def update_configuration(self, deployment_id: UUID, configuration: dict):
         """Update the configuration JSONB field for a deployment."""
@@ -488,7 +536,7 @@ class ModelDeploymentRepository(BaseRepository):
         SET configuration=$2, updated_at=now()
         WHERE deployment_id=$1
         """
-        config_json = json.dumps(configuration)
+        config_json = _encrypt_configuration(configuration)
         async with self.db.acquire() as c:
             await c.execute(q, deployment_id, config_json)
 
