@@ -80,6 +80,37 @@ describe("calculatePoolCompatibility", () => {
   });
 });
 
+describe("AWS pools", () => {
+  const awsPool = pool({
+    allowed_gpu_types: ["g5.xlarge"],
+    gpu_specs: [{ gpu_type: "NVIDIA A10G", vram: 24 }],
+  });
+
+  it("uses the card the backend resolved from the instance type", () => {
+    const r = resolvePoolGpuResources(awsPool);
+    expect(r.vramKnown).toBe(true);
+    expect(r.singleGpuVram).toBe(24);
+    expect(r.gpuSpecKey).toBe("A10G");
+  });
+
+  it("gives a real verdict rather than Unknown", () => {
+    const res = calculatePoolCompatibility(
+      "Qwen/Qwen2.5-14B", awsPool, HF_CONFIG_14B, "awq", "auto",
+    );
+    expect(res?.fitLevel).not.toBe("Unknown");
+    expect(res?.availableVram).toBeGreaterThan(20);
+  });
+
+  it("is Unknown when the instance type resolves to nothing", () => {
+    const res = calculatePoolCompatibility(
+      "Qwen/Qwen2.5-14B",
+      pool({ allowed_gpu_types: ["g5.xlarge"] }),
+      HF_CONFIG_14B, "awq", "auto",
+    );
+    expect(res?.fitLevel).toBe("Unknown");
+  });
+});
+
 describe("calculatePoolCompatibilityWithFit", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

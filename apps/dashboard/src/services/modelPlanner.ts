@@ -66,7 +66,8 @@ interface LlmfitModelFit {
 
 export function resolvePoolGpuResources(pool: any): PoolGpuResources {
   const gpuCount = pool?.gpu_count || 1;
-  const gpuKey = (pool?.allowed_gpu_types?.[0] || "").toUpperCase().replace(/[\s-]/g, "") || "";
+  const gpuName = pool?.gpu_specs?.[0]?.gpu_type || pool?.allowed_gpu_types?.[0] || "";
+  const gpuKey = gpuName.toUpperCase().replace(/[\s-]/g, "") || "";
   const gpuSpecKey = Object.keys(GPU_SPECS).find(k => {
     const nk = k.toUpperCase().replace(/[\s-]/g, "");
     return gpuKey.includes(nk) || nk.includes(gpuKey);
@@ -112,7 +113,7 @@ export function calculatePoolCompatibility(
   const arch = extractHfArchitecture(hfConfig);
   return calculateCompatibility(
     modelId,
-    pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
+    pool.gpu_specs?.[0]?.gpu_type || pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
     quantization || dtype,
     {
       vram: resources.vramKnown
@@ -309,7 +310,7 @@ export async function calculatePoolCompatibilityWithFit(
     if (fit) {
       const baseResult = calculateCompatibility(
         modelId,
-        pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
+        pool.gpu_specs?.[0]?.gpu_type || pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
         quantization || dtype,
         {
           vram: resources.aggregatedVram ?? resources.singleGpuVram,

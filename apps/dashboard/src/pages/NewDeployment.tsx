@@ -716,6 +716,7 @@ export default function NewDeployment() {
               provider: p.provider,
               is_active: p.is_active,
               allowed_gpu_types: p.allowed_gpu_types || [],
+              gpu_specs: p.gpu_specs,
               gpu_count: p.gpu_count,
               nodes_count: 0,
               lifecycle_state: p.lifecycle_state,
