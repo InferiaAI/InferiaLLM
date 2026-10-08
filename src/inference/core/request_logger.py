@@ -43,6 +43,7 @@ class RequestLogger:
         applied_policies: List[str],
         log_payloads: bool,
         ip_address: Optional[str] = None,
+        org_id: Optional[str] = None,
         status_code: int = 200,
         error_message: Optional[str] = None,
         # LLM-specific
@@ -67,6 +68,7 @@ class RequestLogger:
             status_code=status_code,
             duration_seconds_value=end_time - start_time,
             ttft_ms=ttft_ms,
+            org_id=org_id,
         )
 
         # Tokens per second (LLM only)
