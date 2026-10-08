@@ -20,6 +20,7 @@ export interface PoolView {
   owner_type: string;
   owner_id: string;
   allowed_gpu_types: string[];
+  gpu_specs?: { gpu_type: string; vram: number }[];
   max_cost_per_hour: number;
   is_dedicated: boolean;
   scheduling_policy_json: string;

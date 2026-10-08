@@ -2939,6 +2939,32 @@ async def list_pool_inventory(pool_id: str):
     }
 
 
+def resolve_gpu_specs(allowed_gpu_types, gpu_resource_map) -> list[dict]:
+    """The card(s) behind a pool, for the planner's VRAM estimate.
+
+    allowed_gpu_types is a scheduling constraint: a GPU name on most providers,
+    an EC2 instance type on AWS, and "any" on worker and k8s pools. Only the
+    first is in gpu_resource_map, so the instance catalog covers AWS and the
+    rest resolve to nothing, which the planner reports as unknown.
+    """
+    from providers.aws.instance_catalog import lookup as _aws_catalog_lookup
+
+    specs: list[dict] = []
+    for gt in allowed_gpu_types or []:
+        vram = gpu_resource_map.get(gt.upper())
+        if vram:
+            specs.append({"gpu_type": gt, "vram": vram})
+            continue
+        it = _aws_catalog_lookup(gt)
+        # gpu_ram_gb is the node total, so divide for one card's worth.
+        if it is not None and it.gpu_ram_gb and it.gpu_count:
+            specs.append({
+                "gpu_type": it.gpu_model or gt,
+                "vram": it.gpu_ram_gb // it.gpu_count,
+            })
+    return specs
+
+
 @router.get("/listPools/{owner_id}")
 async def list_pools(
     owner_id: str | None = None,
@@ -3001,11 +3027,9 @@ async def list_pools(
                 "updated_at": p.updated_at,
                 "gpu_specs": [],
             }
-            # Add VRAM info if we have it in our map
-            for gt in p.allowed_gpu_types:
-                vram = gpu_resource_map.get(gt.upper())
-                if vram:
-                    pool_dict["gpu_specs"].append({"gpu_type": gt, "vram": vram})
+            pool_dict["gpu_specs"] = resolve_gpu_specs(
+                p.allowed_gpu_types, gpu_resource_map,
+            )
 
             enriched_pools.append(pool_dict)
     except Exception:
