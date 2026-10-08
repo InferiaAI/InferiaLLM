@@ -18,13 +18,13 @@ _DURATION_BUCKETS = (0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0)
 requests_total = Counter(
     "inferia_inference_requests_total",
     "Completed inference requests.",
-    ["deployment", "model", "request_type", "status_code"],
+    ["org", "deployment", "model", "request_type", "status_code"],
 )
 
 duration_seconds = Histogram(
     "inferia_inference_duration_seconds",
     "End-to-end inference request duration.",
-    ["deployment", "model", "request_type"],
+    ["org", "deployment", "model", "request_type"],
     buckets=_DURATION_BUCKETS,
 )
 
@@ -33,7 +33,7 @@ duration_seconds = Histogram(
 ttft_seconds = Histogram(
     "inferia_inference_ttft_seconds",
     "Time to first token. Streaming requests only.",
-    ["deployment", "model"],
+    ["org", "deployment", "model"],
     buckets=_TTFT_BUCKETS,
 )
 
@@ -58,6 +58,7 @@ def observe_request(
     status_code,
     duration_seconds_value,
     ttft_ms=None,
+    org_id=None,
 ):
     """Record one completed request.
 
@@ -67,8 +68,10 @@ def observe_request(
     try:
         deployment = str(deployment_id or "none")
         model_label = str(model or "unknown")
+        org = str(org_id or "unknown")
 
         requests_total.labels(
+            org=org,
             deployment=deployment,
             model=model_label,
             request_type=request_type,
@@ -76,6 +79,7 @@ def observe_request(
         ).inc()
 
         duration_seconds.labels(
+            org=org,
             deployment=deployment,
             model=model_label,
             request_type=request_type,
@@ -83,7 +87,7 @@ def observe_request(
 
         if ttft_ms is not None:
             ttft_seconds.labels(
-                deployment=deployment, model=model_label,
+                org=org, deployment=deployment, model=model_label,
             ).observe(ttft_ms / 1000.0)
     except Exception:  # pragma: no cover - defensive
         pass

@@ -55,6 +55,7 @@ class CompletionHandler:
         deployment_id = deployment.get("id")
         concurrency_key = str(deployment_id or model)
         user_context_id = context["user_id_context"]
+        org_id = context.get("org_id")
         rate_limit_config = context.get("rate_limit_config")
         log_payloads = context.get("log_payloads", True)
 
@@ -140,6 +141,7 @@ class CompletionHandler:
                 log_payloads,
                 ip_address,
                 concurrency_key,
+                org_id=org_id,
             )
         else:
             return await CompletionHandler._handle_standard(
@@ -157,6 +159,7 @@ class CompletionHandler:
                 log_payloads,
                 ip_address,
                 concurrency_key,
+                org_id=org_id,
             )
 
     @staticmethod
@@ -176,6 +179,7 @@ class CompletionHandler:
         log_payloads,
         ip_address,
         concurrency_key,
+        org_id=None,
     ):
         tokenizer_model = provider_payload.get("model") or model
         messages = provider_payload.get("messages", [])
@@ -242,6 +246,7 @@ class CompletionHandler:
                         RequestLogger.log(
                             deployment_id=deployment_id,
                             user_id=user_context_id,
+                            org_id=org_id,
                             model=model,
                             request_payload=original_body,
                             start_time=start_time,
@@ -291,6 +296,7 @@ class CompletionHandler:
         log_payloads,
         ip_address,
         concurrency_key,
+        org_id=None,
     ):
         status_code = 200
         error_message = None
@@ -324,6 +330,7 @@ class CompletionHandler:
                 RequestLogger.log,
                 deployment_id=deployment_id,
                 user_id=user_context_id,
+                org_id=org_id,
                 model=model,
                 request_payload=original_body,
                 start_time=start_time,

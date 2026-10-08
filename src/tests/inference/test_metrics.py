@@ -51,7 +51,7 @@ class TestObserveRequest:
 
         total = REGISTRY.get_sample_value(
             "inferia_inference_requests_total",
-            {"deployment": "d-count", "model": "qwen2:0.5b",
+            {"org": "unknown", "deployment": "d-count", "model": "qwen2:0.5b",
              "request_type": "llm", "status_code": "200"},
         )
         assert total == 1.0
@@ -64,7 +64,7 @@ class TestObserveRequest:
 
         total = REGISTRY.get_sample_value(
             "inferia_inference_duration_seconds_sum",
-            {"deployment": "d-dur", "model": "m", "request_type": "llm"},
+            {"org": "unknown", "deployment": "d-dur", "model": "m", "request_type": "llm"},
         )
         assert total == 2.0
 
@@ -76,7 +76,7 @@ class TestObserveRequest:
 
         total = REGISTRY.get_sample_value(
             "inferia_inference_ttft_seconds_sum",
-            {"deployment": "d-ttft", "model": "m"},
+            {"org": "unknown", "deployment": "d-ttft", "model": "m"},
         )
         assert total == 0.25, "the histogram is in seconds, the caller has ms"
 
@@ -90,13 +90,13 @@ class TestObserveRequest:
 
         count = REGISTRY.get_sample_value(
             "inferia_inference_ttft_seconds_count",
-            {"deployment": "d-none", "model": "m"},
+            {"org": "unknown", "deployment": "d-none", "model": "m"},
         )
         assert count is None, "absent is the correct value, not a filled-in one"
 
         duration = REGISTRY.get_sample_value(
             "inferia_inference_duration_seconds_count",
-            {"deployment": "d-none", "model": "m", "request_type": "llm"},
+            {"org": "unknown", "deployment": "d-none", "model": "m", "request_type": "llm"},
         )
         assert duration == 1.0, "duration is still recorded"
 
@@ -119,7 +119,59 @@ class TestObserveRequest:
 
         total = REGISTRY.get_sample_value(
             "inferia_inference_requests_total",
-            {"deployment": "none", "model": "m",
+            {"org": "unknown", "deployment": "none", "model": "m",
+             "request_type": "llm", "status_code": "200"},
+        )
+        assert total == 1.0
+
+
+class TestTheOrgLabel:
+    """Per-team SLOs are the point of the label, so it has to reach all three."""
+
+    def test_the_counter_carries_it(self):
+        metrics.observe_request(
+            deployment_id="d-org", model="m", request_type="llm",
+            status_code=200, duration_seconds_value=1.0, org_id="acme",
+        )
+
+        total = REGISTRY.get_sample_value(
+            "inferia_inference_requests_total",
+            {"org": "acme", "deployment": "d-org", "model": "m",
+             "request_type": "llm", "status_code": "200"},
+        )
+        assert total == 1.0
+
+    def test_both_histograms_carry_it(self):
+        metrics.observe_request(
+            deployment_id="d-org-h", model="m", request_type="llm",
+            status_code=200, duration_seconds_value=2.0, ttft_ms=500.0,
+            org_id="acme",
+        )
+
+        assert REGISTRY.get_sample_value(
+            "inferia_inference_duration_seconds_sum",
+            {"org": "acme", "deployment": "d-org-h", "model": "m",
+             "request_type": "llm"},
+        ) == 2.0
+        assert REGISTRY.get_sample_value(
+            "inferia_inference_ttft_seconds_sum",
+            {"org": "acme", "deployment": "d-org-h", "model": "m"},
+        ) == 0.5
+
+    @pytest.mark.parametrize("missing", [None, ""])
+    def test_an_unresolved_org_does_not_drop_the_sample(self, missing):
+        """A None label value raises, and observe_request swallows that, so an
+        unresolved org would silently lose the request instead of bucketing it."""
+        # The registry is global, so each case needs its own series.
+        deployment = f"d-org-missing-{missing!r}"
+        metrics.observe_request(
+            deployment_id=deployment, model="m", request_type="llm",
+            status_code=200, duration_seconds_value=1.0, org_id=missing,
+        )
+
+        total = REGISTRY.get_sample_value(
+            "inferia_inference_requests_total",
+            {"org": "unknown", "deployment": deployment, "model": "m",
              "request_type": "llm", "status_code": "200"},
         )
         assert total == 1.0

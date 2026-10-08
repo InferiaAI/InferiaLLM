@@ -156,6 +156,7 @@ class VideoHandler:
                 RequestLogger.log,
                 deployment_id=ctx.deployment_id,
                 user_id=ctx.user_context_id,
+                org_id=ctx.org_id,
                 model=ctx.model,
                 request_payload=body,
                 start_time=ctx.start_time,
