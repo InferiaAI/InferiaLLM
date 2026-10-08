@@ -1932,6 +1932,56 @@ def _without_secrets(configuration: dict) -> dict:
     }
 
 
+async def _stored_configuration(request, deployment_id: str):
+    """The deployment's current configuration, or None if it cannot be read.
+
+    A read failure must not fail the update; it only means the secrets cannot
+    be restored, which is the behaviour before this existed.
+    """
+    from uuid import UUID as _UUID
+
+    from orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+
+    try:
+        repo = ModelDeploymentRepository(
+            request.app.state.pool,
+            event_bus=getattr(request.app.state, "event_bus", None),
+        )
+        row = await repo.get(_UUID(deployment_id))
+        return row.get("configuration") if row else None
+    except Exception:
+        logger.warning(
+            "could not read the stored configuration for %s; secrets in it "
+            "will not be preserved on this update",
+            deployment_id,
+            exc_info=True,
+        )
+        return None
+
+
+def _with_stored_secrets(incoming: dict, stored) -> dict:
+    """The configuration to write, with secrets the caller never saw put back.
+
+    Reads of a deployment go through _without_secrets, so a client that edits
+    what it was given sends a configuration with no credential in it. Writing
+    that verbatim would blank the provider key.
+    """
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except json.JSONDecodeError:
+            return incoming
+    if not isinstance(stored, dict):
+        return incoming
+    restored = dict(incoming)
+    for key, value in stored.items():
+        if key.lower() in _SECRET_CONFIG_KEYS and key not in restored:
+            restored[key] = value
+    return restored
+
+
 @router.get("/status/{deployment_id}")
 async def get_deployment_status(deployment_id: str):
     async with _auth_channel() as channel:
@@ -2050,6 +2100,8 @@ async def update_deployment(
                 configuration = dict(req.configuration)
                 if req.autoscaling is not None:
                     configuration.update(req.autoscaling.as_configuration())
+                stored = await _stored_configuration(request, deployment_id)
+                configuration = _with_stored_secrets(configuration, stored)
                 update_kwargs["configuration"] = json.dumps(configuration)
             if req.inference_model is not None:
                 update_kwargs["inference_model"] = req.inference_model
