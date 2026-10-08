@@ -33,6 +33,8 @@ interface DeploymentData {
     configuration?: any
     auto_replica_enabled?: boolean
     tokens_per_second_threshold?: number | null
+    autoscaling?: Record<string, number>
+    pool_provider?: string | null
 }
 
 interface DeploymentConfigProps {
@@ -80,6 +82,10 @@ type State = {
     // Auto-replica
     autoReplicaEnabled: boolean;
     tokensPerSecondThreshold: string;
+    kedaP95Seconds: string;
+    kedaMaxReplicas: string;
+    kedaInFlightPerReplica: string;
+    kedaMinSamples: string;
 };
 
 type Action =
@@ -127,6 +133,10 @@ const initialState = (deployment: DeploymentData): State => ({
     // Auto-replica defaults
     autoReplicaEnabled: false,
     tokensPerSecondThreshold: "10",
+    kedaP95Seconds: "",
+    kedaMaxReplicas: "",
+    kedaInFlightPerReplica: "",
+    kedaMinSamples: "",
 });
 
 function reducer(state: State, action: Action): State {
@@ -215,6 +225,11 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
             if (deployment?.tokens_per_second_threshold !== undefined && deployment?.tokens_per_second_threshold !== null) {
                 updates.tokensPerSecondThreshold = String(deployment.tokens_per_second_threshold);
             }
+            const keda = deployment?.autoscaling || {};
+            if (keda.p95_seconds != null) updates.kedaP95Seconds = String(keda.p95_seconds);
+            if (keda.max_replicas != null) updates.kedaMaxReplicas = String(keda.max_replicas);
+            if (keda.in_flight_per_replica != null) updates.kedaInFlightPerReplica = String(keda.in_flight_per_replica);
+            if (keda.min_samples != null) updates.kedaMinSamples = String(keda.min_samples);
             dispatch({ type: 'INIT_CONFIG', payload: updates });
         }
     }, [deployment, isVllmFamily, isTraining, isEmbedding, isDiffusion])
@@ -322,6 +337,12 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 payload.auto_replica_enabled = false;
                 payload.tokens_per_second_threshold = null;
             }
+            const autoscaling: Record<string, number> = {};
+            if (state.kedaP95Seconds) autoscaling.p95_seconds = parseInt(state.kedaP95Seconds);
+            if (state.kedaMaxReplicas) autoscaling.max_replicas = parseInt(state.kedaMaxReplicas);
+            if (state.kedaInFlightPerReplica) autoscaling.in_flight_per_replica = parseInt(state.kedaInFlightPerReplica);
+            if (state.kedaMinSamples) autoscaling.min_samples = parseInt(state.kedaMinSamples);
+            if (Object.keys(autoscaling).length > 0) payload.autoscaling = autoscaling;
             await computeApi.patch(`/deployment/update/${deployment.id || deployment.deployment_id}`, payload)
             toast.success("Configuration updated successfully")
             if (onUpdate) onUpdate()
@@ -345,6 +366,8 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                             <AutoReplicaSettings
                                 autoReplicaEnabled={state.autoReplicaEnabled}
                                 tokensPerSecondThreshold={state.tokensPerSecondThreshold}
+                                isK8s={deployment?.pool_provider === "k8s"}
+                                state={state}
                                 dispatch={dispatch}
                             />
                         )}
@@ -726,7 +749,53 @@ function DiffusionSettings({
     );
 }
 
-function AutoReplicaSettings({ autoReplicaEnabled, tokensPerSecondThreshold, dispatch }: { autoReplicaEnabled: boolean; tokensPerSecondThreshold: string; dispatch: React.Dispatch<Action> }) {
+const KEDA_TARGETS: { field: keyof State; label: string; unit?: string; min: number; max: number; fallback: number; hint: string }[] = [
+    { field: 'kedaP95Seconds', label: "P95 latency target", unit: "s", min: 1, max: 300, fallback: 10, hint: "Replicas are only added while P95 is above this." },
+    { field: 'kedaMaxReplicas', label: "Max replicas", min: 1, max: 50, fallback: 3, hint: "Ceiling KEDA will not scale past." },
+    { field: 'kedaInFlightPerReplica', label: "In-flight per replica", min: 1, max: 100, fallback: 3, hint: "Requests one replica is expected to carry." },
+    { field: 'kedaMinSamples', label: "Minimum samples", min: 1, max: 1000, fallback: 2, hint: "Below this the window is too quiet to act on." },
+];
+
+function KedaTargets({ state, dispatch }: { state: State; dispatch: React.Dispatch<Action> }) {
+    return (
+        <div className="space-y-4 pt-4 border-t border-border">
+            <div>
+                <h4 className="text-xs font-bold uppercase tracking-tighter text-muted-foreground">Kubernetes scaling targets</h4>
+                <p className="text-[10px] text-muted-foreground font-mono mt-1">
+                    Leave a field blank to use the platform default.
+                </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {KEDA_TARGETS.map(t => (
+                    <div key={t.field} className="space-y-1.5">
+                        <label htmlFor={t.field} className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">
+                            {t.label}
+                        </label>
+                        <div className="relative">
+                            <input
+                                id={t.field}
+                                type="number"
+                                min={t.min}
+                                max={t.max}
+                                step="1"
+                                value={String(state[t.field] ?? "")}
+                                onChange={e => dispatch({ type: 'SET_FIELD', field: t.field, value: e.target.value })}
+                                className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground placeholder:text-muted-foreground/50 placeholder:italic focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono pr-12"
+                                placeholder={`default ${t.fallback}`}
+                            />
+                            {t.unit && (
+                                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">{t.unit}</span>
+                            )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-mono">{t.hint}</p>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+export function AutoReplicaSettings({ autoReplicaEnabled, tokensPerSecondThreshold, isK8s, state, dispatch }: { autoReplicaEnabled: boolean; tokensPerSecondThreshold: string; isK8s: boolean; state: State; dispatch: React.Dispatch<Action> }) {
     return (
         <div className="bg-card border border-border rounded-2xl p-6 hover:border-amber-500/30 transition-colors duration-300">
             <div className="flex items-center gap-2 mb-6 text-foreground">
@@ -746,7 +815,7 @@ function AutoReplicaSettings({ autoReplicaEnabled, tokensPerSecondThreshold, dis
                         Automatically provision new nodes when throughput degrades
                     </label>
                 </div>
-                {autoReplicaEnabled && (
+                {autoReplicaEnabled && !isK8s && (
                     <div className="space-y-2">
                         <label htmlFor="tpsThreshold" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">
                             Tokens/sec threshold
@@ -769,6 +838,7 @@ function AutoReplicaSettings({ autoReplicaEnabled, tokensPerSecondThreshold, dis
                         </p>
                     </div>
                 )}
+                {autoReplicaEnabled && isK8s && <KedaTargets state={state} dispatch={dispatch} />}
             </div>
         </div>
     );
