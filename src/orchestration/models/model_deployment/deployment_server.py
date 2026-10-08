@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 import logging
 
 logger = logging.getLogger(__name__)
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import asyncpg
 import collections
 import grpc
@@ -636,6 +636,55 @@ async def _initiate_node_destroy(
 # status start stop
 
 
+class AutoscalingTargets(BaseModel):
+    """What a deployment is held to when auto_replica_enabled is set.
+
+    The k8s adapter reads these from `configuration` under the `autoscale_`
+    names, so `as_configuration` is the only shape that reaches KEDA.
+    """
+
+    p95_seconds: int | None = Field(default=None, ge=1, le=300)
+    max_replicas: int | None = Field(default=None, ge=1, le=50)
+    in_flight_per_replica: int | None = Field(default=None, ge=1, le=100)
+    min_samples: int | None = Field(default=None, ge=1, le=1000)
+
+    def as_configuration(self) -> dict:
+        return {
+            f"autoscale_{name}": value
+            for name, value in (
+                ("p95_seconds", self.p95_seconds),
+                ("max_replicas", self.max_replicas),
+                ("in_flight_per_replica", self.in_flight_per_replica),
+                ("min_samples", self.min_samples),
+            )
+            if value is not None
+        }
+
+
+AUTOSCALING_CONFIG_KEYS = (
+    "autoscale_p95_seconds",
+    "autoscale_max_replicas",
+    "autoscale_in_flight_per_replica",
+    "autoscale_min_samples",
+)
+
+
+def autoscaling_from_configuration(configuration) -> dict:
+    """The autoscaling keys a stored configuration carries, if any."""
+    if isinstance(configuration, str):
+        try:
+            configuration = json.loads(configuration)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(configuration, dict):
+        return {}
+    return {
+        key.removeprefix("autoscale_"): configuration[key]
+        for key in AUTOSCALING_CONFIG_KEYS
+        if configuration.get(key) is not None
+    }
+
+
 class DeployModelRequest(BaseModel):
     model_name: str
     model_version: str
@@ -658,6 +707,7 @@ class DeployModelRequest(BaseModel):
     hf_token_name: str | None = None
     auto_replica_enabled: bool = False
     tokens_per_second_threshold: float | None = None
+    autoscaling: AutoscalingTargets | None = None
 
 
 class PreflightRequest(BaseModel):
@@ -697,6 +747,7 @@ class UpdateDeploymentRequest(BaseModel):
     replicas: int | None = None
     auto_replica_enabled: bool | None = None
     tokens_per_second_threshold: float | None = None
+    autoscaling: AutoscalingTargets | None = None
 
 
 class CreatePoolRequest(BaseModel):
@@ -1757,6 +1808,10 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     if policies_val is not None and isinstance(policies_val, dict):
         policies_val = json.dumps(policies_val)
     configuration_val = req.configuration
+    if req.autoscaling is not None:
+        configuration_val = {
+            **(configuration_val or {}), **req.autoscaling.as_configuration(),
+        }
     if configuration_val is not None and isinstance(configuration_val, dict):
         configuration_val = json.dumps(configuration_val)
     await deploys.create(
@@ -1897,11 +1952,16 @@ async def get_deployment_status(deployment_id: str):
     target_node_id: str | None = None
     auto_replica_enabled: bool = False
     tokens_per_second_threshold: float | None = None
+    pool_provider: str | None = None
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
         try:
             row = await conn.fetchrow(
-                "SELECT node_ids, target_node_id, auto_replica_enabled, tokens_per_second_threshold FROM model_deployments WHERE deployment_id = $1",
+                "SELECT d.node_ids, d.target_node_id, d.auto_replica_enabled, "
+                "d.tokens_per_second_threshold, p.provider "
+                "FROM model_deployments d "
+                "LEFT JOIN compute_pools p ON p.id = d.pool_id "
+                "WHERE d.deployment_id = $1",
                 deployment_id,
             )
             if row:
@@ -1911,6 +1971,7 @@ async def get_deployment_status(deployment_id: str):
                     target_node_id = str(row["target_node_id"])
                 auto_replica_enabled = row.get("auto_replica_enabled", False)
                 tokens_per_second_threshold = row.get("tokens_per_second_threshold")
+                pool_provider = row.get("provider")
         finally:
             await conn.close()
     except Exception:
@@ -1928,6 +1989,8 @@ async def get_deployment_status(deployment_id: str):
             if resp.configuration
             else {}
         ),
+        "autoscaling": autoscaling_from_configuration(resp.configuration),
+        "pool_provider": pool_provider,
         "owner_id": resp.owner_id,
         "endpoint": resp.endpoint,
         "org_id": resp.org_id,
@@ -1943,10 +2006,16 @@ async def get_deployment_status(deployment_id: str):
 
 
 @router.patch("/update/{deployment_id}")
-async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
+async def update_deployment(
+    deployment_id: str, req: UpdateDeploymentRequest, request: Request,
+):
     # Persist control-plane-only fields (auto_replica) directly to DB
     # before/after the gRPC call, since gRPC doesn't carry these.
-    if req.auto_replica_enabled is not None or req.tokens_per_second_threshold is not None:
+    if (
+        req.auto_replica_enabled is not None
+        or req.tokens_per_second_threshold is not None
+        or req.autoscaling is not None
+    ):
         from uuid import UUID as _UUID
         from orchestration.repositories.model_deployment_repo import (
             ModelDeploymentRepository,
@@ -1955,11 +2024,22 @@ async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
             request.app.state.pool,
             event_bus=getattr(request.app.state, "event_bus", None),
         )
-        await deploys_repo.update_auto_replica(
-            _UUID(deployment_id),
-            auto_replica_enabled=req.auto_replica_enabled,
-            tokens_per_second_threshold=req.tokens_per_second_threshold,
-        )
+        if (
+            req.auto_replica_enabled is not None
+            or req.tokens_per_second_threshold is not None
+        ):
+            await deploys_repo.update_auto_replica(
+                _UUID(deployment_id),
+                auto_replica_enabled=req.auto_replica_enabled,
+                tokens_per_second_threshold=req.tokens_per_second_threshold,
+            )
+        # Only when the caller sends no configuration of its own. A
+        # configuration in the same request is a whole-column replace
+        # below, which would drop whatever this merged.
+        if req.autoscaling is not None and req.configuration is None:
+            await deploys_repo.merge_configuration(
+                _UUID(deployment_id), req.autoscaling.as_configuration(),
+            )
 
     async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
@@ -1967,7 +2047,10 @@ async def update_deployment(deployment_id: str, req: UpdateDeploymentRequest):
         try:
             update_kwargs = {"deployment_id": deployment_id}
             if req.configuration is not None:
-                update_kwargs["configuration"] = json.dumps(req.configuration)
+                configuration = dict(req.configuration)
+                if req.autoscaling is not None:
+                    configuration.update(req.autoscaling.as_configuration())
+                update_kwargs["configuration"] = json.dumps(configuration)
             if req.inference_model is not None:
                 update_kwargs["inference_model"] = req.inference_model
             if req.endpoint is not None:

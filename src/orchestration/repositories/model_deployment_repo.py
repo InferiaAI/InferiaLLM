@@ -540,6 +540,37 @@ class ModelDeploymentRepository(BaseRepository):
         async with self.db.acquire() as c:
             await c.execute(q, deployment_id, config_json)
 
+    async def merge_configuration(self, deployment_id: UUID, values: dict):
+        """Set only ``values`` inside the stored configuration, keeping the rest.
+
+        A whole-column write would drop the provider credential when a caller
+        changes one unrelated key, so the current value is read first.
+        """
+        if not values:
+            return
+        async with self.db.acquire() as c, c.transaction():
+            row = await c.fetchrow(
+                "SELECT configuration FROM model_deployments "
+                "WHERE deployment_id=$1 FOR UPDATE",
+                deployment_id,
+            )
+            if row is None:
+                return
+            current = _decrypted(dict(row)).get("configuration")
+            if isinstance(current, str):
+                try:
+                    current = json.loads(current)
+                except json.JSONDecodeError:
+                    current = {}
+            if not isinstance(current, dict):
+                current = {}
+            await c.execute(
+                "UPDATE model_deployments SET configuration=$2, updated_at=now() "
+                "WHERE deployment_id=$1",
+                deployment_id,
+                _encrypt_configuration({**current, **values}),
+            )
+
     async def list_pending_for_pool(
         self,
         pool_id: UUID,
