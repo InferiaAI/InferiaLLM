@@ -1,17 +1,28 @@
 import os
+from pathlib import Path
 import yaml
 
-REPO = os.environ.get("INFERIA_REPO", "/host")
+REPO = os.environ.get("INFERIA_REPO") or str(Path(__file__).resolve().parents[3])
 COMPOSE = os.path.join(REPO, "docker-compose.yml")
 
-def _app_service():
+def _service(name):
     with open(COMPOSE) as f:
         data = yaml.safe_load(f)
-    return data["services"]["app"]
+    return data["services"][name]
 
-def test_app_publishes_exactly_one_port():
-    ports = _app_service().get("ports", [])
-    assert len(ports) == 1, f"app should publish exactly one port, got {ports}"
+def _app_service():
+    return _service("app")
+
+def test_app_publishes_app_port_and_no_legacy_ports():
+    ports = [str(p) for p in _app_service().get("ports", [])]
+    text = "\n".join(ports)
+    assert "APP_PORT" in text, f"app must publish APP_PORT, got {ports}"
+    for legacy in ("DASHBOARD_PORT", "FILTRATION_GATEWAY_PORT", "INFERENCE_GATEWAY_PORT"):
+        assert legacy not in text, f"{legacy} replaced by APP_PORT"
+
+def test_envoy_does_not_publish_its_admin_port():
+    ports = [str(p) for p in _service("front-envoy").get("ports", [])]
+    assert not any("9901" in p for p in ports), f"envoy admin published: {ports}"
 
 def test_app_does_not_hardcode_mirror_base():
     env = _app_service().get("environment", [])

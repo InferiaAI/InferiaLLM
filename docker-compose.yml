@@ -112,7 +112,6 @@ services:
     restart: unless-stopped
     ports:
       - "10000:10000"
-      - "9901:9901"
     volumes:
       - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
