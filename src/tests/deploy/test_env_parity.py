@@ -1,8 +1,10 @@
 import os
 import re
+from pathlib import Path
+
 import pytest
 
-REPO = "/host"
+REPO = os.environ.get("INFERIA_REPO") or str(Path(__file__).resolve().parents[3])
 ENV = os.path.join(REPO, ".env")
 EXAMPLE = os.path.join(REPO, ".env.example")
 
