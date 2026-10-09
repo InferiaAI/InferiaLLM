@@ -133,7 +133,12 @@ class DownloadManager:
         Dispatches to the appropriate downloader based on *source*:
         - ``hf``: HuggingFace (uses injectable ``_fetch_list``/``_fetch_file``)
         - ``ollama``: Ollama registry (uses ``_ollama_list``/``_ollama_file``)
-        - anything else: no-op, marks directly as cached
+        - anything else: marks the row ``error``, since nothing was fetched
+
+        Returns immediately when the row is already cached and its files are
+        on disk. Every deploy calls this, so without it a cached model is
+        re-listed against the origin each time - which fails with no egress
+        and flips a working row to ``error``.
 
         Failure is caught and recorded as ``status='error'`` on the row; the
         exception is never propagated to callers.
@@ -143,6 +148,12 @@ class DownloadManager:
         )
         cid = row["id"]
         try:
+            # Inside the try: an unreadable cache directory raises here, and
+            # that is a real error — the mirror could not read it either.
+            if row.get("status") == "cached" and self._files_present(
+                source, model_id, revision
+            ):
+                return
             if source == "hf":
                 # Resolve token once per pre-warm — avoids per-file DB round-trips
                 self._hf_token = await self._load_hf_token()
@@ -173,6 +184,22 @@ class DownloadManager:
     # ------------------------------------------------------------------
     # Shared download loop — both HF and Ollama use this
     # ------------------------------------------------------------------
+
+    def _files_present(self, source, model_id, revision) -> bool:
+        """Whether this row's cache directory actually holds its files.
+
+        A row can read ``cached`` while its directory has been removed, and
+        skipping the fetch then leaves nothing for the mirror to serve.
+        """
+        if self.paths is None:
+            return False
+        if source == "hf":
+            d = self.paths.hf_dir(model_id, revision)
+            return d.is_dir() and any(d.iterdir())
+        if source == "ollama":
+            # The mirror reads this file first, so blobs alone are not enough.
+            return (self.paths.ollama_dir(model_id, revision) / "manifest.json").is_file()
+        return False
 
     async def _run_prewarm(self, cid, *, list_fn, file_fn, model_id, revision):
         """Enumerate files via *list_fn*, download each via *file_fn*, update progress.
