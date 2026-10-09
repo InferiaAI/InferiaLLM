@@ -73,6 +73,35 @@ class CachePaths:
             return 0
         return sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
 
+    def import_root(self) -> Path:
+        """Staging directory an operator places model files in.
+
+        Inside the cache volume so an import hard-links rather than copies,
+        and so a request naming a path outside it can be refused outright.
+        """
+        return self.root / "import"
+
+    def resolve_import(self, name: str) -> Path:
+        """The staging entry *name* refers to, or raise if it escapes.
+
+        Imports reach a route that does not re-check the caller, so an
+        unconstrained path would let anyone able to create a model publish
+        any file the control plane can read.
+        """
+        root = self.import_root().resolve()
+        raw = root / name
+        # Before resolve(), which would follow it and hide the hop.
+        if raw.is_symlink():
+            raise ValueError(f"import path is a symlink: {name!r}")
+        candidate = raw.resolve()
+        if candidate == root or root not in candidate.parents:
+            raise ValueError(f"import path escapes the staging directory: {name!r}")
+        return candidate
+
     def total_bytes(self) -> int:
-        """Return the total size in bytes of the entire cache root."""
-        return self.dir_size_bytes(self.root)
+        """Return the total size in bytes of the cache, excluding staging.
+
+        Imported files are hard-linked out of staging, so counting both would
+        charge every imported model to the eviction cap twice.
+        """
+        return self.dir_size_bytes(self.root) - self.dir_size_bytes(self.import_root())

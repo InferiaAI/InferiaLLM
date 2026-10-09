@@ -110,7 +110,8 @@ class DownloadManager:
             except BaseException:
                 pass
 
-    def start(self, *, source, model_id, revision="main", engine_hint=None):
+    def start(self, *, source, model_id, revision="main", engine_hint=None,
+              import_from=None):
         """Fire-and-forget pre-warm; deduplicates by ``(source, model_id, revision)`` key.
 
         Returns the asyncio.Task for the running pre-warm operation.  If a
@@ -122,12 +123,21 @@ class DownloadManager:
         if t and not t.done():
             return t
         t = asyncio.create_task(
-            self.prewarm(source=source, model_id=model_id, revision=revision, engine_hint=engine_hint)
+            self.prewarm(
+                source=source, model_id=model_id, revision=revision,
+                engine_hint=engine_hint, import_from=import_from,
+            )
         )
         self._tasks[key] = t
         return t
 
-    async def prewarm(self, *, source, model_id, revision="main", engine_hint=None):
+    def is_running(self, source, model_id, revision="main") -> bool:
+        """Whether a pre-warm or import for this key is still in flight."""
+        t = self._tasks.get((source, model_id, revision))
+        return bool(t and not t.done())
+
+    async def prewarm(self, *, source, model_id, revision="main", engine_hint=None,
+                      import_from=None):
         """Download all files for *model_id* at *revision* into the cache.
 
         Dispatches to the appropriate downloader based on *source*:
@@ -150,11 +160,15 @@ class DownloadManager:
         try:
             # Inside the try: an unreadable cache directory raises here, and
             # that is a real error — the mirror could not read it either.
-            if row.get("status") == "cached" and self._files_present(
-                source, model_id, revision
+            if (
+                import_from is None
+                and row.get("status") == "cached"
+                and self._files_present(source, model_id, revision)
             ):
                 return
-            if source == "hf":
+            if import_from is not None:
+                await self._run_import(cid, source, model_id, revision, import_from)
+            elif source == "hf":
                 # Resolve token once per pre-warm — avoids per-file DB round-trips
                 self._hf_token = await self._load_hf_token()
                 await self._run_prewarm(
@@ -184,6 +198,57 @@ class DownloadManager:
     # ------------------------------------------------------------------
     # Shared download loop — both HF and Ollama use this
     # ------------------------------------------------------------------
+
+    async def _run_import(self, cid, source, model_id, revision, import_from):
+        """Bring a staged directory into the cache and record its metadata.
+
+        The importers hash every file they cannot take an etag from, so they
+        run on a worker thread: on the event loop they would stall /hf, /v2,
+        the worker channels and the API for the duration of the import.
+
+        Imported models are pinned, because on an install with no egress an
+        evicted model cannot be fetched again.
+        """
+        from . import importer
+
+        src = self.paths.resolve_import(import_from)
+        if not src.is_dir():
+            raise FileNotFoundError(f"not a directory in staging: {import_from!r}")
+
+        if source == "ollama":
+            manifest = await asyncio.to_thread(
+                importer.ollama_manifest, src, model_id, revision
+            )
+            layers = await asyncio.to_thread(importer.ollama_layers, manifest)
+            total = sum(int(f["size"]) for f in layers)
+            await self.repo.set_progress(
+                cid, bytes_total=total, bytes_done=0, status="downloading"
+            )
+            meta = await asyncio.to_thread(
+                importer.ollama_import, src,
+                self.paths.ollama_dir(model_id, revision), manifest, layers,
+            )
+        else:
+            files = await asyncio.to_thread(importer.hf_files, src)
+            if not files:
+                raise FileNotFoundError(f"no files to import from {import_from!r}")
+            total = sum(int(f["size"]) for f in files)
+            await self.repo.set_progress(
+                cid, bytes_total=total, bytes_done=0, status="downloading"
+            )
+            meta = await asyncio.to_thread(
+                importer.hf_import, src, self.paths.hf_dir(model_id, revision), files,
+            )
+
+        await self.repo.set_metadata(
+            cid,
+            commit_sha=meta["commit_sha"],
+            file_meta=meta["file_meta"],
+            pinned=True,
+        )
+        await self.repo.set_progress(
+            cid, bytes_total=total, bytes_done=total, status="cached"
+        )
 
     def _files_present(self, source, model_id, revision) -> bool:
         """Whether this row's cache directory actually holds its files.
