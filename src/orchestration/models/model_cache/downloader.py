@@ -162,8 +162,9 @@ class DownloadManager:
                     revision=revision,
                 )
             else:
-                # Unknown source — treat as cached (no download needed).
-                await self.repo.set_status(cid, "cached")
+                await self.repo.set_status(
+                    cid, "error", f"unsupported source {source!r}"
+                )
 
         except Exception as e:  # pre-warm failure is non-fatal to deploys
             logger.warning("prewarm failed %s/%s: %s", model_id, revision, e)

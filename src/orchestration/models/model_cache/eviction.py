@@ -52,6 +52,12 @@ class EvictionManager:
         in_use = self._in_use()
         for row in await self.repo.lru_candidates(exclude_model_ids=in_use):
             d = self._dir_for(row)
+            if d is None:
+                logger.warning(
+                    "skipping eviction of %s/%s: unknown source %r",
+                    row["model_id"], row["revision"], row["source"],
+                )
+                continue
             shutil.rmtree(d, ignore_errors=True)
             await self.repo.delete(row["id"])
             logger.info("evicted %s/%s", row["model_id"], row["revision"])
@@ -71,6 +77,6 @@ class EvictionManager:
             # Use per-model dir so a single eviction doesn't wipe ALL ollama
             # models from disk.
             return self.paths.ollama_dir(row["model_id"], row["revision"])
-        # Fallback for any other source: use the per-model ollama-style dir if
-        # the paths object supports it, otherwise fall back to ollama_root.
-        return self.paths.ollama_root()
+        # No layout for this source. Callers rmtree what this returns, so a
+        # default here deletes models belonging to other rows.
+        return None

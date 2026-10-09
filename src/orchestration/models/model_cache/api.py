@@ -1,13 +1,19 @@
 # api.py
 from __future__ import annotations
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from . import deps
 
 router = APIRouter(prefix="/v1/models", tags=["model-cache"])
 
+# Each value needs a download path in downloader.py and a directory layout in
+# eviction._dir_for. A value with neither cannot be stored or removed.
+CacheSource = Literal["hf", "ollama"]
+
 class AddModelBody(BaseModel):
-    source: str = "hf"        # 'hf' | 'ollama'
+    source: CacheSource = "hf"
     model_id: str
     revision: str = "main"
     engine: str | None = None
@@ -48,6 +54,8 @@ async def delete_model(cache_id: str):
     em = deps.get("eviction")
     if em:
         import shutil
-        shutil.rmtree(em._dir_for(row), ignore_errors=True)
+        d = em._dir_for(row)
+        if d is not None:
+            shutil.rmtree(d, ignore_errors=True)
     await repo.delete(cache_id)
     return None

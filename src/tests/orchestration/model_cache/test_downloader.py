@@ -129,14 +129,12 @@ async def test_prewarm_failure_marks_error_not_raises():
 
 
 # ---------------------------------------------------------------------------
-# Test 3: non-hf source is a no-op that ends cached
+# Test 3: an unknown source downloads nothing and ends in error
 # ---------------------------------------------------------------------------
 
-async def test_non_hf_source_is_cached_noop():
-    """source='custom' (unknown source) → row ends status='cached'; fetch_list is never called.
-
-    Note: 'ollama' is now a real source with actual download logic.
-    This test covers the fallthrough path for any unrecognized source.
+async def test_unknown_source_errors_without_downloading():
+    """Nothing is downloaded, so the row must not claim to be cached:
+    a deploy would then be sent to a mirror with no files behind it.
     """
     repo = FakeRepo()
     fetch_list_calls = []
@@ -154,7 +152,7 @@ async def test_non_hf_source_is_cached_noop():
     await dm.prewarm(source="custom", model_id="llama3")
 
     row = next(iter(repo._rows.values()))
-    assert row["status"] == "cached"
+    assert row["status"] == "error"
     # fetch_list was NOT called
     assert fetch_list_calls == []
 
@@ -605,8 +603,8 @@ async def test_prewarm_ollama_failure_marks_error(tmp_path):
     assert "HTTP 503" in (row["error"] or "")
 
 
-async def test_prewarm_other_source_is_cached_noop():
-    """source='custom' (not hf or ollama) → row ends status='cached'; no download."""
+async def test_prewarm_other_source_errors_without_http():
+    """An unrecognised source makes no request and does not claim cached."""
     repo = FakeRepo()
     # Use a router fake that would fail any HTTP call
     http = _RouterFakeHTTP({})
@@ -615,7 +613,7 @@ async def test_prewarm_other_source_is_cached_noop():
     await dm.prewarm(source="custom", model_id="some/model", revision="v1")
 
     row = next(iter(repo._rows.values()))
-    assert row["status"] == "cached"
+    assert row["status"] == "error"
     assert http.urls == [], "No HTTP requests should be made for unknown sources"
 
 
