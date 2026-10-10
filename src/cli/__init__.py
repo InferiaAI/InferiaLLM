@@ -18,6 +18,7 @@ from inferiadocs import (
 
 KNOWN_COMMANDS = {
     "init",
+    "models",
     "start",
     "migrate",
     "write-dashboard-config",
@@ -796,6 +797,46 @@ def main(argv=None):
     upd_p.add_argument("--value", default=None, help="New value")
     upd_p.add_argument("--active", default=None, help="Set active state (true/false)")
 
+    # --- models sub-command -------------------------------------------------
+    models_parser = sub.add_parser(
+        "models",
+        help="Inspect the model cache and import models staged on disk",
+    )
+    models_sub = models_parser.add_subparsers(
+        dest="models_action", required=True, help="Action",
+    )
+
+    ls_p = models_sub.add_parser("list", help="List cached models")
+
+    imp_p = models_sub.add_parser(
+        "import",
+        help="Import a model staged in the cache volume's import/ directory",
+    )
+    imp_p.add_argument(
+        "--from", dest="from_", required=True, metavar="NAME",
+        help="Entry name under the cache import/ directory",
+    )
+    imp_p.add_argument("--model-id", required=True, help="Model id to cache it as")
+    imp_p.add_argument(
+        "--format", choices=["hf", "ollama"], default="hf",
+        help="Staging layout (default: hf)",
+    )
+    imp_p.add_argument(
+        "--revision", default=None,
+        help="HF revision (default: main) or Ollama tag (default: latest)",
+    )
+    imp_p.add_argument("--engine", default=None, help="Engine hint")
+
+    for _p in (ls_p, imp_p):
+        _p.add_argument(
+            "--orchestration-url", default=None,
+            help="Orchestration service URL (default: http://localhost:8080)",
+        )
+        _p.add_argument(
+            "--internal-api-key", default=None,
+            help="Internal API key (default: INTERNAL_API_KEY env var)",
+        )
+
     # --- worker sub-command -------------------------------------------------
     worker_parser = sub.add_parser(
         "worker",
@@ -1023,6 +1064,10 @@ def main(argv=None):
         elif cmd == "providers":
             from cli.providers import run_providers_command
             run_providers_command(args)
+
+        elif cmd == "models":
+            from cli.models import run_models_command
+            run_models_command(args)
 
         elif cmd == "worker":
             from cli.worker import run_worker_command

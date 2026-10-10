@@ -28,7 +28,9 @@ Design notes
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -56,6 +58,51 @@ def _hf_headers() -> dict:
     return {"authorization": f"Bearer {tok}"} if tok else {}
 
 
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _file_meta(row: dict) -> dict:
+    """``file_meta`` as a dict, whichever way the driver returned it."""
+    fm = row.get("file_meta") or {}
+    if isinstance(fm, str):
+        try:
+            return json.loads(fm)
+        except json.JSONDecodeError:
+            return {}
+    return fm if isinstance(fm, dict) else {}
+
+
+async def _served_locally(repo: str, rev: str) -> dict | None:
+    """The cache row able to answer metadata for *repo* at *rev*, if any.
+
+    snapshot_download resolves a branch to a commit and then asks for
+    ``/resolve/<commit>/...``, so a 40-hex revision is matched against
+    ``commit_sha`` rather than against the revision the row was cached under.
+
+    Returns None whenever anything is missing, which leaves every existing
+    upstream path untouched.
+    """
+    r = deps.get("repo")
+    if r is None:
+        return None
+    try:
+        if _COMMIT_RE.match(rev):
+            row = await r.get_by_commit(source="hf", model_id=repo, commit_sha=rev)
+        else:
+            row = await r.get_by_key(source="hf", model_id=repo, revision=rev)
+    except Exception:
+        return None
+    if not row or row.get("status") != "cached" or not row.get("commit_sha"):
+        return None
+    return row
+
+
+def _local_dir(row: dict):
+    """The directory holding this row's files, under its own revision."""
+    cp = deps.get("paths")
+    return None if cp is None else cp.hf_dir(row["model_id"], row["revision"])
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -73,6 +120,30 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
     big file itself is still served from the local cache on the follow-up GET.
     """
     from urllib.parse import urljoin
+
+    # A cached row carries the commit and per-file etag, so the whole exchange
+    # happens locally. Without this an install with no egress reaches the
+    # except below, answers without X-Repo-Commit, and huggingface_hub refuses
+    # the file it already has on disk.
+    row = await _served_locally(repo, rev)
+    if row is not None:
+        files = _file_meta(row)
+        meta = files.get(filename)
+        if meta:
+            return Response(
+                status_code=200,
+                headers={
+                    "accept-ranges": "bytes",
+                    "x-repo-commit": row["commit_sha"],
+                    "etag": str(meta.get("etag", "")),
+                    "content-length": str(meta.get("size", 0)),
+                },
+            )
+        if files:
+            # The row lists every file, so absence is authoritative. Without
+            # the header huggingface_hub reads a bare 404 as a transport
+            # failure, and file_exists() answers True for what is not there.
+            return Response(status_code=404, headers={"x-error-code": "EntryNotFound"})
 
     url = f"{_HF}/{repo}/resolve/{rev}/{filename}"
     headers: dict[str, str] = {"accept-ranges": "bytes"}
@@ -153,6 +224,73 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
         return Response(status_code=200, headers=headers)
 
 
+# Both of these must stay above the /api/{rest:path} catch-all: FastAPI matches
+# in registration order, so the proxy would otherwise swallow them.
+@router.get("/api/models/{repo:path}/revision/{rev}")
+async def model_revision(repo: str, rev: str) -> Response:
+    """The repo at a revision, answered locally for a cached model.
+
+    huggingface_hub calls this to turn a branch name into a commit before it
+    asks for anything else, so a 500 here stops snapshot_download outright.
+    """
+    row = await _served_locally(repo, rev)
+    if row is None:
+        return await _proxy_api(f"models/{repo}/revision/{rev}")
+    meta = _file_meta(row)
+    return Response(
+        content=json.dumps({
+            "id": repo,
+            "sha": row["commit_sha"],
+            "siblings": [{"rfilename": p} for p in sorted(meta)],
+        }),
+        media_type="application/json",
+    )
+
+
+@router.get("/api/models/{repo:path}/tree/{rev}")
+async def model_tree(repo: str, rev: str) -> Response:
+    """The file list for a revision, answered locally for a cached model.
+
+    ``lfs`` is reported for the weight files because huggingface_hub decides
+    how to fetch a file from its presence.
+    """
+    row = await _served_locally(repo, rev)
+    if row is None:
+        return await _proxy_api(f"models/{repo}/tree/{rev}")
+    entries = []
+    for path, m in sorted(_file_meta(row).items()):
+        size = int(m.get("size", 0))
+        oid = str(m.get("etag", ""))
+        entry = {"type": "file", "path": path, "size": size, "oid": oid}
+        if path.endswith((".safetensors", ".bin", ".pt", ".gguf")):
+            entry["lfs"] = {"oid": oid, "size": size, "pointerSize": 134}
+        entries.append(entry)
+    return Response(content=json.dumps(entries), media_type="application/json")
+
+
+@router.get("/api/models/{repo:path}")
+async def model_info(repo: str) -> Response:
+    """The repo with no revision, which HfFileSystem.ls calls first.
+
+    Registered after the revision and tree routes so it cannot shadow them.
+    """
+    return await model_revision(repo, "main")
+
+
+async def _proxy_api(rest: str, query: str = "") -> Response:
+    """Forward an API call to HuggingFace unchanged."""
+    url = f"{_HF}/api/{rest}"
+    if query:
+        url += f"?{query}"
+    async with _client().stream("GET", url, headers=_hf_headers()) as up:
+        body = b"".join([chunk async for chunk in up.aiter_bytes()])
+        return Response(
+            content=body,
+            status_code=up.status_code,
+            media_type=up.headers.get("content-type", "application/json"),
+        )
+
+
 @router.get("/api/{rest:path}")
 async def proxy_api(rest: str, request: Request) -> Response:
     """Proxy HuggingFace API metadata straight through (not cached)."""
@@ -180,7 +318,11 @@ async def resolve_file(
     a ``.part`` temp, and atomically rename on completion.
     """
     cp = deps.get("paths")
-    base: Path = cp.hf_dir(repo, rev)
+    # snapshot_download asks for /resolve/<commit>/..., and the pre-warm files
+    # everything under the revision it cached. Without this the lookup lands in
+    # a commit-named folder that was never written and the file is re-fetched.
+    row = await _served_locally(repo, rev)
+    base: Path = _local_dir(row) if row is not None else cp.hf_dir(repo, rev)
     target: Path = base / filename
 
     # ------------------------------------------------------------------

@@ -622,9 +622,21 @@ CREATE TABLE IF NOT EXISTS public.model_cache (
     bytes_total  bigint NOT NULL DEFAULT 0,
     bytes_done   bigint NOT NULL DEFAULT 0,
     error        text,
+    -- The mirror answers HuggingFace metadata from these, so a cached model is
+    -- usable with no internet. huggingface_hub rejects a file whose HEAD has
+    -- no X-Repo-Commit or ETag.
+    commit_sha   text,                          -- 40 hex, matches ^[0-9a-f]{40}$
+    file_meta    jsonb NOT NULL DEFAULT '{}'::jsonb,  -- path -> {size, etag}
+    pinned       boolean NOT NULL DEFAULT false,-- excluded from LRU eviction
     last_used_at timestamptz NOT NULL DEFAULT now(),
     created_at   timestamptz NOT NULL DEFAULT now(),
     updated_at   timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT model_cache_uniq UNIQUE (source, model_id, revision)
+    CONSTRAINT model_cache_uniq UNIQUE (source, model_id, revision),
+    CONSTRAINT model_cache_commit_sha_format
+        CHECK (commit_sha IS NULL OR commit_sha ~ '^[0-9a-f]{40}$')
 );
 CREATE INDEX IF NOT EXISTS idx_model_cache_lru ON public.model_cache (last_used_at ASC);
+-- snapshot_download asks for /resolve/<commit>/..., so a 40-hex revision is
+-- resolved to its row by this rather than by revision.
+CREATE INDEX IF NOT EXISTS idx_model_cache_commit
+  ON public.model_cache (source, model_id, commit_sha);

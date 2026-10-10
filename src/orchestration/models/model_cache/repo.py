@@ -141,6 +141,39 @@ class ModelCacheRepo:
             )
             return dict(row) if row else None
 
+    async def set_metadata(
+        self, cache_id, *, commit_sha: str | None, file_meta: dict,
+        pinned: bool | None = None,
+    ) -> None:
+        """Record what the mirror needs to answer HF metadata offline."""
+        import json
+
+        sets = ['commit_sha=$2', 'file_meta=$3::jsonb']
+        args = [UUID(str(cache_id)), commit_sha, json.dumps(file_meta)]
+        if pinned is not None:
+            sets.append(f'pinned=${len(args) + 1}')
+            args.append(pinned)
+        async with self.db.acquire() as conn:
+            await conn.execute(
+                f"UPDATE model_cache SET {', '.join(sets)}, updated_at=now() "
+                "WHERE id=$1",
+                *args,
+            )
+
+    async def get_by_commit(
+        self, *, source: str, model_id: str, commit_sha: str,
+    ) -> dict | None:
+        """Fetch a row by commit. snapshot_download asks for files by
+        commit, not by the revision the row was cached under.
+        """
+        async with self.db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM model_cache "
+                "WHERE source=$1 AND model_id=$2 AND commit_sha=$3",
+                source, model_id, commit_sha,
+            )
+            return dict(row) if row else None
+
     async def list_all(self) -> list[dict]:
         """Return all rows, newest first."""
         async with self.db.acquire() as conn:
@@ -152,6 +185,8 @@ class ModelCacheRepo:
         """Return cached rows ordered by ``last_used_at`` ASC (oldest first).
 
         Only rows with ``status='cached'`` are considered eviction candidates.
+        Pinned rows are never candidates: an imported model cannot be
+        downloaded again on an install with no egress.
         Rows whose ``model_id`` is in *exclude_model_ids* are filtered out
         (i.e. models currently in use by a deployment).  When *exclude_model_ids*
         is empty, all cached rows are returned (``<> ALL('{}')`` is TRUE for
@@ -162,6 +197,7 @@ class ModelCacheRepo:
                 """
                 SELECT * FROM model_cache
                 WHERE status = 'cached'
+                  AND NOT pinned
                   AND model_id <> ALL($1::text[])
                 ORDER BY last_used_at ASC
                 """,
