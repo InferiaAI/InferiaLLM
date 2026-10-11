@@ -185,6 +185,21 @@ class TestTheOllamaFormat:
         with pytest.raises(FileNotFoundError):
             importer.ollama_manifest(stage, "qwen2", "7b")
 
+    @pytest.mark.parametrize(
+        "model_id,tag",
+        [
+            ("../../../..", "etc/passwd"),
+            ("qwen2", "../../../../secret.json"),
+            ("a/../../../..", "x"),
+        ],
+    )
+    def test_a_model_or_tag_escaping_staging_is_refused(self, cache, model_id, tag):
+        """Both come from the request body, and the manifest is copied into a
+        cache /v2 serves without auth."""
+        stage, _ = _ollama_staging(cache)
+        with pytest.raises(ValueError, match="escapes"):
+            importer.ollama_manifest(stage, model_id, tag)
+
     def test_the_manifest_and_blobs_land_in_the_cache(self, cache):
         stage, layers = _ollama_staging(cache)
         dest = cache.ollama_dir("qwen2", "0.5b")
