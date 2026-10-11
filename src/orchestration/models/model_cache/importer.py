@@ -145,8 +145,14 @@ def ollama_manifest(root: Path, model_id: str, tag: str) -> Path:
     """
     manifests = root / "manifests"
     name = model_id if "/" in model_id else f"library/{model_id}"
+    base = manifests.resolve()
     for registry in sorted(p for p in manifests.iterdir() if p.is_dir()):
         candidate = registry / Path(name) / tag
+        if base not in candidate.resolve().parents:
+            raise ValueError(
+                f"model or tag escapes the staging directory: {model_id}:{tag}"
+            )
+        _reject_symlink(candidate, root)
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(f"no manifest for {model_id}:{tag} under {manifests}")
