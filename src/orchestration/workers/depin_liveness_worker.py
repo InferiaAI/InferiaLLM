@@ -111,6 +111,7 @@ class DepinLivenessWorker:
         await self._sweep("RUNNING", self._check_running)
         await self._sweep("DEPLOYING", self._check_deploying)
         await self._sweep("PENDING_NODE", self._check_pending)
+        await self._retry_failed_deprovisions()
 
     async def _sweep(self, state: str, handler) -> None:
         rows = await self.deploys.list_by_state(state)
@@ -204,7 +205,11 @@ class DepinLivenessWorker:
             return False
         if pii and node:
             try:
-                await _deprovision_direct_node(node, pool_credential_name=cred)
+                ok, err = await _deprovision_direct_node(node, pool_credential_name=cred)
+                if not ok and node_id:
+                    await self.inventory.mark_deprovision_failed_node(
+                        node_id=node_id, reason=err
+                    )
             except Exception:
                 logger.exception(
                     "DePIN reconcile: deprovision failed for %s", deploy_id
@@ -217,6 +222,35 @@ class DepinLivenessWorker:
                     "DePIN reconcile: mark_terminated failed for node %s", node_id
                 )
         return True
+
+    async def _retry_failed_deprovisions(self) -> None:
+        """Retry stopping external jobs whose deprovision call failed. The
+        node row is already terminated, so without this the job keeps
+        billing until someone stops it by hand."""
+        for n in await self.inventory.list_deprovision_failed_nodes() or []:
+            if not is_direct_provision_provider(n.get("provider")):
+                continue
+            node_id = n["id"]
+            cred = n.get("provider_credential_name")
+            try:
+                status = await self._get_adapter(n["provider"]).get_node_status(
+                    provider_instance_id=n["provider_instance_id"],
+                    provider_credential_name=cred,
+                )
+                if status not in _TERMINAL_STATES:
+                    ok, err = await _deprovision_direct_node(n, pool_credential_name=cred)
+                    if not ok:
+                        logger.warning(
+                            "DePIN reconcile: deprovision retry failed for node %s: %s",
+                            node_id, err,
+                        )
+                        continue
+                await self.inventory.clear_deprovision_failed(node_id=node_id)
+                logger.info("DePIN reconcile: external job for node %s is stopped", node_id)
+            except Exception:
+                logger.exception(
+                    "DePIN reconcile: deprovision retry errored for node %s", node_id
+                )
 
     # ------------------------------------------------------------------ checks
     async def _check_running(self, d: dict) -> None:

@@ -1384,6 +1384,36 @@ async def _mark_deprovision_failed_node_impl(self, *, node_id, reason=None):
         )
 
 
+async def _list_deprovision_failed_nodes_impl(self):
+    """Nodes whose external job may still be running because a deprovision
+    call failed, with the pool credential needed to retry it."""
+    async with self.db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT ci.id, ci.provider::text AS provider, ci.provider_instance_id,
+                   cp.provider_credential_name
+            FROM compute_inventory ci
+            LEFT JOIN compute_pools cp ON cp.id = ci.pool_id
+            WHERE ci.metadata->>'deprovision_failed' = 'true'
+            """
+        )
+    return [dict(r) for r in rows]
+
+
+async def _clear_deprovision_failed_impl(self, *, node_id):
+    nid = uuid.UUID(node_id) if isinstance(node_id, str) else node_id
+    async with self.db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE compute_inventory
+            SET metadata = metadata - 'deprovision_failed' - 'deprovision_error',
+                updated_at = now()
+            WHERE id = $1
+            """,
+            nid,
+        )
+
+
 async def _set_state_impl(self, *, node_id, state):
     """Set compute_inventory.state to an arbitrary node_state enum value.
 
@@ -1469,3 +1499,7 @@ InventoryRepository.set_state = _set_state_impl
 InventoryRepository.mark_deprovision_failed_node = (
     _mark_deprovision_failed_node_impl
 )
+InventoryRepository.list_deprovision_failed_nodes = (
+    _list_deprovision_failed_nodes_impl
+)
+InventoryRepository.clear_deprovision_failed = _clear_deprovision_failed_impl

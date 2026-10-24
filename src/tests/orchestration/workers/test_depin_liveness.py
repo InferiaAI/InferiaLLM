@@ -541,3 +541,76 @@ async def test_get_logs_pending_returns_running(monkeypatch):
     monkeypatch.setattr(na.aiohttp, "ClientSession", lambda *a, **k: _FakeSeqSession(seq))
     out = await NosanaAdapter().get_logs(provider_instance_id="job1")
     assert any("running" in str(x).lower() for x in out["logs"])
+
+
+def _leak_mocks(rows):
+    deploys = AsyncMock(spec=ModelDeploymentRepository)
+    deploys.list_by_state.return_value = []
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.list_deprovision_failed_nodes.return_value = rows
+    return deploys, inventory, AsyncMock(spec=ComputePoolRepository)
+
+
+_LEAKED = {"id": "n9", "provider": "nosana", "provider_instance_id": "job-x",
+           "provider_credential_name": "c1"}
+
+
+async def test_failed_deprovision_is_retried_and_cleared(monkeypatch):
+    deploys, inventory, pool_repo = _leak_mocks([_LEAKED])
+    dep = AsyncMock(return_value=(True, None))
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+                                get_adapter_fn=lambda p: _adapter("RUNNING"))
+    await w.reconcile_once()
+
+    dep.assert_awaited_once()
+    assert dep.await_args.kwargs["pool_credential_name"] == "c1"
+    inventory.clear_deprovision_failed.assert_awaited_once_with(node_id="n9")
+
+
+async def test_failed_deprovision_still_failing_keeps_marker(monkeypatch):
+    deploys, inventory, pool_repo = _leak_mocks([_LEAKED])
+    monkeypatch.setattr(mod, "_deprovision_direct_node", AsyncMock(return_value=(False, "down")))
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+                                get_adapter_fn=lambda p: _adapter("RUNNING"))
+    await w.reconcile_once()
+
+    inventory.clear_deprovision_failed.assert_not_awaited()
+
+
+async def test_failed_deprovision_job_already_gone_clears_marker(monkeypatch):
+    deploys, inventory, pool_repo = _leak_mocks([_LEAKED])
+    dep = AsyncMock(return_value=(False, "already closed"))
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+                                get_adapter_fn=lambda p: _adapter("COMPLETED"))
+    await w.reconcile_once()
+
+    dep.assert_not_awaited()
+    inventory.clear_deprovision_failed.assert_awaited_once_with(node_id="n9")
+
+
+async def test_failed_deprovision_retry_skips_cloud_nodes(monkeypatch):
+    deploys, inventory, pool_repo = _leak_mocks([{**_LEAKED, "provider": "aws"}])
+    dep = AsyncMock(return_value=(True, None))
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+                                get_adapter_fn=lambda p: _adapter("RUNNING"))
+    await w.reconcile_once()
+
+    dep.assert_not_awaited()
+
+
+async def test_teardown_failure_stamps_marker(monkeypatch):
+    deploys, inventory, pool_repo = _mocks(
+        deploy_rows=[{"deployment_id": "d1", "pool_id": "p1", "target_node_id": "n1"}],
+        node={"provider_instance_id": "job-abc", "provider": "nosana"},
+        pool={"provider": "nosana", "provider_credential_name": "cred1"},
+    )
+    inventory.list_deprovision_failed_nodes.return_value = []
+    monkeypatch.setattr(mod, "_deprovision_direct_node", AsyncMock(return_value=(False, "sidecar down")))
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+                                get_adapter_fn=lambda p: _adapter("COMPLETED"))
+    await w.reconcile_once()
+
+    inventory.mark_deprovision_failed_node.assert_awaited_once_with(node_id="n1", reason="sidecar down")
