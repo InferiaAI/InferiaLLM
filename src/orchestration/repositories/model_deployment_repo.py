@@ -217,7 +217,10 @@ class ModelDeploymentRepository(BaseRepository):
         state: str,
         tx=None,
         error_message: str | None = None,
-    ):
+        unless_in: tuple[str, ...] = (),
+    ) -> bool:
+        """Set the state. Skips the write when the current state is in
+        ``unless_in`` and returns whether a row was updated."""
         # Clear error_message when transitioning to non-failure states
         if state not in ("FAILED", "RETRYING"):
             error_message = None
@@ -226,12 +229,17 @@ class ModelDeploymentRepository(BaseRepository):
         UPDATE model_deployments
         SET state=$2, error_message=$3, updated_at=now()
         WHERE deployment_id=$1
+          AND (state IS NULL OR NOT (state = ANY($4::text[])))
         """
+        args = (deployment_id, state, error_message, list(unless_in))
         if tx:
-            await tx.execute(q, deployment_id, state, error_message)
+            result = await tx.execute(q, *args)
         else:
             async with self.db.acquire() as c:
-                await c.execute(q, deployment_id, state, error_message)
+                result = await c.execute(q, *args)
+
+        if result == "UPDATE 0":
+            return False
 
         if self.event_bus:
             await self.event_bus.publish(
@@ -241,6 +249,7 @@ class ModelDeploymentRepository(BaseRepository):
                     "state": state,
                 },
             )
+        return True
 
     async def update_state_if(
         self,

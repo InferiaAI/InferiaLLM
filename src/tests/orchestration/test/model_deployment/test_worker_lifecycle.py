@@ -185,3 +185,75 @@ class TestWorkerLifecycle:
 
         worker.deployments.update_state.assert_called_with(dep_id, "STOPPED")
         mock_adapter.deprovision_node.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_terminate_during_provisioning_is_not_overwritten(worker):
+    dep_id = uuid4()
+    pool_id = uuid4()
+    deployment_state = {"state": "PENDING"}
+    base_row = {
+        "deployment_id": str(dep_id),
+        "pool_id": str(pool_id),
+        "model_id": None,
+        "gpu_per_replica": 1,
+        "replicas": 1,
+        "configuration": '{"workload_type": "inference"}',
+        "model_name": "test-model",
+        "engine": "vllm",
+        "inference_model": None,
+    }
+
+    async def fake_get(_dep_id):
+        return {**base_row, **deployment_state}
+
+    async def fake_update_state(_id, new_state, *, unless_in=(), **_kw):
+        if deployment_state["state"] in unless_in:
+            return False
+        deployment_state["state"] = new_state
+        return True
+
+    async def fake_update_state_if(_id, *, expected_state, new_state):
+        if deployment_state["state"] == expected_state:
+            deployment_state["state"] = new_state
+            return True
+        return False
+
+    async def terminate_lands(**_kw):
+        deployment_state["state"] = "TERMINATED"
+
+    worker.deployments.get = AsyncMock(side_effect=fake_get)
+    worker.deployments.update_state = AsyncMock(side_effect=fake_update_state)
+    worker.deployments.update_state_if = AsyncMock(side_effect=fake_update_state_if)
+    worker.deployments.attach_runtime = AsyncMock(side_effect=terminate_lands)
+    worker.pools.get = AsyncMock(
+        return_value={"provider": "nosana", "allowed_gpu_types": ["a100"], "provider_pool_id": "p"}
+    )
+    worker.inventory.get_resource_requirement = AsyncMock(return_value=None)
+    worker.inventory.register_node = AsyncMock(return_value=str(uuid4()))
+    worker.placement.fetch_candidate_nodes = AsyncMock(return_value=[])
+
+    adapter = MagicMock()
+    adapter.get_capabilities.return_value = MagicMock(
+        readiness_timeout_seconds=60, is_ephemeral=True
+    )
+    adapter.provision_node = AsyncMock(
+        return_value={
+            "provider_instance_id": "inst-1",
+            "hostname": "host-1",
+            "gpu_total": 1,
+            "vcpu_total": 8,
+            "ram_gb_total": 32,
+            "node_class": "gpu",
+            "metadata": {},
+            "provider": "nosana",
+        }
+    )
+    adapter.wait_for_ready = AsyncMock(return_value="http://endpoint:8000")
+    adapter.deprovision_node = AsyncMock()
+
+    with patch("orchestration.models.model_deployment.worker.get_adapter", return_value=adapter):
+        await worker.handle_deploy_requested(dep_id)
+
+    assert deployment_state["state"] == "TERMINATED"
+    adapter.deprovision_node.assert_awaited_once()

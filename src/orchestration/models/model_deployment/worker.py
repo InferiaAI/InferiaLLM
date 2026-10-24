@@ -9,6 +9,14 @@ log = logging.getLogger(__name__)
 MAX_PROVISION_RETRIES = 4
 PROVISION_WAIT_SECONDS = 40
 
+# A terminate or stop can land while provisioning is still running. The
+# worker's own state writes must not overwrite it.
+_ENDED_STATES = ("TERMINATING", "TERMINATED", "STOPPED")
+
+
+class DeploymentEndedError(Exception):
+    pass
+
 
 class ModelDeploymentWorker:
     def __init__(
@@ -41,6 +49,19 @@ class ModelDeploymentWorker:
     # -------------------------------------------------
     # EVENT HANDLER
     # -------------------------------------------------
+    async def _set_state(self, deployment_id: UUID, state: str, **kwargs) -> bool:
+        return await self.deployments.update_state(
+            deployment_id, state, unless_in=_ENDED_STATES, **kwargs
+        )
+
+    async def _mark_running(self, deployment_id: UUID) -> None:
+        # Raising sends us through the cleanup in handle_deploy_requested's
+        # except block, which deprovisions the node we just created.
+        if not await self._set_state(deployment_id, "RUNNING"):
+            raise DeploymentEndedError(
+                f"Deployment {deployment_id} ended while provisioning"
+            )
+
     async def handle_deploy_requested(self, deployment_id: UUID):
         d = await self.deployments.get(deployment_id)
         if not d:
@@ -115,7 +136,7 @@ class ModelDeploymentWorker:
             try:
                 log.info(f"Deploying to cluster-based pool: cluster_id={cluster_id}")
 
-                await self.deployments.update_state(deployment_id, "PROVISIONING")
+                await self._set_state(deployment_id, "PROVISIONING")
 
                 # Build service configuration from deployment config
                 metadata = {}
@@ -220,7 +241,7 @@ class ModelDeploymentWorker:
                     runtime=pool["provider"],
                 )
 
-                await self.deployments.update_state(deployment_id, "RUNNING")
+                await self._mark_running(deployment_id)
                 log.info(
                     f"Cluster-based deployment {deployment_id} is RUNNING on cluster {cluster_id}"
                 )
@@ -228,7 +249,7 @@ class ModelDeploymentWorker:
 
             except Exception as e:
                 log.error(f"Cluster-based deployment failed for {deployment_id}: {e}")
-                await self.deployments.update_state(
+                await self._set_state(
                     deployment_id,
                     "FAILED",
                     error_message=f"Cluster deployment failed: {str(e)}",
@@ -266,7 +287,7 @@ class ModelDeploymentWorker:
                     break
 
                 if attempt == MAX_PROVISION_RETRIES:
-                    await self.deployments.update_state(
+                    await self._set_state(
                         deployment_id,
                         "FAILED",
                         error_message=f"No available nodes after {MAX_PROVISION_RETRIES} provisioning attempts",
@@ -332,7 +353,7 @@ class ModelDeploymentWorker:
                     and not has_engine_or_model
                 ):
                     log.error(f"Missing job definition for deployment {deployment_id}")
-                    await self.deployments.update_state(
+                    await self._set_state(
                         deployment_id,
                         "FAILED",
                         error_message="Missing job definition or image for deployment",
@@ -362,7 +383,7 @@ class ModelDeploymentWorker:
                         f"Fencing legacy provision_node call for deployment "
                         f"{deployment_id}: provider={_provider!r} is reconciler-managed"
                     )
-                    await self.deployments.update_state(
+                    await self._set_state(
                         deployment_id,
                         "FAILED",
                         error_message=_msg,
@@ -408,7 +429,7 @@ class ModelDeploymentWorker:
                         node_ids=[],
                         runtime=f"{pool['provider']}-sim",
                     )
-                    await self.deployments.update_state(deployment_id, "RUNNING")
+                    await self._mark_running(deployment_id)
                     return
 
                 # ---- Universal Readiness Poll ----
@@ -481,7 +502,7 @@ class ModelDeploymentWorker:
                         f"has no node_id returned from register_node."
                     )
 
-                await self.deployments.update_state(deployment_id, "RUNNING")
+                await self._mark_running(deployment_id)
 
                 # For ephemeral providers, deployment is complete once provisioned
                 if capabilities.is_ephemeral:
@@ -492,7 +513,7 @@ class ModelDeploymentWorker:
                 log.error(
                     f"Insufficient capacity for deployment {deployment_id}"
                 )
-                await self.deployments.update_state(
+                await self._set_state(
                     deployment_id,
                     "FAILED",
                     error_message=f"Insufficient capacity: GPU={d['gpu_per_replica']}, vCPU={vcpu_req}, RAM={ram_gb_req}",
@@ -577,7 +598,7 @@ class ModelDeploymentWorker:
                 runtime=result["runtime"],
             )
 
-            await self.deployments.update_state(deployment_id, "RUNNING")
+            await self._mark_running(deployment_id)
 
         except Exception as e:
             log.exception(f"Deployment {deployment_id} failed: type={type(e).__name__} repr={e!r}")
@@ -595,22 +616,8 @@ class ModelDeploymentWorker:
                         f"Failed to cleanup orphaned node for {deployment_id}: {cleanup_err}"
                     )
 
-            d_current = await self.deployments.get(deployment_id)
-            if d_current and d_current["state"] not in (
-                "STOPPED",
-                "TERMINATED",
-                "TERMINATING",
-            ):
-                await self.deployments.update_state(
-                    deployment_id,
-                    "FAILED",
-                    error_message=str(e),
-                )
-            else:
-                log.info(
-                    f"Skipping FAILED state update for {deployment_id} — "
-                    f"already in terminal state: {d_current['state'] if d_current else 'deleted'}"
-                )
+            if not await self._set_state(deployment_id, "FAILED", error_message=str(e)):
+                log.info(f"Skipping FAILED state update for {deployment_id}: it already ended")
 
     # Providers whose nodes are owned by the pool-first reconciler. For these,
     # teardown MUST go through the node-scoped refcount-aware path
