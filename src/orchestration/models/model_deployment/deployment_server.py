@@ -1479,6 +1479,8 @@ async def place_and_provision(
 
     # 4b. Post-tx: load_model for the warm path
     if bound_for_load is not None:
+        from orchestration.repositories.model_deployment_repo import ENDED_STATES
+
         node_id, _ = bound_for_load
         try:
             _cfg = _source_field(load_spec_source, "configuration") or {}
@@ -1520,13 +1522,18 @@ async def place_and_provision(
             )
         except Exception as exc:
             logger.exception("deploy: load_model failed for %s: %s", deploy_id, exc)
-            # Rollback: release the GPU and mark FAILED
+            # Rollback: mark FAILED and release the GPU. A terminate during the
+            # load already released it, so release only if the FAILED write lands.
             async with db_pool.acquire() as conn:
                 async with conn.transaction():
-                    await inventory.release_gpu(
-                        node_id, gpu_per_replica or 0, tx=conn,
-                    )
-                    await deploys.set_state(deploy_id, "FAILED", tx=conn)
+                    if await deploys.update_state(
+                        deploy_id, "FAILED", tx=conn,
+                        error_message=f"load_model error: {exc}",
+                        unless_in=ENDED_STATES,
+                    ):
+                        await inventory.release_gpu(
+                            node_id, gpu_per_replica or 0, tx=conn,
+                        )
             raise HTTPException(status_code=502,
                                   detail=f"load_model failed: {exc}")
 
@@ -1549,13 +1556,14 @@ async def place_and_provision(
             # error_message + the published state-change event.
             async with db_pool.acquire() as conn:
                 async with conn.transaction():
-                    await inventory.release_gpu(
-                        node_id, gpu_per_replica or 0, tx=conn,
-                    )
-                    await deploys.update_state(
+                    if await deploys.update_state(
                         deploy_id, "FAILED", tx=conn,
                         error_message=detail,
-                    )
+                        unless_in=ENDED_STATES,
+                    ):
+                        await inventory.release_gpu(
+                            node_id, gpu_per_replica or 0, tx=conn,
+                        )
             raise HTTPException(
                 status_code=502,
                 detail=f"load_model failed: {detail}",
@@ -1566,8 +1574,21 @@ async def place_and_provision(
         # worker. We publish the node's CP-reachable advertise_url — NOT the
         # worker's reported endpoint_url, which is a 127.0.0.1:<port> loopback
         # useless to the control plane (mirrors the linker success branch).
-        async with db_pool.acquire() as conn:
-            await deploys.set_state(deploy_id, "RUNNING", tx=conn)
+        if not await deploys.update_state(
+            deploy_id, "RUNNING", unless_in=ENDED_STATES,
+        ):
+            # Terminated while loading: terminate already released the GPU and
+            # its unload ran before the container existed, so unload it now.
+            logger.info("deploy: %s ended during load_model; unloading", deploy_id)
+            try:
+                await controller.unload_model(
+                    node_id=str(node_id), deployment_id=str(deploy_id),
+                )
+            except Exception:
+                logger.exception(
+                    "deploy: unload after terminate failed for %s", deploy_id,
+                )
+            return response_body, response_status
         response_body["state"] = "RUNNING"
         try:
             async with db_pool.acquire() as conn:
