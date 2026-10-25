@@ -10,6 +10,10 @@ from cryptography.fernet import Fernet
 from orchestration.config import settings
 from orchestration.repositories.base_repo import BaseRepository
 
+# A deploy in one of these states is being torn down; other writers must not
+# move it back to a live state.
+ENDED_STATES = ("TERMINATING", "TERMINATED", "STOPPED")
+
 _fernet = Fernet(settings.secret_encryption_key.encode()) if settings.secret_encryption_key else None
 
 

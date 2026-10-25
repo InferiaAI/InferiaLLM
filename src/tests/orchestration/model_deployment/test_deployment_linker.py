@@ -442,3 +442,54 @@ async def test_already_bound_deploy_is_promoted_without_reallocate(pool):
     assert row["state"] == "RUNNING"
     assert node["gpu_allocated"] == 1            # NOT double-allocated
     controller.load_model.assert_awaited_once()  # model load fired
+
+
+def _terminate_during_load(pool, deploy_id, node_id, *, then=None):
+    async def load_model(**_kw):
+        async with pool.acquire() as c:
+            await c.execute(
+                "UPDATE model_deployments SET state='TERMINATED' "
+                "WHERE deployment_id=$1", deploy_id,
+            )
+            # Terminate released the GPU and another deploy took it.
+            await c.execute(
+                "UPDATE compute_inventory SET gpu_allocated=1 WHERE id=$1",
+                node_id,
+            )
+        if then:
+            raise then
+    return load_model
+
+
+@pytest.mark.parametrize("load_error", [None, RuntimeError("pull failed")])
+async def test_terminate_during_load_stays_terminated(pool, load_error):
+    pool_id, node_id = await _seed_pool_and_node(pool, gpu_total=1)
+    deploy_id = await _seed_pending_deploy(pool, pool_id)
+    controller = AsyncMock(spec=WorkerController)
+    controller.load_model.side_effect = _terminate_during_load(
+        pool, deploy_id, node_id, then=load_error,
+    )
+    linker = DeploymentLinker(
+        db_pool=pool,
+        inventory_repo=InventoryRepository(pool),
+        deployment_repo=ModelDeploymentRepository(pool, event_bus=None),
+        worker_controller=controller,
+    )
+
+    await linker.on_worker_ready(node_id)
+
+    async with pool.acquire() as c:
+        row = await c.fetchrow(
+            "SELECT state, endpoint FROM model_deployments "
+            "WHERE deployment_id=$1", deploy_id,
+        )
+        node = await c.fetchrow(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
+        )
+    assert row["state"] == "TERMINATED"
+    assert row["endpoint"] is None
+    assert node["gpu_allocated"] == 1
+    if load_error is None:
+        controller.unload_model.assert_awaited_once_with(
+            node_id=str(node_id), deployment_id=str(deploy_id),
+        )

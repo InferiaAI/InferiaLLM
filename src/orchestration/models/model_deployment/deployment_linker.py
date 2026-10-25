@@ -29,6 +29,7 @@ from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
 from orchestration.repositories.model_deployment_repo import (
+    ENDED_STATES,
     ModelDeploymentRepository,
 )
 from orchestration.models.model_deployment.model_ref import (
@@ -259,15 +260,9 @@ class DeploymentLinker:
             # is VISIBLE in the deploy row + dashboard — set_state writes state
             # only, which previously left load_model failures with an empty
             # error_message and no clue why the container never started.
-            async with self._db.acquire() as conn:
-                async with conn.transaction():
-                    await self._inventory.release_gpu(
-                        node_id, gpu_required, tx=conn,
-                    )
-                    await self._deploys.update_state(
-                        deploy["id"], "FAILED", tx=conn,
-                        error_message=f"load_model error: {e}",
-                    )
+            await self._mark_failed(
+                node_id, deploy["id"], gpu_required, f"load_model error: {e}",
+            )
             return
 
         # The worker can return a CommandResult with status='failed' (readiness
@@ -279,20 +274,33 @@ class DeploymentLinker:
                 "linker: load_model returned status=failed for deploy=%s: %s",
                 deploy["id"], detail,
             )
-            async with self._db.acquire() as conn:
-                async with conn.transaction():
-                    await self._inventory.release_gpu(
-                        node_id, gpu_required, tx=conn,
-                    )
-                    await self._deploys.update_state(
-                        deploy["id"], "FAILED", tx=conn,
-                        error_message=f"load_model failed on worker: {detail}",
-                    )
+            await self._mark_failed(
+                node_id, deploy["id"], gpu_required,
+                f"load_model failed on worker: {detail}",
+            )
             return
 
         # Model loaded on the worker. Promote DEPLOYING → RUNNING.
-        async with self._db.acquire() as conn:
-            await self._deploys.set_state(deploy["id"], "RUNNING", tx=conn)
+        promoted = await self._deploys.update_state(
+            deploy["id"], "RUNNING", unless_in=ENDED_STATES,
+        )
+        if not promoted:
+            # Terminated while loading: terminate already released the GPU and
+            # its unload ran before the container existed, so unload it now.
+            logger.info(
+                "linker: deploy=%s ended during load_model; unloading",
+                deploy["id"],
+            )
+            try:
+                await self._controller.unload_model(
+                    node_id=str(node_id), deployment_id=str(deploy["id"]),
+                )
+            except Exception:
+                logger.exception(
+                    "linker: unload after terminate failed for deploy=%s",
+                    deploy["id"],
+                )
+            return
         # Publish the inference endpoint (the node's CP-reachable advertise_url,
         # NOT the worker's 127.0.0.1 loopback) so the data plane can route.
         try:
@@ -313,3 +321,17 @@ class DeploymentLinker:
             logger.exception(
                 "linker: failed to set endpoint for deploy=%s", deploy["id"],
             )
+
+    async def _mark_failed(self, node_id: UUID, deploy_id, gpu_required: int,
+                           error_message: str) -> None:
+        # Release the GPU only if the FAILED write lands. A terminated deploy's
+        # GPU was already released by terminate and may now belong to another.
+        async with self._db.acquire() as conn:
+            async with conn.transaction():
+                if await self._deploys.update_state(
+                    deploy_id, "FAILED", tx=conn,
+                    error_message=error_message, unless_in=ENDED_STATES,
+                ):
+                    await self._inventory.release_gpu(
+                        node_id, gpu_required, tx=conn,
+                    )

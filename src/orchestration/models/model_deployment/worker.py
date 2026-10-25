@@ -3,15 +3,12 @@ from uuid import UUID
 
 from orchestration.scheduling.placement_scoring import score_node
 from orchestration.provisioning.engine.registry import get_adapter
+from orchestration.repositories.model_deployment_repo import ENDED_STATES
 
 log = logging.getLogger(__name__)
 
 MAX_PROVISION_RETRIES = 4
 PROVISION_WAIT_SECONDS = 40
-
-# A terminate or stop can land while provisioning is still running. The
-# worker's own state writes must not overwrite it.
-_ENDED_STATES = ("TERMINATING", "TERMINATED", "STOPPED")
 
 
 class DeploymentEndedError(Exception):
@@ -51,7 +48,7 @@ class ModelDeploymentWorker:
     # -------------------------------------------------
     async def _set_state(self, deployment_id: UUID, state: str, **kwargs) -> bool:
         return await self.deployments.update_state(
-            deployment_id, state, unless_in=_ENDED_STATES, **kwargs
+            deployment_id, state, unless_in=ENDED_STATES, **kwargs
         )
 
     async def _mark_running(self, deployment_id: UUID) -> None:
