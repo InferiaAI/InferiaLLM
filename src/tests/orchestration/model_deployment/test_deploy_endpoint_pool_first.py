@@ -250,6 +250,69 @@ async def test_deploy_to_warm_pool_returns_running(app_and_pool):
     assert call_kwargs["spec"]["model"]["artifact_uri"]  # non-empty
 
 
+@pytest.mark.parametrize("load_status", ["ok", "failed"])
+async def test_terminate_during_warm_load_is_not_overwritten(app_and_pool, load_status):
+    """A terminate that lands while the warm path is loading the model keeps the
+    deploy TERMINATED, and the GPU terminate released is not released again
+    (another deploy holds 2 GPUs on the same node)."""
+    from orchestration.workers.worker_controller.protocol import (
+        CommandResultBody,
+    )
+
+    app, pool = app_and_pool
+    pool_id = await _seed_pool(pool)
+    node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=2)
+    async with pool.acquire() as c:
+        org_id = await c.fetchval(
+            "SELECT owner_id FROM compute_pools WHERE id=$1", pool_id,
+        )
+
+    async def terminate_lands(*, node_id, spec):
+        async with pool.acquire() as c:
+            await c.execute(
+                "UPDATE model_deployments SET state='TERMINATED' "
+                "WHERE deployment_id=$1",
+                UUID(spec["deployment_id"]),
+            )
+            await c.execute(
+                "UPDATE compute_inventory SET gpu_allocated = gpu_allocated - 1 "
+                "WHERE id=$1",
+                UUID(node_id),
+            )
+        return CommandResultBody(
+            in_reply_to="x", status=load_status, detail="",
+            endpoint_url="http://127.0.0.1:9000",
+        )
+
+    controller = app.state.worker_controller
+    controller.load_model.side_effect = terminate_lands
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await client.post(
+            "/deployment/deploy",
+            json=_deploy_payload(pool_id),
+            headers={"X-Organization-ID": org_id},
+        )
+
+    async with pool.acquire() as c:
+        state = await c.fetchval(
+            "SELECT state FROM model_deployments WHERE target_pool_id=$1",
+            pool_id,
+        )
+        gpu_allocated = await c.fetchval(
+            "SELECT gpu_allocated FROM compute_inventory WHERE id=$1", node_id,
+        )
+
+    assert state == "TERMINATED"
+    assert gpu_allocated == 2
+    if load_status == "ok":
+        controller.unload_model.assert_awaited_once()
+    else:
+        controller.unload_model.assert_not_awaited()
+
+
 async def test_deploy_to_terminating_pool_returns_409(app_and_pool):
     """Deploying to a terminating pool must return 409."""
     app, pool = app_and_pool

@@ -39,6 +39,7 @@ from orchestration.repositories.inventory_repo import (
     InventoryRepository,
 )
 from orchestration.repositories.model_deployment_repo import (
+    ENDED_STATES,
     ModelDeploymentRepository,
 )
 from orchestration.state_machine.jobs.repository import (
@@ -715,11 +716,11 @@ async def test_bind_to_ready_warm_path_fires_load_model(monkeypatch):
         "backend": "vllm",
     }
 
-    # Promoted to RUNNING (the warm bind set DEPLOYING in-tx first; the final
-    # set_state promotes RUNNING) and endpoint published with advertise_url.
-    ss_states = [c.args[1] for c in deploys.set_state.await_args_list]
-    assert ss_states[-1] == "RUNNING"
-    assert deploys.set_state.await_args.args[0] == deploy_id
+    # Promoted to RUNNING (the warm bind set DEPLOYING in-tx first; the guarded
+    # update_state promotes RUNNING) and endpoint published with advertise_url.
+    deploys.update_state.assert_any_await(
+        deploy_id, "RUNNING", unless_in=ENDED_STATES,
+    )
 
     deploys.update_endpoint.assert_awaited_once()
     ue_args = deploys.update_endpoint.await_args
@@ -937,8 +938,9 @@ async def test_bind_to_ready_warm_path_ok_status_runs_and_publishes(monkeypatch)
     assert body["state"] == "RUNNING"
 
     # Final state transition promotes RUNNING (DEPLOYING was set in the bind tx).
-    ss_states = [c.args[1] for c in deploys.set_state.await_args_list]
-    assert ss_states[-1] == "RUNNING"
+    deploys.update_state.assert_any_await(
+        deploy_id, "RUNNING", unless_in=ENDED_STATES,
+    )
 
     # Endpoint published with the node's CP-reachable advertise_url, NOT the
     # worker's loopback endpoint_url.
