@@ -21,6 +21,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from common.exception_handlers import register_exception_handlers
 from common.logger import setup_logging
 from common.app_setup import setup_cors, add_standard_health_routes
+from common.middleware import RequestIDMiddleware
 
 # Configure logging
 logger = setup_logging(
@@ -43,6 +44,9 @@ register_exception_handlers(app)
 import os
 
 setup_cors(app, os.getenv("ALLOWED_ORIGINS", ""), settings.is_development)
+
+# Added last so it runs first: every request, CORS preflights included, gets an id.
+app.add_middleware(RequestIDMiddleware)
 
 
 # Add standard / and /health routes
