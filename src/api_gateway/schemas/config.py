@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import date, datetime
 
 class ConfigUpdateRequest(BaseModel):
     policy_type: str
@@ -18,3 +18,16 @@ class UsageStatsResponse(BaseModel):
     key_prefix: str
     requests: int
     tokens: int
+
+class UsageHistoryRow(BaseModel):
+    """One API key's usage of one model on one day."""
+    day: date
+    key_id: str
+    key_name: str
+    key_prefix: str
+    key_active: bool
+    model: str
+    requests: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
