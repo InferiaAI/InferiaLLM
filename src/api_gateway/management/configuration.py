@@ -458,6 +458,13 @@ async def get_usage_history(
             status_code=400, detail=f"range is limited to {MAX_HISTORY_DAYS} days"
         )
 
+    return await usage_history_rows(db, user_ctx.org_id, start, end)
+
+
+async def usage_history_rows(
+    db: AsyncSession, org_id: str, start: date, end: date
+) -> List[UsageHistoryRow]:
+    """Daily usage per API key and model for one org between two days, inclusive."""
     # usage_stats has no org column; API-key usage is stored as "apikey:<id>".
     result = await db.execute(
         select(
@@ -473,7 +480,7 @@ async def get_usage_history(
             DBUsage.total_tokens,
         )
         .join(DBApiKey, DBUsage.user_id == func.concat("apikey:", DBApiKey.id))
-        .where(DBApiKey.org_id == user_ctx.org_id, DBUsage.date.between(start, end))
+        .where(DBApiKey.org_id == org_id, DBUsage.date.between(start, end))
         .order_by(DBUsage.date, DBApiKey.name, DBUsage.model)
     )
     return [
