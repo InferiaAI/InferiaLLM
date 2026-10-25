@@ -130,7 +130,8 @@ describe("vision model choice", () => {
   it("recommends the catalog models when nothing matches", () => {
     expect(nodeReadiness({ kind: "vision", config: {} }, [dep("qwen2-5-1-5b", "inference")])).toEqual({ state: "needsDeployment", recommended: MODEL_CATALOG.vision });
     expect(MODEL_CATALOG.vision).toMatchObject({ modelId: "moondream", engine: "ollama", modelType: "inference", deploymentName: "moondream-vision" });
-    expect(MODEL_CATALOG.imageGeneration).toMatchObject({ modelId: "stabilityai/sd-turbo", engine: "generic", modelType: "image_generation", deploymentName: "sd-turbo-image" });
+    expect(MODEL_CATALOG.imageGeneration).toMatchObject({ modelId: "stabilityai/sd-turbo", engine: "inferia-diffusion", modelType: "image_generation", deploymentName: "sd-turbo-image" });
+    expect(MODEL_CATALOG.imageGeneration!.job).toMatchObject({ image: "docker.io/inferiaai/inferiadiffusion:latest", gpu: true });
   });
 });
 

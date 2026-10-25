@@ -8,7 +8,8 @@ function dep(modelName: string, model_type: string): Deployment {
 }
 
 const stt = { kind: "speechToText" as const, config: {} };
-const whisperCatalog = MODEL_CATALOG.speechToText!;
+const llm = { kind: "llm" as const, config: {} };
+const qwenCatalog = MODEL_CATALOG.llm!;
 
 describe("nodeReadiness", () => {
   it("treats nodes without a model field, or with a model set, as ready", () => {
@@ -22,29 +23,47 @@ describe("nodeReadiness", () => {
   });
 
   it("needs deployment when only non-matching deployments exist", () => {
-    expect(nodeReadiness(stt, [dep("kokoro-tts", "audio_generation"), dep("bank-llm", "inference")])).toEqual({
+    expect(nodeReadiness(llm, [dep("whisper-stt", "audio_generation")])).toEqual({
       state: "needsDeployment",
-      recommended: whisperCatalog,
-    });
-    expect(nodeReadiness({ kind: "textToSpeech", config: {} }, [])).toEqual({
-      state: "needsDeployment",
-      recommended: MODEL_CATALOG.textToSpeech,
+      recommended: qwenCatalog,
     });
   });
 
-  it("follows the pending deploy through deploying, waiting and deployed", () => {
-    expect(nodeReadiness(stt, [], { status: "deploying", deploymentName: "whisper-tiny-stt" })).toEqual({
-      state: "deploying",
-      recommended: whisperCatalog,
+  it("asks for an external deployment for speech, which no pool engine can run", () => {
+    expect(nodeReadiness(stt, [dep("kokoro-tts", "audio_generation"), dep("bank-llm", "inference")])).toEqual({
+      state: "needsExternal",
     });
-    expect(nodeReadiness(stt, [], { status: "waiting", reason: "no active compute pool" })).toEqual({
+    expect(nodeReadiness({ kind: "textToSpeech", config: {} }, [])).toEqual({ state: "needsExternal" });
+  });
+
+  it("follows the pending deploy through deploying, waiting, failed and deployed", () => {
+    expect(nodeReadiness(llm, [], { status: "deploying", deploymentName: "qwen2-5-1-5b" })).toEqual({
+      state: "deploying",
+      recommended: qwenCatalog,
+    });
+    expect(nodeReadiness(llm, [], { status: "waiting", reason: "no active compute pool" })).toEqual({
       state: "waiting",
-      recommended: whisperCatalog,
+      recommended: qwenCatalog,
       reason: "no active compute pool",
     });
+    expect(nodeReadiness(llm, [], { status: "failed", reason: "image pull failed" })).toEqual({
+      state: "failed",
+      recommended: qwenCatalog,
+      reason: "image pull failed",
+    });
     expect(
-      nodeReadiness(stt, [dep("whisper-tiny-stt", "audio_generation")], { status: "deploying", deploymentName: "whisper-tiny-stt" }),
-    ).toEqual({ state: "deployed", model: "whisper-tiny-stt" });
+      nodeReadiness(llm, [dep("qwen2-5-1-5b", "inference")], { status: "deploying", deploymentName: "qwen2-5-1-5b" }),
+    ).toEqual({ state: "deployed", model: "qwen2-5-1-5b" });
+  });
+});
+
+describe("MODEL_CATALOG", () => {
+  it("only recommends engines that worker pools can run", () => {
+    const poolEngines = ["vllm", "vllm-omni", "ollama", "infinity", "triton", "inferia-diffusion"];
+    for (const entry of Object.values(MODEL_CATALOG)) {
+      expect(poolEngines).toContain(entry!.engine);
+      expect(entry!.job.engine).toBe(entry!.engine);
+    }
   });
 });
 
@@ -63,9 +82,12 @@ describe("runBlocker", () => {
   });
 
   it("names the first blocked node and its reason", () => {
-    expect(runBlocker(wf([{}, { model: "l" }]), [], {})).toBe("Speech to text: Needs deployment");
-    expect(runBlocker(wf([{}, { model: "l" }]), [], { s: { status: "waiting", reason: "no active compute pool" } })).toBe(
-      "Speech to text: Waiting for compute: no active compute pool",
+    expect(runBlocker(wf([{}, { model: "l" }]), [], {})).toBe("Speech to text: Needs an external deployment");
+    expect(runBlocker(wf([{ model: "w" }, {}]), [], { l: { status: "waiting", reason: "no active compute pool" } })).toBe(
+      "LLM: Waiting for compute: no active compute pool",
+    );
+    expect(runBlocker(wf([{ model: "w" }, {}]), [], { l: { status: "failed", reason: "image pull failed" } })).toBe(
+      "LLM: Deploy failed: image pull failed",
     );
     expect(runBlocker(wf([{ model: "w" }, {}]), [], { l: { status: "deploying", deploymentName: "qwen2-5-1-5b" } })).toBe(
       "LLM: Deploying qwen2-5-1-5b",
@@ -97,6 +119,5 @@ describe("deployRequests", () => {
       owner_id: "user-1",
       org_id: "org-1",
     });
-    expect(deployRequests(whisperCatalog, "p", { orgId: "o" }).deploy.gpu_per_replica).toBe(0);
   });
 });

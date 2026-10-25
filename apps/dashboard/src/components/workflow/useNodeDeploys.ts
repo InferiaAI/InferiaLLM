@@ -1,8 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { computeApi } from "@/lib/api";
 import { deployRequests, type CatalogModel, type PendingDeploy } from "@/lib/workflow/readiness";
 import { listPools } from "@/services/poolService";
+
+// A deploy that ends in one of these never comes up, so the node stops waiting on it.
+const DEAD_STATES = new Set(["FAILED", "TERMINATED", "STOPPED"]);
 
 interface PreflightResponse {
   ready: boolean;
@@ -43,11 +46,33 @@ export function useNodeDeploys() {
         const failed = data.checks.filter((c) => !c.passed).map((c) => c.message || c.check);
         return set(nodeId, { status: "waiting", reason: failed.join("; ") || "preflight failed" });
       }
-      await computeApi.post("/deployment/deploy", req.deploy);
+      const { data: created } = await computeApi.post<{ deployment_id?: string }>("/deployment/deploy", req.deploy);
+      set(nodeId, { status: "deploying", deploymentName: entry.deploymentName, deploymentId: created?.deployment_id });
     } catch (err) {
       set(nodeId, { status: "waiting", reason: errorMessage(err) });
     }
   };
+
+  // The ready-deployments list never shows a failed deploy, so poll each one we started.
+  useEffect(() => {
+    const watched = Object.entries(pending).flatMap(([nodeId, p]) =>
+      p.status === "deploying" && p.deploymentId ? [[nodeId, p.deploymentId] as const] : [],
+    );
+    if (watched.length === 0) return;
+    const timer = setInterval(() => {
+      for (const [nodeId, id] of watched) {
+        computeApi
+          .get<{ state?: string; error_message?: string | null }>(`/deployment/status/${id}`)
+          .then(({ data }) => {
+            if (data.state && DEAD_STATES.has(data.state)) {
+              set(nodeId, { status: "failed", reason: data.error_message || `deployment ${data.state.toLowerCase()}` });
+            }
+          })
+          .catch(() => {});
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [pending, set]);
 
   const clear = useCallback((nodeId: string) => set(nodeId, null), [set]);
   const reset = useCallback(() => setPending({}), []);

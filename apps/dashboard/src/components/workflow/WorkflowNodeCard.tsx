@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { Link } from "react-router-dom";
 import { CheckCircle2, CloudUpload, Loader2, Mic, Square, Upload, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NODE_KINDS, type ConfigField } from "@/lib/workflow/nodeKinds";
@@ -90,7 +91,21 @@ function Elapsed({ run }: { run: NodeRun }) {
 function ReadinessBanner({ nodeId, readiness }: { nodeId: string; readiness: Readiness }) {
   const { deploy } = useCanvas();
   if (readiness.state === "ready" || readiness.state === "selectModel" || readiness.state === "deployed") return null;
+  if (readiness.state === "needsExternal") {
+    return (
+      <div className="space-y-1.5 border-b bg-amber-500/5 px-3 py-2 text-[11px]">
+        <span className="font-medium text-amber-600 dark:text-amber-400">Needs an external deployment</span>
+        <p className="text-muted-foreground">
+          Compute pools can't run this model type yet.{" "}
+          <Link to="/dashboard/deployments/new" className="nodrag text-ember-600 underline">
+            Add an external endpoint
+          </Link>
+        </p>
+      </div>
+    );
+  }
   const { recommended } = readiness;
+  const retry = readiness.state === "waiting" || readiness.state === "failed";
   return (
     <div className="space-y-1.5 border-b bg-amber-500/5 px-3 py-2 text-[11px]">
       <div className="flex items-center justify-between gap-2">
@@ -98,6 +113,7 @@ function ReadinessBanner({ nodeId, readiness }: { nodeId: string; readiness: Rea
           {readiness.state === "needsDeployment" && "Needs deployment"}
           {readiness.state === "deploying" && "Deploying..."}
           {readiness.state === "waiting" && "Waiting for compute"}
+          {readiness.state === "failed" && "Deploy failed"}
         </span>
         {readiness.state === "deploying" ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
@@ -108,14 +124,14 @@ function ReadinessBanner({ nodeId, readiness }: { nodeId: string; readiness: Rea
             className="nodrag flex items-center gap-1 rounded-md bg-ember-600 px-2 py-0.5 font-medium text-white hover:bg-ember-700"
           >
             <CloudUpload className="h-3 w-3" />
-            {readiness.state === "waiting" ? "Retry" : "Deploy"}
+            {retry ? "Retry" : "Deploy"}
           </button>
         )}
       </div>
       <div className="text-muted-foreground">
         Recommended <span className="font-mono text-foreground">{recommended.modelId}</span> on {recommended.engine}
       </div>
-      {readiness.state === "waiting" && <p className="break-words text-red-500">{readiness.reason}</p>}
+      {retry && <p className="break-words text-red-500">{readiness.reason}</p>}
     </div>
   );
 }

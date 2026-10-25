@@ -1,6 +1,7 @@
 import type { Deployment } from "@/hooks/useReadyDeployments";
 import { NODE_KINDS, matchingDeployments } from "./nodeKinds";
 import type { NodeKind, Workflow, WorkflowNode } from "./types";
+import { buildDiffusionSpec } from "@/pages/newDeploymentSpec";
 
 export interface CatalogModel {
   modelId: string;
@@ -20,30 +21,9 @@ const ollama = (modelId: string) => ({
   gpu: true,
 });
 
-const speaches = (modelId: string) => ({
-  model_id: modelId,
-  engine: "speaches",
-  image: "ghcr.io/speaches-ai/speaches:latest-cpu",
-  env: { PRELOAD_MODELS: JSON.stringify([modelId]) },
-  expose: [{ port: 8000, type: "http", health_checks: [{ path: "/health", type: "http", method: "GET", expected_status: 200 }] }],
-  gpu: false,
-});
-
+// Only engines that worker pools have a recipe for. Speech has none yet, so
+// speech nodes ask for an external deployment instead of offering Deploy.
 export const MODEL_CATALOG: Partial<Record<NodeKind, CatalogModel>> = {
-  speechToText: {
-    modelId: "Systran/faster-whisper-tiny.en",
-    engine: "speaches",
-    modelType: "audio_generation",
-    deploymentName: "whisper-tiny-stt",
-    job: speaches("Systran/faster-whisper-tiny.en"),
-  },
-  textToSpeech: {
-    modelId: "speaches-ai/piper-en_US-amy-medium",
-    engine: "speaches",
-    modelType: "audio_generation",
-    deploymentName: "piper-amy-tts",
-    job: speaches("speaches-ai/piper-en_US-amy-medium"),
-  },
   llm: {
     modelId: "qwen2.5:1.5b",
     engine: "ollama",
@@ -60,22 +40,27 @@ export const MODEL_CATALOG: Partial<Record<NodeKind, CatalogModel>> = {
   },
   imageGeneration: {
     modelId: "stabilityai/sd-turbo",
-    engine: "generic",
+    engine: "inferia-diffusion",
     modelType: "image_generation",
     deploymentName: "sd-turbo-image",
-    job: { model_id: "stabilityai/sd-turbo", engine: "generic", expose: [{ port: 8000, type: "http" }], gpu: true },
+    job: JSON.parse(buildDiffusionSpec({ modelId: "stabilityai/sd-turbo", modelType: "image_generation" })),
   },
 };
 
 // Deploy attempt the canvas started for a node; lives in UI state, never in the saved workflow.
-export type PendingDeploy = { status: "deploying"; deploymentName: string } | { status: "waiting"; reason: string };
+export type PendingDeploy =
+  | { status: "deploying"; deploymentName: string; deploymentId?: string }
+  | { status: "waiting"; reason: string }
+  | { status: "failed"; reason: string };
 
 export type Readiness =
   | { state: "ready" }
   | { state: "selectModel" }
+  | { state: "needsExternal" }
   | { state: "needsDeployment"; recommended: CatalogModel }
   | { state: "deploying"; recommended: CatalogModel }
   | { state: "waiting"; recommended: CatalogModel; reason: string }
+  | { state: "failed"; recommended: CatalogModel; reason: string }
   // The node's own deployment came up; the canvas selects it and the node becomes ready.
   | { state: "deployed"; model: string };
 
@@ -90,9 +75,11 @@ export function nodeReadiness(
   if (pending?.status === "deploying" && deployments.some((d) => d.modelName === pending.deploymentName)) {
     return { state: "deployed", model: pending.deploymentName };
   }
-  if (matchingDeployments(field, deployments).length > 0 || !recommended) return { state: "selectModel" };
+  if (matchingDeployments(field, deployments).length > 0) return { state: "selectModel" };
+  if (!recommended) return { state: "needsExternal" };
   if (pending?.status === "deploying") return { state: "deploying", recommended };
   if (pending?.status === "waiting") return { state: "waiting", recommended, reason: pending.reason };
+  if (pending?.status === "failed") return { state: "failed", recommended, reason: pending.reason };
   return { state: "needsDeployment", recommended };
 }
 
@@ -103,12 +90,16 @@ export function readinessMessage(r: Readiness): string | null {
       return null;
     case "selectModel":
       return "Select a model";
+    case "needsExternal":
+      return "Needs an external deployment";
     case "needsDeployment":
       return "Needs deployment";
     case "deploying":
       return `Deploying ${r.recommended.deploymentName}`;
     case "waiting":
       return `Waiting for compute: ${r.reason}`;
+    case "failed":
+      return `Deploy failed: ${r.reason}`;
   }
 }
 
