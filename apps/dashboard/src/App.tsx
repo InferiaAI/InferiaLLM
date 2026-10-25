@@ -35,6 +35,7 @@ import NewModel from "@/pages/NewModel";
 import Pools from "@/pages/Compute/Pools";
 import PoolDetail from "@/pages/Compute/PoolDetail";
 import NewPool from "@/pages/Compute/NewPool";
+import ExtensionPage from "@/pages/ExtensionPage";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
@@ -228,6 +229,12 @@ const router = createBrowserRouter([
             path: "status",
             element: <PermissionGuard permission="organization:view" />,
             children: [{ index: true, element: <Status /> }]
+          },
+          {
+            // Pages from installed extensions. The listing only offers pages the
+            // user may open, and the gateway checks again when serving the script.
+            path: "ext/:plugin/:page",
+            element: <ExtensionPage />,
           },
         ],
       },

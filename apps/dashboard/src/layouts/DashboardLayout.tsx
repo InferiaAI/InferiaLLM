@@ -25,12 +25,16 @@ import {
   Plus,
   FlaskConical,
   Workflow,
+  Puzzle,
+  Wallet,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { SpotlightSearch, useSpotlight } from "@/components/SpotlightSearch";
 import { isExternalAuthMode } from "@/lib/authMode";
+import { extensionPagePath, useExtensionPages, type ExtensionSection } from "@/hooks/useExtensionPages";
 
 const navItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true, permission: "organization:view" },
@@ -52,6 +56,15 @@ const settingsItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard/settings/security", label: "Security", icon: Shield },
   { href: "/dashboard/status", label: "System Status", icon: Activity, permission: "organization:view" },
 ];
+
+// Icons an extension page may name. A small map rather than lucide's full set,
+// which would put every icon in the bundle; unknown names get the puzzle piece.
+const extensionIcons: Record<string, LucideIcon> = {
+  puzzle: Puzzle,
+  chart: BarChart3,
+  activity: Activity,
+  wallet: Wallet,
+};
 
 const breadcrumbLabels: Record<string, string> = {
   dashboard: "Overview",
@@ -183,6 +196,12 @@ export default function DashboardLayout() {
     [hasPermission]
   );
 
+  const { pages: extensionPages } = useExtensionPages();
+  const extensionItems = (section: ExtensionSection) =>
+    extensionPages
+      .filter((p) => p.section === section)
+      .map((p) => ({ href: extensionPagePath(p), label: p.title, icon: extensionIcons[p.icon] ?? Puzzle }));
+
   const filteredSettingsItems = useMemo(
     () =>
       settingsItems.filter((item) => {
@@ -203,6 +222,12 @@ export default function DashboardLayout() {
     const relevant = segments[0] === "dashboard" ? segments.slice(1) : segments;
     const basePath = "/dashboard";
 
+    // An extension page reads as its own title, not "ext / <plugin> / <page>".
+    if (relevant[0] === "ext") {
+      const page = extensionPages.find((p) => p.plugin === relevant[1] && p.id === relevant[2]);
+      return [{ path: location.pathname, label: page?.title ?? "Extension", isLast: true }];
+    }
+
     if (relevant.length === 0) {
       return [{ path: basePath, label: "Overview", isLast: true }];
     }
@@ -212,7 +237,7 @@ export default function DashboardLayout() {
       label: breadcrumbLabels[segment] || segment.replace(/-/g, " "),
       isLast: index === relevant.length - 1,
     }));
-  }, [location.pathname]);
+  }, [location.pathname, extensionPages]);
 
   // S3: Skip TOTP wall in external mode — the IdP owns MFA.
   if (!isLoading && user && !user.totp_enabled && !externalAuth) {
@@ -283,7 +308,7 @@ export default function DashboardLayout() {
           <NavSection
             title="Monitor"
             label="Primary navigation"
-            items={filteredNavItems.slice(0, 3)}
+            items={[...filteredNavItems.slice(0, 3), ...extensionItems("monitor")]}
             isCollapsed={isCollapsed}
             closeMobile={closeMobile}
           />
@@ -291,7 +316,7 @@ export default function DashboardLayout() {
           <NavSection
             title="Build"
             label="Build navigation"
-            items={filteredNavItems.slice(3)}
+            items={[...filteredNavItems.slice(3), ...extensionItems("build")]}
             isCollapsed={isCollapsed}
             closeMobile={closeMobile}
           />
@@ -299,7 +324,7 @@ export default function DashboardLayout() {
           <NavSection
             title="Admin"
             label="Settings navigation"
-            items={filteredSettingsItems}
+            items={[...filteredSettingsItems, ...extensionItems("admin")]}
             isCollapsed={isCollapsed}
             closeMobile={closeMobile}
           />
