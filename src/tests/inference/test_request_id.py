@@ -82,3 +82,25 @@ def test_calls_to_the_gateway_forward_the_id():
         assert client._get_headers()["X-Request-ID"] == "trace-7"
     finally:
         request_id_ctx.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_the_log_carries_the_id_of_the_request_being_logged(monkeypatch):
+    import asyncio
+
+    client = ApiGatewayClient()
+    sent = []
+
+    class _Http:
+        async def post(self, path, json, headers):
+            sent.append(json)
+
+    monkeypatch.setattr(client, "_get_client", lambda: _Http())
+    token = request_id_ctx.set("trace-9")
+    try:
+        await client.log_inference(deployment_id="d1", user_id="apikey:k1", model="m")
+    finally:
+        request_id_ctx.reset(token)  # the send runs later, in the context it was created in
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert sent[0]["request_id"] == "trace-9"

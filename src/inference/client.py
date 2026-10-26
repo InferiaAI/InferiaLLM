@@ -221,6 +221,8 @@ class ApiGatewayClient:
                     "is_streaming": is_streaming,
                     "applied_policies": applied_policies,
                     "ip_address": ip_address,
+                    # create_task copied the request's context, so this is its id.
+                    "request_id": request_id_ctx.get() or None,
                     "request_type": request_type,
                 }
 

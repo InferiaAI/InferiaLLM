@@ -525,7 +525,8 @@ CREATE TABLE inference_logs (
     deployment_id UUID NOT NULL, 
     user_id VARCHAR NOT NULL, 
     ip_address VARCHAR,
-    request_payload JSON, 
+    request_id VARCHAR,
+    request_payload JSON,
     model VARCHAR NOT NULL, 
     latency_ms INTEGER, 
     ttft_ms INTEGER, 
@@ -543,6 +544,7 @@ CREATE TABLE inference_logs (
 );
 CREATE INDEX ix_inference_logs_user_id ON inference_logs (user_id);
 CREATE INDEX ix_inference_logs_ip_address ON inference_logs (ip_address);
+CREATE INDEX ix_inference_logs_request_id ON inference_logs (request_id);
 CREATE INDEX ix_inference_logs_id ON inference_logs (id);
 CREATE INDEX ix_inference_logs_model ON inference_logs (model);
 CREATE INDEX ix_inference_logs_created_at ON inference_logs (created_at);

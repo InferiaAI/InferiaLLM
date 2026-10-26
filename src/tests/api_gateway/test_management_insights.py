@@ -285,6 +285,37 @@ async def test_logs_pagination_and_limit_clamping():
 
 
 @pytest.mark.asyncio
+async def test_logs_can_be_found_by_request_id():
+    request = _make_request()
+    db = AsyncMock()
+    count_result = MagicMock()
+    count_result.scalar.return_value = 1
+    logs_result = MagicMock()
+    logs_result.scalars.return_value.all.return_value = [_make_log("l1")]
+    db.execute.side_effect = [count_result, logs_result]
+
+    await get_insights_logs(
+        request=request,
+        start_time=_now() - timedelta(days=1),
+        end_time=_now(),
+        deployment_id=None,
+        model=None,
+        ip_address=None,
+        request_id="trace-42",
+        status="all",
+        deployment_type="all",
+        limit=50,
+        offset=0,
+        db=db,
+    )
+
+    for call in db.execute.call_args_list:
+        stmt = call.args[0]
+        assert "inference_logs.request_id" in str(stmt)
+        assert "trace-42" in stmt.compile().params.values()
+
+
+@pytest.mark.asyncio
 async def test_empty_dataset_returns_zeroed_shapes():
     request = _make_request()
     db = AsyncMock()

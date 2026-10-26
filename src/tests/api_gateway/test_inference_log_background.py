@@ -177,3 +177,20 @@ class TestCreateInferenceLogEndpoint:
         assert result["status"] == "ok"
         assert "log_id" in result
         assert len(result["log_id"]) == 36  # UUID length
+
+
+@pytest.mark.asyncio
+async def test_the_request_id_is_stored_on_the_row():
+    from api_gateway.gateway.router import _persist_log_background
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+    added = []
+    mock_session.add = added.append
+
+    with patch("api_gateway.db.database.AsyncSessionLocal", return_value=mock_session):
+        await _persist_log_background(_make_log_data(request_id="trace-42"), "log-rid")
+        await _persist_log_background(_make_log_data(), "log-no-rid")
+
+    assert [row.request_id for row in added] == ["trace-42", None]
