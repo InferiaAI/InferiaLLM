@@ -72,6 +72,7 @@ type State = {
     customEnd: string;
     deploymentId: string;
     ipAddress: string;
+    requestId: string;
     status: InsightsStatus;
     page: number;
     pageSize: number;
@@ -89,6 +90,7 @@ const createInitialState = (defaultStart: Date, now: Date): State => ({
     customEnd: toLocalDateTimeInputValue(now),
     deploymentId: "",
     ipAddress: "",
+    requestId: "",
     status: "all",
     page: 1,
     pageSize: DEFAULT_PAGE_SIZE,
@@ -119,6 +121,7 @@ function createInitialStateFromParams(searchParams: URLSearchParams, defaultStar
         customEnd: searchParams.get("customEnd") || baseState.customEnd,
         deploymentId: searchParams.get("deploymentId") || "",
         ipAddress: searchParams.get("ipAddress") || "",
+        requestId: searchParams.get("requestId") || "",
         status: status ? (status as InsightsStatus) : baseState.status,
         page,
         pageSize: PAGE_SIZE_OPTIONS.includes(parsedPageSize) ? parsedPageSize : DEFAULT_PAGE_SIZE,
@@ -132,7 +135,7 @@ function reducer(state: State, action: Action): State {
         case 'SET_DEPLOYMENT_TYPE':
             return { ...state, deploymentType: action.payload, deploymentId: "", page: 1 };
         case 'CLEAR_FILTERS':
-            return { ...state, deploymentId: "", ipAddress: "", status: "all", page: 1 };
+            return { ...state, deploymentId: "", ipAddress: "", requestId: "", status: "all", page: 1 };
         default:
             return state;
     }
@@ -150,7 +153,7 @@ export default function Insights() {
     );
     const {
         deploymentType, timePreset, customStart, customEnd,
-        deploymentId, ipAddress, status, page, pageSize
+        deploymentId, ipAddress, requestId, status, page, pageSize
     } = state;
 
     useEffect(() => {
@@ -170,6 +173,7 @@ export default function Insights() {
         setOrDelete("customEnd", timePreset === "custom" ? customEnd : null);
         setOrDelete("deploymentId", deploymentId || null);
         setOrDelete("ipAddress", ipAddress.trim() || null);
+        setOrDelete("requestId", requestId.trim() || null);
         setOrDelete("status", status === "all" ? null : status);
         setOrDelete("page", page > 1 ? String(page) : null);
         setOrDelete("pageSize", pageSize !== DEFAULT_PAGE_SIZE ? String(pageSize) : null);
@@ -177,9 +181,10 @@ export default function Insights() {
         if (next.toString() !== searchParams.toString()) {
             setSearchParams(next, { replace: true });
         }
-    }, [deploymentType, timePreset, customStart, customEnd, deploymentId, ipAddress, status, page, pageSize, searchParams, setSearchParams]);
+    }, [deploymentType, timePreset, customStart, customEnd, deploymentId, ipAddress, requestId, status, page, pageSize, searchParams, setSearchParams]);
 
     const debouncedIpAddress = useDebouncedValue(ipAddress.trim(), IP_DEBOUNCE_DELAY);
+    const debouncedRequestId = useDebouncedValue(requestId.trim(), IP_DEBOUNCE_DELAY);
 
     const range = useMemo(() => {
         const end = new Date();
@@ -307,14 +312,17 @@ export default function Insights() {
             baseParams.end_time,
             deploymentId,
             debouncedIpAddress,
+            debouncedRequestId,
             status,
             page,
             pageSize,
             deploymentType,
         ],
+        // Only the logs list can be searched by request ID; the totals and charts cannot.
         queryFn: () =>
             insightsService.getLogs({
                 ...baseParams,
+                request_id: debouncedRequestId || undefined,
                 limit: pageSize,
                 offset: (page - 1) * pageSize,
             }),
@@ -395,7 +403,7 @@ export default function Insights() {
         logsQuery.isLoading;
     const hasNoData = (summary?.totals.requests ?? 0) === 0 && !isInitialLoading;
 
-    const hasActiveFilters = deploymentId !== "" || ipAddress !== "" || status !== "all";
+    const hasActiveFilters = deploymentId !== "" || ipAddress !== "" || requestId !== "" || status !== "all";
 
     const clearFilters = useCallback(() => {
         dispatch({ type: 'CLEAR_FILTERS' });
@@ -403,9 +411,10 @@ export default function Insights() {
 
     const exportLogsToCSV = useCallback(() => {
         if (!logs?.items.length) return;
-        const headers = ["Timestamp", "Deployment ID", "Model", "IP Address", "Prompt Tokens", "Completion Tokens", "Total Tokens", "Latency (ms)", "Status"];
+        const headers = ["Timestamp", "Request ID", "Deployment ID", "Model", "IP Address", "Prompt Tokens", "Completion Tokens", "Total Tokens", "Latency (ms)", "Status"];
         const rows = logs.items.map((log) => [
             log.created_at,
+            log.request_id || "",
             log.deployment_id,
             log.model,
             log.ip_address || "",
@@ -836,16 +845,33 @@ export default function Insights() {
                             }
                         </p>
                     </div>
-                    {logs?.items.length ? (
-                        <button
-                            type="button"
-                            onClick={exportLogsToCSV}
-                            className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
-                        >
-                            <Download className="h-3.5 w-3.5" />
-                            Export CSV
-                        </button>
-                    ) : null}
+                    <div className="flex items-center gap-2">
+                        <input
+                            id="insight-request-id"
+                            aria-label="Find a request by its ID"
+                            type="search"
+                            value={requestId}
+                            onChange={(e) => {
+                                dispatch({ type: 'SET_FIELD', field: 'requestId', value: e.target.value });
+                                dispatch({ type: 'SET_FIELD', field: 'page', value: 1 });
+                            }}
+                            placeholder="Find request ID"
+                            maxLength={128}
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="h-8 w-56 rounded-md border bg-background px-3 text-xs font-mono"
+                        />
+                        {logs?.items.length ? (
+                            <button
+                                type="button"
+                                onClick={exportLogsToCSV}
+                                className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+                            >
+                                <Download className="h-3.5 w-3.5" />
+                                Export CSV
+                            </button>
+                        ) : null}
+                    </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -853,6 +879,7 @@ export default function Insights() {
                         <thead className="bg-muted/40 text-muted-foreground">
                             <tr>
                                 <th className="px-4 py-3 text-left font-medium">Timestamp</th>
+                                <th className="px-4 py-3 text-left font-medium">Request ID</th>
                                 <th className="px-4 py-3 text-left font-medium">Deployment</th>
                                 <th className="px-4 py-3 text-left font-medium">Model</th>
                                 <th className="px-4 py-3 text-left font-medium">IP</th>
@@ -866,6 +893,10 @@ export default function Insights() {
                                 <tr key={log.id} className="hover:bg-muted/20">
                                     <td className="px-4 py-3 text-xs font-mono text-muted-foreground">
                                         {new Date(log.created_at).toLocaleString()}
+                                    </td>
+                                    <td className="px-4 py-3 text-xs font-mono" title={log.request_id || undefined}>
+                                        {!log.request_id ? "-"
+                                            : log.request_id.length > 14 ? `${log.request_id.slice(0, 12)}…` : log.request_id}
                                     </td>
                                     <td className="px-4 py-3 text-xs font-mono">
                                         {String(log.deployment_id).slice(0, 8)}…
@@ -899,8 +930,10 @@ export default function Insights() {
                             ))}
                             {!logsQuery.isLoading && (logs?.items.length || 0) === 0 && (
                                 <tr>
-                                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
-                                        No logs found for the selected filters.
+                                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                                        {debouncedRequestId
+                                            ? "No log with this request ID in the selected time range."
+                                            : "No logs found for the selected filters."}
                                     </td>
                                 </tr>
                             )}

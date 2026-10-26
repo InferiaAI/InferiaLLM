@@ -66,6 +66,7 @@ export interface InferenceLogItem {
     user_id: string;
     model: string;
     ip_address: string | null;
+    request_id: string | null;
     request_payload: Record<string, unknown> | null;
     latency_ms: number | null;
     ttft_ms: number | null;
@@ -130,6 +131,7 @@ export interface InsightsTopModelsResponse {
 export interface InsightsLogsQueryParams extends InsightsQueryParams {
     limit?: number;
     offset?: number;
+    request_id?: string;
 }
 
 export interface InsightsTimeseriesQueryParams extends InsightsQueryParams {
