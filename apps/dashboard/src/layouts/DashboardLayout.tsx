@@ -27,6 +27,7 @@ import {
   Workflow,
   Puzzle,
   Wallet,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,7 @@ const extensionIcons: Record<string, LucideIcon> = {
   chart: BarChart3,
   activity: Activity,
   wallet: Wallet,
+  shield: ShieldCheck, // not Shield, which Roles and Security already use
 };
 
 const breadcrumbLabels: Record<string, string> = {
