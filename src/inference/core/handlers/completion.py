@@ -11,6 +11,8 @@ _background_log_tasks: Set[asyncio.Task] = set()
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 
+from common import extensions
+from common.http_client import request_id_ctx
 from inference.client import api_gateway_client
 from inference.config import settings
 from ..providers import resolve_upstream
@@ -78,6 +80,18 @@ class CompletionHandler:
         # 3. Check Quota
         applied_policies.append("quota")
         await api_gateway_client.check_quota(user_context_id, model)
+
+        # 3b. Installed extensions; one may refuse with an HTTPException.
+        # /v1/messages comes through here too, already in this format.
+        await extensions.before_request(
+            request_id=request_id_ctx.get() or "",
+            user_id=user_context_id,
+            org_id=org_id,
+            deployment_id=str(deployment_id) if deployment_id else None,
+            model=model,
+            request_type="llm",
+            body=body,
+        )
 
         # 4. Prepare Provider Request
         endpoint_url = deployment.get("endpoint")
