@@ -93,3 +93,38 @@ async def test_migrations_run_core_first_then_extensions(monkeypatch):
     monkeypatch.setattr(init, "migrate_all", ext)
     await init._apply_migrations("postgresql://x")
     assert order == [("core", "postgresql://x"), ("extensions", "postgresql://x")]
+
+
+class _Checker:
+    def __init__(self, error=None):
+        self.error, self.seen = error, []
+
+    async def before_request(self, **request):
+        self.seen.append(request)
+        if self.error:
+            raise self.error
+
+
+async def test_before_request_reaches_every_extension_that_has_it(install):
+    first, second = _Checker(), _Checker()
+    install(_EP("first", first), _EP("no_hook", _Ext()), _EP("second", second))
+    await extensions.before_request(request_id="r1", model="m", body={"messages": []})
+    assert first.seen == second.seen == [{"request_id": "r1", "model": "m", "body": {"messages": []}}]
+
+
+async def test_a_refusal_reaches_the_caller(install):
+    from fastapi import HTTPException
+
+    later = _Checker()
+    install(_EP("refuses", _Checker(HTTPException(status_code=400, detail="no"))), _EP("later", later))
+    with pytest.raises(HTTPException) as e:
+        await extensions.before_request(request_id="r1")
+    assert e.value.status_code == 400
+    assert later.seen == []  # refused requests stop at the first refusal
+
+
+async def test_a_broken_check_is_skipped_and_the_request_goes_on(install):
+    good = _Checker()
+    install(_EP("broken", _Checker(RuntimeError("bug"))), _EP("good", good))
+    await extensions.before_request(request_id="r1")
+    assert good.seen == [{"request_id": "r1"}]
