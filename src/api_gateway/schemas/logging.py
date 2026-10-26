@@ -9,6 +9,7 @@ class InferenceLogCreate(BaseModel):
     user_id: str
     model: str
     ip_address: Optional[str] = None
+    request_id: Optional[str] = None
     request_payload: Optional[Dict[str, Any]] = None
     latency_ms: Optional[int] = None
     ttft_ms: Optional[int] = None
@@ -30,6 +31,7 @@ class InferenceLogResponse(BaseModel):
     user_id: str
     model: str
     ip_address: Optional[str] = None
+    request_id: Optional[str] = None
     request_payload: Optional[Dict[str, Any]] = None
     latency_ms: Optional[int] = None
     ttft_ms: Optional[int] = None

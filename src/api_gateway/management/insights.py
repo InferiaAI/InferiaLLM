@@ -79,6 +79,7 @@ def _build_filters(
     ip_address: str | None,
     status: InsightsStatusFilter,
     deployment_type: InsightsDeploymentTypeFilter,
+    request_id: str | None = None,
 ) -> List[Any]:
     conditions: List[Any] = [
         DBDeployment.org_id == org_id,
@@ -100,6 +101,9 @@ def _build_filters(
 
     if ip_address:
         conditions.append(DBInferenceLog.ip_address == ip_address)
+
+    if request_id:
+        conditions.append(DBInferenceLog.request_id == request_id)
 
     if status == "success":
         conditions.append(DBInferenceLog.status_code < 400)
@@ -529,6 +533,7 @@ async def get_insights_logs(
     deployment_id: str | None = Query(None),
     model: str | None = Query(None),
     ip_address: str | None = Query(None),
+    request_id: str | None = Query(None, max_length=128),
     status: InsightsStatusFilter = Query("all"),
     deployment_type: InsightsDeploymentTypeFilter = Query("all"),
     limit: int = Query(50, ge=1, le=200),
@@ -553,6 +558,7 @@ async def get_insights_logs(
         ip_address,
         status,
         deployment_type,
+        request_id=request_id,
     )
 
     clamped_limit = min(max(limit, 1), 200)

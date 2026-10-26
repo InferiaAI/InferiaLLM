@@ -155,6 +155,7 @@ async def _persist_log_background(log_data: InferenceLogCreate, log_id: str):
                 deployment_id=log_data.deployment_id,
                 user_id=log_data.user_id,
                 ip_address=log_data.ip_address,
+                request_id=log_data.request_id,
                 model=log_data.model,
                 request_payload=request_payload,
                 latency_ms=log_data.latency_ms,

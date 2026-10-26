@@ -16,7 +16,8 @@ class InferenceLog(Base):
     )
     user_id = Column(String, index=True, nullable=False)  # User ID or API key context
     ip_address = Column(String, index=True, nullable=True)  # Client IP supplied by caller/proxy
-    
+    request_id = Column(String, index=True, nullable=True)  # X-Request-ID; null on rows logged before it was stored
+
     # Request Info
     request_payload = Column(JSON, nullable=True)  # Full request body (optional to save space)
     model = Column(String, index=True, nullable=False)
