@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 from sqlalchemy.future import select
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import asyncio
 import logging
 
@@ -24,6 +25,7 @@ from api_gateway.schemas.config import (
     ConfigUpdateRequest,
     ConfigResponse,
     UsageStatsResponse,
+    UsageHistoryRow,
 )
 from api_gateway.management.dependencies import (
     get_current_user_context,
@@ -424,6 +426,78 @@ async def get_usage_stats(request: Request, db: AsyncSession = Depends(get_db)):
         )
 
     return stats
+
+
+# Bounds one query; a spend page asks for a month at a time.
+MAX_HISTORY_DAYS = 366
+
+
+@router.get("/config/quota/usage/history", response_model=List[UsageHistoryRow])
+async def get_usage_history(
+    request: Request,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily usage per API key and model in the caller's org, revoked keys included.
+
+    Days are the dates usage was recorded under. Writes use the server's local
+    date (PolicyEngine.persist_usage_db), so the default range does too.
+    """
+    user_ctx = get_current_user_context(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.ORG_VIEW)
+    if not user_ctx.org_id:
+        return []
+
+    end = end or date.today()
+    start = start or end - timedelta(days=29)
+    if start > end:
+        raise HTTPException(status_code=400, detail="start must not be after end")
+    if (end - start).days >= MAX_HISTORY_DAYS:
+        raise HTTPException(
+            status_code=400, detail=f"range is limited to {MAX_HISTORY_DAYS} days"
+        )
+
+    return await usage_history_rows(db, user_ctx.org_id, start, end)
+
+
+async def usage_history_rows(
+    db: AsyncSession, org_id: str, start: date, end: date
+) -> List[UsageHistoryRow]:
+    """Daily usage per API key and model for one org between two days, inclusive."""
+    # usage_stats has no org column; API-key usage is stored as "apikey:<id>".
+    result = await db.execute(
+        select(
+            DBUsage.date,
+            DBApiKey.id,
+            DBApiKey.name,
+            DBApiKey.prefix,
+            DBApiKey.is_active,
+            DBUsage.model,
+            DBUsage.request_count,
+            DBUsage.prompt_tokens,
+            DBUsage.completion_tokens,
+            DBUsage.total_tokens,
+        )
+        .join(DBApiKey, DBUsage.user_id == func.concat("apikey:", DBApiKey.id))
+        .where(DBApiKey.org_id == org_id, DBUsage.date.between(start, end))
+        .order_by(DBUsage.date, DBApiKey.name, DBUsage.model)
+    )
+    return [
+        UsageHistoryRow(
+            day=row.date,
+            key_id=row.id,
+            key_name=row.name,
+            key_prefix=row.prefix,
+            key_active=row.is_active is not False,
+            model=row.model,
+            requests=row.request_count or 0,
+            prompt_tokens=row.prompt_tokens or 0,
+            completion_tokens=row.completion_tokens or 0,
+            total_tokens=row.total_tokens or 0,
+        )
+        for row in result
+    ]
 
 
 @router.get("/config/{policy_type}", response_model=ConfigResponse)
