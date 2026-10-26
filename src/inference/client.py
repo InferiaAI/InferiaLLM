@@ -8,6 +8,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import httpx
+from common.http_client import request_id_ctx
 from inference.config import settings
 from fastapi import HTTPException
 from fastapi import status as http_status
@@ -93,6 +94,11 @@ class ApiGatewayClient:
 
         if auth_token:
             headers["Authorization"] = auth_token
+
+        # Lets the gateway's logs be matched to the inference request.
+        request_id = request_id_ctx.get()
+        if request_id:
+            headers["X-Request-ID"] = request_id
 
         return headers
 

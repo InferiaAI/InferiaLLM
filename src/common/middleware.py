@@ -3,12 +3,53 @@ Shared middleware for the InferiaLLM ecosystem.
 """
 
 import logging
+import re
 import uuid
 from typing import List, Optional
 from fastapi import Request, status
 from common.http_client import request_id_ctx
 
 logger = logging.getLogger(__name__)
+
+# A caller's id is logged and echoed back, so only short, plain ids are kept.
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
+class RequestIDMiddleware:
+    """Gives each HTTP request an X-Request-ID, the caller's or a new one.
+
+    Plain ASGI rather than BaseHTTPMiddleware, so streamed responses pass
+    through untouched. The id is set in request_id_ctx for logs and outgoing
+    internal calls, in request.state.request_id, and on the response.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        sent = dict(scope["headers"]).get(b"x-request-id", b"").decode("latin-1")
+        request_id = sent if _REQUEST_ID.fullmatch(sent) else str(uuid.uuid4())
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        async def send_with_id(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    (k, v) for k, v in message.get("headers", [])
+                    if k.lower() != b"x-request-id"
+                ]
+                headers.append((b"x-request-id", request_id.encode("latin-1")))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        token = request_id_ctx.set(request_id)
+        try:
+            await self.app(scope, receive, send_with_id)
+        finally:
+            request_id_ctx.reset(token)
 
 
 def _route_path(request: Request) -> str:
