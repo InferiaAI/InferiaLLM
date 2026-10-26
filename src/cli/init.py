@@ -8,6 +8,8 @@ import subprocess
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 
+from common.extensions import migrate_all
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +71,12 @@ _MIGRATION_LOCK_ID = 0x1EF1A0  # any fixed int64, shared by every runner
 
 
 async def _apply_migrations(dsn: str):
+    """Apply core's migrations, then those of installed extensions."""
+    await _apply_core_migrations(dsn)
+    await migrate_all(dsn)
+
+
+async def _apply_core_migrations(dsn: str):
     """Apply any unapplied SQL migrations from the migrations directory.
 
     Supports @SPLIT@ marker to separate transactional and concurrent chunks.

@@ -15,6 +15,7 @@ from common.exception_handlers import register_exception_handlers
 
 from common.logger import setup_logging
 from common.app_setup import setup_cors, add_standard_health_routes
+from common.extensions import mount_all
 from api_gateway.config import httpx_verify, settings
 from api_gateway.gateway.middleware import (
     RequestIDMiddleware,
@@ -180,6 +181,9 @@ app.include_router(users_router)
 app.include_router(proxy_router)
 app.include_router(worker_passthrough_router)
 app.include_router(health_router)
+
+# Installed extensions add their routes last, under their own prefix.
+mount_all(app)
 
 
 if __name__ == "__main__":
