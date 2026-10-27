@@ -60,6 +60,7 @@ class EmbeddingHandler:
                 ctx.engine,
                 path=embedding_path,
                 concurrency_key=ctx.concurrency_key,
+                resolve_names=ctx.resolve_names,
             )
 
             usage = response_data.get("usage", {})

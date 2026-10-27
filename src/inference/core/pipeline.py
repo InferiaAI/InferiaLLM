@@ -50,6 +50,7 @@ class RequestContext:
     endpoint_url: str = ""
     provider_key: str = ""
     provider_headers: Dict = field(default_factory=dict)
+    resolve_names: bool = True
 
     # --- Tracking ---
     applied_policies: List[str] = field(default_factory=list)
@@ -117,6 +118,7 @@ class Pipeline:
         ctx.adapter, ctx.endpoint_url = resolve_upstream(
             engine, raw_endpoint, settings.external_proxy_url,
         )
+        ctx.resolve_names = GatewayService.resolves_names_for(deployment)
 
         ctx.provider_key, extra_headers = provider_auth(deployment, engine)
         ctx.provider_headers = ctx.adapter.get_headers(ctx.provider_key)

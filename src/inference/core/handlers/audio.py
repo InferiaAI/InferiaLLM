@@ -53,6 +53,7 @@ class AudioHandler:
                 files={"file": (filename, audio, content_type or "application/octet-stream")},
                 data={**fields, "model": ctx.body["model"]},
                 concurrency_key=ctx.concurrency_key,
+                resolve_names=ctx.resolve_names,
             )
 
         resp = await AudioHandler._handle(
@@ -90,6 +91,7 @@ class AudioHandler:
                 ctx.provider_headers,
                 json_body=ctx.body,
                 concurrency_key=ctx.concurrency_key,
+                resolve_names=ctx.resolve_names,
             )
 
         resp = await AudioHandler._handle(

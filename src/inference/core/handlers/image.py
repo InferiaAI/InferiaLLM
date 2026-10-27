@@ -127,6 +127,7 @@ class ImageHandler:
                 ctx.engine,
                 path=image_path,
                 concurrency_key=ctx.concurrency_key,
+                resolve_names=ctx.resolve_names,
             )
 
             return echo_requested_model(response_data, ctx.model)

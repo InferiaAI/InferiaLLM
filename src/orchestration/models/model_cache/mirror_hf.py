@@ -2,12 +2,14 @@
 
 Routes
 ------
-GET /hf/api/{rest:path}
-    Proxy HuggingFace API metadata straight through (not cached).
+GET /hf/api/models/{repo:path}[/revision|/tree/{rev}]
+    Answer model metadata locally when cached, else from HuggingFace.
 
 GET /hf/{repo:path}/resolve/{rev}/{filename:path}
     Serve from disk on a cache hit; otherwise stream from HuggingFace,
     tee to disk (atomic publish via .part → rename), and stream to client.
+
+Every route serves only repos with a model_cache row; anything else is 404.
 
 Design notes
 ------------
@@ -97,6 +99,31 @@ async def _served_locally(repo: str, rev: str) -> dict | None:
     return row
 
 
+async def _mirrored(repo: str) -> bool:
+    """Whether this install chose to cache *repo* (a deploy or an admin added it).
+
+    The mirror is unauthenticated and fetches with the install's HF token, so
+    it must not serve whatever repo a caller names.
+    """
+    r = deps.get("repo")
+    if r is None:
+        return False
+    try:
+        return await r.is_mirrored(source="hf", model_id=repo)
+    except Exception:
+        return False
+
+
+def _repo_not_found() -> Response:
+    # The header is how huggingface_hub tells a missing repo from a failure.
+    return Response(
+        content=json.dumps({"error": "not served by this mirror"}),
+        status_code=404,
+        media_type="application/json",
+        headers={"x-error-code": "RepoNotFound"},
+    )
+
+
 def _local_dir(row: dict):
     """The directory holding this row's files, under its own revision."""
     cp = deps.get("paths")
@@ -120,6 +147,9 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
     big file itself is still served from the local cache on the follow-up GET.
     """
     from urllib.parse import urljoin
+
+    if not await _mirrored(repo):
+        return _repo_not_found()
 
     # A cached row carries the commit and per-file etag, so the whole exchange
     # happens locally. Without this an install with no egress reaches the
@@ -241,6 +271,8 @@ async def model_revision(repo: str, rev: str) -> Response:
     huggingface_hub calls this to turn a branch name into a commit before it
     asks for anything else, so a 500 here stops snapshot_download outright.
     """
+    if not await _mirrored(repo):
+        return _repo_not_found()
     row = await _served_locally(repo, rev)
     if row is None:
         return await _proxy_api(f"models/{repo}/revision/{rev}")
@@ -262,6 +294,8 @@ async def model_tree(repo: str, rev: str) -> Response:
     ``lfs`` is reported for the weight files because huggingface_hub decides
     how to fetch a file from its presence.
     """
+    if not await _mirrored(repo):
+        return _repo_not_found()
     row = await _served_locally(repo, rev)
     if row is None:
         return await _proxy_api(f"models/{repo}/tree/{rev}")
@@ -308,9 +342,13 @@ async def _proxy_api(rest: str, query: str = "") -> Response:
 
 
 @router.get("/api/{rest:path}")
-async def proxy_api(rest: str, request: Request) -> Response:
-    """Proxy HuggingFace API metadata straight through (not cached)."""
-    return await _proxy_api(rest, request.url.query)
+async def proxy_api(rest: str) -> Response:
+    """Refuse every other API call.
+
+    Engines only need the model routes above. Passing the rest through with
+    the install's token let any caller run whoami or list its private repos.
+    """
+    return _repo_not_found()
 
 
 @router.get("/{repo:path}/resolve/{rev}/{filename:path}")
@@ -324,6 +362,8 @@ async def resolve_file(
     ``StreamingResponse``**, stream the body to the client while writing to
     a ``.part`` temp, and atomically rename on completion.
     """
+    if not await _mirrored(repo):
+        return _repo_not_found()
     cp = deps.get("paths")
     # snapshot_download asks for /resolve/<commit>/..., and the pre-warm files
     # everything under the revision it cached. Without this the lookup lands in

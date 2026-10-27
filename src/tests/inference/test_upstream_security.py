@@ -299,3 +299,133 @@ class TestCallUpstreamSecurity:
     async def _async_iter(items):
         for item in items:
             yield item
+
+
+class TestAddressFormsThatReachInternalHosts:
+    """Spellings the resolver accepts for an internal address, and the names
+    that mean this machine or the cloud metadata service."""
+
+    @pytest.mark.parametrize("host", [
+        "2852039166",            # 169.254.169.254 as one number
+        "0xa9fea9fe",            # ... in hex
+        "0251.0376.0251.0376",   # ... in octal
+        "127.1",
+        "0.0.0.0",
+        "[::ffff:169.254.169.254]",
+        "[::]",
+        "[fe80::1]",
+        "100.64.0.1",            # carrier-grade NAT
+        "localhost",
+        "api.localhost",
+        "metadata.google.internal",
+    ])
+    def test_rejected(self, host):
+        with pytest.raises(ValueError, match="not allowed"):
+            validate_upstream_url(f"http://{host}/latest/meta-data/", [])
+
+    def test_an_allowlisted_name_still_passes(self):
+        assert validate_upstream_url("http://localhost:11434/v1", ["localhost"])
+
+
+@pytest.mark.asyncio
+class TestNamesAreCheckedByWhatTheyResolveTo:
+
+    async def _check(self, url, allowed, addresses):
+        from inference.core import validators
+
+        async def _resolve(hostname):
+            return addresses
+
+        with patch.object(validators, "_resolve", _resolve):
+            return await validators.check_resolved_host(url, allowed)
+
+    @pytest.mark.parametrize("address", ["169.254.169.254", "10.0.0.5", "127.0.0.1", "fd00::1"])
+    async def test_a_name_resolving_inside_is_rejected(self, address):
+        with pytest.raises(ValueError, match="not allowed"):
+            await self._check("http://rebind.example.com/v1", [], [address])
+
+    async def test_one_internal_answer_is_enough(self):
+        with pytest.raises(ValueError, match="not allowed"):
+            await self._check("http://x.example.com", [], ["93.184.215.14", "10.0.0.5"])
+
+    async def test_a_public_name_passes(self):
+        url = "https://api.example.com/v1"
+        assert await self._check(url, [], ["93.184.215.14"]) == url
+
+    async def test_allowed_by_name(self):
+        url = "http://ollama.lan:11434/v1"
+        assert await self._check(url, ["ollama.lan"], ["192.168.1.20"]) == url
+
+    async def test_allowed_by_address(self):
+        """setup.sh lists kind node addresses, which names may resolve to."""
+        url = "http://node.kind:30080/v1"
+        assert await self._check(url, ["172.18.0.3"], ["172.18.0.3"]) == url
+
+
+def test_the_operators_proxies_are_always_allowed():
+    """Worker and external traffic go through these internal proxies when set."""
+    from inference.core.service import GatewayService
+
+    with patch("inference.core.service.settings") as s:
+        s.upstream_allowed_internal_hosts = "10.0.1.50"
+        s.envoy_url = "http://envoy:10000"
+        s.external_proxy_url = "http://inferiagate:4000"
+        assert GatewayService._get_allowed_hosts() == ["10.0.1.50", "envoy", "inferiagate"]
+
+
+@pytest.mark.asyncio
+async def test_video_status_checks_its_upstream():
+    """The status poll is a GET whose JSON goes back to the caller."""
+    from inference.core.handlers.video import VideoHandler
+
+    context = {"valid": True, "deployment": {
+        "engine": "inferia-diffusion", "endpoint": "http://2852039166/latest?",
+    }}
+    with (
+        patch("inference.core.handlers.video.GatewayService.resolve_context",
+              AsyncMock(return_value=context)),
+        patch("inference.core.handlers.video.settings") as s,
+        patch("inference.core.handlers.video.http_client") as hc,
+    ):
+        s.envoy_url = None
+        with pytest.raises(HTTPException) as exc:
+            await VideoHandler.handle_status("sk-x", "vid", "m")
+
+    assert exc.value.status_code == 502
+    hc.get_client.return_value.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestOnlyUserEnteredEndpointsAreResolved:
+    """External deployments carry a URL a user typed; worker and k8s ones
+    carry a URL the platform set, which often names a private host."""
+
+    async def _checked(self, url, deployment):
+        from inference.core import validators
+        from inference.core.service import GatewayService
+
+        async def _private(hostname):
+            return ["172.18.0.7"]
+
+        with (
+            patch.object(validators, "_resolve", _private),
+            patch("inference.core.service.settings") as s,
+        ):
+            s.upstream_allowed_internal_hosts = ""
+            s.envoy_url = None
+            s.external_proxy_url = None
+            return await GatewayService._checked_url(
+                url, GatewayService.resolves_names_for(deployment)
+            )
+
+    async def test_a_worker_hostname_still_works(self):
+        url = "http://inferia-worker:8080/v1/chat/completions"
+        assert await self._checked(url, {"pool_id": "pool-1"}) == url
+
+    async def test_the_same_name_on_an_external_deployment_is_refused(self):
+        with pytest.raises(ValueError, match="not allowed"):
+            await self._checked("http://inferia-worker:8080/v1", {"pool_id": None})
+
+    async def test_a_worker_still_gets_the_literal_checks(self):
+        with pytest.raises(ValueError, match="not allowed"):
+            await self._checked("http://2852039166/latest", {"pool_id": "pool-1"})

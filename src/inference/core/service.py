@@ -6,10 +6,16 @@ from typing import Dict, Any, AsyncGenerator, Optional
 import json
 import logging
 import httpx
+from urllib.parse import urlparse
 from .http_client import http_client
 from .providers import get_adapter
 from .concurrency_limiter import upstream_concurrency_limiter
-from .validators import validate_upstream_url, sanitize_headers, check_response_size
+from .validators import (
+    check_resolved_host,
+    validate_upstream_url,
+    sanitize_headers,
+    check_response_size,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +97,31 @@ class GatewayService:
 
     @staticmethod
     def _get_allowed_hosts() -> list[str]:
-        """Parse allowed internal hosts from config."""
-        raw = settings.upstream_allowed_internal_hosts
-        if not raw:
-            return []
-        return [h.strip() for h in raw.split(",") if h.strip()]
+        """Parse allowed internal hosts from config, plus the operator's proxies."""
+        raw = settings.upstream_allowed_internal_hosts or ""
+        hosts = [h.strip() for h in raw.split(",") if h.strip()]
+        # Worker and external traffic go through these when they are set.
+        for proxy in (settings.envoy_url, settings.external_proxy_url):
+            if isinstance(proxy, str) and urlparse(proxy).hostname:
+                hosts.append(urlparse(proxy).hostname)
+        return hosts
+
+    @staticmethod
+    def resolves_names_for(deployment: Dict) -> bool:
+        """Whether *deployment*'s endpoint was typed in by a user.
+
+        Only external deployments have no pool. Worker and k8s endpoints are
+        set by the platform and often name a private host it can reach.
+        """
+        return not deployment.get("pool_id")
+
+    @staticmethod
+    async def _checked_url(url: str, resolve_names: bool) -> str:
+        allowed = GatewayService._get_allowed_hosts()
+        url = validate_upstream_url(url, allowed)
+        if resolve_names:
+            await check_resolved_host(url, allowed)
+        return url
 
     @staticmethod
     async def stream_upstream(
@@ -105,6 +131,7 @@ class GatewayService:
         engine: str = "vllm",
         concurrency_key: str = "default",
         error_sink: Optional[Dict[str, Any]] = None,
+        resolve_names: bool = True,
     ) -> AsyncGenerator[bytes, None]:
         adapter = get_adapter(engine)
         chat_path = adapter.get_chat_path()
@@ -113,9 +140,7 @@ class GatewayService:
 
         # Validate URL and headers before making upstream request
         try:
-            full_url = validate_upstream_url(
-                full_url, GatewayService._get_allowed_hosts()
-            )
+            full_url = await GatewayService._checked_url(full_url, resolve_names)
             headers = sanitize_headers(headers)
         except ValueError as e:
             logger.error(f"Upstream validation failed: {e}")
@@ -193,15 +218,14 @@ class GatewayService:
         files: Optional[Dict] = None,
         data: Optional[Dict] = None,
         concurrency_key: str = "default",
+        resolve_names: bool = True,
     ) -> httpx.Response:
         """POST to the upstream and return the read response without parsing
         it. For multipart uploads and binary bodies, which call_upstream's
         JSON-in/JSON-out shape can't carry."""
         full_url = GatewayService._build_full_url(endpoint_url, path)
         try:
-            full_url = validate_upstream_url(
-                full_url, GatewayService._get_allowed_hosts()
-            )
+            full_url = await GatewayService._checked_url(full_url, resolve_names)
             headers = sanitize_headers(headers)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -268,6 +292,7 @@ class GatewayService:
         concurrency_key: str = "default",
         timeout: float = None,
         transform_response: bool = True,
+        resolve_names: bool = True,
     ) -> Dict:
         adapter = get_adapter(engine)
         # Use custom path if provided, otherwise use adapter's chat path
@@ -279,9 +304,7 @@ class GatewayService:
 
         # Validate URL and headers before making upstream request
         try:
-            full_url = validate_upstream_url(
-                full_url, GatewayService._get_allowed_hosts()
-            )
+            full_url = await GatewayService._checked_url(full_url, resolve_names)
             headers = sanitize_headers(headers)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

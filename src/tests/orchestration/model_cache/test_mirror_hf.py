@@ -44,12 +44,32 @@ class _FakeUpstream:
         return _Ctx()
 
 
-def _app(tmp_path, upstream, hf_token=""):
+class _Mirrored:
+    """A cache that has every repo added but no metadata rows to answer from."""
+
+    def __init__(self, mirrored=True):
+        self.mirrored = mirrored
+
+    async def is_mirrored(self, *, source, model_id):
+        return self.mirrored
+
+    async def get_by_key(self, **kw):
+        return None
+
+    async def get_by_commit(self, **kw):
+        return None
+
+    async def touch_by_key(self, **kw):
+        return None
+
+
+def _app(tmp_path, upstream, hf_token="", repo=None):
     deps._reset()
     deps.configure(
         paths=paths_mod.CachePaths(str(tmp_path)),
         http_client=upstream,
         settings=type("S", (), {"hf_token": hf_token})(),
+        repo=repo or _Mirrored(),
     )
     app = FastAPI()
     app.include_router(mirror_hf.router)
@@ -134,6 +154,7 @@ async def test_traversal_filename_rejected(tmp_path):
         paths=paths_mod.CachePaths(str(tmp_path)),
         http_client=_FakeUpstream(b"X"),
         settings=type("S", (), {"hf_token": ""})(),
+        repo=_Mirrored(),
     )
     # Call the route handler directly with a traversal filename.
     # httpx/Starlette would normalise the URL before it reaches the handler,
@@ -173,7 +194,7 @@ async def test_resolve_awaits_inflight_then_serves_from_disk(tmp_path):
             raise AssertionError("origin must not be called")
 
     deps._reset()
-    deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=None)
+    deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=_Mirrored())
 
     app = FastAPI(); app.include_router(mirror_hf.router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -210,7 +231,7 @@ async def test_head_resolve_returns_200_with_metadata_headers(monkeypatch):
             return _Ctx()
 
     deps._reset()
-    deps.configure(http_client=_HeadHTTP(), settings=None, paths=None, repo=None)
+    deps.configure(http_client=_HeadHTTP(), settings=None, paths=None, repo=_Mirrored())
     app = FastAPI(); app.include_router(mirror_hf.router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.head("/hf/org/m/resolve/main/model.safetensors")
@@ -248,7 +269,7 @@ async def test_head_uses_cached_size_when_hf_reports_zero(tmp_path):
             return _Ctx()
 
     deps._reset()
-    deps.configure(http_client=_ZeroSizeHTTP(), settings=None, paths=cp, repo=None)
+    deps.configure(http_client=_ZeroSizeHTTP(), settings=None, paths=cp, repo=_Mirrored())
     app = FastAPI(); app.include_router(mirror_hf.router)
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.head("/hf/org/m/resolve/main/tokenizer_config.json")
@@ -274,8 +295,36 @@ async def test_head_404_for_missing_uncached_file(tmp_path):
             return _Ctx()
 
     deps._reset()
-    deps.configure(http_client=_NotFoundHTTP(), settings=None, paths=cp, repo=None)
+    deps.configure(http_client=_NotFoundHTTP(), settings=None, paths=cp, repo=_Mirrored())
     app = FastAPI(); app.include_router(mirror_hf.router)
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.head("/hf/org/m/resolve/main/special_tokens_map.json")
     assert r.status_code == 404
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/hf/someone/private/resolve/main/model.safetensors"),
+    ("HEAD", "/hf/someone/private/resolve/main/model.safetensors"),
+    ("GET", "/hf/api/models/someone/private"),
+    ("GET", "/hf/api/models/someone/private/tree/main"),
+])
+async def test_a_repo_the_install_did_not_add_is_not_fetched(tmp_path, method, path):
+    """The mirror fetches with the install's HF token, so a caller must not be
+    able to pull a repo nobody added (a private or gated one, or a disk filler)."""
+    up = _FakeUpstream(b"PRIVATE")
+    transport = ASGITransport(app=_app(tmp_path, up, hf_token="tok", repo=_Mirrored(False)))
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.request(method, path)
+    assert r.status_code == 404
+    assert up.call_count == 0
+
+
+@pytest.mark.parametrize("path", ["/hf/api/whoami-v2", "/hf/api/models", "/hf/api/datasets/x/y"])
+async def test_other_hf_api_calls_are_refused(tmp_path, path):
+    """Passing these through with the install's token exposed its account."""
+    up = _FakeUpstream(b'{"name":"owner"}')
+    transport = ASGITransport(app=_app(tmp_path, up, hf_token="tok"))
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.get(path)
+    assert r.status_code == 404
+    assert up.call_count == 0

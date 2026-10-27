@@ -2,7 +2,7 @@
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import cachetools
 
 from api_gateway.rbac.auth import AuthService
@@ -96,3 +96,78 @@ class TestApiKeyOrgScoping:
 
         ctx = await policy_engine.resolve_context(mock_db, raw_key, "some-model")
         assert ctx["valid"] is False
+
+
+def _sql(call) -> str:
+    """The SQL of a db.execute call, with its values inlined."""
+    stmt = call.args[0]
+    return str(stmt.compile(compile_kwargs={"literal_binds": True}))
+
+
+class TestRevokedKeys:
+    """Revoking a key only clears is_active, so lookups must check it."""
+
+    @pytest.mark.asyncio
+    async def test_lookup_skips_inactive_keys(self, policy_engine):
+        mock_db = AsyncMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = result
+
+        await policy_engine.verify_api_key(mock_db, "sk-abc123")
+
+        assert "is_active IS true" in _sql(mock_db.execute.call_args)
+
+
+class TestBoundKeys:
+    """A key bound to a deployment only ever serves its own org's deployment."""
+
+    @pytest.mark.asyncio
+    async def test_bound_lookup_is_scoped_to_the_key_org(self, policy_engine):
+        import uuid
+        from api_gateway.db.models import ApiKey as DBApiKey
+
+        key_record = MagicMock(spec=DBApiKey)
+        key_record.org_id = "org-A"
+        key_record.deployment_id = uuid.uuid4()
+        policy_engine.verify_api_key = AsyncMock(return_value=key_record)
+
+        empty = MagicMock()
+        empty.first.return_value = None
+        mock_db = AsyncMock()
+        mock_db.execute.return_value = empty
+
+        ctx = await policy_engine.resolve_context(mock_db, "sk-abc123", "m")
+
+        assert ctx["valid"] is False
+        sql = _sql(mock_db.execute.call_args_list[0])
+        assert "model_deployments.org_id = 'org-A'" in sql
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("deployment_id", [
+        "0b5c7a3e-1111-4222-8333-944445555666",  # exists, but in another org
+        "not-a-uuid",
+    ])
+    async def test_cannot_create_a_key_for_another_orgs_deployment(self, deployment_id):
+        from fastapi import HTTPException
+        from api_gateway.management import api_keys
+        from api_gateway.schemas.management import ApiKeyCreate
+
+        user_ctx = MagicMock(org_id="org-A", user_id="u1")
+        no_row = MagicMock()
+        no_row.scalar_one_or_none.return_value = None
+        db = AsyncMock()
+        db.add = MagicMock()
+        db.execute.return_value = no_row
+
+        with (
+            patch.object(api_keys, "get_current_user_context", return_value=user_ctx),
+            patch.object(api_keys.authz_service, "require_permission"),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await api_keys.create_api_key(
+                ApiKeyCreate(name="k", deployment_id=deployment_id), MagicMock(), db
+            )
+
+        assert exc.value.status_code == 404
+        db.add.assert_not_called()
