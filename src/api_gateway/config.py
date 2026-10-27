@@ -218,7 +218,7 @@ class Settings(BaseSettings):
         default_factory=dict,
         validation_alias="OIDC_ROLE_MAP",
         description="Map of IdP group name -> InferiaLLM catalog role (admin|member|viewer). "
-                    "Empty = interim 'authenticated => admin'. Set via JSON, e.g. "
+                    "Empty = everyone gets oidc_default_role. Set via JSON, e.g. "
                     '{"llm-admins":"admin","llm-users":"viewer"}.',
     )
     oidc_default_role: str = Field(

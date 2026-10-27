@@ -160,27 +160,14 @@ def extract_api_key(authorization: str, sandbox: bool = False) -> str:
 
 
 def extract_client_ip(request: Request) -> Optional[str]:
-    """
-    Prefer explicitly provided client IP headers when requests pass through
-    upstream proxies. Fall back to connection source IP.
-    """
-    header_candidates = [
-        request.headers.get("X-IP-Address"),
-        request.headers.get("X-Client-IP"),
-        request.headers.get("X-Forwarded-For"),
-        request.headers.get("X-Real-IP"),
-    ]
+    """The connection's source IP.
 
-    for raw_ip in header_candidates:
-        if not raw_ip:
-            continue
-        first_ip = raw_ip.split(",")[0].strip()
-        if first_ip:
-            return first_ip
-
+    uvicorn already replaces it with X-Forwarded-For when the request came
+    through a proxy listed in FORWARDED_ALLOW_IPS. Reading the headers here
+    would let any client write whatever IP it likes into the logs.
+    """
     if request.client and request.client.host:
         return request.client.host
-
     return None
 
 

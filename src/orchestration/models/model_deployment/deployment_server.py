@@ -1980,14 +1980,24 @@ async def deploy_model(req: DeployModelRequest, request: Request):
 
 
 _SECRET_CONFIG_KEYS = {"api_key", "credentials", "token", "secret", "password"}
+# Keys holding a credential, by name: hf_token (a training deploy's own),
+# HF_TOKEN in env (resolved from the install's named tokens), OPENAI_API_KEY.
+_SECRET_KEY_SUFFIXES = ("TOKEN", "KEY", "SECRET", "PASSWORD")
+
+
+def _is_secret_key(name) -> bool:
+    name = str(name)
+    return name.lower() in _SECRET_CONFIG_KEYS or name.upper().endswith(
+        _SECRET_KEY_SUFFIXES
+    )
 
 
 def _without_secrets(configuration: dict) -> dict:
-    return {
-        k: v
-        for k, v in configuration.items()
-        if k.lower() not in _SECRET_CONFIG_KEYS
-    }
+    cleaned = {k: v for k, v in configuration.items() if not _is_secret_key(k)}
+    env = cleaned.get("env")
+    if isinstance(env, dict):
+        cleaned["env"] = {k: v for k, v in env.items() if not _is_secret_key(k)}
+    return cleaned
 
 
 async def _stored_configuration(request, deployment_id: str):
@@ -2033,10 +2043,21 @@ def _with_stored_secrets(incoming: dict, stored) -> dict:
             return incoming
     if not isinstance(stored, dict):
         return incoming
+    # Missing or blank both mean "unchanged": the edit form starts empty for a
+    # secret it was never shown (the 2026-06-10 provider-secret wipe).
     restored = dict(incoming)
     for key, value in stored.items():
-        if key.lower() in _SECRET_CONFIG_KEYS and key not in restored:
+        if _is_secret_key(key) and restored.get(key) in (None, ""):
             restored[key] = value
+    stored_env = stored.get("env")
+    if isinstance(stored_env, dict):
+        env = restored.get("env")
+        env = dict(env) if isinstance(env, dict) else {}
+        for key, value in stored_env.items():
+            if _is_secret_key(key) and env.get(key) in (None, ""):
+                env[key] = value
+        if env:
+            restored["env"] = env
     return restored
 
 

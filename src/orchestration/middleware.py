@@ -6,7 +6,9 @@ from orchestration.config import settings
 logger = logging.getLogger(__name__)
 
 # Paths that bypass the internal key. Each one is health or discovery, or
-# authenticates its caller itself (workers carry their own token).
+# authenticates its caller itself (workers carry their own token). Envoy's REST
+# xDS client cannot send the key, so discovery stays open; the route table and
+# debug dump list every worker's address and need the key.
 INTERNAL_AUTH_SKIP_PATHS = [
     "/health",
     "/v1/workers/register",
@@ -14,8 +16,6 @@ INTERNAL_AUTH_SKIP_PATHS = [
     "/v3/discovery:clusters",
     "/v3/discovery:endpoints",
     "/v3/healthz",
-    "/v3/route-table",
-    "/v3/debug/resources",
 ]
 
 class InternalAuthMiddleware:

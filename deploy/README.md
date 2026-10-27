@@ -153,6 +153,15 @@ server {
 }
 ```
 
+### Real client IPs
+
+Behind any of these proxies, set `FORWARDED_ALLOW_IPS` in `.env` to the
+proxy's address as the app sees it: its container IP on `inferia-net`, or
+the Docker bridge gateway if it forwards to the published port. The app then
+reads the client's IP from `X-Forwarded-For`. Without a proxy, leave it empty.
+Never use `*`: any client could then set its own IP and dodge the login rate
+limit.
+
 ---
 
 ## Option 4 — Nginx Proxy Manager (NPM, the web GUI)

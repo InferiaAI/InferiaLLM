@@ -102,6 +102,21 @@ async def lifespan(app: FastAPI):
     if settings.is_external_mode and settings.external_auth_url:
         logger.info(f"External auth enabled via: {settings.external_auth_url}")
 
+    if "*" in (settings.forwarded_allow_ips or "").split(","):
+        logger.warning(
+            "FORWARDED_ALLOW_IPS=* trusts X-Forwarded-For from every client, so "
+            "anyone can set their own IP and get past the login rate limit. Set "
+            "it to your reverse proxy's IP, or leave it empty without one."
+        )
+
+    if settings.auth_provider == "oidc" and not settings.oidc_role_map:
+        logger.warning(
+            "OIDC_ROLE_MAP is empty: every SSO user gets the '%s' role. Set "
+            'OIDC_ROLE_MAP (e.g. {"llm-admins": "admin"}) to grant admin; the '
+            "superadmin can still sign in with a password.",
+            settings.oidc_default_role,
+        )
+
     # Declare catalog to InferiaAuth (best-effort, never raises)
     await _maybe_declare_catalog()
 

@@ -39,7 +39,28 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from common.rate_limit import login_rate_limiter, register_rate_limiter
+from common.rate_limit import (
+    login_account_limiter,
+    login_rate_limiter,
+    register_rate_limiter,
+)
+
+import cachetools
+
+# A 2FA code stays valid for its whole 30s step, and pyotp accepts it in other
+# digit scripts too, so remember each user's last accepted step, not the text.
+# Per process, which matches the in-memory login limiter.
+_last_totp_step = cachetools.TTLCache(maxsize=10000, ttl=90)
+
+
+def _normalized_email(value) -> str:
+    """The form authenticate_user looks users up by."""
+    return (value or "").strip().lower()
+
+
+def _login_failed(username: str) -> None:
+    """Count a failed attempt against the account, from whatever address."""
+    login_account_limiter.is_allowed(username, "any")
 
 
 def utcnow_naive():
@@ -74,10 +95,9 @@ async def login(
     # When external SSO is active, /auth/login is reserved for the
     # superadmin (break-glass). Everyone else MUST go through /auth/start
     # so PKCE + state cookies are issued. See spec §9.3.
-    use_external = (
-        _settings.auth_provider == "external" and _settings.external_auth_url
-    )
-    if use_external and request.username != _settings.superadmin_email:
+    username = _normalized_email(request.username)
+    superadmin = _normalized_email(_settings.superadmin_email)
+    if _settings.is_external_mode and (not superadmin or username != superadmin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Direct password sign in is disabled. Use /auth/start.",
@@ -86,7 +106,10 @@ async def login(
     # Rate limiting check
     client_ip = http_request.client.host if http_request.client else "unknown"
 
-    is_allowed, retry_after = login_rate_limiter.is_allowed(request.username, client_ip)
+    is_allowed, retry_after = login_rate_limiter.is_allowed(username, client_ip)
+    account_wait = login_account_limiter.blocked_for(username, "any")
+    if account_wait:
+        is_allowed, retry_after = False, account_wait
     if not is_allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -107,8 +130,13 @@ async def login(
             if not request.totp_code:
                 raise HTTPException(status_code=403, detail="TOTP_REQUIRED")
             totp = pyotp.TOTP(user.totp_secret)
-            if not totp.verify(request.totp_code):
+            now = datetime.now()
+            step = totp.timecode(now)
+            replayed = _last_totp_step.get(user.id, -1) >= step
+            if replayed or not totp.verify(request.totp_code, for_time=now):
+                _login_failed(username)
                 raise HTTPException(status_code=401, detail="Invalid 2FA Code")
+            _last_totp_step[user.id] = step
         return await auth_service.login(db, request)
 
     # --- External auth path ---
@@ -140,6 +168,7 @@ async def login(
         )
 
     # --- Local auth failure ---
+    _login_failed(username)
     await auth_service.log_failed_login(db, request.username)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

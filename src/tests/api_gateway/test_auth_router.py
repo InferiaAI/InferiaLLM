@@ -1,8 +1,11 @@
-"""Tests for /auth/login gating in external mode (C6).
+"""Tests for /auth/login gating in SSO mode (C6).
 
-In external mode, /auth/login must reject everyone except the
-superadmin: dashboard users go through /auth/start, and direct
+With AUTH_PROVIDER=oidc or inferiaauth, /auth/login must reject everyone
+except the superadmin: dashboard users go through /auth/start, and direct
 password sign-in is reserved for break-glass.
+
+The gate used to test for auth_provider == "external", a value the config
+validator rewrites to "inferiaauth", so it never ran outside these tests.
 
 Local mode is unchanged.
 """
@@ -18,7 +21,7 @@ from httpx import ASGITransport, AsyncClient
 
 def _build_app(monkeypatch, *, auth_provider: str,
                external_auth_url: str = "https://auth.example.test",
-               superadmin_email: str = "admin@test") -> FastAPI:
+               superadmin_email: str | None = "admin@test") -> FastAPI:
     """Build an isolated FastAPI app exposing only the auth router.
 
     Patches settings + rate limiter + auth_service for deterministic tests.
@@ -28,7 +31,7 @@ def _build_app(monkeypatch, *, auth_provider: str,
     monkeypatch.setattr(gw_settings, "auth_provider", auth_provider, raising=False)
     monkeypatch.setattr(gw_settings, "external_auth_url", external_auth_url, raising=False)
     monkeypatch.setattr(gw_settings, "superadmin_email", superadmin_email, raising=False)
-    if auth_provider == "external":
+    if auth_provider in ("oidc", "inferiaauth"):
         # Fill the rest of the required fields so other env-validators are happy.
         monkeypatch.setattr(gw_settings, "external_auth_issuer", external_auth_url, raising=False)
         monkeypatch.setattr(gw_settings, "oauth_client_id", "x", raising=False)
@@ -38,6 +41,7 @@ def _build_app(monkeypatch, *, auth_provider: str,
     # Disable rate limiting so the test isn't flaky on rapid retries.
     from common import rate_limit as rl
     monkeypatch.setattr(rl.login_rate_limiter, "is_allowed", lambda *a, **kw: (True, 0))
+    monkeypatch.setattr(rl.login_account_limiter, "is_allowed", lambda *a, **kw: (True, 0))
 
     app = FastAPI()
     from api_gateway.rbac.router import router as auth_router
@@ -45,9 +49,9 @@ def _build_app(monkeypatch, *, auth_provider: str,
     return app
 
 
-@pytest_asyncio.fixture
-async def external_client(monkeypatch) -> AsyncIterator[AsyncClient]:
-    app = _build_app(monkeypatch, auth_provider="external")
+@pytest_asyncio.fixture(params=["oidc", "inferiaauth"])
+async def external_client(monkeypatch, request) -> AsyncIterator[AsyncClient]:
+    app = _build_app(monkeypatch, auth_provider=request.param)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="https://gw.example.test") as c:
         yield c
@@ -156,52 +160,26 @@ async def test_local_mode_any_user_login_path_unaffected(local_client, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_external_with_empty_external_auth_url_does_not_gate(monkeypatch):
-    """If AUTH_PROVIDER=external but external_auth_url is unset (misconfig),
-    the gate is INACTIVE — local credentials still flow through so the
-    operator can recover."""
-    # We must set external_auth_url to empty before model_validator runs.
-    # Build via monkeypatch after construction.
-    app = _build_app(monkeypatch, auth_provider="external")
-    from api_gateway.config import settings as gw_settings
-    monkeypatch.setattr(gw_settings, "external_auth_url", "", raising=False)
+async def test_the_superadmin_email_matches_in_any_case(external_client, monkeypatch):
+    """authenticate_user lowercases the email, so the gate must too: a
+    differently-cased superadmin email is let through to the password check."""
+    from api_gateway.rbac import router as r
+    called = AsyncMock(return_value=None)
+    monkeypatch.setattr(r.auth_service, "authenticate_user", called)
+    monkeypatch.setattr(r.auth_service, "log_failed_login", AsyncMock(return_value=None))
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="https://gw.example.test") as c:
-        # Authenticate_user fails (no such user) — we expect 401, not 403.
-        from api_gateway.rbac import router as r
-        monkeypatch.setattr(
-            r.auth_service, "authenticate_user", AsyncMock(return_value=None)
-        )
-        monkeypatch.setattr(
-            r.auth_service, "log_failed_login", AsyncMock(return_value=None)
-        )
-        resp = await c.post(
-            "/auth/login",
-            json={"username": "bob@example.test", "password": "x"},
-        )
-    # Because the gate is bypassed (external_auth_url is empty) and there's
-    # no external_login path either (also empty), the local auth fall-through
-    # kicks in. With authenticate_user returning None we get 401.
-    assert resp.status_code == 401
+    resp = await external_client.post(
+        "/auth/login",
+        json={"username": " ADMIN@test ", "password": "wrong"},
+    )
+    assert resp.status_code != 403
+    called.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_external_case_insensitive_superadmin_match_currently_strict(
-    external_client, monkeypatch
-):
-    """Documents current behaviour: superadmin match is case-sensitive.
-
-    If someone signs in with a differently-cased version of the superadmin
-    email under external mode they are gated. We keep this test to lock
-    behaviour; a future enhancement could lowercase both sides.
-    """
-    from api_gateway.rbac import router as r
-    monkeypatch.setattr(
-        r.auth_service, "authenticate_user", AsyncMock(return_value=None)
-    )
-    resp = await external_client.post(
-        "/auth/login",
-        json={"username": "ADMIN@test", "password": "p"},
-    )
+async def test_no_superadmin_configured_refuses_everyone(monkeypatch):
+    """With no superadmin set there is no break-glass account to let through."""
+    app = _build_app(monkeypatch, auth_provider="oidc", superadmin_email=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://gw.example.test") as c:
+        resp = await c.post("/auth/login", json={"username": "", "password": "x"})
     assert resp.status_code == 403

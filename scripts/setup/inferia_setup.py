@@ -213,7 +213,9 @@ def build_env(
     env["INFERIA_SSH_AUTHORIZED_KEYS_FILE"] = "./.ssh/authorized_keys"
     # --- Single-port web ---
     env["APP_PORT"] = str(app_port)
-    env["FORWARDED_ALLOW_IPS"] = "*"
+    # Trust no proxy until the operator names theirs: "*" let any client set
+    # its own IP with X-Forwarded-For.
+    env["FORWARDED_ALLOW_IPS"] = ""
     env["ALLOWED_ORIGINS"] = urls["ALLOWED_ORIGINS"]
     env["DASHBOARD_API_GATEWAY_URL"] = urls["DASHBOARD_API_GATEWAY_URL"]
     env["DASHBOARD_INFERENCE_URL"] = urls["DASHBOARD_INFERENCE_URL"]
