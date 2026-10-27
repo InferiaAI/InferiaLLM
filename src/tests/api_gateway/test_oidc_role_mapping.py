@@ -1,7 +1,7 @@
 """Tests for OIDC group→role mapping in _resolve_oidc_token.
 
 Covers:
-  - empty oidc_role_map (default) → admin with full catalog perms (unchanged behavior)
+  - empty oidc_role_map (default) → oidc_default_role, never admin
   - group match → correct role assigned
   - viewer role → only viewer perms, no admin-only keys
   - no group match → oidc_default_role
@@ -75,13 +75,13 @@ def _shadow_mock():
 
 
 # ---------------------------------------------------------------------------
-# Default: empty oidc_role_map → admin (unchanged interim behavior)
+# Default: empty oidc_role_map → oidc_default_role (the interim admin is gone)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_empty_role_map_gives_admin(monkeypatch):
-    """When oidc_role_map is empty, any authenticated user gets role=admin."""
+async def test_empty_role_map_gives_the_default_role(monkeypatch):
+    """An empty map used to make every directory user an admin."""
     monkeypatch.setattr(
         mw, "_get_verifier",
         lambda: _make_verifier({"sub": "ext1", "email": "a@b.com", "org_id": "o1",
@@ -93,14 +93,13 @@ async def test_empty_role_map_gives_admin(monkeypatch):
 
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
-    assert ctx.roles == ["admin"]
-    assert "inferiallm:deployment:write" in ctx.permissions
-    assert set(ctx.permissions) == set(_admin_perms())
+    assert ctx.roles == ["viewer"]
+    assert set(ctx.permissions) == set(mw.expand_catalog_permissions(_viewer_perms()))
 
 
 @pytest.mark.asyncio
-async def test_empty_role_map_no_groups_claim_still_admin(monkeypatch):
-    """Empty map + no groups in token still resolves to admin (default unchanged)."""
+async def test_empty_role_map_no_groups_claim_gives_the_default_role(monkeypatch):
+    """Empty map + no groups in token: the default role, not admin."""
     monkeypatch.setattr(
         mw, "_get_verifier",
         lambda: _make_verifier({"sub": "ext2", "email": "b@c.com", "org_id": "o2"}),
@@ -111,8 +110,8 @@ async def test_empty_role_map_no_groups_claim_still_admin(monkeypatch):
 
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
-    assert ctx.roles == ["admin"]
-    assert "inferiallm:deployment:write" in ctx.permissions
+    assert ctx.roles == ["viewer"]
+    assert "inferiallm:deployment:write" not in ctx.permissions
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +139,7 @@ async def test_group_match_admin(monkeypatch):
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
     assert ctx.roles == ["admin"]
-    assert set(ctx.permissions) == set(_admin_perms())
+    assert set(ctx.permissions) == set(mw.expand_catalog_permissions(_admin_perms()))
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +168,7 @@ async def test_group_match_viewer(monkeypatch):
 
     assert ctx.roles == ["viewer"]
     # Must include the 3 viewer read keys
-    expected_viewer = set(_viewer_perms())
+    expected_viewer = set(mw.expand_catalog_permissions(_viewer_perms()))
     assert set(ctx.permissions) == expected_viewer
     # Must NOT include admin-only write key
     assert "inferiallm:deployment:write" not in ctx.permissions
@@ -204,7 +203,7 @@ async def test_no_group_match_falls_back_to_default_role(monkeypatch):
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
     assert ctx.roles == ["viewer"]
-    assert set(ctx.permissions) == set(_viewer_perms())
+    assert set(ctx.permissions) == set(mw.expand_catalog_permissions(_viewer_perms()))
 
 
 @pytest.mark.asyncio
@@ -259,7 +258,7 @@ async def test_custom_groups_claim_is_honored(monkeypatch):
 
     # The "roles" claim has "llm-admins" → admin
     assert ctx.roles == ["admin"]
-    assert set(ctx.permissions) == set(_admin_perms())
+    assert set(ctx.permissions) == set(mw.expand_catalog_permissions(_admin_perms()))
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +286,7 @@ async def test_group_match_member(monkeypatch):
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
     assert ctx.roles == ["member"]
-    assert set(ctx.permissions) == set(_member_perms())
+    assert set(ctx.permissions) == set(mw.expand_catalog_permissions(_member_perms()))
     assert "inferiallm:deployment:write" not in ctx.permissions
     assert "inferiallm:deployment:read" in ctx.permissions
 
@@ -375,7 +374,7 @@ async def test_single_string_groups_claim_is_coerced(monkeypatch):
     ctx = await mw._resolve_oidc_token(MagicMock(), "tok")
 
     assert ctx.roles == ["admin"]
-    assert set(ctx.permissions) == set(_admin_perms())
+    assert set(ctx.permissions) == set(mw.expand_catalog_permissions(_admin_perms()))
 
 
 # ---------------------------------------------------------------------------

@@ -174,12 +174,9 @@ def _catalog_role_permissions(role_name: str) -> list[str]:
 async def _resolve_oidc_token(db, token: str) -> UserContext:
     """Verify a generic enterprise OIDC token and build a UserContext.
 
-    When oidc_role_map is empty (the default), every authenticated user
-    becomes admin of their shadow org — the same interim posture as before.
-
-    When oidc_role_map is configured, the user's IdP groups (read from the
-    claim named by oidc_groups_claim) are matched against the map; the first
-    matching group wins. If no group matches, oidc_default_role is used.
+    The user's IdP groups (read from the claim named by oidc_groups_claim)
+    are matched against oidc_role_map; the first matching group wins. If no
+    group matches, or the map is empty, oidc_default_role is used.
     """
     try:
         claims = _get_verifier().verify_sync(token)
@@ -208,18 +205,16 @@ async def _resolve_oidc_token(db, token: str) -> UserContext:
     if org_id:
         await ensure_external_org(db, org_id, user_id=user.id, bearer_token=token)
 
+    # An empty map used to make every directory user an admin. Admins are
+    # now granted only through the map (see the startup warning in app.py).
     role_map = settings.oidc_role_map or {}
-    if not role_map:
-        # Interim default (unchanged): authenticated => admin of the shadow org.
-        role = "admin"
-    else:
-        groups = claims.get(settings.oidc_groups_claim) or []
-        if isinstance(groups, str):
-            groups = [groups]
-        role = next(
-            (role_map[g] for g in groups if g in role_map),
-            settings.oidc_default_role,
-        )
+    groups = claims.get(settings.oidc_groups_claim) or []
+    if isinstance(groups, str):
+        groups = [groups]
+    role = next(
+        (role_map[g] for g in groups if g in role_map),
+        settings.oidc_default_role,
+    )
     # Catalog-role keys expand to their local equivalents, same as the
     # inferiaauth path.
     perms = expand_catalog_permissions(_catalog_role_permissions(role))

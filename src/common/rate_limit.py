@@ -87,6 +87,14 @@ class RateLimiter:
         self._store[key] = entry
         return True, None
 
+    def blocked_for(self, identifier: str, ip_address: str) -> Optional[int]:
+        """Seconds left on a block, or None. Counts nothing, unlike is_allowed."""
+        entry = self._store.get(self._get_key(identifier, ip_address))
+        now = time.time()
+        if entry and entry["blocked_until"] and now < entry["blocked_until"]:
+            return int(entry["blocked_until"] - now) + 1
+        return None
+
     def cleanup(self):
         """Clean up expired entries."""
         now = time.time()
@@ -105,6 +113,15 @@ login_rate_limiter = RateLimiter(
     max_requests=5,  # 5 login attempts
     window_seconds=60,  # per 60 seconds
     block_duration_seconds=300,  # block for 5 minutes
+)
+
+# Failed logins per account from any address. Caps password and 2FA guessing
+# even when the client IP can be faked or shared behind a proxy. Anyone who
+# knows an email can still hold that account blocked, so the block is short.
+login_account_limiter = RateLimiter(
+    max_requests=20,
+    window_seconds=60,
+    block_duration_seconds=60,
 )
 
 register_rate_limiter = RateLimiter(

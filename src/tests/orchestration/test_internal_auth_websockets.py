@@ -82,3 +82,14 @@ def test_the_worker_channel_still_connects_without_the_key():
     # themselves inside the route.
     with _app().websocket_connect("/v1/workers/channel") as ws:
         assert ws.receive_text() == "worker channel"
+
+
+def test_the_xds_dumps_need_the_key_and_discovery_does_not():
+    """The route table and debug dump list every worker's host and port.
+    Envoy's REST xDS client cannot send the key, so discovery stays open."""
+    from orchestration.middleware import INTERNAL_AUTH_SKIP_PATHS
+
+    assert "/v3/route-table" not in INTERNAL_AUTH_SKIP_PATHS
+    assert "/v3/debug/resources" not in INTERNAL_AUTH_SKIP_PATHS
+    assert "/v3/discovery:clusters" in INTERNAL_AUTH_SKIP_PATHS
+    assert "/v3/discovery:endpoints" in INTERNAL_AUTH_SKIP_PATHS

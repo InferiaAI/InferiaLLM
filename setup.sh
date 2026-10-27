@@ -810,6 +810,7 @@ summary() {
   [[ $SETUP_K8S -eq 1 ]] && kv "Kubernetes" "kind cluster ${K8S_CLUSTER}"
   echo
   kv "Reverse proxy" "deploy/README.md — forward all paths to inferia-app:${APP_PORT}"
+  kv ""              "then set FORWARDED_ALLOW_IPS in ${ENV_FILE} to the proxy's IP"
   kv "Manage"     "./setup.sh --down   ·   ./setup.sh --logs"
   echo
 }

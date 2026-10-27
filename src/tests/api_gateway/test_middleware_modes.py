@@ -43,13 +43,15 @@ def _make_failing_verifier():
 
 
 @pytest.mark.asyncio
-async def test_oidc_token_authenticated_is_admin(monkeypatch):
-    """A valid OIDC token produces a UserContext with role=admin + all catalog perms."""
+async def test_oidc_token_in_an_admin_group_is_admin(monkeypatch):
+    """A valid OIDC token whose group maps to admin produces an admin UserContext."""
+    monkeypatch.setattr(mw.settings, "oidc_role_map", {"llm-admins": "admin"})
     monkeypatch.setattr(
         mw,
         "_get_verifier",
         lambda: _make_verifier(
-            {"sub": "user:ext1", "email": "a@b.com", "org_id": "org9"}
+            {"sub": "user:ext1", "email": "a@b.com", "org_id": "org9",
+             "groups": ["llm-admins"]}
         ),
     )
     monkeypatch.setattr(
@@ -75,10 +77,12 @@ async def test_oidc_token_admin_has_all_catalog_perms(monkeypatch):
     """Admin permissions granted by OIDC path match the full catalog admin role."""
     from api_gateway.rbac.catalog import CATALOG
 
+    monkeypatch.setattr(mw.settings, "oidc_role_map", {"llm-admins": "admin"})
     monkeypatch.setattr(
         mw,
         "_get_verifier",
-        lambda: _make_verifier({"sub": "ext2", "email": "b@c.com", "org_id": "o2"}),
+        lambda: _make_verifier({"sub": "ext2", "email": "b@c.com", "org_id": "o2",
+                                "groups": ["llm-admins"]}),
     )
     monkeypatch.setattr(
         mw,

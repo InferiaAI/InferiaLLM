@@ -114,7 +114,9 @@ services:
     container_name: inferia-envoy
     restart: unless-stopped
     ports:
-      - "10000:10000"
+      # Host only: inference reaches Envoy over inferia-net, and its catch-all
+      # route trusts the x-inferia-route-cluster header the caller sends.
+      - "127.0.0.1:10000:10000"
     volumes:
       - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:
