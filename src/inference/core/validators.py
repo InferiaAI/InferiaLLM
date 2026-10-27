@@ -13,9 +13,15 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 # Names that reach this machine or the cloud metadata service.
-_INTERNAL_NAMES = frozenset(
-    {"localhost", "metadata", "metadata.google.internal", "instance-data"}
-)
+_INTERNAL_NAMES = frozenset({
+    "localhost", "metadata", "metadata.google.internal", "metadata.goog",
+    "instance-data", "instance-data.ec2.internal",
+})
+
+
+def _hostname(url: str) -> str:
+    """The URL's host, without the trailing dot that names the same host."""
+    return (urlparse(url).hostname or "").rstrip(".")
 
 
 def _literal_ip(hostname: str):
@@ -78,7 +84,7 @@ def validate_upstream_url(url: str, allowed_hosts: list[str]) -> str:
     if parsed.username or parsed.password:
         raise ValueError("URL must not contain embedded credentials")
 
-    hostname = parsed.hostname
+    hostname = _hostname(url)
     if not hostname:
         raise ValueError("URL has no hostname")
 
@@ -99,7 +105,7 @@ async def check_resolved_host(url: str, allowed_hosts: list[str]) -> str:
     For user-entered endpoints. An allowed host may be listed by name or by
     any address it resolves to.
     """
-    hostname = urlparse(url).hostname
+    hostname = _hostname(url)
     if hostname in allowed_hosts or _literal_ip(hostname) is not None:
         return url
     for ip in await _resolve(hostname):

@@ -8,6 +8,8 @@ import logging
 import asyncio
 import posixpath
 import websockets
+from urllib.parse import urlencode
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -612,7 +614,7 @@ async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     try:
-        _confined(node_id)
+        node_id = str(UUID(node_id))  # also keeps ? and # out of the upstream URL
         user_context = await _get_ws_user_context(token)
         authz_service.require_permission(user_context, permission)
     except Exception as e:
@@ -625,10 +627,10 @@ async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath
     # Carry the upstream query string forward (deployment=… / container=…)
     # but drop the access_token — orchestration uses the internal API key,
     # and we don't want the user JWT travelling further than necessary.
-    upstream_qs = "&".join(
-        f"{k}={v}" for k, v in websocket.query_params.items()
+    upstream_qs = urlencode([
+        (k, v) for k, v in websocket.query_params.multi_items()
         if k not in ("access_token", "token")
-    )
+    ])
     upstream_qs = f"?{upstream_qs}" if upstream_qs else ""
 
     upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace("https://", "wss://")

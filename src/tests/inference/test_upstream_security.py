@@ -429,3 +429,17 @@ class TestOnlyUserEnteredEndpointsAreResolved:
     async def test_a_worker_still_gets_the_literal_checks(self):
         with pytest.raises(ValueError, match="not allowed"):
             await self._checked("http://2852039166/latest", {"pool_id": "pool-1"})
+
+
+@pytest.mark.parametrize("host", [
+    "metadata.google.internal.", "localhost.", "instance-data.ec2.internal",
+    "metadata.goog", "169.254.169.254.",
+])
+def test_trailing_dots_and_more_metadata_names_are_rejected(host):
+    """A trailing dot names the same host, so it must not slip past the name list."""
+    with pytest.raises(ValueError, match="not allowed"):
+        validate_upstream_url(f"http://{host}/", [])
+
+
+def test_an_allowlisted_name_matches_with_a_trailing_dot():
+    assert validate_upstream_url("http://ollama.lan./v1", ["ollama.lan"])

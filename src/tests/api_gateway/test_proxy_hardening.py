@@ -112,3 +112,31 @@ async def test_only_the_provider_list_is_proxied_from_inventory(client, upstream
     assert heartbeat.status_code in (404, 405)
     assert nodes.status_code in (404, 405)
     assert upstream.request.call_count == 1
+
+
+@pytest.mark.parametrize("node_id", ["..", "n1", "x%3Fshell=1", "x%23"])
+def test_the_worker_websocket_needs_a_node_uuid(node_id, monkeypatch):
+    """The node id goes into the upstream URL, so ? and # must not reach it."""
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    from api_gateway.app import app
+
+    from api_gateway.models import UserContext
+
+    async def _logged_in(_token):
+        return UserContext(user_id="u1", username="a@b.com", email="a@b.com",
+                           roles=["admin"], permissions=["admin:all"], org_id="org1",
+                           quota_limit=1, quota_used=0)
+
+    connected = []
+    monkeypatch.setattr(proxy_routes, "_get_ws_user_context", _logged_in)
+    monkeypatch.setattr(proxy_routes.authz_service, "require_permission", lambda *a: None)
+    monkeypatch.setattr(proxy_routes, "websockets",
+                        SimpleNamespace(connect=lambda *a, **k: connected.append(a)))
+    with pytest.raises(WebSocketDisconnect):
+        with TestClient(app).websocket_connect(
+            f"/v1/admin/workers/{node_id}/logs?access_token=t"
+        ):
+            pass
+    assert connected == []
