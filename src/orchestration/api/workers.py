@@ -158,44 +158,17 @@ async def register_worker(
     auth: WorkerAuth = Depends(get_auth),
     inventory=Depends(get_inventory),
 ) -> RegisterResponse:
-    # --- Authentication: two paths -------------------------------------------
-    # Path A (new): bootstrap_token in request body → DB-backed single-use
-    # consume.  No Authorization header required.
-    # Path B (legacy): Authorization: Bearer <JWT> → stateless JWT verify.
-    # Both paths verify pool_id scope.
-    #
-    # The inferia-worker Go client always populates BOTH the body field and
-    # the Authorization header (omitempty + Set-Header), so in production
-    # we resolve which path to take based on whether a DB conn adapter is
-    # wired up. Until the DB-consume adapter is wired, we prefer the
-    # stateless JWT path whenever an Authorization header is present.
-    header_token = _strip_bearer(authorization)
-
-    # Auth: try DB-backed single-use consume first (token in body). If the
-    # token wasn't persisted in the DB fall back to stateless JWT verify
-    # (Authorization header). The CLI `inferiallm worker token` and the
-    # dashboard both mint stateless JWTs via the admin API, while Pulumi-
-    # provisioned workers get DB-backed tokens; this fallback handles both.
-    authed = False
-    if body.bootstrap_token is not None:
-        try:
-            db_claim = await _consume_bootstrap_token(None, token=body.bootstrap_token)
-        except InvalidBootstrapToken:
-            pass  # fall through to JWT verify below
-        else:
-            if str(db_claim.pool_id) != str(body.pool_id):
-                raise HTTPException(401, "pool_scope_violation")
-            authed = True
-
-    if not authed:
-        if not header_token:
-            raise HTTPException(401, "invalid_bootstrap_token")
-        try:
-            claims = auth.verify_bootstrap_token(header_token)
-        except InvalidTokenError as e:
-            raise HTTPException(401, f"invalid bootstrap token: {e}")
-        if claims.pool_id != body.pool_id:
-            raise HTTPException(403, "bootstrap token is for a different pool")
+    # Bootstrap tokens are single-use (an atomic UPDATE), so a leaked or replayed
+    # one registers nothing. The Go client sends it in the body and as the bearer.
+    token = body.bootstrap_token or _strip_bearer(authorization)
+    if not token:
+        raise HTTPException(401, "invalid_bootstrap_token")
+    try:
+        db_claim = await _consume_bootstrap_token(None, token=token)
+    except InvalidBootstrapToken:
+        raise HTTPException(401, "invalid_bootstrap_token")
+    if str(db_claim.pool_id) != str(body.pool_id):
+        raise HTTPException(401, "pool_scope_violation")
 
     # --- Build cloud-env labels to merge into inventory ----------------------
     labels: dict = {}

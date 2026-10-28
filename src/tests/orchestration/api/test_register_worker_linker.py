@@ -22,9 +22,6 @@ pytestmark = pytest.mark.asyncio
 async def app_and_deps():
     """Set up a FastAPI app with workers_api router and mocked dependencies."""
     auth = MagicMock()
-    auth.verify_bootstrap_token = MagicMock(
-        return_value=type("C", (), {"pool_id": str(uuid4())})()
-    )
     auth.mint_worker_token = MagicMock(return_value="jwt-token-mock")
 
     registry = MagicMock()

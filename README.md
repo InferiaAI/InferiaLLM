@@ -291,6 +291,14 @@ to `UPSTREAM_ALLOWED_INTERNAL_HOSTS` in `.env`. Without those, deployments
 reach RUNNING but chat requests fail with `Invalid upstream configuration`.
 Run it again if a node's address changes, for example after Docker restarts.
 
+Deployments run in the namespace set by `K8S_NAMESPACE` (default `default`);
+a deployment can't pick another one. If you change `K8S_NAMESPACE` on an
+install that already has workloads, tear those down first: the adapter only
+looks in the current namespace. Deployments can use the engine images the
+dashboard offers. To allow other images, list them in `K8S_ALLOWED_IMAGES`,
+comma-separated: an exact image, a repository (any tag), or a prefix ending in
+`/` (for example `registry.example.com/team/`).
+
 #### On a GPU machine
 
 `deploy/gpu-kind.sh` takes a GPU machine from nothing to a cluster models can

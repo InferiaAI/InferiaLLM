@@ -27,57 +27,6 @@ def make_auth() -> WorkerAuth:
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap tokens
-# ---------------------------------------------------------------------------
-
-
-class TestBootstrapTokens:
-    def test_mint_and_verify(self):
-        auth = make_auth()
-        token = auth.mint_bootstrap_token(pool_id="pool-x", ttl_seconds=300)
-        claims = auth.verify_bootstrap_token(token)
-        assert claims.pool_id == "pool-x"
-        assert claims.scope == "worker:bootstrap"
-
-    def test_mint_default_ttl_under_24h(self):
-        auth = make_auth()
-        token = auth.mint_bootstrap_token(pool_id="p")
-        claims = auth.verify_bootstrap_token(token)
-        # Default TTL is at most 24h.
-        assert claims.exp - int(time.time()) <= 24 * 3600 + 5
-
-    def test_expired_bootstrap_rejected(self):
-        # Use jose directly to forge a token that is already 60 seconds expired
-        # so we avoid jose's default leeway window without sleeping in the test.
-        from jose import jwt
-        token = jwt.encode(
-            {
-                "scope": "worker:bootstrap",
-                "pool_id": "p",
-                "exp": int(time.time()) - 60,
-                "iat": int(time.time()) - 120,
-            },
-            SECRET, algorithm="HS256",
-        )
-        auth = make_auth()
-        with pytest.raises(InvalidTokenError):
-            auth.verify_bootstrap_token(token)
-
-    def test_tampered_bootstrap_rejected(self):
-        auth = make_auth()
-        token = auth.mint_bootstrap_token(pool_id="p")
-        bad = token[:-2] + "AA"
-        with pytest.raises(InvalidTokenError):
-            auth.verify_bootstrap_token(bad)
-
-    def test_worker_token_rejected_as_bootstrap(self):
-        auth = make_auth()
-        wjwt = auth.mint_worker_token(node_id="n", pool_id="p")
-        with pytest.raises(InvalidTokenError):
-            auth.verify_bootstrap_token(wjwt)
-
-
-# ---------------------------------------------------------------------------
 # Worker tokens
 # ---------------------------------------------------------------------------
 
@@ -119,12 +68,6 @@ class TestWorkerTokens:
         token = a1.mint_worker_token(node_id="n", pool_id="p")
         with pytest.raises(InvalidTokenError):
             a2.verify_worker_token(token)
-
-    def test_bootstrap_token_rejected_as_worker(self):
-        auth = make_auth()
-        boot = auth.mint_bootstrap_token(pool_id="p")
-        with pytest.raises(InvalidTokenError):
-            auth.verify_worker_token(boot)
 
     def test_user_jwt_rejected_as_worker(self):
         """A user-shaped token (no kind=worker claim) must not authenticate."""

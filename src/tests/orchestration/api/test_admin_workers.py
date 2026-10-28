@@ -131,13 +131,27 @@ def app_and_deps():
     return app, auth, registry, inventory, pool_repo
 
 
+@pytest.fixture(autouse=True)
+def minted(monkeypatch):
+    """Single-use tokens the route stored, as (pool_id, org_id, ttl_seconds)."""
+    calls = {}
+
+    async def _mint(*, pool_id, org_id, ttl_seconds):
+        token = f"single-use-{len(calls)}"
+        calls[token] = (pool_id, org_id, ttl_seconds)
+        return token
+
+    monkeypatch.setattr(admin_workers, "_mint_single_use_token", _mint)
+    return calls
+
+
 # ---------------------------------------------------------------------------
 # POST /v1/admin/workers/tokens
 # ---------------------------------------------------------------------------
 
 
 class TestMintToken:
-    def test_happy_path(self, app_and_deps):
+    def test_happy_path(self, app_and_deps, minted):
         app, auth, *_ = app_and_deps
         client = TestClient(app)
         r = client.post(
@@ -158,11 +172,11 @@ class TestMintToken:
             "INFERENCE_TOKEN=", "NODE_NAME=", "WORKER_ADVERTISE_URL=",
         ):
             assert key in snippet
-        # Token must round-trip the auth verifier.
-        claims = auth.verify_bootstrap_token(data["bootstrap_token"])
-        assert claims.pool_id == POOL_ID
+        # A stored single-use token for this pool and its org, not a reusable JWT.
+        assert minted[data["bootstrap_token"]] == (POOL_ID, ORG, 3600)
+        assert f"BOOTSTRAP_TOKEN={data['bootstrap_token']}" in snippet
 
-    def test_default_ttl_is_one_hour(self, app_and_deps):
+    def test_default_ttl_is_one_hour(self, app_and_deps, minted):
         app, auth, *_ = app_and_deps
         client = TestClient(app)
         r = client.post(
@@ -174,6 +188,7 @@ class TestMintToken:
         # exp ≈ now + 3600 (±60s tolerance for test runtime).
         delta = r.json()["expires_at"] - int(time.time())
         assert 3500 < delta < 3700
+        assert minted[r.json()["bootstrap_token"]][2] == 3600
 
     def test_ttl_capped_at_24_hours(self, app_and_deps):
         app, *_ = app_and_deps

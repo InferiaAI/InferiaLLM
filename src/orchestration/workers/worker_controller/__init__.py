@@ -14,6 +14,6 @@ Public surface:
 - protocol            — Pydantic message models shared with the Go worker
 """
 
-from .auth import WorkerAuth, WorkerClaims, BootstrapClaims  # noqa: F401
+from .auth import WorkerAuth, WorkerClaims  # noqa: F401
 from .registry import WorkerRegistry, WorkerConn  # noqa: F401
 from . import protocol  # noqa: F401

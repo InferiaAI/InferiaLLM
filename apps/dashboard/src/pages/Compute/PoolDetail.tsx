@@ -389,8 +389,8 @@ function PoolDetailContent() {
             <div className="flex items-center justify-between">
               <p className="text-sm text-muted-foreground">
                 Each host runs the inferia-worker agent and registers itself
-                with a bootstrap token. Tokens are short-lived; mint a fresh
-                one per host.
+                with a bootstrap token. Each token registers one host, once,
+                and is short-lived; mint a fresh one per host.
               </p>
               <button
                 onClick={() => setShowAddWorker(true)}

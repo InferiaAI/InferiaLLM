@@ -227,3 +227,49 @@ async def test_emit_event_logs_progress():
         await PulumiUpHandler().run(_job(), ctx)
     # At least one log event emitted (start) + one success event.
     assert ctx.emit_event.await_count >= 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keys,expected", [("ssh-ed25519 AAAA op@host\n", True), ("\n", False), (None, False)])
+async def test_ssh_ingress_follows_the_operator_keys(tmp_path, monkeypatch, keys, expected):
+    """Port 22 opens on the created security group only when SSH keys are installed."""
+    job = _job(spec={"provider": "aws", "instance_class": "normal_gpu",
+                      "instance_type": "g6.xlarge", "region": "us-east-1",
+                      "pool_id": "p", "org_id": "o", "gpu_count": 1})
+    path = tmp_path / "authorized_keys"
+    if keys is not None:
+        path.write_text(keys)
+    captured = {}
+
+    def _capture_program(*, spec, stack_outputs):
+        captured["ssh_ingress"] = spec.get("ssh_ingress")
+        return lambda: None
+
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value={"node_name": "node-xyz"})
+    conn.execute = AsyncMock(return_value=None)
+    db = MagicMock()
+    db.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    db.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    ctx = PhaseContext(
+        repo=MagicMock(), db=db, emit_event=AsyncMock(), aws_creds=MagicMock(),
+        pulumi_env={"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s"},
+    )
+    outputs = StackOutputs(instance_id="i", public_dns=None, region=None, ami_id=None)
+    from orchestration.config import Settings
+    # Not a settings field: production reads it with getattr and a default path.
+    monkeypatch.setattr(Settings, "ssh_authorized_keys_path", str(path), raising=False)
+    with patch(
+        "orchestration.state_machine.phases.pulumi_up.build_program", side_effect=_capture_program,
+    ), patch(
+        "orchestration.state_machine.phases.pulumi_up.run_pulumi_up_sync", return_value=outputs,
+    ), patch(
+        "orchestration.workers.worker_controller.auth.mint_bootstrap_token",
+        new=AsyncMock(return_value=("tok", uuid.uuid4())),
+    ), patch(
+        "orchestration.repositories.pool_repo.ComputePoolRepository.get_or_generate_inference_token",
+        new=AsyncMock(return_value="inf-tok"),
+    ):
+        await PulumiUpHandler().run(job, ctx)
+
+    assert captured["ssh_ingress"] is expected
