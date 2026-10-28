@@ -8,8 +8,10 @@ import asyncio
 import ipaddress
 import logging
 import socket
-from typing import Optional
+from typing import Callable
 from urllib.parse import urlparse
+
+import httpcore
 
 logger = logging.getLogger(__name__)
 
@@ -100,44 +102,70 @@ def validate_upstream_url(url: str, allowed_hosts: list[str]) -> str:
     return url
 
 
-async def check_resolved_host(url: str, allowed_hosts: list[str]) -> Optional[str]:
+async def check_resolved_host(url: str, allowed_hosts: list[str]) -> None:
     """The check validate_upstream_url makes, on what the name resolves to.
 
-    For user-entered endpoints. An allowed host may be listed by name or by
-    any address it resolves to. Returns the address to connect to, or None
-    when there is nothing to pin (an allowed or literal host, or no answer).
+    For user-entered endpoints, so a refusal is a clear 400 before any
+    request. GuardedBackend repeats it at connect time, which is the check
+    that holds: this lookup and the socket's could get different answers.
     """
     hostname = _hostname(url)
     if hostname in allowed_hosts or _literal_ip(hostname) is not None:
-        return None
-    addresses = await _resolve(hostname)
+        return
+    _refuse_internal(hostname, await _resolve(hostname), allowed_hosts)
+
+
+def _refuse_internal(hostname: str, addresses: list[str], allowed_hosts: list[str]) -> str:
+    """The address to connect to; ValueError if there is none or any is internal.
+
+    An allowed host may be listed by name or by any address it resolves to.
+    """
+    if not addresses:
+        raise ValueError(f"Upstream host '{hostname}' does not resolve")
     for ip in addresses:
         if _is_internal(ipaddress.ip_address(ip)) and ip not in allowed_hosts:
             raise ValueError(f"Upstream host '{hostname}' is not allowed")
-    return addresses[0] if addresses else None
+    return addresses[0]
 
 
-def pinned_request(url: str, ip: str) -> tuple[str, dict]:
-    """*url* aimed at *ip*, and the request kwargs that keep it the same host.
+class GuardedBackend(httpcore.AsyncNetworkBackend):
+    """Opens connections only to addresses the upstream check allows.
 
-    Connecting to the checked address stops a name that answers one address
-    to the check and another to the client (DNS rebinding). The Host header
-    and TLS server name stay the original host, so routing and certificate
-    checks are unchanged.
+    The name is resolved and checked here, and the socket goes to the address
+    that passed, so a second DNS answer can not move it (rebinding). The URL
+    keeps its hostname: pooled connections and TLS stay per host.
     """
-    parsed = urlparse(url)
-    host = parsed.hostname
-    address = f"[{ip}]" if ":" in ip else ip
-    netloc = address if parsed.port is None else f"{address}:{parsed.port}"
-    return parsed._replace(netloc=netloc).geturl(), {
-        "host": parsed.netloc,
-        "extensions": {"sni_hostname": host},
-    }
+
+    def __init__(self, allowed_hosts: Callable[[], list[str]]):
+        self._allowed_hosts = allowed_hosts
+        self._backend = httpcore.AnyIOBackend()
+
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        hostname = host.rstrip(".")
+        allowed = self._allowed_hosts()
+        if hostname in allowed:
+            address = hostname
+        else:
+            literal = _literal_ip(hostname)
+            addresses = [str(literal)] if literal is not None else await _resolve(hostname)
+            try:
+                address = _refuse_internal(hostname, addresses, allowed)
+            except ValueError as e:
+                raise httpcore.ConnectError(str(e)) from None
+        return await self._backend.connect_tcp(
+            address, port, timeout=timeout, local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        raise httpcore.ConnectError("Unix sockets are not an upstream")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
 
 
 async def _resolve(hostname: str) -> list[str]:
-    """Every address *hostname* resolves to; empty if it does not resolve,
-    which the request itself then fails on."""
+    """Every address *hostname* resolves to; empty if it does not resolve."""
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(
             hostname, None, type=socket.SOCK_STREAM

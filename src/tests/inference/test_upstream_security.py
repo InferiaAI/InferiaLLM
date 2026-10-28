@@ -348,75 +348,167 @@ class TestNamesAreCheckedByWhatTheyResolveTo:
         with pytest.raises(ValueError, match="not allowed"):
             await self._check("http://x.example.com", [], ["93.184.215.14", "10.0.0.5"])
 
-    async def test_a_public_name_passes_with_the_address_to_use(self):
-        url = "https://api.example.com/v1"
-        assert await self._check(url, [], ["93.184.215.14"]) == "93.184.215.14"
+    async def test_a_public_name_passes(self):
+        await self._check("https://api.example.com/v1", [], ["93.184.215.14"])
 
-    async def test_allowed_by_name_is_not_pinned(self):
-        url = "http://ollama.lan:11434/v1"
-        assert await self._check(url, ["ollama.lan"], ["192.168.1.20"]) is None
+    async def test_allowed_by_name(self):
+        await self._check("http://ollama.lan:11434/v1", ["ollama.lan"], ["192.168.1.20"])
 
     async def test_allowed_by_address(self):
         """setup.sh lists kind node addresses, which names may resolve to."""
-        url = "http://node.kind:30080/v1"
-        assert await self._check(url, ["172.18.0.3"], ["172.18.0.3"]) == "172.18.0.3"
+        await self._check("http://node.kind:30080/v1", ["172.18.0.3"], ["172.18.0.3"])
 
-    async def test_a_name_that_does_not_resolve_is_not_pinned(self):
-        assert await self._check("http://nowhere.example.com", [], []) is None
+    async def test_a_name_that_does_not_resolve_is_refused(self):
+        """Otherwise the client resolves it again, and a rebinding server
+        can fail the check's lookup and answer the request's."""
+        with pytest.raises(ValueError, match="does not resolve"):
+            await self._check("http://nowhere.example.com", [], [])
+
+
+def _certificate_for(hostname, tmp_path):
+    """A CA file, and a server context whose certificate covers only *hostname*."""
+    import datetime
+    import ssl
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    def _name(cn):
+        return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    day = datetime.timedelta(days=1)
+    ca_key, key = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
+    ca = (x509.CertificateBuilder().subject_name(_name("test ca")).issuer_name(_name("test ca"))
+          .public_key(ca_key.public_key()).serial_number(1)
+          .not_valid_before(now - day).not_valid_after(now + day)
+          .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+          .sign(ca_key, hashes.SHA256()))
+    leaf = (x509.CertificateBuilder().subject_name(_name(hostname)).issuer_name(ca.subject)
+            .public_key(key.public_key()).serial_number(2)
+            .not_valid_before(now - day).not_valid_after(now + day)
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+            .sign(ca_key, hashes.SHA256()))
+    pem = serialization.Encoding.PEM
+    (tmp_path / "ca.pem").write_bytes(ca.public_bytes(pem))
+    (tmp_path / "leaf.pem").write_bytes(leaf.public_bytes(pem))
+    (tmp_path / "key.pem").write_bytes(key.private_bytes(
+        pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    server = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    server.load_cert_chain(tmp_path / "leaf.pem", tmp_path / "key.pem")
+    return str(tmp_path / "ca.pem"), server
 
 
 @pytest.mark.asyncio
-class TestPinnedRequest:
-    """A checked name is requested at the checked address (DNS rebinding)."""
+class TestGuardedConnections:
+    """User-entered endpoints connect only to addresses that pass the check,
+    decided as each connection opens (DNS rebinding)."""
 
-    def test_keeps_path_port_and_host(self):
-        from inference.core.validators import pinned_request
-
-        url, pin = pinned_request("https://api.example.com:8443/v1/chat?x=1", "93.184.215.14")
-        assert url == "https://93.184.215.14:8443/v1/chat?x=1"
-        assert pin == {"host": "api.example.com:8443",
-                       "extensions": {"sni_hostname": "api.example.com"}}
-
-    def test_brackets_ipv6(self):
-        from inference.core.validators import pinned_request
-
-        url, pin = pinned_request("http://api.example.com/v1", "2606:2800::1")
-        assert url == "http://[2606:2800::1]/v1"
-        assert pin["host"] == "api.example.com"
-
-    async def test_the_request_goes_to_the_checked_address(self):
-        """A second lookup can not move it: the client never resolves the name."""
-        import httpx
+    @staticmethod
+    def _backend(answers, allowed=()):
         from inference.core import validators
-        from inference.core.service import GatewayService
 
-        answers = iter([["93.184.215.14"], ["169.254.169.254"]])
+        connected = []
+
+        class _Inner:
+            async def connect_tcp(self, host, port, **kw):
+                connected.append((host, port))
+                return "stream"
 
         async def _resolve(hostname):
-            return next(answers)
+            return answers.pop(0) if answers else []
 
-        seen = {}
+        backend = validators.GuardedBackend(lambda: list(allowed))
+        backend._backend = _Inner()
+        return backend, connected, _resolve
 
-        def _handler(request):
-            seen.update(host=request.url.host, header=request.headers["host"],
-                        sni=request.extensions.get("sni_hostname"))
-            return httpx.Response(200, json={})
+    async def test_connects_to_the_address_it_checked(self):
+        from inference.core import validators
 
-        with patch.object(validators, "_resolve", _resolve),                 patch.object(GatewayService, "_get_allowed_hosts", return_value=[]):
-            url, pin = await GatewayService._checked_url("https://rebind.example.com/v1", True)
-            headers, kwargs = GatewayService._apply_pin({"authorization": "Bearer k"}, pin)
-            async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as c:
-                await c.post(url, json={}, headers=headers, **kwargs)
+        backend, connected, resolve = self._backend([["93.184.215.14"], ["169.254.169.254"]])
+        with patch.object(validators, "_resolve", resolve):
+            assert await backend.connect_tcp("api.example.com", 443) == "stream"
+        assert connected == [("93.184.215.14", 443)]
 
-        assert seen == {"host": "93.184.215.14", "header": "rebind.example.com",
-                        "sni": "rebind.example.com"}
+    @pytest.mark.parametrize("answer", [["169.254.169.254"], ["93.184.215.14", "10.0.0.5"], []])
+    async def test_refuses_an_internal_or_missing_answer(self, answer):
+        import httpcore
+        from inference.core import validators
 
-    async def test_without_resolving_nothing_is_pinned(self):
+        backend, connected, resolve = self._backend([answer])
+        with patch.object(validators, "_resolve", resolve), pytest.raises(httpcore.ConnectError):
+            await backend.connect_tcp("rebind.example.com", 80)
+        assert connected == []
+
+    async def test_refuses_an_internal_literal(self):
+        import httpcore
+
+        backend, connected, _ = self._backend([])
+        with pytest.raises(httpcore.ConnectError):
+            await backend.connect_tcp("2852039166", 80)  # 169.254.169.254
+        assert connected == []
+
+    async def test_an_allowed_host_connects_by_name(self):
+        backend, connected, _ = self._backend([], allowed=["inferiagate"])
+        await backend.connect_tcp("inferiagate", 4000)
+        assert connected == [("inferiagate", 4000)]
+
+    async def test_a_connection_is_not_reused_for_another_hostname(self, tmp_path, monkeypatch):
+        """Two names on one address (a CDN) keep separate connections, so
+        each is TLS-verified for its own name. The server's certificate
+        covers only a.test."""
+        import asyncio
+
+        import httpx
+        from inference.core import http_client as hc
+        from inference.core import validators
+
+        ca, server_ctx = _certificate_for("a.test", tmp_path)
+
+        async def _serve(reader, writer):
+            try:
+                while await reader.readuntil(b"\r\n\r\n"):
+                    writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                    await writer.drain()
+            except (asyncio.IncompleteReadError, ConnectionError, OSError):
+                writer.close()
+
+        server = await asyncio.start_server(_serve, "127.0.0.1", 0, ssl=server_ctx)
+        port = server.sockets[0].getsockname()[1]
+
+        async def _resolve(hostname):
+            return ["127.0.0.1"]
+
+        monkeypatch.setattr(validators, "_resolve", _resolve)
+        monkeypatch.setattr(hc, "_allowed_hosts", lambda: ["127.0.0.1"])
+        monkeypatch.setattr(hc.settings, "verify_ssl", ca)
+        monkeypatch.setattr(hc.HttpClientManager, "_guarded", None)
+        client = hc.http_client.get_client(guarded=True)
+        try:
+            assert (await client.get(f"https://a.test:{port}/")).text == "ok"
+            with pytest.raises(httpx.ConnectError, match="CERTIFICATE_VERIFY_FAILED"):
+                await client.get(f"https://b.test:{port}/")
+        finally:
+            await client.aclose()
+            server.close()
+
+    async def test_user_entered_endpoints_get_the_guarded_client(self):
+        from inference.core.http_client import http_client
         from inference.core.service import GatewayService
+        from inference.core.validators import GuardedBackend
 
         with patch.object(GatewayService, "_get_allowed_hosts", return_value=[]):
-            assert await GatewayService._checked_url("http://api.example.com/v1", False) == (
-                "http://api.example.com/v1", {})
+            url, client = await GatewayService._checked_url("https://api.example.com/v1", True)
+        assert url == "https://api.example.com/v1"
+        assert client is http_client.get_client(guarded=True)
+        # httpx has no public hook for the backend; this fails if the private one moves.
+        assert isinstance(client._transport._pool._network_backend, GuardedBackend)
+
+        with patch.object(GatewayService, "_get_allowed_hosts", return_value=[]):
+            _, shared = await GatewayService._checked_url("http://inferia-worker:8080/v1", False)
+        assert shared is http_client.get_client()
 
 
 def test_the_operators_proxies_are_always_allowed():
@@ -442,7 +534,7 @@ async def test_video_status_checks_its_upstream():
         patch("inference.core.handlers.video.GatewayService.resolve_context",
               AsyncMock(return_value=context)),
         patch("inference.core.handlers.video.settings") as s,
-        patch("inference.core.handlers.video.http_client") as hc,
+        patch("inference.core.service.http_client") as hc,
     ):
         s.envoy_url = None
         with pytest.raises(HTTPException) as exc:
@@ -477,7 +569,9 @@ class TestOnlyUserEnteredEndpointsAreResolved:
 
     async def test_a_worker_hostname_still_works(self):
         url = "http://inferia-worker:8080/v1/chat/completions"
-        assert await self._checked(url, {"pool_id": "pool-1"}) == (url, {})
+        from inference.core.http_client import http_client
+
+        assert await self._checked(url, {"pool_id": "pool-1"}) == (url, http_client.get_client())
 
     async def test_the_same_name_on_an_external_deployment_is_refused(self):
         with pytest.raises(ValueError, match="not allowed"):

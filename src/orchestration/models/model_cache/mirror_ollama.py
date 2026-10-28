@@ -30,15 +30,24 @@ def _model_id(name: str) -> str:
     return name[len("library/"):] if name.startswith("library/") else name
 
 
-async def _refuse_uncached(name: str) -> None:
+async def _refuse_uncached(name: str, ref: str | None = None) -> None:
     """404 unless this install chose to cache the model (a deploy or an admin).
 
     The registry is unauthenticated, so serving any name a caller asks for
-    would let anyone make the control plane download and store it.
+    would let anyone make the control plane download and store it. Manifests
+    pass their tag: a cached qwen3:0.6b must not fetch qwen3:235b. Blobs are
+    only reachable from a served manifest, so the name is enough for them.
     """
     r = deps.get("repo")
+    model_id = _model_id(name)
     try:
-        ok = r is not None and await r.is_mirrored(source="ollama", model_id=_model_id(name))
+        if r is None:
+            ok = False
+        elif ref is None:
+            ok = await r.is_mirrored(source="ollama", model_id=model_id)
+        else:
+            row = await r.get_by_key(source="ollama", model_id=model_id, revision=ref)
+            ok = bool(row) and row.get("status") in ("cached", "downloading", "pending")
     except Exception:
         ok = False
     if not ok:
@@ -54,7 +63,7 @@ async def root() -> Response:
 
 @router.get("/{name:path}/manifests/{ref}")
 async def get_manifest(name: str, ref: str) -> Response:
-    await _refuse_uncached(name)
+    await _refuse_uncached(name, ref)
     paths = deps.get("paths")
     model_id = _model_id(name)
     mpath: Path = paths.ollama_dir(model_id, ref) / "manifest.json"
@@ -96,7 +105,7 @@ async def head_manifest(name: str, ref: str) -> Response:
     with headers only (no body): 200 when the manifest is cached or in-flight,
     otherwise proxy a HEAD to origin and relay its status.
     """
-    await _refuse_uncached(name)
+    await _refuse_uncached(name, ref)
     paths = deps.get("paths")
     model_id = _model_id(name)
     mpath: Path = paths.ollama_dir(model_id, ref) / "manifest.json"

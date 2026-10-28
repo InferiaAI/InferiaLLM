@@ -15,12 +15,20 @@ _MANIFEST = {"schemaVersion": 2,
 
 
 class _Mirrored:
-    """A cache repo that has every model the tests ask for."""
+    """A cache repo holding *models* ("name" or "name:tag"); none means every one."""
     def __init__(self, *models):
         self.models = models
 
+    def _has(self, source, model_id, tag=None):
+        if source != "ollama":
+            return False
+        return not self.models or model_id in self.models or f"{model_id}:{tag}" in self.models
+
     async def is_mirrored(self, *, source, model_id):
-        return source == "ollama" and (not self.models or model_id in self.models)
+        return self._has(source, model_id) or any(m.startswith(model_id + ":") for m in self.models)
+
+    async def get_by_key(self, *, source, model_id, revision):
+        return {"status": "cached"} if self._has(source, model_id, revision) else None
 
 
 def _app():
@@ -423,12 +431,26 @@ async def test_without_a_cache_repo_nothing_is_served(tmp_path):
         assert (await c.get("/v2/library/gemma3/manifests/4b")).status_code == 404
 
 
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+async def test_another_tag_of_a_cached_model_is_refused(tmp_path, method):
+    """A cached qwen3:0.6b must not let anyone make the CP fetch qwen3:235b."""
+    class _HTTP:
+        def stream(self, *a, **k): raise AssertionError("origin must not be called")
+        async def head(self, *a, **k): raise AssertionError("origin must not be called")
+
+    deps._reset(); deps.configure(paths=CachePaths(str(tmp_path)), downloader=None,
+                                  http_client=_HTTP(), repo=_Mirrored("qwen3:0.6b"))
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
+        refused = await c.request(method, "/v2/library/qwen3/manifests/235b")
+    assert refused.status_code == 404
+
+
 async def test_a_namespaced_model_is_checked_by_its_full_name(tmp_path):
     seen = []
 
     class _Repo:
-        async def is_mirrored(self, *, source, model_id):
-            seen.append(model_id); return False
+        async def get_by_key(self, *, source, model_id, revision):
+            seen.append(model_id); return None
 
     deps._reset(); deps.configure(paths=CachePaths(str(tmp_path)), repo=_Repo())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:

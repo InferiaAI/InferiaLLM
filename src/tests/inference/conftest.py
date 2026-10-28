@@ -7,10 +7,9 @@ from common.circuit_breaker import circuit_breaker_registry
 
 @pytest.fixture(autouse=True)
 def _public_dns(monkeypatch):
-    """Resolve no upstream name, without the network: nothing to pin, so the
-    request goes to the URL as written. Pinning tests set their own answer."""
+    """Resolve every upstream name to a public address, without the network."""
     async def _resolve(hostname):
-        return []
+        return ["93.184.215.14"]
 
     monkeypatch.setattr("inference.core.validators._resolve", _resolve)
 
