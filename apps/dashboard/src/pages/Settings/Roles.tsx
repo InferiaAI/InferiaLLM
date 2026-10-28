@@ -84,7 +84,7 @@ const initialState: State = {
 
 export default function Roles() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { hasPermission } = useAuth();
+  const { hasPermission, isSuperadmin } = useAuth();
   const {
     roles,
     permissionsList,
@@ -96,9 +96,10 @@ export default function Roles() {
     pageSize,
     totalRoles,
   } = state;
-  const canCreateRole = hasPermission("role:create");
-  const canUpdateRole = hasPermission("role:update");
-  const canDeleteRole = hasPermission("role:delete");
+  // Roles are shared by every organization.
+  const canCreateRole = isSuperadmin && hasPermission("role:create");
+  const canUpdateRole = isSuperadmin && hasPermission("role:update");
+  const canDeleteRole = isSuperadmin && hasPermission("role:delete");
 
   const getErrorDetail = (error: unknown, fallback: string): string | null => {
     const apiError = error as AxiosError<ApiErrorResponse>;

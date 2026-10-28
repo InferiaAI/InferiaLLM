@@ -42,6 +42,51 @@ class AuthorizationService:
                 detail=f"Permission denied: {permission.value} required",
             )
             
+    def is_superadmin(self, user: UserContext) -> bool:
+        """The install's superadmin, signed in with its local password.
+
+        SSO users map to local users by email, so the email alone would let an
+        IdP account carrying the superadmin's address through.
+        """
+        from api_gateway.config import settings
+
+        email = (settings.superadmin_email or "").strip().lower()
+        return bool(email) and user.local_session and (
+            (user.email or "").strip().lower() == email
+        )
+
+    def require_superadmin(self, user: UserContext) -> None:
+        """For install-wide state every org shares: roles, provider credentials."""
+        if not self.is_superadmin(user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the superadmin can change this; it applies to every organization",
+            )
+
+    def require_grantable(self, user: UserContext, role_permissions) -> None:
+        """403 unless *user* already holds every permission the role grants."""
+        if self.is_superadmin(user):
+            return
+        from api_gateway.rbac.permissions import normalize_permissions
+
+        granted, _, _ = normalize_permissions(role_permissions or [])
+        missing = set(granted) - set(self.get_user_permissions(user))
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot grant a role with permissions you do not have",
+            )
+
+    async def require_grantable_role(self, db, user: UserContext, role_name: str) -> None:
+        """require_grantable for a role by name; 400 if no such role exists."""
+        from sqlalchemy.future import select
+        from api_gateway.db.models import Role
+
+        role = (await db.execute(select(Role).where(Role.name == role_name))).scalars().first()
+        if role is None:
+            raise HTTPException(status_code=400, detail=f"Role '{role_name}' does not exist")
+        self.require_grantable(user, role.permissions)
+
     def require_role(self, user: UserContext, role: str) -> None:
         """Deprecated: Role-based checks are disabled."""
         raise HTTPException(

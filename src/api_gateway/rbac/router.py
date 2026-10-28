@@ -592,6 +592,7 @@ async def get_current_user_info(request: Request, db: AsyncSession = Depends(get
         created_at=user.created_at,
         is_active=user_context.is_active,
         totp_enabled=effective_totp_enabled,
+        is_superadmin=authz_service.is_superadmin(user_context),
     )
 
 

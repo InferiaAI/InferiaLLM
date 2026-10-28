@@ -149,30 +149,14 @@ class AuthService:
         result = await db.execute(stmt)
         orgs_data = result.all() # [(UserOrganization, Organization), ...]
         
+        # No org means no access: membership comes only from an invitation or
+        # an admin (the superadmin is added to the default org at startup).
+        # Joining such a user to the first org would hand them the main tenant.
         if not orgs_data:
-             # AUTO-FIX: If single tenant, add user to default org if they have none
-             stmt = select(Organization).limit(1)
-             result = await db.execute(stmt)
-             default_org = result.scalars().first()
-             
-             if default_org:
-                 # Add user to org
-                 uo = UserOrganization(user_id=user.id, org_id=default_org.id, role="member")
-                 db.add(uo)
-                 await db.commit()
-                 
-                 # Refetch
-                 stmt = select(UserOrganization, Organization).join(
-                    Organization, UserOrganization.org_id == Organization.id
-                 ).where(UserOrganization.user_id == user.id)
-                 result = await db.execute(stmt)
-                 orgs_data = result.all()
-             
-             if not orgs_data:
-                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User does not belong to any organization",
-                )
+             raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User does not belong to any organization",
+            )
             
         # Select target org (default or first)
         target_org_id = user.default_org_id

@@ -29,6 +29,9 @@ from api_gateway.config import (
 
 _BASE = "/management/config/providers/huggingface/credentials"
 
+# Provider credentials are install-wide, so only the superadmin may change them.
+pytestmark = pytest.mark.usefixtures("as_superadmin")
+
 
 @contextmanager
 def _patched(tokens):

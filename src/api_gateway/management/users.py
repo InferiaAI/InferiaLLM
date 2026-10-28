@@ -23,6 +23,7 @@ async def create_user(
 ):
     user_ctx = get_current_user_context(request)
     authz_service.require_permission(user_ctx, PermissionEnum.MEMBER_INVITE)
+    await authz_service.require_grantable_role(db, user_ctx, user_data.role)
 
     if not user_ctx.org_id:
         raise HTTPException(

@@ -53,6 +53,7 @@ async def create_role(
     """Create a new role."""
     user_ctx = get_current_user_from_request(request)
     authz_service.require_permission(user_ctx, PermissionEnum.ROLE_CREATE)
+    authz_service.require_superadmin(user_ctx)  # roles are shared by every org
 
     # Check if exists
     result = await db.execute(select(Role).where(Role.name == role_in.name))
@@ -79,6 +80,7 @@ async def update_role(
     """Update a role."""
     user_ctx = get_current_user_from_request(request)
     authz_service.require_permission(user_ctx, PermissionEnum.ROLE_UPDATE)
+    authz_service.require_superadmin(user_ctx)
 
     result = await db.execute(select(Role).where(Role.name == name))
     role = result.scalars().first()
@@ -100,6 +102,7 @@ async def delete_role(name: str, request: Request, db: AsyncSession = Depends(ge
     """Delete a role."""
     user_ctx = get_current_user_from_request(request)
     authz_service.require_permission(user_ctx, PermissionEnum.ROLE_DELETE)
+    authz_service.require_superadmin(user_ctx)
 
     result = await db.execute(select(Role).where(Role.name == name))
     role = result.scalars().first()

@@ -34,6 +34,10 @@ async def get_audit_logs(
     Retrieve audit logs. Supports filtering by category (auth, deployment, etc.)
     """
     authz_service.require_permission(user_ctx, PermissionEnum.AUDIT_LOG_LIST)
+    # The service filters by org only when one is given, so no org would mean
+    # every org's events.
+    if not user_ctx.org_id:
+        return []
 
     filters = AuditLogFilter(
         user_id=user_id,

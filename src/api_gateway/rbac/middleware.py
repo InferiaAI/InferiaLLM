@@ -79,6 +79,7 @@ async def _resolve_local_token(db, token: str) -> UserContext:
         org_id=org_id,
         quota_limit=10000,
         quota_used=0,
+        local_session=True,
     )
 
 

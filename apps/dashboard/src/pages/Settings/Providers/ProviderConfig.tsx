@@ -4,6 +4,7 @@ import { ConfigService, type ProvidersConfig, type NosanaApiKeyResponse, type Hf
 import { ChevronRight, Save, Loader2, Edit2, X, CheckCircle, ShieldCheck, Plus, Trash2, Key, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import { EngineAmiSection } from "./EngineAmiSection";
+import { useAuth } from "@/context/AuthContext";
 
 // Small inline "where to find" hint rendered below a credential field
 // label. The HelpCircle icon plus a one-line writeup tells the user
@@ -115,6 +116,7 @@ export default function ProviderConfigPage() {
     const { category, providerId } = useParams();
     const navigate = useNavigate();
     const [state, dispatch] = useReducer(reducer, initialState);
+    const { isSuperadmin } = useAuth();
     const {
         config, loading, saving, isEditing, isConfigured,
         nosanaApiKeys, hfTokens, showAddKeyModal, newKeyName, newKeyValue, loadingKeys,
@@ -325,7 +327,13 @@ export default function ProviderConfigPage() {
                     )}
                 </div>
 
-                {!isEditing && isConfigured ? (
+                {!isSuperadmin ? (
+                    // These credentials serve every organization.
+                    <div className="p-8 text-center text-muted-foreground">
+                        {isConfigured ? "Configured." : "Not configured."} Only the superadmin can change
+                        provider credentials, because every organization uses them.
+                    </div>
+                ) : !isEditing && isConfigured ? (
                     <div className="p-8 flex flex-col items-center justify-center text-center space-y-4">
                         <div className="bg-green-100 p-4 rounded-full text-green-600">
                             <CheckCircle className="w-12 h-12" />

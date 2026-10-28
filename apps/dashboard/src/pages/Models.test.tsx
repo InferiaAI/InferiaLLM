@@ -20,6 +20,8 @@ vi.mock("@/services/huggingfaceService", () => ({
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const mockHasPermission = vi.fn((_perm: string) => true);
+// The cache is shared by every org, so only the superadmin may delete from it.
+let mockIsSuperadmin = true;
 
 vi.mock("@/context/AuthContext", () => ({
   useAuth: () => ({
@@ -38,6 +40,7 @@ vi.mock("@/context/AuthContext", () => ({
     refreshUser: vi.fn(),
     organizations: [],
     hasPermission: mockHasPermission,
+    isSuperadmin: mockIsSuperadmin,
   }),
 }));
 
@@ -221,12 +224,24 @@ describe("Models page — Delete button", () => {
     vi.mocked(searchHFModels).mockResolvedValue([]);
     vi.mocked(deleteModel).mockResolvedValue(undefined);
     mockHasPermission.mockImplementation(() => true);
+    mockIsSuperadmin = true;
     // Suppress window.confirm
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("hides Delete from an org admin who is not the superadmin", async () => {
+    mockIsSuperadmin = false;
+    renderModels();
+
+    await waitFor(() => {
+      expect(screen.getByText("meta-llama/Llama-3-8B")).toBeInTheDocument();
+    });
+
+    expect(screen.queryAllByRole("button", { name: /delete/i })).toHaveLength(0);
   });
 
   it("calls deleteModel with the model id when Delete is confirmed", async () => {

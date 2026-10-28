@@ -110,6 +110,8 @@ class UserContext(BaseModel):
     quota_limit: int
     quota_used: int
     is_active: bool = True
+    # Signed in through this install's own login, not an external IdP.
+    local_session: bool = False
 
 
 class UserInfoResponse(BaseModel):
@@ -126,6 +128,8 @@ class UserInfoResponse(BaseModel):
     created_at: Optional[datetime] = None
     is_active: bool
     totp_enabled: bool = False
+    # Install-wide settings (roles, provider credentials) are superadmin-only.
+    is_superadmin: bool = False
 
 
 class RoleCreate(BaseModel):

@@ -263,6 +263,8 @@ def _require_provider_read_permission(user_ctx) -> None:
 
 def _require_provider_write_permission(user_ctx) -> None:
     authz_service.require_permission(user_ctx, PermissionEnum.ORG_UPDATE)
+    # One set of provider credentials serves every org.
+    authz_service.require_superadmin(user_ctx)
 
 
 @router.get("/config/providers", response_model=ProviderConfigResponse)

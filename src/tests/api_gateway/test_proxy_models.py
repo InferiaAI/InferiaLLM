@@ -144,7 +144,7 @@ async def test_post_models_enforces_model_add(client, admin_token):
 
 
 @pytest.mark.asyncio
-async def test_delete_model_enforces_model_delete(client, admin_token):
+async def test_delete_model_enforces_model_delete(client, admin_token, as_superadmin):
     """DELETE /v1/models/<id> → enforces MODEL_DELETE permission."""
     mock_resp = _make_fastapi_response(204, b"")
 

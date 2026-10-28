@@ -364,6 +364,8 @@ def _require_models_permission(user_context: UserContext, method: str) -> None:
         authz_service.require_permission(user_context, PermissionEnum.MODEL_ADD)
     elif m == "DELETE":
         authz_service.require_permission(user_context, PermissionEnum.MODEL_DELETE)
+        # The cache is shared: a delete removes weights other orgs deploy from.
+        authz_service.require_superadmin(user_context)
     else:
         raise HTTPException(status_code=405, detail="method not allowed")
 
