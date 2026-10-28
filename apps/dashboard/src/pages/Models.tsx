@@ -50,9 +50,10 @@ function hasActiveDownload(models: CachedModel[]): boolean {
 
 export default function Models() {
   const queryClient = useQueryClient();
-  const { hasPermission } = useAuth();
+  const { hasPermission, isSuperadmin } = useAuth();
   const canAdd = hasPermission("model:add");
-  const canDelete = hasPermission("model:delete");
+  // The cache is shared: deleting a model removes it for every organization.
+  const canDelete = isSuperadmin && hasPermission("model:delete");
 
   const {
     data: models = [],

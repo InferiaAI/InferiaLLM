@@ -125,3 +125,15 @@ def guest_token(client):
     """Get guest user token."""
     user = DBUser(id="user_guest_001", email="guest@com")
     return auth_service.create_access_token(user, org_id="org_default", role="guest")
+
+
+@pytest.fixture
+def as_superadmin(monkeypatch):
+    """Make the admin token's user the install's superadmin.
+
+    Install-wide state (roles, provider credentials, the model cache) can only
+    be changed by the superadmin, matched by SUPERADMIN_EMAIL on a local login.
+    """
+    from api_gateway.config import settings
+
+    monkeypatch.setattr(settings, "superadmin_email", "user_admin_001@test.com")

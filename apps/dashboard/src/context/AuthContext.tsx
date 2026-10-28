@@ -20,6 +20,7 @@ interface User {
     permissions: string[];
     org_id?: string;
     totp_enabled: boolean;
+    is_superadmin?: boolean;
 }
 
 interface AuthContextType {
@@ -35,6 +36,9 @@ interface AuthContextType {
     isAuthenticated: boolean;
     organizations: OrganizationBasicInfo[];
     hasPermission: (permission: string) => boolean;
+    // Roles, provider credentials and the model cache are shared by every
+    // org, so only the superadmin can change them.
+    isSuperadmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -143,6 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 isAuthenticated: !!user,
                 organizations,
                 hasPermission,
+                isSuperadmin: !!user?.is_superadmin,
             }}
         >
             {children}

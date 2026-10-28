@@ -68,13 +68,7 @@ async def update_user_role(
     """Assign a role to a user."""
     user_ctx = get_current_user_from_request(request)
     authz_service.require_permission(user_ctx, PermissionEnum.ROLE_UPDATE)
-
-    # Verify role exists
-    role_check = await db.execute(select(Role).where(Role.name == role_update.role))
-    if not role_check.scalars().first():
-        raise HTTPException(
-            status_code=400, detail=f"Role '{role_update.role}' does not exist"
-        )
+    await authz_service.require_grantable_role(db, user_ctx, role_update.role)
 
     # Get UserOrganization link for the current admin's org (which is user_ctx.org_id)
     stmt = select(UserOrganization).where(
