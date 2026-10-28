@@ -42,6 +42,16 @@ def _route_path(request) -> str:
 _auth_cache: TTLCache = TTLCache(maxsize=2048, ttl=30)
 
 
+def forget_user(user_id: str) -> None:
+    """Drop the user's cached tokens, so ended sessions stop at once.
+
+    Per process, like the cache; another worker can serve one for up to its TTL.
+    """
+    for token, ctx in list(_auth_cache.items()):
+        if getattr(ctx, "user_id", None) == user_id:
+            _auth_cache.pop(token, None)
+
+
 def _auth_error_response(
     status_code: int, detail: str, headers: Optional[dict] = None
 ) -> JSONResponse:

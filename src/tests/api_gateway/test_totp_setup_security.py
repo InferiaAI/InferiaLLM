@@ -81,9 +81,12 @@ async def test_totp_setup_writes_to_pending_secret():
 
 
 @pytest.mark.asyncio
-async def test_totp_setup_does_not_overwrite_active_secret():
-    """If the user already has an active totp_secret (2FA enabled), calling
-    setup must NOT overwrite it — the new secret goes to pending only."""
+async def test_totp_setup_is_refused_while_2fa_is_on():
+    """With 2FA on, setup is refused outright: a session alone could otherwise
+    enroll its own authenticator in place of the user's. Turning 2FA off
+    first needs the password and a current code."""
+    from fastapi import HTTPException
+
     existing_secret = pyotp.random_base32()
     user = _make_user(totp_secret=existing_secret, totp_enabled=True)
     db = _make_db(user)
@@ -93,13 +96,12 @@ async def test_totp_setup_does_not_overwrite_active_secret():
         "api_gateway.rbac.router.get_current_user_from_request",
         return_value=_user_context(),
     ):
-        await totp_setup(request=request, db=db)
+        with pytest.raises(HTTPException) as exc:
+            await totp_setup(request=request, db=db)
 
-    # Active secret unchanged
+    assert exc.value.status_code == 409
     assert user.totp_secret == existing_secret
-    # New secret stored in pending
-    assert user.totp_pending_secret is not None
-    assert user.totp_pending_secret != existing_secret
+    assert not user.totp_pending_secret
 
 
 # ---------------------------------------------------------------------------

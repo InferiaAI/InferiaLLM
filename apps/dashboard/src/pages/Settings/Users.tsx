@@ -6,6 +6,7 @@ import { UserPlus, Copy, Users as UsersIcon } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Pagination } from "@/components/ui/Pagination";
 import type { AxiosError } from "axios";
+import { isExternalAuthMode } from "@/lib/authMode";
 
 type ApiErrorResponse = {
   detail?: string;
@@ -87,6 +88,8 @@ export default function Users() {
   const { user: currentUser, hasPermission } = useAuth();
   const canInviteMember = hasPermission("member:invite");
   const canRevokeInvite = hasPermission("member:delete");
+  // With SSO the identity provider owns membership; the API answers 409.
+  const canRemoveMember = hasPermission("member:delete") && !isExternalAuthMode();
   const canUpdateUserRole = hasPermission("role:update");
   const canViewRoles = hasPermission("role:list");
   const canManageRoles = canUpdateUserRole && canViewRoles;
@@ -181,6 +184,19 @@ export default function Users() {
     } catch (error) {
       const message = getErrorDetail(error, "Revoke failed");
       if (message) toast.error(message);
+    }
+  };
+
+  const handleRemove = async (memberId: string, email: string) => {
+    if (!confirm(`Remove ${email} from this organization? They lose access immediately.`)) return;
+    try {
+      await rbacService.removeMember(memberId);
+      await fetchData();
+      toast.success("Member removed");
+    } catch (error) {
+      // Unlike the other actions, show a 403 too: it says why (e.g. a stronger role).
+      const detail = (error as AxiosError<ApiErrorResponse>).response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : "Remove failed");
     }
   };
 
@@ -290,13 +306,16 @@ export default function Users() {
                     {user.created_at ? new Date(user.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "-"}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button
-                      type="button"
-                      aria-label={`Open actions for ${user.email}`}
-                      className="p-1 px-2 rounded hover:bg-muted text-muted-foreground"
-                    >
-                      ...
-                    </button>
+                    {canRemoveMember && user.id !== currentUser?.user_id && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemove(user.id, user.email)}
+                        aria-label={`Remove ${user.email}`}
+                        className="p-1 px-2 rounded text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

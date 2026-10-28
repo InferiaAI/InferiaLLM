@@ -68,6 +68,11 @@ export const rbacService = {
         const { data } = await api.get<User[]>("/management/users", { params });
         return data;
     },
+    // Removes the user from the caller's org; their access to it ends at once.
+    removeMember: async (userId: string) => {
+        await api.delete(`/admin/users/${userId}`);
+    },
+
     updateUserRole: async (userId: string, roleName: string) => {
         const { data } = await api.put(`/admin/users/${userId}/role`, { role: roleName });
         return data;

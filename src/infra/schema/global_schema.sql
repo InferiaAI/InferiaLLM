@@ -27,7 +27,8 @@ CREATE TABLE users (
     totp_secret VARCHAR,
     totp_pending_secret VARCHAR,
     totp_enabled BOOLEAN DEFAULT FALSE,
-    default_org_id VARCHAR, 
+    token_version INTEGER NOT NULL DEFAULT 0,
+    default_org_id VARCHAR,
     created_at TIMESTAMP WITHOUT TIME ZONE, 
     updated_at TIMESTAMP WITHOUT TIME ZONE, 
     PRIMARY KEY (id)

@@ -74,27 +74,34 @@ export function consumeAccessTokenFragment(): string | null {
 }
 
 /**
+ * End every session the user has on the gateway. Pass the access token read
+ * before it is cleared: without it the gateway cannot tell whose sessions to
+ * end. Best-effort; a failure must not block signing out locally.
+ */
+export function endServerSession(token: string | null): void {
+  if (!token) return;
+  void fetch(`${API_GATEWAY_URL}/auth/logout`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
+  }).catch(() => {});
+}
+
+/**
  * Sign the user out of the dashboard.
  *
  * Order matters:
- * 1. Clear the in-memory access token first so nothing else can re-use it
- *    while the network request is still in flight.
- * 2. POST `/auth/logout` (best-effort — the gateway holds no server-side
- *    session state now that refresh lives in an httpOnly cookie, but the
- *    endpoint still writes an audit log entry). A network failure here
- *    must NOT block the user-facing redirect.
- * 3. In external mode, navigate to the IdP's SSO-logout endpoint so the
+ * 1. End the session on the gateway with the current token (see
+ *    endServerSession), then clear the token. When AuthContext.logout ran
+ *    first it has already done both, and the token here is null.
+ * 2. In external mode, navigate to the IdP's SSO-logout endpoint so the
  *    SSO cookie at auth.* clears too. The external URL is resolved
  *    runtime-config-first so a single image build serves any deployment.
  *    On URL-construction failure, fall through to /login.
  */
 export async function logout(): Promise<void> {
+  endServerSession(tokenStore.getToken());
   tokenStore.clearToken();
-  try {
-    await fetch(`${API_GATEWAY_URL}/auth/logout`, { method: "POST", credentials: "include" });
-  } catch {
-    // Network failure on the audit POST must not block the redirect.
-  }
 
   const isExternal = isExternalAuthMode();
   // Runtime config (written by `inferiallm write-dashboard-config`) takes

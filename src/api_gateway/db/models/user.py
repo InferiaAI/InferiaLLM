@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, func, Boolean
+from sqlalchemy import Column, String, DateTime, func, Boolean, Integer
 from ..database import Base
 import uuid
 
@@ -13,6 +13,8 @@ class User(Base):
     totp_secret = Column(String, nullable=True)
     totp_pending_secret = Column(String, nullable=True)
     totp_enabled = Column(Boolean, default=False)
+    # Stamped into every token as "tv". Bumping it ends all the user's sessions.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     
     # Deprecated: usage moved to UserOrganization table
     # role = Column(String, default="member")

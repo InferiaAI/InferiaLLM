@@ -174,6 +174,7 @@ describe("logout", () => {
 
   it("local mode: clears the token store, POSTs the gateway-mounted /auth/logout, then redirects to /login", async () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    tokenStore.setToken("access-tok");
     await logout();
     expect(clearSpy).toHaveBeenCalledTimes(1);
     // Must hit the gateway under its mount prefix (default base http://localhost:8000),
@@ -182,12 +183,23 @@ describe("logout", () => {
     expect(calledUrl).toMatch(/\/auth\/logout$/);
     expect(calledUrl).not.toBe("/auth/logout");
     expect(calledOpts).toMatchObject({ method: "POST", credentials: "include" });
+    // The gateway ends the user's sessions only if it can tell who they are.
+    expect(calledOpts.headers).toMatchObject({ Authorization: "Bearer access-tok" });
+    expect(assignMock).toHaveBeenCalledWith("/auth/login");
+  });
+
+  it("sends no logout request when there is no token left to identify the user", async () => {
+    vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    tokenStore.setToken(null);
+    await logout();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(assignMock).toHaveBeenCalledWith("/auth/login");
   });
 
   it("external mode: redirects to the IdP /api/v1/auth/sso-logout with redirect_uri", async () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "external");
     vi.stubEnv("VITE_EXTERNAL_AUTH_URL", "https://auth.inferia.local");
+    tokenStore.setToken("access-tok");
     await logout();
     expect(clearSpy).toHaveBeenCalledTimes(1);
     const [logoutUrl, logoutOpts] = fetchMock.mock.calls[0];
@@ -205,8 +217,10 @@ describe("logout", () => {
 
   it("does not throw when /auth/logout fails on the network", async () => {
     vi.stubEnv("VITE_AUTH_PROVIDER", "local");
+    tokenStore.setToken("access-tok");
     fetchMock.mockRejectedValueOnce(new Error("network"));
     await expect(logout()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     // User-facing redirect must still happen.
     expect(assignMock).toHaveBeenCalledWith("/auth/login");
     // Token store must still be cleared even when the audit POST fails.
