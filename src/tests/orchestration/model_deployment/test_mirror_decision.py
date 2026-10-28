@@ -163,3 +163,46 @@ async def test_resolve_applies_when_provider_unknown_or_none(provider):
                                    cache_repo=_FakeRepo({"status": "cached"}),
                                    provider=provider)
     assert spec["env"]["HF_ENDPOINT"] == "https://cp/hf"
+
+
+_KEY = "k" * 32
+
+
+@pytest.fixture
+def _internal_key(monkeypatch):
+    monkeypatch.setattr("orchestration.config.settings.internal_api_key", _KEY)
+
+
+@pytest.mark.parametrize("recipe", ["vllm", "tei", "infinity", "inferia-diffusion"])
+def test_apply_mirror_gives_hf_engines_their_pools_token(_internal_key, recipe):
+    """huggingface_hub sends HF_TOKEN as the bearer to HF_ENDPOINT."""
+    from common import mirror_token
+
+    spec = {"model": {"artifact_uri": "hf://org/m"}, "env": {}}
+    apply_mirror_to_spec(spec, recipe=recipe, mirror_base="https://cp", pool_id="pool-7")
+    assert mirror_token.verify(spec["env"]["HF_TOKEN"], _KEY) == "pool-7"
+
+
+def test_apply_mirror_gives_ollama_no_token(_internal_key):
+    spec = {"model": {"artifact_uri": "ollama://gemma3:4b"}}
+    apply_mirror_to_spec(spec, recipe="ollama", mirror_base="https://cp", pool_id="pool-7")
+    assert "HF_TOKEN" not in spec.get("env", {})
+
+
+def test_apply_mirror_without_a_pool_or_key_sets_no_token(monkeypatch):
+    monkeypatch.setattr("orchestration.config.settings.internal_api_key", "")
+    for pool_id in (None, "pool-7"):
+        spec = {"model": {"artifact_uri": "hf://org/m"}, "env": {}}
+        apply_mirror_to_spec(spec, recipe="vllm", mirror_base="https://cp", pool_id=pool_id)
+        assert "HF_TOKEN" not in spec["env"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_passes_the_pool_through(_internal_key):
+    from common import mirror_token
+
+    spec = {"recipe": "vllm", "model": {"artifact_uri": "hf://org/m"}, "env": {}}
+    await resolve_and_apply_mirror(spec, recipe="vllm", artifact_uri="hf://org/m",
+                                   mirror_base="https://cp", cache_repo=_FakeRepo({"status": "cached"}),
+                                   pool_id="pool-7")
+    assert mirror_token.verify(spec["env"]["HF_TOKEN"], _KEY) == "pool-7"

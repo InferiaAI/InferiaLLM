@@ -14,6 +14,15 @@ _MANIFEST = {"schemaVersion": 2,
              "layers": [{"digest": "sha256:m", "size": 4}]}
 
 
+class _Mirrored:
+    """A cache repo that has every model the tests ask for."""
+    def __init__(self, *models):
+        self.models = models
+
+    async def is_mirrored(self, *, source, model_id):
+        return source == "ollama" and (not self.models or model_id in self.models)
+
+
 def _app():
     from orchestration.models.model_cache import mirror_ollama
     app = FastAPI(); app.include_router(mirror_ollama.router)
@@ -30,7 +39,7 @@ async def test_manifest_served_from_cache(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "manifest.json").write_text(json.dumps(_MANIFEST))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 200
@@ -46,7 +55,7 @@ async def test_blob_plain_get_returns_200_with_location(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "sha256_m").write_bytes(b"BLOB")
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/blobs/sha256:m")
     assert r.status_code == 200
@@ -57,7 +66,7 @@ async def test_blob_served_from_cache(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "sha256_m").write_bytes(b"BLOB")
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1")
     assert r.status_code == 200 and r.content == b"BLOB"
@@ -75,7 +84,7 @@ async def test_manifest_awaits_inflight_then_serves(tmp_path):
     class _HTTP:
         def stream(self, *a, **k): raise AssertionError("origin must not be called")
 
-    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 200
@@ -96,7 +105,7 @@ async def test_blob_awaits_inflight_then_serves(tmp_path):
     # Pre-create the model root with an (empty) rev dir so the blob handler has
     # a rev dir to iterate + await on.
     paths.ollama_dir("gemma3", "4b").mkdir(parents=True, exist_ok=True)
-    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1")
     assert r.status_code == 200 and r.content == b"BLOB"
@@ -124,7 +133,7 @@ async def test_manifest_origin_fallback_caches_and_serves(tmp_path):
     paths = CachePaths(str(tmp_path))
     deps._reset()
     deps.configure(paths=paths, downloader=None,
-                   http_client=_StreamHTTP(200, json.dumps(_MANIFEST).encode()), repo=None)
+                   http_client=_StreamHTTP(200, json.dumps(_MANIFEST).encode()), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 200
@@ -135,7 +144,7 @@ async def test_manifest_origin_fallback_caches_and_serves(tmp_path):
 async def test_blob_origin_fallback_streams_and_caches(tmp_path):
     paths = CachePaths(str(tmp_path))
     deps._reset()
-    deps.configure(paths=paths, downloader=None, http_client=_StreamHTTP(200, b"BLOBDATA"), repo=None)
+    deps.configure(paths=paths, downloader=None, http_client=_StreamHTTP(200, b"BLOBDATA"), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/blobs/sha256:z?download=1")
     assert r.status_code == 200 and r.content == b"BLOBDATA"
@@ -169,7 +178,7 @@ async def test_blob_head_cached_returns_size(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "sha256_m").write_bytes(b"BLOBBYTES")  # 9 bytes
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/blobs/sha256:m")
     assert r.status_code == 200
@@ -194,7 +203,7 @@ async def test_blob_head_awaits_inflight_then_200(tmp_path):
     class _HTTP:
         def stream(self, *a, **k): raise AssertionError("origin must not be called")
 
-    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/blobs/sha256:m")
     assert r.status_code == 200
@@ -218,7 +227,7 @@ async def test_blob_head_origin_fallback_relays_metadata(tmp_path):
             return _Ctx()
 
     paths = CachePaths(str(tmp_path))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/blobs/sha256:z")
     assert r.status_code == 200
@@ -230,7 +239,7 @@ async def test_manifest_head_cached_returns_200(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "manifest.json").write_text(json.dumps(_MANIFEST))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 200
@@ -252,7 +261,7 @@ async def test_manifest_head_origin_fallback(tmp_path):
             return _Ctx()
 
     paths = CachePaths(str(tmp_path))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 200
@@ -272,7 +281,7 @@ async def test_manifest_head_awaits_inflight_then_200(tmp_path):
     class _HTTP:
         def stream(self, *a, **k): raise AssertionError("origin must not be called")
 
-    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=_DL(), http_client=_HTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 200
@@ -292,7 +301,7 @@ async def test_manifest_head_origin_non_200_propagates(tmp_path):
             return _Ctx()
 
     paths = CachePaths(str(tmp_path))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 404
@@ -300,7 +309,7 @@ async def test_manifest_head_origin_non_200_propagates(tmp_path):
 
 async def test_manifest_head_404_when_no_client(tmp_path):
     paths = CachePaths(str(tmp_path))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/manifests/4b")
     assert r.status_code == 404
@@ -308,7 +317,7 @@ async def test_manifest_head_404_when_no_client(tmp_path):
 
 async def test_blob_head_404_when_no_client(tmp_path):
     paths = CachePaths(str(tmp_path))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/blobs/sha256:gone")
     assert r.status_code == 404
@@ -327,7 +336,7 @@ async def test_blob_head_origin_non_200_propagates(tmp_path):
             return _Ctx()
 
     paths = CachePaths(str(tmp_path))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/blobs/sha256:missing")
     assert r.status_code == 404
@@ -347,7 +356,7 @@ async def test_blob_head_origin_no_content_length(tmp_path):
             return _Ctx()
 
     paths = CachePaths(str(tmp_path))
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=_HeadHTTP(), repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.head("/v2/library/gemma3/blobs/sha256:nolen")
     assert r.status_code == 200
@@ -364,7 +373,7 @@ async def test_blob_download_honors_range(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "sha256_m").write_bytes(b"0123456789ABCDEF")  # 16 bytes
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1",
                         headers={"Range": "bytes=4-7"})
@@ -379,8 +388,50 @@ async def test_blob_download_full_when_no_range(tmp_path):
     paths = CachePaths(str(tmp_path))
     d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
     (d / "sha256_m").write_bytes(b"0123456789ABCDEF")
-    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=_Mirrored())
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
         r = await c.get("/v2/library/gemma3/blobs/sha256:m?download=1")
     assert r.status_code == 200
     assert r.content == b"0123456789ABCDEF"
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/v2/library/gemma3/manifests/4b"),
+    ("HEAD", "/v2/library/gemma3/manifests/4b"),
+    ("GET", "/v2/library/gemma3/blobs/sha256:m"),
+    ("HEAD", "/v2/library/gemma3/blobs/sha256:m"),
+])
+async def test_a_model_this_install_did_not_cache_is_refused(tmp_path, method, path):
+    """Unauthenticated callers must not make the CP fetch and store any model."""
+    class _HTTP:
+        def stream(self, *a, **k): raise AssertionError("origin must not be called")
+        async def head(self, *a, **k): raise AssertionError("origin must not be called")
+
+    deps._reset(); deps.configure(paths=CachePaths(str(tmp_path)), downloader=None,
+                                  http_client=_HTTP(), repo=_Mirrored("qwen3"))
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
+        r = await c.request(method, path)
+    assert r.status_code == 404
+
+
+async def test_without_a_cache_repo_nothing_is_served(tmp_path):
+    paths = CachePaths(str(tmp_path))
+    d = paths.ollama_dir("gemma3", "4b"); d.mkdir(parents=True)
+    (d / "manifest.json").write_text(json.dumps(_MANIFEST))
+    deps._reset(); deps.configure(paths=paths, downloader=None, http_client=None, repo=None)
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
+        assert (await c.get("/v2/library/gemma3/manifests/4b")).status_code == 404
+
+
+async def test_a_namespaced_model_is_checked_by_its_full_name(tmp_path):
+    seen = []
+
+    class _Repo:
+        async def is_mirrored(self, *, source, model_id):
+            seen.append(model_id); return False
+
+    deps._reset(); deps.configure(paths=CachePaths(str(tmp_path)), repo=_Repo())
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://t") as c:
+        await c.get("/v2/library/gemma3/manifests/4b")
+        await c.get("/v2/acme/tuned/manifests/latest")
+    assert seen == ["gemma3", "acme/tuned"]

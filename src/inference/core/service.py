@@ -12,6 +12,7 @@ from .providers import get_adapter
 from .concurrency_limiter import upstream_concurrency_limiter
 from .validators import (
     check_resolved_host,
+    pinned_request,
     validate_upstream_url,
     sanitize_headers,
     check_response_size,
@@ -116,12 +117,22 @@ class GatewayService:
         return not deployment.get("pool_id")
 
     @staticmethod
-    async def _checked_url(url: str, resolve_names: bool) -> str:
+    async def _checked_url(url: str, resolve_names: bool) -> tuple[str, dict]:
+        """The URL to request, and for a resolved name the pin that holds it
+        to the checked address: {"host": ..., "extensions": ...} or {}."""
         allowed = GatewayService._get_allowed_hosts()
         url = validate_upstream_url(url, allowed)
-        if resolve_names:
-            await check_resolved_host(url, allowed)
-        return url
+        if not resolve_names:
+            return url, {}
+        ip = await check_resolved_host(url, allowed)
+        return pinned_request(url, ip) if ip else (url, {})
+
+    @staticmethod
+    def _apply_pin(headers: Dict, pin: dict) -> tuple[Dict, dict]:
+        """Headers with the pinned Host, and the kwargs left for httpx."""
+        pin = dict(pin)
+        host = pin.pop("host", None)
+        return ({**headers, "Host": host} if host else headers), pin
 
     @staticmethod
     async def stream_upstream(
@@ -140,8 +151,8 @@ class GatewayService:
 
         # Validate URL and headers before making upstream request
         try:
-            full_url = await GatewayService._checked_url(full_url, resolve_names)
-            headers = sanitize_headers(headers)
+            full_url, pin = await GatewayService._checked_url(full_url, resolve_names)
+            headers, pin = GatewayService._apply_pin(sanitize_headers(headers), pin)
         except ValueError as e:
             logger.error(f"Upstream validation failed: {e}")
             yield _upstream_error(error_sink, 500, "Invalid upstream configuration")
@@ -170,7 +181,7 @@ class GatewayService:
             # head-of-line blocking for new requests.
             async with upstream_concurrency_limiter.limit(concurrency_key):
                 request = client.build_request(
-                    "POST", full_url, json=transformed_payload, headers=headers
+                    "POST", full_url, json=transformed_payload, headers=headers, **pin
                 )
                 response = await client.send(request, stream=True)
                 response.raise_for_status()
@@ -225,8 +236,8 @@ class GatewayService:
         JSON-in/JSON-out shape can't carry."""
         full_url = GatewayService._build_full_url(endpoint_url, path)
         try:
-            full_url = await GatewayService._checked_url(full_url, resolve_names)
-            headers = sanitize_headers(headers)
+            full_url, pin = await GatewayService._checked_url(full_url, resolve_names)
+            headers, pin = GatewayService._apply_pin(sanitize_headers(headers), pin)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         if files:
@@ -256,6 +267,7 @@ class GatewayService:
                     data=data,
                     headers=headers,
                     timeout=settings.upstream_http_timeout_seconds,
+                    **pin,
                 )
                 resp.raise_for_status()
             if len(resp.content) > max_bytes:
@@ -304,8 +316,8 @@ class GatewayService:
 
         # Validate URL and headers before making upstream request
         try:
-            full_url = await GatewayService._checked_url(full_url, resolve_names)
-            headers = sanitize_headers(headers)
+            full_url, pin = await GatewayService._checked_url(full_url, resolve_names)
+            headers, pin = GatewayService._apply_pin(sanitize_headers(headers), pin)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -334,6 +346,7 @@ class GatewayService:
                     json=transformed_payload,
                     headers=headers,
                     timeout=request_timeout,
+                    **pin,
                 )
                 resp.raise_for_status()
 

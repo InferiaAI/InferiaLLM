@@ -8,6 +8,7 @@ import asyncio
 import ipaddress
 import logging
 import socket
+from typing import Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -99,19 +100,39 @@ def validate_upstream_url(url: str, allowed_hosts: list[str]) -> str:
     return url
 
 
-async def check_resolved_host(url: str, allowed_hosts: list[str]) -> str:
+async def check_resolved_host(url: str, allowed_hosts: list[str]) -> Optional[str]:
     """The check validate_upstream_url makes, on what the name resolves to.
 
     For user-entered endpoints. An allowed host may be listed by name or by
-    any address it resolves to.
+    any address it resolves to. Returns the address to connect to, or None
+    when there is nothing to pin (an allowed or literal host, or no answer).
     """
     hostname = _hostname(url)
     if hostname in allowed_hosts or _literal_ip(hostname) is not None:
-        return url
-    for ip in await _resolve(hostname):
+        return None
+    addresses = await _resolve(hostname)
+    for ip in addresses:
         if _is_internal(ipaddress.ip_address(ip)) and ip not in allowed_hosts:
             raise ValueError(f"Upstream host '{hostname}' is not allowed")
-    return url
+    return addresses[0] if addresses else None
+
+
+def pinned_request(url: str, ip: str) -> tuple[str, dict]:
+    """*url* aimed at *ip*, and the request kwargs that keep it the same host.
+
+    Connecting to the checked address stops a name that answers one address
+    to the check and another to the client (DNS rebinding). The Host header
+    and TLS server name stay the original host, so routing and certificate
+    checks are unchanged.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname
+    address = f"[{ip}]" if ":" in ip else ip
+    netloc = address if parsed.port is None else f"{address}:{parsed.port}"
+    return parsed._replace(netloc=netloc).geturl(), {
+        "host": parsed.netloc,
+        "extensions": {"sni_hostname": host},
+    }
 
 
 async def _resolve(hostname: str) -> list[str]:

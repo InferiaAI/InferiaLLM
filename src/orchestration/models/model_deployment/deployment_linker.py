@@ -190,7 +190,7 @@ class DeploymentLinker:
         # Transaction committed. Drive load_model OUTSIDE the transaction for
         # the deploys we just bound.
         for deploy in bound:
-            await self._drive_deploy(node_id, deploy, provider=provider)
+            await self._drive_deploy(node_id, deploy, provider=provider, pool_id=pool_id)
 
         # RE-DRIVE orphaned DEPLOYING deploys. A deploy whose load_model was
         # in flight when the control plane restarted (or whose linker task
@@ -218,7 +218,7 @@ class DeploymentLinker:
                 "(load_model never completed; control-plane restart?)",
                 deploy["id"], node_id,
             )
-            await self._drive_deploy(node_id, deploy, provider=provider)
+            await self._drive_deploy(node_id, deploy, provider=provider, pool_id=pool_id)
 
         if bound or orphaned:
             logger.info(
@@ -227,7 +227,7 @@ class DeploymentLinker:
             )
 
     async def _drive_deploy(self, node_id: UUID, deploy: dict,
-                            *, provider: str | None = None) -> None:
+                            *, provider: str | None = None, pool_id=None) -> None:
         """Fire load_model for one already-bound deploy, then promote
         DEPLOYING → RUNNING (and publish the endpoint) on success, or release
         the GPU + mark FAILED on failure. The GPU was allocated at bind time, so
@@ -245,7 +245,7 @@ class DeploymentLinker:
                 spec, recipe=spec["recipe"],
                 artifact_uri=spec["model"]["artifact_uri"],
                 mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
-                provider=provider,
+                provider=provider, pool_id=pool_id,
             )
             result = await self._controller.load_model(
                 node_id=str(node_id), spec=spec,

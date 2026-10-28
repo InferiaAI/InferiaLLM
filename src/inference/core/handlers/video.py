@@ -207,9 +207,10 @@ class VideoHandler:
 
         status_url = f"{endpoint_url.rstrip('/')}/generate/v1/videos/{video_id}"
         try:
-            status_url = await GatewayService._checked_url(
+            status_url, pin = await GatewayService._checked_url(
                 status_url, GatewayService.resolves_names_for(deployment)
             )
+            provider_headers, pin = GatewayService._apply_pin(provider_headers, pin)
         except ValueError as e:
             logger.error(f"Upstream validation failed: {e}")
             raise HTTPException(status_code=502, detail="Invalid upstream configuration")
@@ -218,7 +219,7 @@ class VideoHandler:
 
         try:
             resp = await client.get(
-                status_url, headers=provider_headers, timeout=30.0
+                status_url, headers=provider_headers, timeout=30.0, **pin
             )
             resp.raise_for_status()
             status_data = resp.json()

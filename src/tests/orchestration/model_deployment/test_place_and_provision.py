@@ -744,8 +744,9 @@ async def test_bind_to_ready_warm_path_threads_provider_to_mirror(provider, monk
     captured = {}
 
     async def _spy_mirror(spec, *, recipe, artifact_uri, mirror_base, cache_repo,
-                          provider=None):
+                          provider=None, pool_id=None):
         captured["provider"] = provider
+        captured["pool_id"] = pool_id
         captured["called"] = True
 
     # The warm path imports resolve_and_apply_mirror LOCALLY (inside
@@ -786,6 +787,7 @@ async def test_bind_to_ready_warm_path_threads_provider_to_mirror(provider, monk
 
     assert captured.get("called") is True
     assert captured["provider"] == provider  # exactly the pool's provider
+    assert captured["pool_id"] == pool_id  # signs the engine's HF mirror token
 
 
 async def test_bind_to_ready_warm_path_failed_status_marks_failed(monkeypatch):

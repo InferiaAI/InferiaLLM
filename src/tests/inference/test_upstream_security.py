@@ -348,18 +348,75 @@ class TestNamesAreCheckedByWhatTheyResolveTo:
         with pytest.raises(ValueError, match="not allowed"):
             await self._check("http://x.example.com", [], ["93.184.215.14", "10.0.0.5"])
 
-    async def test_a_public_name_passes(self):
+    async def test_a_public_name_passes_with_the_address_to_use(self):
         url = "https://api.example.com/v1"
-        assert await self._check(url, [], ["93.184.215.14"]) == url
+        assert await self._check(url, [], ["93.184.215.14"]) == "93.184.215.14"
 
-    async def test_allowed_by_name(self):
+    async def test_allowed_by_name_is_not_pinned(self):
         url = "http://ollama.lan:11434/v1"
-        assert await self._check(url, ["ollama.lan"], ["192.168.1.20"]) == url
+        assert await self._check(url, ["ollama.lan"], ["192.168.1.20"]) is None
 
     async def test_allowed_by_address(self):
         """setup.sh lists kind node addresses, which names may resolve to."""
         url = "http://node.kind:30080/v1"
-        assert await self._check(url, ["172.18.0.3"], ["172.18.0.3"]) == url
+        assert await self._check(url, ["172.18.0.3"], ["172.18.0.3"]) == "172.18.0.3"
+
+    async def test_a_name_that_does_not_resolve_is_not_pinned(self):
+        assert await self._check("http://nowhere.example.com", [], []) is None
+
+
+@pytest.mark.asyncio
+class TestPinnedRequest:
+    """A checked name is requested at the checked address (DNS rebinding)."""
+
+    def test_keeps_path_port_and_host(self):
+        from inference.core.validators import pinned_request
+
+        url, pin = pinned_request("https://api.example.com:8443/v1/chat?x=1", "93.184.215.14")
+        assert url == "https://93.184.215.14:8443/v1/chat?x=1"
+        assert pin == {"host": "api.example.com:8443",
+                       "extensions": {"sni_hostname": "api.example.com"}}
+
+    def test_brackets_ipv6(self):
+        from inference.core.validators import pinned_request
+
+        url, pin = pinned_request("http://api.example.com/v1", "2606:2800::1")
+        assert url == "http://[2606:2800::1]/v1"
+        assert pin["host"] == "api.example.com"
+
+    async def test_the_request_goes_to_the_checked_address(self):
+        """A second lookup can not move it: the client never resolves the name."""
+        import httpx
+        from inference.core import validators
+        from inference.core.service import GatewayService
+
+        answers = iter([["93.184.215.14"], ["169.254.169.254"]])
+
+        async def _resolve(hostname):
+            return next(answers)
+
+        seen = {}
+
+        def _handler(request):
+            seen.update(host=request.url.host, header=request.headers["host"],
+                        sni=request.extensions.get("sni_hostname"))
+            return httpx.Response(200, json={})
+
+        with patch.object(validators, "_resolve", _resolve),                 patch.object(GatewayService, "_get_allowed_hosts", return_value=[]):
+            url, pin = await GatewayService._checked_url("https://rebind.example.com/v1", True)
+            headers, kwargs = GatewayService._apply_pin({"authorization": "Bearer k"}, pin)
+            async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as c:
+                await c.post(url, json={}, headers=headers, **kwargs)
+
+        assert seen == {"host": "93.184.215.14", "header": "rebind.example.com",
+                        "sni": "rebind.example.com"}
+
+    async def test_without_resolving_nothing_is_pinned(self):
+        from inference.core.service import GatewayService
+
+        with patch.object(GatewayService, "_get_allowed_hosts", return_value=[]):
+            assert await GatewayService._checked_url("http://api.example.com/v1", False) == (
+                "http://api.example.com/v1", {})
 
 
 def test_the_operators_proxies_are_always_allowed():
@@ -420,7 +477,7 @@ class TestOnlyUserEnteredEndpointsAreResolved:
 
     async def test_a_worker_hostname_still_works(self):
         url = "http://inferia-worker:8080/v1/chat/completions"
-        assert await self._checked(url, {"pool_id": "pool-1"}) == url
+        assert await self._checked(url, {"pool_id": "pool-1"}) == (url, {})
 
     async def test_the_same_name_on_an_external_deployment_is_refused(self):
         with pytest.raises(ValueError, match="not allowed"):

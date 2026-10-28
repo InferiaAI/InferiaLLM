@@ -30,6 +30,21 @@ def _model_id(name: str) -> str:
     return name[len("library/"):] if name.startswith("library/") else name
 
 
+async def _refuse_uncached(name: str) -> None:
+    """404 unless this install chose to cache the model (a deploy or an admin).
+
+    The registry is unauthenticated, so serving any name a caller asks for
+    would let anyone make the control plane download and store it.
+    """
+    r = deps.get("repo")
+    try:
+        ok = r is not None and await r.is_mirrored(source="ollama", model_id=_model_id(name))
+    except Exception:
+        ok = False
+    if not ok:
+        raise HTTPException(404, "not served by this mirror")
+
+
 @router.get("")
 @router.get("/")
 async def root() -> Response:
@@ -39,6 +54,7 @@ async def root() -> Response:
 
 @router.get("/{name:path}/manifests/{ref}")
 async def get_manifest(name: str, ref: str) -> Response:
+    await _refuse_uncached(name)
     paths = deps.get("paths")
     model_id = _model_id(name)
     mpath: Path = paths.ollama_dir(model_id, ref) / "manifest.json"
@@ -80,6 +96,7 @@ async def head_manifest(name: str, ref: str) -> Response:
     with headers only (no body): 200 when the manifest is cached or in-flight,
     otherwise proxy a HEAD to origin and relay its status.
     """
+    await _refuse_uncached(name)
     paths = deps.get("paths")
     model_id = _model_id(name)
     mpath: Path = paths.ollama_dir(model_id, ref) / "manifest.json"
@@ -132,6 +149,7 @@ async def head_blob(name: str, digest: str) -> Response:
     Content-Length + Docker-Content-Digest (no body); on a true miss we proxy a
     HEAD to origin and relay its metadata.
     """
+    await _refuse_uncached(name)
     paths = deps.get("paths")
     model_id = _model_id(name)
     fname = digest.replace(":", "_")
@@ -252,6 +270,7 @@ def _serve_cached_blob(path: Path, request: Request, digest: str) -> Response:
 
 @router.get("/{name:path}/blobs/{digest}")
 async def get_blob(name: str, digest: str, request: Request) -> Response:
+    await _refuse_uncached(name)
     # ollama's blob downloader resolves a "direct URL" by GETting the blob and
     # calling Go's resp.Location() on the response — UNCONDITIONALLY, on both the
     # 307 and 200 branches (registry.ollama.ai 307s to a CDN). Crucially its
