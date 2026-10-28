@@ -8,7 +8,6 @@ import httpx
 from fastapi import BackgroundTasks, HTTPException
 
 from inference.config import settings
-from ..http_client import http_client
 from ..pipeline import Pipeline, RequestContext
 from ..providers import get_adapter
 from ..worker_routing import echo_requested_model, envoy_route_headers, provider_auth
@@ -207,14 +206,12 @@ class VideoHandler:
 
         status_url = f"{endpoint_url.rstrip('/')}/generate/v1/videos/{video_id}"
         try:
-            status_url = await GatewayService._checked_url(
+            status_url, client = await GatewayService._checked_url(
                 status_url, GatewayService.resolves_names_for(deployment)
             )
         except ValueError as e:
             logger.error(f"Upstream validation failed: {e}")
             raise HTTPException(status_code=502, detail="Invalid upstream configuration")
-
-        client = http_client.get_client()
 
         try:
             resp = await client.get(

@@ -32,6 +32,7 @@ from api_gateway.config import settings
 from common.service_ports import orchestration_http_url
 from api_gateway.gateway.http_client import gateway_http_client
 from api_gateway.gateway.rate_limiter import rate_limiter
+from common import mirror_token
 from api_gateway.db.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -770,13 +771,24 @@ async def _streaming_passthrough(method: str, upstream_url: str, request: Reques
 async def proxy_hf_mirror(request: Request, path: str):
     """Stream HuggingFace model artifacts from the orchestration HF mirror.
 
-    Unauthenticated by design — engine containers have no dashboard JWT.
-    Large files are streamed, not buffered, to support range requests.
+    Engine containers have no dashboard JWT. Instead they carry a mirror
+    token for their pool as HF_TOKEN, which huggingface_hub sends as the
+    bearer: the mirror fetches from HuggingFace with the install's own token,
+    so it must not serve whoever asks. Large files are streamed, not
+    buffered, to support range requests.
 
     Path is normalized and confined to the /hf/* prefix to prevent path-
     traversal attacks (e.g. ``%2e%2e`` → ``..``) that would forward the
     internal API key to other orchestration routes.
     """
+    auth = request.headers.get("authorization") or ""
+    bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+    if not mirror_token.verify(bearer, settings.internal_api_key):
+        raise HTTPException(
+            status_code=401,
+            detail="A pool mirror token is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     normalized = posixpath.normpath(f"/hf/{path}")
     if not (normalized == "/hf" or normalized.startswith("/hf/")):
         raise HTTPException(status_code=400, detail="invalid path")

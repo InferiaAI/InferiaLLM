@@ -211,11 +211,16 @@ class TestTheHuggingFaceMirror:
         assert json.loads(info.content)["sha"] == COMMIT
 
 
+# The mirror serves only models this install chose to cache.
+_QWEN2 = {"source": "ollama", "model_id": "qwen2", "revision": "0.5b",
+          "status": "cached"}
+
+
 class TestTheOllamaMirror:
     pytestmark = pytest.mark.asyncio
 
     async def test_a_manifest_miss_404s(self, tmp_path):
-        _configure(tmp_path)
+        _configure(tmp_path, row=_QWEN2)
         async with _client(mirror_ollama.router) as c:
             get = await c.get("/v2/library/qwen2/manifests/0.5b")
             head = await c.head("/v2/library/qwen2/manifests/0.5b")
@@ -224,7 +229,7 @@ class TestTheOllamaMirror:
         assert head.status_code == 404
 
     async def test_a_blob_miss_404s(self, tmp_path):
-        _configure(tmp_path)
+        _configure(tmp_path, row=_QWEN2)
         digest = "sha256:" + "f" * 64
         async with _client(mirror_ollama.router) as c:
             get = await c.get(f"/v2/library/qwen2/blobs/{digest}?download=1")
@@ -234,7 +239,7 @@ class TestTheOllamaMirror:
         assert head.status_code == 404
 
     async def test_an_imported_manifest_is_still_served(self, tmp_path):
-        _configure(tmp_path)
+        _configure(tmp_path, row=_QWEN2)
         d = paths_mod.CachePaths(str(tmp_path)).ollama_dir("qwen2", "0.5b")
         d.mkdir(parents=True)
         (d / "manifest.json").write_text('{"layers": []}')

@@ -4,8 +4,8 @@ Covers:
   (a) GET /v1/models — forwards to v1/models, enforces MODEL_LIST.
   (b) POST /v1/models — enforces MODEL_ADD.
   (c) DELETE /v1/models/<id> — enforces MODEL_DELETE.
-  (d) GET /hf/org/m/resolve/main/f — reaches orchestration unauthenticated
-      (no 401/403), streamed.
+  (d) GET /hf/org/m/resolve/main/f — needs a pool mirror token, not a JWT;
+      streamed.
   (e) GET /v2/org/m/blobs/sha — unauthenticated streaming passthrough
       (via ollama_registry_router, NOT the gateway app).
   (f) 401 returned when MODEL_LIST permission is absent for GET /v1/models.
@@ -59,6 +59,22 @@ async def v2_client():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_INTERNAL_KEY = "k" * 32
+
+
+@pytest.fixture(autouse=True)
+def _internal_key(monkeypatch):
+    """The HF mirror checks pool tokens against the install's internal key."""
+    monkeypatch.setattr("api_gateway.gateway.proxy_routes.settings.internal_api_key", _INTERNAL_KEY)
+
+
+def _mirror_auth(pool_id: str = "pool-1") -> dict:
+    """The bearer an engine container in *pool_id* sends to the HF mirror."""
+    from common import mirror_token
+
+    return {"Authorization": f"Bearer {mirror_token.make(pool_id, _INTERNAL_KEY)}"}
+
 
 def _make_fastapi_response(status_code: int, body: bytes, headers: dict | None = None):
     """Build a real fastapi.responses.Response so the route can return it directly."""
@@ -231,7 +247,7 @@ async def test_get_models_requires_model_list_permission():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_hf_passthrough_unauthenticated_no_auth_error(client):
+async def test_hf_passthrough_with_a_pool_token(client):
     """GET /hf/org/m/resolve/main/f — no JWT needed; returns upstream body streamed."""
     upstream_body = b"fake-model-weights"
 
@@ -244,8 +260,8 @@ async def test_hf_passthrough_unauthenticated_no_auth_error(client):
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
-        # No Authorization header — should still succeed (not 401 or 403).
-        response = await client.get("/hf/org/m/resolve/main/weights.bin")
+        # A pool mirror token, no dashboard JWT.
+        response = await client.get("/hf/org/m/resolve/main/weights.bin", headers=_mirror_auth())
 
     assert response.status_code == 200
     assert response.content == upstream_body
@@ -269,7 +285,7 @@ async def test_hf_passthrough_forwards_range_header(client):
 
         response = await client.get(
             "/hf/org/m/resolve/main/weights.bin",
-            headers={"Range": "bytes=0-12"},
+            headers={"Range": "bytes=0-12", **_mirror_auth()},
         )
 
     assert response.status_code == 206
@@ -306,7 +322,7 @@ async def test_hf_passthrough_forwards_hf_metadata_headers(client):
             )
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
-        response = await client.get("/hf/Qwen/Qwen3-0.6B/resolve/main/config.json")
+        response = await client.get("/hf/Qwen/Qwen3-0.6B/resolve/main/config.json", headers=_mirror_auth())
 
     assert response.status_code == 200
     h = {k.lower(): v for k, v in response.headers.items()}
@@ -315,6 +331,54 @@ async def test_hf_passthrough_forwards_hf_metadata_headers(client):
     assert h.get("x-linked-size") == "1503300328"
     assert h.get("etag") == '"f5c3703b"'
     assert h.get("accept-ranges") == "bytes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Authorization": "Bearer hf_realusertoken"},
+    {"Authorization": "Bearer pool-1:" + "0" * 64},
+    {"Authorization": "pool-1"},
+])
+async def test_hf_mirror_refuses_without_a_pool_token(client, headers):
+    """The mirror fetches with the install's HF token, so it must not serve
+    whoever asks: anyone could pull gated models or fill the cache."""
+    with patch("api_gateway.gateway.proxy_routes.gateway_http_client") as mock_client_mgr:
+        mock_proxy = MagicMock()
+        mock_client_mgr.get_proxy_client.return_value = mock_proxy
+        response = await client.get("/hf/org/m/resolve/main/config.json", headers=headers)
+
+    assert response.status_code == 401
+    mock_proxy.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hf_mirror_refuses_a_token_signed_with_another_key(client):
+    from common import mirror_token
+
+    forged = mirror_token.make("pool-1", "not-this-install's-key")
+    with patch("api_gateway.gateway.proxy_routes.gateway_http_client") as mock_client_mgr:
+        mock_proxy = MagicMock()
+        mock_client_mgr.get_proxy_client.return_value = mock_proxy
+        response = await client.get("/hf/org/m/resolve/main/config.json",
+                                    headers={"Authorization": f"Bearer {forged}"})
+
+    assert response.status_code == 401
+    mock_proxy.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hf_mirror_token_is_not_forwarded(client):
+    """Orchestration gets the internal key, never the engine's bearer."""
+    with patch("api_gateway.gateway.proxy_routes.gateway_http_client") as mock_client_mgr:
+        mock_proxy = MagicMock()
+        mock_proxy.stream = MagicMock(return_value=_make_mock_stream_ctx(200, b"{}"))
+        mock_client_mgr.get_proxy_client.return_value = mock_proxy
+        token = _mirror_auth()["Authorization"]
+        await client.get("/hf/org/m/resolve/main/config.json", headers={"Authorization": token})
+
+    sent = mock_proxy.stream.call_args.kwargs["headers"]
+    assert token not in sent.values()
 
 
 @pytest.mark.asyncio
@@ -373,7 +437,7 @@ async def test_hf_passthrough_upstream_503_propagated(client):
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
-        response = await client.get("/hf/org/m/resolve/main/config.json")
+        response = await client.get("/hf/org/m/resolve/main/config.json", headers=_mirror_auth())
 
     assert response.status_code == 503
 
@@ -388,7 +452,7 @@ async def test_hf_passthrough_network_error_returns_503(client):
         mock_proxy.stream.side_effect = httpx.ConnectError("refused")
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
-        response = await client.get("/hf/org/m/resolve/main/config.json")
+        response = await client.get("/hf/org/m/resolve/main/config.json", headers=_mirror_auth())
 
     assert response.status_code == 503
 
@@ -416,7 +480,7 @@ async def test_hf_path_traversal_percent_encoded_rejected(client):
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
-        response = await client.get("/hf/%2e%2e/v1/nodes")
+        response = await client.get("/hf/%2e%2e/v1/nodes", headers=_mirror_auth())
 
     assert response.status_code == 400
     # Verify the upstream was NOT contacted.
@@ -460,7 +524,7 @@ async def test_hf_normal_path_still_forwards(client):
         )
         mock_client_mgr.get_proxy_client.return_value = mock_proxy
 
-        response = await client.get("/hf/org/m/resolve/main/file.bin")
+        response = await client.get("/hf/org/m/resolve/main/file.bin", headers=_mirror_auth())
 
     assert response.status_code == 200
     assert response.content == upstream_body
@@ -520,7 +584,7 @@ async def test_hf_double_dot_literal_rejected(client):
             "method": "GET",
             "path": "/hf/../v1/nodes",
             "query_string": b"",
-            "headers": [],
+            "headers": [(b"authorization", _mirror_auth()["Authorization"].encode())],
         }
         req = starlette.requests.Request(scope)
 

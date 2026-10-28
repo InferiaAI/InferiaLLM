@@ -39,7 +39,9 @@ def choose_fetch_source(cache_row: dict | None) -> str:
     return "origin"
 
 
-def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
+def apply_mirror_to_spec(
+    spec: dict, *, recipe: str, mirror_base: str, pool_id=None,
+) -> None:
     """Inject mirror coordinates into a load spec (mutates in place).
 
     HF engines: set env HF_ENDPOINT=<base>/hf so huggingface_hub (inside the
@@ -49,7 +51,17 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
     recipe = (recipe or "").lower()
     base = mirror_base.rstrip("/")
     if recipe in _HF_RECIPES:
-        spec.setdefault("env", {})["HF_ENDPOINT"] = base + "/hf"
+        env = spec.setdefault("env", {})
+        env["HF_ENDPOINT"] = base + "/hf"
+        # huggingface_hub sends HF_TOKEN as the bearer to HF_ENDPOINT; the
+        # mirror wants this pool's token. The CP fetches from HF with its own
+        # token, so the engine needs no HF credential of its own here.
+        from orchestration.config import settings
+
+        if pool_id and settings.internal_api_key:
+            from common import mirror_token
+
+            env["HF_TOKEN"] = mirror_token.make(str(pool_id), settings.internal_api_key)
     elif recipe == "ollama":
         parsed = urlparse(base)
         host = parsed.netloc or base.split("://", 1)[-1].split("/", 1)[0]
@@ -102,7 +114,7 @@ async def blocking_uncached_model(
 
 async def resolve_and_apply_mirror(
     spec: dict, *, recipe: str, artifact_uri: str, mirror_base: str, cache_repo,
-    provider: str | None = None,
+    provider: str | None = None, pool_id=None,
 ) -> None:
     """Look up the CP cache row and inject mirror coords iff the CP has/IS-getting
     the model. No-op when mirror_base is blank (dormant), cache_repo is None, or
@@ -129,4 +141,4 @@ async def resolve_and_apply_mirror(
     except Exception:
         row = None  # cache lookup failure -> behave as 'origin' (never block deploy)
     if choose_fetch_source(row) == "mirror":
-        apply_mirror_to_spec(spec, recipe=recipe, mirror_base=mirror_base)
+        apply_mirror_to_spec(spec, recipe=recipe, mirror_base=mirror_base, pool_id=pool_id)

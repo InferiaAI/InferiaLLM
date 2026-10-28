@@ -162,7 +162,7 @@ def _build_metadata(d: dict) -> dict:
     return metadata
 
 
-async def _apply_mirror(metadata: dict, provider) -> None:
+async def _apply_mirror(metadata: dict, provider, pool_id=None) -> None:
     """Point an in-cluster engine at the control plane's model mirror when the
     install has no egress, so the mirror is the only source.
 
@@ -184,6 +184,7 @@ async def _apply_mirror(metadata: dict, provider) -> None:
         mirror_base=settings.model_mirror_base or "",
         cache_repo=_mc_deps.get("repo"),
         provider=provider,
+        pool_id=pool_id,
     )
 
 
@@ -273,7 +274,7 @@ async def provision_direct_node(
     provider_instance_id = None
     try:
         metadata = _build_metadata(d)
-        await _apply_mirror(metadata, provider)
+        await _apply_mirror(metadata, provider, pool_id=pool_row.get("id"))
 
         node_spec = await adapter.provision_node(
             provider_resource_id=pool_row["allowed_gpu_types"][0],

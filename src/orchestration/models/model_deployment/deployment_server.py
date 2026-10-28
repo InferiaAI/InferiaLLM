@@ -1513,7 +1513,7 @@ async def place_and_provision(
                     spec, recipe=spec["recipe"],
                     artifact_uri=spec["model"]["artifact_uri"],
                     mirror_base=_mirror_base, cache_repo=_mc_deps.get("repo"),
-                    provider=pool_row.get("provider"),
+                    provider=pool_row.get("provider"), pool_id=pool_id,
                 )
             except Exception:
                 pass  # mirror is best-effort; never block a warm deploy
