@@ -28,6 +28,7 @@ def mock_user():
     user.id = "user-001"
     user.email = "test@com"
     user.default_org_id = "org-001"
+    user.token_version = 0
     return user
 
 

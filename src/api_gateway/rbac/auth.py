@@ -55,7 +55,8 @@ class AuthService:
             "iat": utcnow_naive(),
             "type": "access",
             "roles": roles,
-            "org_id": org_id
+            "org_id": org_id,
+            "tv": user.token_version or 0,
         }
         
         encoded_jwt = jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
@@ -70,7 +71,8 @@ class AuthService:
             "exp": expire,
             "iat": utcnow_naive(),
             "type": "refresh",
-            "org_id": org_id or user.default_org_id
+            "org_id": org_id or user.default_org_id,
+            "tv": user.token_version or 0,
         }
         
         encoded_jwt = jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
@@ -87,6 +89,7 @@ class AuthService:
                 type=payload.get("type"),
                 roles=payload.get("roles", []),
                 org_id=payload.get("org_id"),
+                tv=payload.get("tv") or 0,
             )
             if expected_type and token_payload.type != expected_type:
                 raise HTTPException(
@@ -226,6 +229,7 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found",
             )
+        self._require_current_session(token_payload, user)
 
         target_org_id = token_payload.org_id
         if target_org_id:
@@ -258,6 +262,24 @@ class AuthService:
 
         return user, fallback_membership.org_id, [fallback_membership.role]
 
+    @staticmethod
+    def _require_current_session(token_payload: TokenPayload, user: DBUser) -> None:
+        """401 for a token issued before the user's sessions were last ended."""
+        if token_payload.tv != (user.token_version or 0):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session has ended; sign in again",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    async def end_sessions(self, db: AsyncSession, user: DBUser) -> None:
+        """End every session the user has: tokens issued before now stop working."""
+        user.token_version = (user.token_version or 0) + 1
+        await db.commit()
+        from api_gateway.rbac.middleware import forget_user
+
+        forget_user(user.id)
+
     async def refresh_access_token(self, refresh_token: str, db: AsyncSession) -> AuthToken:
         """Refresh access token using refresh token."""
         try:
@@ -270,7 +292,8 @@ class AuthService:
             user = result.scalars().first()
             if not user:
                 raise HTTPException(status_code=401, detail="User not found")
-            
+            self._require_current_session(payload, user)
+
             # If org_id in token, verify user still has access.
             # Fallback to default org, then to first available membership.
             target_org_id = org_id or user.default_org_id

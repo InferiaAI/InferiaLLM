@@ -23,6 +23,7 @@ from api_gateway.db.models import (
     UserOrganization,
 )
 from api_gateway.models import OrganizationBasicInfo, SwitchOrgRequest, AuditLogCreate
+from api_gateway.schemas.auth import ChangePasswordRequest, TOTPDisableRequest
 from api_gateway.audit.service import audit_service
 from api_gateway.rbac.local_identity_guard import require_local_identity
 from api_gateway.config import settings
@@ -453,12 +454,58 @@ async def refresh_token(
 
 
 @router.post("/logout")
-async def logout():
+async def logout(request: Request, db: AsyncSession = Depends(get_db)):
+    """End every session the caller has, on every device.
+
+    A session from an external IdP is the IdP's to end; the dashboard sends
+    the user to its logout page.
     """
-    Logout endpoint (placeholder for future session management).
-    In a stateless JWT setup, logout is typically handled client-side by discarding tokens.
-    """
+    user_context = get_current_user_from_request(request)
+    if user_context.local_session:
+        user = (
+            await db.execute(select(DBUser).where(DBUser.id == user_context.user_id))
+        ).scalars().first()
+        if user:
+            await auth_service.end_sessions(db, user)
     return {"message": "Successfully logged out"}
+
+
+@router.post("/password", response_model=AuthToken, dependencies=[Depends(require_local_identity)])
+async def change_password(
+    payload: ChangePasswordRequest, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Change the caller's password and end their other sessions.
+
+    Returns fresh tokens so the session that made the change stays signed in.
+    """
+    user_context = get_current_user_from_request(request)
+    _refuse_if_account_blocked(user_context)
+    user = (
+        await db.execute(select(DBUser).where(DBUser.id == user_context.user_id))
+    ).scalars().first()
+    if not user or not auth_service.verify_password(payload.current_password, user.password_hash):
+        _login_failed(_normalized_email(user_context.email))
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status_code=400, detail="New password must differ from the current one")
+
+    user.password_hash = auth_service.get_password_hash(payload.new_password)
+    await auth_service.end_sessions(db, user)  # commits the new hash too
+
+    await audit_service.log_event(
+        db,
+        AuditLogCreate(
+            user_id=user.id, org_id=user_context.org_id, action="user.password_changed",
+            resource_type="user", resource_id=user.id, status="success",
+        ),
+    )
+    role = user_context.roles[0] if user_context.roles else "member"
+    return AuthToken(
+        access_token=auth_service.create_access_token(user, org_id=user_context.org_id, role=role),
+        refresh_token=auth_service.create_refresh_token(user, org_id=user_context.org_id),
+        token_type="bearer",
+        expires_in=auth_service.access_token_expire_minutes * 60,
+    )
 
 
 @router.get("/organizations")
@@ -608,6 +655,28 @@ async def get_user_permissions(request: Request):
     }
 
 
+def _refuse_while_2fa_on(user) -> None:
+    """Re-enrolling would let a stolen session swap in its own authenticator;
+    turning 2FA off first needs the password and a current code."""
+    if user.totp_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="2FA is already on. Turn it off first (needs your password and a code).",
+        )
+
+
+def _refuse_if_account_blocked(user_context) -> None:
+    """Wrong passwords on /password and /totp/disable count toward the login
+    cap (_login_failed), so a stolen session cannot guess without limit."""
+    wait = login_account_limiter.blocked_for(_normalized_email(user_context.email), "any")
+    if wait:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many attempts. Try again in {wait} seconds.",
+            headers={"Retry-After": str(wait)},
+        )
+
+
 @router.post("/totp/setup", response_model=TOTPSetupResponse, dependencies=[Depends(require_local_identity)])
 async def totp_setup(request: Request, db: AsyncSession = Depends(get_db)):
     """
@@ -637,6 +706,7 @@ async def totp_setup(request: Request, db: AsyncSession = Depends(get_db)):
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    _refuse_while_2fa_on(user)
 
     user.totp_pending_secret = secret
     # user.totp_enabled = False # Keep false until verified
@@ -660,6 +730,7 @@ async def totp_verify(
 
     if not user or not user.totp_pending_secret:
         raise HTTPException(status_code=400, detail="TOTP setup not requested")
+    _refuse_while_2fa_on(user)
 
     totp = pyotp.TOTP(user.totp_pending_secret)
     if not totp.verify(payload.totp_code):
@@ -686,9 +757,13 @@ async def totp_verify(
 
 
 @router.post("/totp/disable", dependencies=[Depends(require_local_identity)])
-async def totp_disable(request: Request, db: AsyncSession = Depends(get_db)):
-    """Disable TOTP."""
+async def totp_disable(
+    payload: TOTPDisableRequest, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Disable TOTP. Needs the password and a current code: a stolen session
+    alone must not be able to remove the second factor."""
     user_context = get_current_user_from_request(request)
+    _refuse_if_account_blocked(user_context)
 
     stmt = select(DBUser).where(DBUser.id == user_context.user_id)
     result = await db.execute(stmt)
@@ -696,6 +771,12 @@ async def totp_disable(request: Request, db: AsyncSession = Depends(get_db)):
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if not auth_service.verify_password(payload.password, user.password_hash):
+        _login_failed(_normalized_email(user_context.email))
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    if not (user.totp_enabled and user.totp_secret and pyotp.TOTP(user.totp_secret).verify(payload.totp_code)):
+        _login_failed(_normalized_email(user_context.email))
+        raise HTTPException(status_code=400, detail="Invalid 2FA code")
 
     user.totp_enabled = False
     user.totp_secret = None

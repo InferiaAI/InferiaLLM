@@ -86,3 +86,46 @@ async def update_user_role(
     await db.commit()
 
     return {"message": "User role updated"}
+
+
+@router.delete("/{user_id}")
+async def remove_member(user_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Remove a user from the caller's organization.
+
+    Access to the org ends at once: every request re-checks membership. The
+    caller must be able to grant the member's role, so no one removes a
+    stronger account than their own.
+    """
+    user_ctx = get_current_user_from_request(request)
+    authz_service.require_permission(user_ctx, PermissionEnum.MEMBER_DELETE)
+    if user_id == user_ctx.user_id:
+        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+
+    user_org = (
+        await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == user_id,
+                UserOrganization.org_id == user_ctx.org_id,
+            )
+        )
+    ).scalars().first()
+    if not user_org:
+        raise HTTPException(status_code=404, detail="User not found in this organization")
+
+    member = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    from api_gateway.config import settings
+
+    superadmin = (settings.superadmin_email or "").strip().lower()
+    if member and superadmin and member.email.strip().lower() == superadmin:
+        authz_service.require_superadmin(user_ctx)
+    await authz_service.require_grantable_role(db, user_ctx, user_org.role)
+
+    await db.delete(user_org)
+    if member and member.default_org_id == user_ctx.org_id:
+        member.default_org_id = None
+    await db.commit()
+
+    from .middleware import forget_user
+
+    forget_user(user_id)
+    return {"message": "Member removed"}

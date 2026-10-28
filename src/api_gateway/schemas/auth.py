@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Literal
 from enum import Enum
 from datetime import datetime
@@ -87,6 +87,18 @@ class TOTPVerifyRequest(BaseModel):
     totp_code: str
 
 
+class TOTPDisableRequest(BaseModel):
+    """Turning 2FA off needs the password and a current code, not just a session."""
+
+    password: str
+    totp_code: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 class TokenPayload(BaseModel):
     """JWT token payload."""
 
@@ -96,6 +108,7 @@ class TokenPayload(BaseModel):
     type: Literal["access", "refresh"]
     roles: List[str] = []
     org_id: Optional[str] = None
+    tv: int = 0  # the user's token_version when issued; older tokens have none
 
 
 class UserContext(BaseModel):

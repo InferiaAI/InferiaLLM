@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import api, { API_GATEWAY_URL } from "@/lib/api";
 import { toast } from "sonner";
-import { authService, type OrganizationBasicInfo } from "@/services/authService";
+import { authService, endServerSession, type OrganizationBasicInfo } from "@/services/authService";
 import {
     getToken,
     setToken,
@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setOrganizations(orgs);
         } catch (error) {
             console.error("Failed to fetch user", error);
-            logout(); // Invalid token
+            clearLocalSession(); // a failed lookup must not end the user's other sessions
         } finally {
             setIsLoading(false);
         }
@@ -124,10 +124,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         toast.success("Welcome back!");
     };
 
-    const logout = () => {
+    // Sign out of this browser only, as when the token turns out to be invalid.
+    const clearLocalSession = () => {
         clearToken(); // also clears refresh token
         setUser(null);
         setOrganizations([]);
+    };
+
+    // The user's choice: ends every session they have on the gateway too.
+    const logout = () => {
+        endServerSession(getToken()); // before clearToken drops the token it needs
+        clearLocalSession();
         toast.info("Logged out");
     };
 

@@ -5,6 +5,7 @@ import { Shield, ShieldCheck, KeyRound } from "lucide-react";
 import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import type { AxiosError } from "axios";
 import { isExternalAuthMode } from "@/lib/authMode";
+import ChangePasswordCard from "./ChangePasswordCard";
 
 interface UserInfo {
   totp_enabled: boolean;
@@ -176,6 +177,9 @@ export default function Security() {
           </div>
         )}
       </div>
+
+      {/* In external-auth mode the IdP owns the password. */}
+      {!isExternalAuthMode() && <ChangePasswordCard />}
 
       {isSetupOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
