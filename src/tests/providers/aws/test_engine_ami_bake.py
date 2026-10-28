@@ -329,3 +329,13 @@ def test_wait_ssm_accumulates_output_across_polls(monkeypatch):
     # Each line must appear exactly once across the 3 polls — no duplication
     # from the 24KB-tail diff logic in _emit_new_output.
     assert emitted == ["pulling vllm", "extracting", "done"]
+
+
+def test_bake_builder_requires_imdsv2(monkeypatch):
+    """The builder holds the SSM role; its keys need an IMDSv2 session token."""
+    ec2, ssm = _FakeEC2(), _FakeSSM("Success")
+    _patch(monkeypatch, ec2, ssm)
+    bake.bake_engine_ami(region="us-east-1", aws_env=AWS_ENV, ssm_instance_profile="inferia-bake-ssm")
+    assert ec2.run_kwargs["MetadataOptions"] == {
+        "HttpEndpoint": "enabled", "HttpTokens": "required", "HttpPutResponseHopLimit": 1,
+    }

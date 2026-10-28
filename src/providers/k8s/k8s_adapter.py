@@ -238,6 +238,54 @@ def _engine_port(metadata: Optional[Dict]) -> int:
     return _recipe_for(md).port
 
 
+def _namespace() -> str:
+    """Where engine workloads run: the operator's K8S_NAMESPACE, never the request's."""
+    return os.environ.get("K8S_NAMESPACE") or "default"
+
+
+# The engine images the dashboard offers, any tag. Anything else needs the
+# operator's K8S_ALLOWED_IMAGES.
+_PLATFORM_REPOSITORIES = frozenset({
+    "vllm/vllm-openai", "vllm/vllm-omni", "ollama/ollama", "michaelf34/infinity",
+    "ghcr.io/huggingface/text-embeddings-inference", "inferiaai/inferiadiffusion",
+    "pytorch/pytorch",
+})
+
+
+def _repository(image: str) -> str:
+    """*image* without tag or digest, with Docker Hub's implicit prefixes
+    dropped: ollama/ollama and docker.io/ollama/ollama are the same image."""
+    name = image.split("@", 1)[0]
+    head, _, last = name.rpartition("/")
+    if ":" in last:  # a tag; a registry port sits in head
+        last = last.split(":", 1)[0]
+    name = f"{head}/{last}" if head else last
+    for implicit in ("docker.io/", "index.docker.io/", "library/"):
+        if name.startswith(implicit):
+            name = name[len(implicit):]
+    return name
+
+
+def _check_image(image: str, recipe_image: Optional[str]) -> None:
+    """A deployment may run its engine's recipe image, a platform engine image,
+    or one the operator lists in K8S_ALLOWED_IMAGES: an exact image, a
+    repository (any tag), or a prefix ending in "/" (a registry or org)."""
+    repository = _repository(image)
+    if image == recipe_image or repository in _PLATFORM_REPOSITORIES:
+        return
+    for entry in (e.strip() for e in os.environ.get("K8S_ALLOWED_IMAGES", "").split(",")):
+        if not entry:
+            continue
+        if entry.endswith("/") and image.startswith(entry):
+            return
+        if entry == image or _repository(entry) == repository:
+            return
+    raise ValueError(
+        f"image {image!r} is not allowed on this cluster; the operator can add it "
+        f"to K8S_ALLOWED_IMAGES"
+    )
+
+
 def _recipe_for(metadata: Optional[Dict]) -> recipes.ResolvedRecipe:
     md = metadata or {}
     return recipes.resolve(
@@ -380,7 +428,12 @@ class KubernetesAdapter(ProviderAdapter):
         Provision a compute node by creating a Kubernetes pod.
         """
         pod_name = f"inferia-worker-{uuid.uuid4().hex[:6]}"
-        namespace = (metadata or {}).get("namespace", "default")
+        namespace = _namespace()
+        asked = (metadata or {}).get("namespace")
+        if asked and str(asked) != namespace:
+            raise ValueError(
+                f"namespace {asked!r} is not allowed; deployments run in {namespace!r}"
+            )
         # Kubernetes "command" REPLACES the image entrypoint, so "cmd" maps to
         # args instead: ollama/ollama is ENTRYPOINT /bin/ollama + CMD ["serve"],
         # and passing ["serve"] as command execs a binary named "serve".
@@ -395,7 +448,10 @@ class KubernetesAdapter(ProviderAdapter):
         # Extract resource requirements from metadata
         gpu_allocated = (metadata or {}).get("gpu_allocated", 0)
         recipe = _recipe_for(metadata)
-        image = (metadata or {}).get("image") or recipe.image or "busybox"
+        image = (metadata or {}).get("image")
+        if image:
+            _check_image(str(image), recipe.image)
+        image = image or recipe.image or "busybox"
         ram_gb_allocated = (
             (metadata or {}).get("ram_gb_allocated") or recipe.memory_gb or 1
         )
@@ -509,7 +565,11 @@ class KubernetesAdapter(ProviderAdapter):
                 ),
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(labels=labels),
-                    spec=client.V1PodSpec(containers=[container]),
+                    # Engines never call the Kubernetes API, so they get no token for it.
+                    spec=client.V1PodSpec(
+                        containers=[container],
+                        automount_service_account_token=False,
+                    ),
                 ),
                 volume_claim_templates=claim_templates,
                 # The default waits for each ordinal in turn, which here
@@ -694,7 +754,7 @@ class KubernetesAdapter(ProviderAdapter):
         capabilities = self.get_capabilities()
         start = time.time()
         poll_interval = capabilities.polling_interval_seconds
-        namespace = "default"
+        namespace = _namespace()
         pulling_seconds = 0.0
         last_poll = start
 
@@ -785,7 +845,7 @@ class KubernetesAdapter(ProviderAdapter):
         All are removed even if one is already gone, so a partially created
         node leaves nothing behind.
         """
-        namespace = "default"
+        namespace = _namespace()
         try:
             # Before the workload: KEDA writes to a StatefulSet it still owns.
             await self._delete_scaled_object(provider_instance_id, namespace)
@@ -822,7 +882,7 @@ class KubernetesAdapter(ProviderAdapter):
         provider_instance_id names the StatefulSet, not a pod, so the pod is
         resolved through its label.
         """
-        namespace = "default"
+        namespace = _namespace()
         try:
             pod_name = await self._pod_name_for(provider_instance_id, namespace)
             if not pod_name:

@@ -62,8 +62,9 @@ export default function AddWorkerModal({ poolId, poolName, onClose }: Props) {
             <div>
               <h3 className="text-lg font-semibold">Add worker to pool</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Generates a bootstrap token that a fresh inferia-worker host
-                exchanges for a long-lived agent JWT on first start.
+                Generates a single-use bootstrap token that one fresh
+                inferia-worker host exchanges for a long-lived agent JWT on
+                first start.
                 {poolName && (
                   <>
                     {" "}Target pool: <span className="font-mono">{poolName}</span>
@@ -168,8 +169,8 @@ export default function AddWorkerModal({ poolId, poolName, onClose }: Props) {
             </div>
 
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
-              Treat the bootstrap token as a secret. It grants the holder the
-              ability to register a worker into this pool until it expires.
+              Treat the bootstrap token as a secret. It lets the holder register
+              one worker into this pool, once, until it expires.
               Anyone with the resulting worker JWT can serve inference on
               behalf of this pool.
             </div>

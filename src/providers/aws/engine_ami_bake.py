@@ -192,6 +192,12 @@ def bake_engine_ami(
                     {"Key": _BUILDER_TAG, "Value": "true"},
                 ],
             }],
+            # IMDSv2 only, as on worker instances: the builder holds the SSM role.
+            MetadataOptions={
+                "HttpEndpoint": "enabled",
+                "HttpTokens": "required",
+                "HttpPutResponseHopLimit": 1,
+            },
         )
         instance_id = run["Instances"][0]["InstanceId"]
         logger.info("engine_ami_bake: builder %s launching in %s", instance_id, region)

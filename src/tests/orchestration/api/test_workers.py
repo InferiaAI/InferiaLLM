@@ -97,6 +97,34 @@ class FakeInventory:
         self.heartbeats.append({"node_id": node_id, "used": used, "loaded_models": loaded_models})
 
 
+class _TokenStore:
+    """In-memory stand-in for worker_bootstrap_tokens: each token works once."""
+
+    def __init__(self):
+        self.unused: dict[str, str] = {}
+
+    def mint(self, pool_id: str = POOL_ID) -> str:
+        token = f"boot-{len(self.unused)}-{pool_id[:8]}"
+        self.unused[token] = pool_id
+        return token
+
+    async def consume(self, conn, *, token):
+        pool_id = self.unused.pop(token, None)
+        if pool_id is None:
+            raise InvalidBootstrapToken("unknown, already consumed, or expired")
+        return BootstrapClaim(
+            bootstrap_id=UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            pool_id=UUID(pool_id), org_id="org-1",
+        )
+
+
+@pytest.fixture(autouse=True)
+def tokens(monkeypatch):
+    store = _TokenStore()
+    monkeypatch.setattr(workers, "_consume_bootstrap_token", store.consume)
+    return store
+
+
 @pytest.fixture
 def app_and_deps():
     app = FastAPI()
@@ -108,9 +136,10 @@ def app_and_deps():
     return app, auth, registry, inventory
 
 
-def test_register_happy_path(app_and_deps):
+def test_register_happy_path(app_and_deps, tokens):
+    """The Go client sends the token as the bearer too; that alone is enough."""
     app, auth, _registry, inventory = app_and_deps
-    token = auth.mint_bootstrap_token(pool_id=POOL_ID)
+    token = tokens.mint()
     client = TestClient(app)
     r = client.post(
         "/v1/workers/register",
@@ -165,9 +194,9 @@ def test_register_user_token_rejected(app_and_deps):
     assert r.status_code == 401
 
 
-def test_register_pool_mismatch(app_and_deps):
+def test_register_pool_mismatch(app_and_deps, tokens):
     app, auth, _reg, _inv = app_and_deps
-    boot = auth.mint_bootstrap_token(pool_id=POOL_ID)
+    boot = tokens.mint()
     client = TestClient(app)
     r = client.post(
         "/v1/workers/register",
@@ -177,13 +206,14 @@ def test_register_pool_mismatch(app_and_deps):
         },
         headers={"Authorization": f"Bearer {boot}"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 401
+    assert "pool_scope_violation" in r.text
 
 
-def test_register_duplicate_node_kind_conflict(app_and_deps):
+def test_register_duplicate_node_kind_conflict(app_and_deps, tokens):
     app, auth, _reg, inventory = app_and_deps
     inventory.duplicate_kind = True
-    boot = auth.mint_bootstrap_token(pool_id=POOL_ID)
+    boot = tokens.mint()
     client = TestClient(app)
     r = client.post(
         "/v1/workers/register",
@@ -193,24 +223,57 @@ def test_register_duplicate_node_kind_conflict(app_and_deps):
     assert r.status_code == 409
 
 
-def test_register_idempotent_reissues_token(app_and_deps):
-    """Calling /register twice for the same (pool, node_name) yields the same
-    node_id (re-registration after token loss path)."""
+def test_register_idempotent_reissues_token(app_and_deps, tokens):
+    """Re-registering the same (pool, node_name) with a fresh token yields the
+    same node_id (re-registration after token loss path)."""
     app, auth, _reg, _inv = app_and_deps
-    boot = auth.mint_bootstrap_token(pool_id=POOL_ID)
     client = TestClient(app)
     r1 = client.post(
         "/v1/workers/register",
         json={"node_name": "n", "pool_id": POOL_ID, "advertise_url": "http://x"},
-        headers={"Authorization": f"Bearer {boot}"},
+        headers={"Authorization": f"Bearer {tokens.mint()}"},
     )
     r2 = client.post(
         "/v1/workers/register",
         json={"node_name": "n", "pool_id": POOL_ID, "advertise_url": "http://x"},
-        headers={"Authorization": f"Bearer {boot}"},
+        headers={"Authorization": f"Bearer {tokens.mint()}"},
     )
     assert r1.status_code == 200 and r2.status_code == 200
     assert r1.json()["node_id"] == r2.json()["node_id"]
+
+
+@pytest.mark.parametrize("second_name", ["n", "another-node"])
+def test_a_bootstrap_token_registers_only_once(app_and_deps, tokens, second_name):
+    """A leaked or replayed token must not register a new worker, nor take
+    over the name of the worker that used it."""
+    app, auth, _reg, inventory = app_and_deps
+    client = TestClient(app)
+    boot = tokens.mint()
+    body = {"pool_id": POOL_ID, "advertise_url": "http://x", "bootstrap_token": boot}
+    first = client.post("/v1/workers/register", json={**body, "node_name": "n"},
+                        headers={"Authorization": f"Bearer {boot}"})
+    again = client.post("/v1/workers/register", json={**body, "node_name": second_name},
+                        headers={"Authorization": f"Bearer {boot}"})
+    assert first.status_code == 200
+    assert again.status_code == 401
+    assert len(inventory.nodes) == 1
+
+
+def test_a_stateless_bootstrap_jwt_is_not_accepted(app_and_deps):
+    """Tokens minted before single-use tokens were JWTs; they no longer register."""
+    from jose import jwt as _jwt
+    import time as _time
+
+    app, _auth, _reg, inventory = app_and_deps
+    old = _jwt.encode({"scope": "worker:bootstrap", "pool_id": POOL_ID,
+                       "exp": int(_time.time()) + 3600}, SECRET, algorithm="HS256")
+    r = TestClient(app).post(
+        "/v1/workers/register",
+        json={"node_name": "n", "pool_id": POOL_ID, "advertise_url": "http://x"},
+        headers={"Authorization": f"Bearer {old}"},
+    )
+    assert r.status_code == 401
+    assert inventory.nodes == {}
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +445,6 @@ def test_register_oversized_fields_rejected(app_and_deps):
     app, auth, _reg, _inv = app_and_deps
     client = TestClient(app)
 
-    boot = auth.mint_bootstrap_token(pool_id=POOL_ID)
     r = client.post(
         "/v1/workers/register",
         json={
@@ -393,7 +455,6 @@ def test_register_oversized_fields_rejected(app_and_deps):
             "bootstrap_token": "some-token",
             "runtime_env": "x" * 65,
         },
-        headers={"Authorization": f"Bearer {boot}"},
     )
     assert r.status_code == 422, r.text
 

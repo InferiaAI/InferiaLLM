@@ -1,16 +1,16 @@
 """
 JWT minting + verification for the worker control plane.
 
-Two token kinds are issued, both signed with the shared ``JWT_SECRET_KEY``:
+* **Bootstrap token** — a random single-use token stored hashed in
+  ``worker_bootstrap_tokens`` (helpers at the bottom of this module). The
+  operator pastes it into a fresh worker's env; ``/v1/workers/register``
+  consumes it.
 
-* **Bootstrap token** — scope=``worker:bootstrap``, default TTL 24h. Operator
-  pastes this into a fresh worker's compose env. Worker uses it once to call
-  ``/v1/workers/register``.
-
-* **Worker token** — kind=``worker``, default TTL 30d. Returned by ``/register``
-  and presented on every subsequent request (WS upgrade, etc.). Distinguished
-  from user tokens by the ``kind`` claim so the existing user-auth middleware
-  never accepts it, and vice versa.
+* **Worker token** — a JWT signed with the shared ``JWT_SECRET_KEY``,
+  kind=``worker``, default TTL 30d. Returned by ``/register`` and presented on
+  every subsequent request (WS upgrade, etc.). Distinguished from user tokens
+  by the ``kind`` claim so the existing user-auth middleware never accepts it,
+  and vice versa.
 """
 
 from __future__ import annotations
@@ -29,20 +29,12 @@ _SUPPORTED_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
 _MIN_SECRET_LEN = 32
 
 # Default TTLs.
-_DEFAULT_BOOTSTRAP_TTL = 24 * 3600  # 24h
 _DEFAULT_WORKER_TTL = 30 * 24 * 3600  # 30d
 
 
 class InvalidTokenError(Exception):
     """Raised when a token is missing required claims, has expired, or fails
     signature verification."""
-
-
-@dataclass(frozen=True)
-class BootstrapClaims:
-    pool_id: str
-    scope: str  # always "worker:bootstrap"
-    exp: int    # unix seconds
 
 
 @dataclass(frozen=True)
@@ -54,7 +46,7 @@ class WorkerClaims:
 
 
 class WorkerAuth:
-    """Issues + verifies bootstrap and worker tokens."""
+    """Issues + verifies worker tokens."""
 
     def __init__(self, secret_key: str, algorithm: str = "HS256"):
         if len(secret_key) < _MIN_SECRET_LEN:
@@ -70,21 +62,6 @@ class WorkerAuth:
         self.algorithm = algorithm
 
     # --- mint ---------------------------------------------------------------
-
-    def mint_bootstrap_token(
-        self,
-        *,
-        pool_id: str,
-        ttl_seconds: int | None = None,
-    ) -> str:
-        ttl = min(ttl_seconds or _DEFAULT_BOOTSTRAP_TTL, _DEFAULT_BOOTSTRAP_TTL)
-        payload = {
-            "scope": "worker:bootstrap",
-            "pool_id": pool_id,
-            "iat": int(time.time()),
-            "exp": int(time.time()) + ttl,
-        }
-        return jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
 
     def mint_worker_token(
         self,
@@ -104,19 +81,6 @@ class WorkerAuth:
         return jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
 
     # --- verify -------------------------------------------------------------
-
-    def verify_bootstrap_token(self, token: str) -> BootstrapClaims:
-        payload = self._decode(token)
-        if payload.get("scope") != "worker:bootstrap":
-            raise InvalidTokenError("not a worker:bootstrap token")
-        pool_id = payload.get("pool_id")
-        if not pool_id:
-            raise InvalidTokenError("missing pool_id claim")
-        return BootstrapClaims(
-            pool_id=pool_id,
-            scope="worker:bootstrap",
-            exp=int(payload.get("exp", 0)),
-        )
 
     def verify_worker_token(self, token: str) -> WorkerClaims:
         payload = self._decode(token)
@@ -148,7 +112,6 @@ class WorkerAuth:
 
 __all__ = [
     "WorkerAuth",
-    "BootstrapClaims",
     "WorkerClaims",
     "InvalidTokenError",
     # DB-backed bootstrap token helpers

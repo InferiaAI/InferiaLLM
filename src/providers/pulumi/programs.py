@@ -72,9 +72,14 @@ def build_ec2_program(
     root_volume_gb: int,
     user_data: str,
     use_spot: bool = False,
+    ssh_ingress: bool = False,
 ) -> Callable[[], None]:
     """Return a Pulumi program that defines exactly one
-    aws.ec2.Instance for the given pool."""
+    aws.ec2.Instance for the given pool.
+
+    ``ssh_ingress`` opens port 22 on the security group this creates; set it
+    only when operator SSH keys are installed on the instance.
+    """
 
     def _program() -> None:
         import pulumi
@@ -90,6 +95,13 @@ def build_ec2_program(
             ami=ami_id,
             user_data=user_data,
             root_block_device=root_bd,
+            # IMDSv2 only, one hop: the worker (host network) can read the
+            # metadata, engine containers on a bridge can't take the role's keys.
+            metadata_options=aws.ec2.InstanceMetadataOptionsArgs(
+                http_endpoint="enabled",
+                http_tokens="required",
+                http_put_response_hop_limit=1,
+            ),
             tags=_instance_tags(
                 name=f"inferia-pool-{pool_id}",
                 pool_id=pool_id,
@@ -110,27 +122,29 @@ def build_ec2_program(
             # "upstream connect failed: timed out during opening handshake".
             #
             # 8080 is the worker's control port (see WORKER_ADVERTISE_URL in
-            # bootstrap_builder). 22 stays closed by default — operators who
-            # want SSH access add their own SG via providers config.
+            # bootstrap_builder); every route on it needs the pool's inference
+            # token. 22 opens only when operator SSH keys are installed.
+            ingress = [
+                aws.ec2.SecurityGroupIngressArgs(
+                    protocol="tcp",
+                    from_port=8080,
+                    to_port=8080,
+                    cidr_blocks=["0.0.0.0/0"],
+                    description="control plane WS reach-back",
+                ),
+            ]
+            if ssh_ingress:
+                ingress.append(aws.ec2.SecurityGroupIngressArgs(
+                    protocol="tcp",
+                    from_port=22,
+                    to_port=22,
+                    cidr_blocks=["0.0.0.0/0"],
+                    description="operator SSH access (ubuntu + root via key)",
+                ))
             sg = aws.ec2.SecurityGroup(
                 f"inferia-worker-sg-{pool_id}",
                 description="Inferia worker - control-plane reach-back",
-                ingress=[
-                    aws.ec2.SecurityGroupIngressArgs(
-                        protocol="tcp",
-                        from_port=8080,
-                        to_port=8080,
-                        cidr_blocks=["0.0.0.0/0"],
-                        description="control plane WS reach-back",
-                    ),
-                    aws.ec2.SecurityGroupIngressArgs(
-                        protocol="tcp",
-                        from_port=22,
-                        to_port=22,
-                        cidr_blocks=["0.0.0.0/0"],
-                        description="operator SSH access (ubuntu + root via key)",
-                    ),
-                ],
+                ingress=ingress,
                 egress=[
                     aws.ec2.SecurityGroupEgressArgs(
                         protocol="-1",
@@ -350,6 +364,7 @@ def build_program(
             ),
             user_data=str(spec.get("user_data") or ""),
             use_spot=bool(spec.get("use_spot") or False),
+            ssh_ingress=bool(spec.get("ssh_ingress") or False),
         )
     if provider == "gcp":
         return build_gce_program(

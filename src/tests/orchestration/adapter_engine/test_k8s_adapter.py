@@ -1368,6 +1368,7 @@ async def test_vllm_max_model_len_is_passed_only_when_set(monkeypatch):
 @pytest.mark.asyncio
 async def test_a_deployment_image_wins_over_the_recipe(monkeypatch):
     monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    monkeypatch.setenv("K8S_ALLOWED_IMAGES", "registry.local/vllm")
     a = _adapter()
     a.core.read_namespaced_service.return_value = _service(port=8000)
 
@@ -1558,3 +1559,100 @@ async def test_an_engine_without_a_memory_floor_keeps_the_old_default(monkeypatc
 
     assert _container_of(a).resources.limits["memory"] == "1Gi"
     assert isinstance(spec["ram_gb_total"], int)
+
+
+# ---------------------------------------------------------------------------
+# What a deployment may choose: image, namespace, API access
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("image", [
+    "registry.local/vllm:pinned", "attacker.example/miner:latest", "ollama/ollama-evil:latest",
+    "docker.io/library/../ollama/ollama:latest",
+])
+async def test_an_image_the_operator_did_not_allow_is_refused(monkeypatch, image):
+    monkeypatch.delenv("K8S_ALLOWED_IMAGES", raising=False)
+    a = _adapter()
+    with pytest.raises(ValueError, match="K8S_ALLOWED_IMAGES"):
+        await a.provision_node(provider_resource_id="node-1", pool_id="p1",
+                               metadata=_vllm_metadata(image=image))
+    a.apps.create_namespaced_stateful_set.assert_not_called()
+    a.core.create_namespaced_service.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("image", [
+    # What the dashboard sends for each engine, with or without Docker Hub's prefix.
+    "docker.io/vllm/vllm-openai:v0.22.1", "ollama/ollama:latest", "michaelf34/infinity:latest",
+    "ghcr.io/huggingface/text-embeddings-inference:latest",
+    "docker.io/inferiaai/inferiadiffusion:latest", "docker.io/vllm/vllm-omni:v0.23.0",
+    "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime",
+])
+async def test_platform_engine_images_need_no_allowlist(monkeypatch, image):
+    monkeypatch.delenv("K8S_ALLOWED_IMAGES", raising=False)
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1",
+                           metadata=_vllm_metadata(image=image))
+    assert _container_of(a).image == image
+
+
+@pytest.mark.parametrize("allowed,image,ok", [
+    ("registry.local/", "registry.local/team/engine:1", True),
+    ("registry.local/", "registry.local.evil/team/engine:1", False),
+    ("registry.local:5000/team/engine", "registry.local:5000/team/engine:2", True),
+    ("registry.local:5000/team/engine", "registry.local:5000/team/engine-x:2", False),
+    ("registry.local/team/engine:1", "registry.local/team/engine:1", True),
+    ("ghcr.io/acme/vllm, registry.local/", "ghcr.io/acme/vllm@sha256:abc", True),
+])
+def test_allowlist_entries(monkeypatch, allowed, image, ok):
+    monkeypatch.setenv("K8S_ALLOWED_IMAGES", allowed)
+    if ok:
+        k8s_adapter_module._check_image(image, None)
+    else:
+        with pytest.raises(ValueError):
+            k8s_adapter_module._check_image(image, None)
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_can_not_pick_another_namespace(monkeypatch):
+    monkeypatch.delenv("K8S_NAMESPACE", raising=False)
+    a = _adapter()
+    with pytest.raises(ValueError, match="namespace 'kube-system' is not allowed"):
+        await a.provision_node(provider_resource_id="node-1", pool_id="p1",
+                               metadata=_vllm_metadata(namespace="kube-system"))
+    a.apps.create_namespaced_stateful_set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_operators_namespace_is_used_throughout(monkeypatch):
+    """Create, readiness, logs and teardown all use K8S_NAMESPACE; teardown in
+    a different namespace than create would leak the workload."""
+    monkeypatch.setenv("K8S_NAMESPACE", "inferia-engines")
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+    md = _vllm_metadata()
+    md.pop("namespace")
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=md)
+    assert a.apps.create_namespaced_stateful_set.call_args.kwargs["namespace"] == "inferia-engines"
+    assert a.core.create_namespaced_service.call_args.kwargs["namespace"] == "inferia-engines"
+
+    dep = MagicMock()
+    dep.status.ready_replicas = 1
+    a.apps.read_namespaced_stateful_set.return_value = dep
+    await a.wait_for_ready(provider_instance_id="dep-1", timeout=5)
+    assert a.apps.read_namespaced_stateful_set.call_args.kwargs["namespace"] == "inferia-engines"
+
+    await a.deprovision_node(provider_instance_id="dep-1")
+    deleted = a.apps.delete_namespaced_stateful_set.call_args
+    assert "inferia-engines" in (*deleted.args, *deleted.kwargs.values())
+
+
+@pytest.mark.asyncio
+async def test_engine_pods_get_no_service_account_token(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=_vllm_metadata())
+    assert _workload_of(a).spec.template.spec.automount_service_account_token is False

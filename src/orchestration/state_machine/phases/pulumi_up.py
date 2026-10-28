@@ -183,4 +183,7 @@ class PulumiUpHandler:
             gpu_count=int(spec.get("gpu_count") or 1),
             ssh_authorized_keys=ssh_authorized_keys,
         )
-        return {**spec, "user_data": user_data, "bootstrap_id": str(bootstrap_id)}
+        return {
+            **spec, "user_data": user_data, "bootstrap_id": str(bootstrap_id),
+            "ssh_ingress": bool(ssh_authorized_keys.strip()),
+        }
