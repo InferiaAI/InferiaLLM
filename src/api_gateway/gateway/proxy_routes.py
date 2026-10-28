@@ -8,6 +8,8 @@ import logging
 import asyncio
 import posixpath
 import websockets
+from urllib.parse import urlencode
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -49,6 +51,34 @@ ollama_registry_router = APIRouter(tags=["Ollama OCI Mirror"])
 
 ORCHESTRATION_URL = settings.orchestration_url or orchestration_http_url()
 LLMFIT_URL = "http://llmfit:8787"
+
+# Client headers passed upstream. Anything else is dropped, so a caller
+# cannot supply the identity headers (X-Organization-ID, X-User-ID) we set.
+_FORWARD_HEADERS = frozenset(
+    {
+        "accept", "accept-language", "content-type", "user-agent",
+        "x-request-id",
+        # Orchestration builds the worker install URL from these.
+        "host", "x-forwarded-host", "x-forwarded-proto",
+    }
+)
+
+
+def _client_headers(request: Request, *, keep_authorization: bool = False) -> dict:
+    """The allowlisted subset of the caller's headers."""
+    allowed = _FORWARD_HEADERS | ({"authorization"} if keep_authorization else set())
+    return {k: v for k, v in request.headers.items() if k.lower() in allowed}
+
+
+def _confined(path: str) -> str:
+    """``path`` unchanged, or 400 if it has a dot segment.
+
+    The ASGI server decodes %2e%2e to "..", and httpx collapses it, so an
+    unchecked path could leave its route's prefix.
+    """
+    if any(seg in (".", "..") for seg in path.split("/")):
+        raise HTTPException(status_code=400, detail="invalid path")
+    return path
 
 
 def _require_proxy_permission(
@@ -130,14 +160,9 @@ async def proxy_request(
     except Exception as e:
         logger.warning("Rate limit check unavailable, allowing request: %s", e)
 
-    url = f"{target_url}/{path}"
+    url = f"{target_url}/{_confined(path)}"
 
-    # Build headers
-    headers = dict(request.headers)
-    # Remove auth header since we're using internal trust
-    headers.pop("Authorization", None)
-    # Remove internal API key from being forwarded to prevent exposure in downstream logs
-    headers.pop("X-Internal-API-Key", None)
+    headers = _client_headers(request)
 
     # Pass internal API key for service-to-service authentication
     headers["X-Internal-API-Key"] = settings.internal_api_key
@@ -414,17 +439,20 @@ async def proxy_provider_resources(
     )
 
 
-@router.api_route("/inventory/{path:path}", methods=["GET", "POST"])
+@router.api_route("/inventory/providers", methods=["GET"])
 async def proxy_inventory(
     request: Request,
-    path: str,
     user_context: UserContext = Depends(get_current_user_from_request),
 ):
-    """Proxy inventory operations to orchestration service."""
-    _require_proxy_permission(user_context, request.method, f"inventory/{path}")
+    """Proxy the provider capability list to orchestration.
+
+    The rest of /inventory (heartbeat, node lists) serves the DePIN sidecar,
+    which calls orchestration directly, and is not scoped to an org.
+    """
+    _require_proxy_permission(user_context, request.method, "inventory/providers")
     return await proxy_request(
         method=request.method,
-        path=f"inventory/{path}",
+        path="inventory/providers",
         request=request,
         target_url=ORCHESTRATION_URL,
         user_context=user_context,
@@ -459,9 +487,8 @@ async def _proxy_unauthenticated(
     caller carries its own bootstrap JWT (verified by orchestration), not
     a user JWT.
     """
-    url = f"{ORCHESTRATION_URL}/{path}"
-    headers = dict(request.headers)
-    headers.pop("X-Internal-API-Key", None)
+    url = f"{ORCHESTRATION_URL}/{_confined(path)}"
+    headers = _client_headers(request, keep_authorization=True)
     # Still set the internal API key so orchestration's InternalAuthMiddleware
     # accepts the request — the bootstrap JWT is the additional auth layer
     # that orchestration's /v1/workers/register handler enforces.
@@ -587,6 +614,7 @@ async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     try:
+        node_id = str(UUID(node_id))  # also keeps ? and # out of the upstream URL
         user_context = await _get_ws_user_context(token)
         authz_service.require_permission(user_context, permission)
     except Exception as e:
@@ -599,10 +627,10 @@ async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath
     # Carry the upstream query string forward (deployment=… / container=…)
     # but drop the access_token — orchestration uses the internal API key,
     # and we don't want the user JWT travelling further than necessary.
-    upstream_qs = "&".join(
-        f"{k}={v}" for k, v in websocket.query_params.items()
+    upstream_qs = urlencode([
+        (k, v) for k, v in websocket.query_params.multi_items()
         if k not in ("access_token", "token")
-    )
+    ])
     upstream_qs = f"?{upstream_qs}" if upstream_qs else ""
 
     upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace("https://", "wss://")
@@ -887,10 +915,8 @@ async def proxy_llmfit(
 
 async def _proxy_llmfit_unauthenticated(request: Request, path: str) -> Response:
     """Forward a request to the llmfit sidecar without user auth."""
-    url = f"{LLMFIT_URL}/{path}"
-    headers = dict(request.headers)
-    headers.pop("Authorization", None)
-    headers.pop("X-Internal-API-Key", None)
+    url = f"{LLMFIT_URL}/{_confined(path)}"
+    headers = _client_headers(request)
     headers["X-Internal-API-Key"] = settings.internal_api_key
     headers["X-Gateway-Request"] = "true"
     content = await request.body()

@@ -1755,6 +1755,11 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=status, content=body)
 
+    # The platform sets a pool deployment's endpoint (the worker, the k8s
+    # service). Inference checks it less strictly than a user-typed one.
+    if req.endpoint:
+        raise _pool_endpoint_refused()
+
     # 1. Validate pool
     if not req.pool_id:
         raise HTTPException(status_code=422, detail="pool_id is required")
@@ -2135,11 +2140,42 @@ async def get_deployment_status(deployment_id: str, request: Request):
     }
 
 
+def _pool_endpoint_refused() -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail="endpoint can only be set on external deployments; "
+        "the platform sets it for deployments in a pool",
+    )
+
+
+async def _in_a_pool(request, deployment_id: str) -> bool:
+    """Whether the deployment sits in a pool. True when it cannot be read, so
+    an endpoint change is refused rather than let through unchecked."""
+    from uuid import UUID as _UUID
+
+    from orchestration.repositories.model_deployment_repo import (
+        ModelDeploymentRepository,
+    )
+
+    try:
+        repo = ModelDeploymentRepository(
+            request.app.state.pool,
+            event_bus=getattr(request.app.state, "event_bus", None),
+        )
+        row = await repo.get(_UUID(deployment_id))
+    except Exception:
+        logger.warning("could not read deployment %s", deployment_id, exc_info=True)
+        return True
+    return row is None or bool(row.get("pool_id"))
+
+
 @router.patch("/update/{deployment_id}")
 async def update_deployment(
     deployment_id: str, req: UpdateDeploymentRequest, request: Request,
 ):
     await _require_own_deployment(request, deployment_id)
+    if req.endpoint is not None and await _in_a_pool(request, deployment_id):
+        raise _pool_endpoint_refused()
     # Persist control-plane-only fields (auto_replica) directly to DB
     # before/after the gRPC call, since gRPC doesn't carry these.
     if (

@@ -139,6 +139,7 @@ class VideoHandler:
                 ctx.engine,
                 path=video_path,
                 concurrency_key=ctx.concurrency_key,
+                resolve_names=ctx.resolve_names,
                 timeout=settings.upstream_video_timeout_seconds,
             )
 
@@ -205,6 +206,13 @@ class VideoHandler:
             )
 
         status_url = f"{endpoint_url.rstrip('/')}/generate/v1/videos/{video_id}"
+        try:
+            status_url = await GatewayService._checked_url(
+                status_url, GatewayService.resolves_names_for(deployment)
+            )
+        except ValueError as e:
+            logger.error(f"Upstream validation failed: {e}")
+            raise HTTPException(status_code=502, detail="Invalid upstream configuration")
 
         client = http_client.get_client()
 

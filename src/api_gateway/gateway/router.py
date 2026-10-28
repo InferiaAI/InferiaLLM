@@ -332,7 +332,9 @@ async def list_models(
         async with _health_semaphore:
             return await check_health(client, d)
 
-    client = gateway_http_client.get_service_client()
+    # Deployment endpoints are third-party hosts: use the client that carries
+    # no internal API key.
+    client = gateway_http_client.get_proxy_client()
     health_results = await asyncio.gather(
         *(_bounded_check(client, d) for d in all_deployments), return_exceptions=True
     )

@@ -12,6 +12,7 @@ def utcnow_naive():
 
 from api_gateway.db.database import get_db
 from api_gateway.db.models import ApiKey as DBApiKey
+from api_gateway.db.models import Deployment as DBDeployment
 from api_gateway.schemas.management import ApiKeyCreate, ApiKeyResponse, ApiKeyCreatedResponse
 from api_gateway.schemas.auth import PermissionEnum
 from api_gateway.management.dependencies import get_current_user_context
@@ -32,6 +33,21 @@ async def create_api_key(
         raise HTTPException(
             status_code=400, detail="Action requires organization context"
         )
+
+    if key_data.deployment_id:
+        # A key bound to another org's deployment would serve that deployment.
+        try:
+            deployment_uuid = uuid.UUID(key_data.deployment_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+        owned = await db.execute(
+            select(DBDeployment.id).where(
+                (DBDeployment.id == deployment_uuid)
+                & (DBDeployment.org_id == user_ctx.org_id)
+            )
+        )
+        if owned.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Deployment not found")
 
     raw_key = f"sk-{uuid.uuid4().hex}"
     key_hash = auth_service.get_password_hash(raw_key)

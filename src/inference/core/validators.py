@@ -4,21 +4,46 @@ Validates URLs, headers, and response sizes before forwarding
 requests to upstream LLM providers.
 """
 
+import asyncio
 import ipaddress
 import logging
+import socket
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-]
+# Names that reach this machine or the cloud metadata service.
+_INTERNAL_NAMES = frozenset({
+    "localhost", "metadata", "metadata.google.internal", "metadata.goog",
+    "instance-data", "instance-data.ec2.internal",
+})
+
+
+def _hostname(url: str) -> str:
+    """The URL's host, without the trailing dot that names the same host."""
+    return (urlparse(url).hostname or "").rstrip(".")
+
+
+def _literal_ip(hostname: str):
+    """The address *hostname* spells, or None if it is a DNS name.
+
+    inet_aton also reads the forms the resolver accepts but ipaddress does
+    not, such as 2852039166 or 0xa9fea9fe for 169.254.169.254.
+    """
+    try:
+        return ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    try:
+        return ipaddress.ip_address(socket.inet_aton(hostname))
+    except OSError:
+        return None
+
+
+def _is_internal(addr) -> bool:
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return not addr.is_global or addr.is_multicast
 
 _HOP_BY_HOP_HEADERS = frozenset(
     h.lower()
@@ -59,25 +84,46 @@ def validate_upstream_url(url: str, allowed_hosts: list[str]) -> str:
     if parsed.username or parsed.password:
         raise ValueError("URL must not contain embedded credentials")
 
-    hostname = parsed.hostname
+    hostname = _hostname(url)
     if not hostname:
         raise ValueError("URL has no hostname")
 
-    # Check if hostname is a private IP
-    try:
-        addr = ipaddress.ip_address(hostname)
-        is_private = any(addr in net for net in _PRIVATE_NETWORKS)
-        if is_private:
-            if hostname not in allowed_hosts:
-                raise ValueError(f"Upstream host '{hostname}' is not allowed")
-    except ValueError as e:
-        # Not a valid IP address — it's a DNS name.
-        # Re-raise if it's our own "not allowed" error.
-        if "not allowed" in str(e) or "illegal" in str(e):
-            raise
-        # Otherwise it's a hostname, which is fine (no IP check needed).
+    if hostname in allowed_hosts:
+        return url
+
+    addr = _literal_ip(hostname)
+    internal_name = hostname in _INTERNAL_NAMES or hostname.endswith(".localhost")
+    if internal_name or (addr is not None and _is_internal(addr)):
+        raise ValueError(f"Upstream host '{hostname}' is not allowed")
 
     return url
+
+
+async def check_resolved_host(url: str, allowed_hosts: list[str]) -> str:
+    """The check validate_upstream_url makes, on what the name resolves to.
+
+    For user-entered endpoints. An allowed host may be listed by name or by
+    any address it resolves to.
+    """
+    hostname = _hostname(url)
+    if hostname in allowed_hosts or _literal_ip(hostname) is not None:
+        return url
+    for ip in await _resolve(hostname):
+        if _is_internal(ipaddress.ip_address(ip)) and ip not in allowed_hosts:
+            raise ValueError(f"Upstream host '{hostname}' is not allowed")
+    return url
+
+
+async def _resolve(hostname: str) -> list[str]:
+    """Every address *hostname* resolves to; empty if it does not resolve,
+    which the request itself then fails on."""
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            hostname, None, type=socket.SOCK_STREAM
+        )
+    except socket.gaierror:
+        return []
+    return [info[4][0].split("%", 1)[0] for info in infos]  # drop IPv6 zone ids
 
 
 def sanitize_headers(headers: dict[str, str]) -> dict[str, str]:

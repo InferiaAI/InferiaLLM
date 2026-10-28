@@ -156,6 +156,7 @@ class CompletionHandler:
                 ip_address,
                 concurrency_key,
                 org_id=org_id,
+                resolve_names=GatewayService.resolves_names_for(deployment),
             )
         else:
             return await CompletionHandler._handle_standard(
@@ -174,6 +175,7 @@ class CompletionHandler:
                 ip_address,
                 concurrency_key,
                 org_id=org_id,
+                resolve_names=GatewayService.resolves_names_for(deployment),
             )
 
     @staticmethod
@@ -194,6 +196,7 @@ class CompletionHandler:
         ip_address,
         concurrency_key,
         org_id=None,
+        resolve_names=True,
     ):
         tokenizer_model = provider_payload.get("model") or model
         messages = provider_payload.get("messages", [])
@@ -225,6 +228,7 @@ class CompletionHandler:
             engine,
             concurrency_key=concurrency_key,
             error_sink=upstream_error,
+            resolve_names=resolve_names,
         )
 
         processed_stream = StreamProcessor.process_stream(
@@ -311,6 +315,7 @@ class CompletionHandler:
         ip_address,
         concurrency_key,
         org_id=None,
+        resolve_names=True,
     ):
         status_code = 200
         error_message = None
@@ -324,6 +329,7 @@ class CompletionHandler:
                 provider_headers,
                 engine,
                 concurrency_key=concurrency_key,
+                resolve_names=resolve_names,
             )
 
             usage = response_data.get("usage", {})

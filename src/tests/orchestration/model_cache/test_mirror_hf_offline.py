@@ -38,6 +38,12 @@ class _Repo:
     def __init__(self, row):
         self._row = row
 
+    async def is_mirrored(self, *, source, model_id):
+        r = self._row
+        return bool(r) and (r["source"], r["model_id"]) == (source, model_id) and (
+            r["status"] in ("cached", "downloading", "pending")
+        )
+
     async def get_by_key(self, *, source, model_id, revision):
         r = self._row
         if r and r["source"] == source and r["model_id"] == model_id and r["revision"] == revision:
@@ -193,7 +199,10 @@ class TestTheRepoLevelEndpoint:
         assert r.status_code == 200
         assert r.json()["sha"] == COMMIT
 
-    async def test_another_repo_falls_through(self, client):
+    async def test_another_repo_is_not_served(self, client):
+        """Only cached repos go upstream; the mirror fetches with the install's token."""
         c, _, _ = client
-        with pytest.raises(AssertionError, match="upstream was contacted"):
-            await c.get("/hf/api/models/someone/else/revision/main")
+        r = await c.get("/hf/api/models/someone/else/revision/main")
+
+        assert r.status_code == 404
+        assert r.headers["x-error-code"] == "RepoNotFound"

@@ -145,6 +145,16 @@ class ModelCacheRepo:
             )
             return dict(row) if row else None
 
+    async def is_mirrored(self, *, source: str, model_id: str) -> bool:
+        """Whether any revision of the model is cached or being fetched."""
+        async with self.db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM model_cache WHERE source=$1 AND model_id=$2 "
+                "AND status IN ('cached', 'downloading', 'pending') LIMIT 1",
+                source, model_id,
+            )
+            return row is not None
+
     async def set_metadata(
         self, cache_id, *, commit_sha: str | None, file_meta: dict,
         pinned: bool | None = None,

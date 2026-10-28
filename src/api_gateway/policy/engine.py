@@ -70,7 +70,10 @@ class PolicyEngine:
 
         # Optimistic lookup by prefix
         prefix = api_key[:6] + "..."
-        stmt = select(DBApiKey).where(DBApiKey.prefix == prefix)
+        # Revoking a key only clears is_active, so the lookup must check it.
+        stmt = select(DBApiKey).where(
+            (DBApiKey.prefix == prefix) & DBApiKey.is_active.is_(True)
+        )
         result = await db.execute(stmt)
         candidates = result.scalars().all()
 
@@ -236,7 +239,10 @@ class PolicyEngine:
 
         key_is_bound = bool(auth_key_record.deployment_id)
         if key_is_bound:
-            stmt = stmt.where(DBDeployment.id == auth_key_record.deployment_id)
+            stmt = stmt.where(
+                (DBDeployment.id == auth_key_record.deployment_id)
+                & (DBDeployment.org_id == auth_key_record.org_id)
+            )
         else:
             # Three columns because three fields hold names a user might send.
             # `inference_model` is the model id, which is what the dashboard shows.

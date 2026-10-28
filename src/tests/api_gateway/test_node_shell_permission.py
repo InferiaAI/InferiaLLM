@@ -68,7 +68,7 @@ def connect_shell(monkeypatch):
             proxy_routes, "websockets", SimpleNamespace(connect=_no_upstream),
         )
         with TestClient(app).websocket_connect(
-            "/v1/admin/workers/n1/shell?access_token=t",
+            "/v1/admin/workers/3f6c2a4e-1d2b-4c5e-8f9a-0b1c2d3e4f50/shell?access_token=t",
         ):
             pass
 

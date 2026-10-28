@@ -35,6 +35,12 @@ class _Repo:
     def __init__(self, row=None):
         self._row = row
 
+    async def is_mirrored(self, *, source, model_id):
+        r = self._row
+        return bool(r) and (r["source"], r["model_id"]) == (source, model_id) and (
+            r["status"] in ("cached", "downloading", "pending")
+        )
+
     async def get_by_key(self, *, source, model_id, revision):
         r = self._row
         if r and (r["source"], r["model_id"], r["revision"]) == (
@@ -150,13 +156,13 @@ class TestAddingAModel:
 class TestTheHuggingFaceMirror:
     pytestmark = pytest.mark.asyncio
 
-    async def test_an_unknown_file_is_a_definite_404(self, tmp_path):
+    async def test_an_uncached_repo_is_a_definite_404(self, tmp_path):
         _configure(tmp_path)
         async with _client(mirror_hf.router) as c:
             r = await c.head(f"/hf/{REPO}/resolve/main/config.json")
 
         assert r.status_code == 404
-        assert r.headers["x-error-code"] == "EntryNotFound"
+        assert r.headers["x-error-code"] == "RepoNotFound"
 
     async def test_a_file_on_disk_still_reports_its_size(self, tmp_path):
         """A row cached before the box was disconnected carries no commit, so
