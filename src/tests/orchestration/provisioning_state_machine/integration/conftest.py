@@ -22,8 +22,10 @@ is skipped cleanly so CI on machines without a test PG passes.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import AsyncIterator
+from unittest.mock import patch
 
 import asyncpg
 import pytest
@@ -44,6 +46,20 @@ MIGRATIONS = [
     _MIGRATIONS_DIR / "20260528a_node_state_failed.sql",
     _MIGRATIONS_DIR / "20260528b_provisioning_jobs.sql",
 ]
+
+
+@pytest.fixture(autouse=True)
+def _pulumi_on_path():
+    """Preflight requires the pulumi binary; CI has none and the tests patch
+    every pulumi call, so report it present."""
+    real_which = shutil.which
+    with patch(
+        "orchestration.state_machine.phases.preflight.shutil.which",
+        side_effect=lambda name, *a, **kw: (
+            "/usr/bin/pulumi" if name == "pulumi" else real_which(name, *a, **kw)
+        ),
+    ):
+        yield
 
 
 @pytest.fixture

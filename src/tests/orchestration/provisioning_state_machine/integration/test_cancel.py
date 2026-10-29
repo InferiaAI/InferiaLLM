@@ -85,7 +85,9 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
             f"/v1/nodes/{node_id}",
             headers=ORG_HEADERS,
         )
-        assert resp.status_code in (200, 204), resp.text
+        # In-flight job: the route force-cancels and answers 202 terminating.
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["state"] == "terminating"
 
         # 3. Drive the cancel tick. The claim query orders 'cancelling'
         # jobs ahead of fresh work so this picks up our job immediately.

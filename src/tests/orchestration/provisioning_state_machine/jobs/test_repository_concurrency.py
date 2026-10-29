@@ -68,11 +68,11 @@ async def _seed_job(pool, *, n: int = 20):
                  lifecycle_state, org_id
                )
                VALUES (
-                 $1, 'p-concurrency-' || $1::text, 'organization', 'aws',
+                 $1, $2, 'organization', 'aws',
                  '{}'::jsonb, 'running', 'org-concurrency'
                )
                ON CONFLICT (id) DO NOTHING""",
-            pool_id,
+            pool_id, f"p-concurrency-{pool_id}",
         )
         ids = []
         for _ in range(n):
@@ -80,8 +80,8 @@ async def _seed_job(pool, *, n: int = 20):
             await conn.execute(
                 """INSERT INTO compute_inventory (id, pool_id, provider,
                        provider_instance_id, state, agent_kind)
-                   VALUES ($1, $2, 'aws', 'placeholder:c-'||$1::text, 'provisioning', 'worker')""",
-                node_id, pool_id,
+                   VALUES ($1, $2, 'aws', $3, 'provisioning', 'worker')""",
+                node_id, pool_id, f"placeholder:c-{node_id}",
             )
             job_id = uuid.uuid4()
             await conn.execute(
