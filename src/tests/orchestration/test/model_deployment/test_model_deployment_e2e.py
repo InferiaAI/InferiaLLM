@@ -1,43 +1,64 @@
-import asyncio
+"""ModelDeployment gRPC path (service -> controller -> repos) against a real Postgres.
+
+Stops at the control plane: the deployment row, its outbox entry and the worker event.
+Driving it to ready needs a worker; see e2e/manual_e2e_control_plane.py.
+"""
+from uuid import UUID, uuid4
+
 import grpc
-from uuid import UUID
+import pytest
+import pytest_asyncio
 
-from orchestration.infra.db import create_test_db_pool
+from orchestration.models.model_deployment.controller import ModelDeploymentController
+from orchestration.models.model_deployment.service import ModelDeploymentService
+from orchestration.repositories.model_deployment_repo import ModelDeploymentRepository
+from orchestration.repositories.model_registry_repo import ModelRegistryRepository
+from orchestration.repositories.outbox_repo import OutboxRepository
+from orchestration.repositories.pool_repo import ComputePoolRepository
+from orchestration.v1 import model_deployment_pb2, model_deployment_pb2_grpc
+from tests.orchestration.infra.setup_helpers import create_test_pool
 
-from orchestration.v1 import (
-    model_deployment_pb2,
-    model_deployment_pb2_grpc,
-)
-
-
-async def test_model_deployment_e2e():
-    print("\n=== MODEL DEPLOYMENT E2E TEST ===\n")
-
-    db = await create_test_db_pool()
-    channel = grpc.aio.insecure_channel("localhost:50051")
-
-    deployer = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
+pytestmark = pytest.mark.asyncio
 
 
-    # -------------------------------------------------
-    # 2. DEPLOY MODEL
-    # -------------------------------------------------
-    print("\n2) Deploying model")
+class _SpyEventBus:
+    def __init__(self):
+        self.published = []
 
-    pool_id = await db.fetchval(
-        """
-        SELECT id FROM compute_pools
-        WHERE is_active = true
-        ORDER BY created_at DESC
-        LIMIT 1
-        """
+    async def publish(self, topic, payload=None):
+        self.published.append((topic, payload))
+
+
+@pytest_asyncio.fixture
+async def event_bus():
+    return _SpyEventBus()
+
+
+@pytest_asyncio.fixture
+async def stub(db_pool, grpc_channel, event_bus):
+    controller = ModelDeploymentController(
+        model_registry_repo=ModelRegistryRepository(db_pool),
+        deployment_repo=ModelDeploymentRepository(db=db_pool, event_bus=event_bus),
+        outbox_repo=OutboxRepository(db_pool),
+        event_bus=event_bus,
+        pool_repo=ComputePoolRepository(db_pool),
     )
+    channel = await grpc_channel(
+        (
+            model_deployment_pb2_grpc.add_ModelDeploymentServiceServicer_to_server,
+            ModelDeploymentService(controller=controller),
+        )
+    )
+    return model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
-    assert pool_id, "No compute pool available for deployment"
 
-    deploy = await deployer.DeployModel(
+async def test_deploy_creates_pending_deployment(db_pool, stub, event_bus):
+    pool_id = await create_test_pool(db_pool)
+    model_name = f"llama-{uuid4().hex[:8]}"
+
+    deploy = await stub.DeployModel(
         model_deployment_pb2.DeployModelRequest(
-            model_name="llama-3-14b",
+            model_name=model_name,
             model_version="v1",
             pool_id=str(pool_id),
             replicas=1,
@@ -45,50 +66,28 @@ async def test_model_deployment_e2e():
             workload_type="inference",
         )
     )
+    assert deploy.state == "PENDING"
+    deployment_id = UUID(deploy.deployment_id)
 
-    deployment_id = deploy.deployment_id
-    print(f"   ✔ Deployment started: {deployment_id}")
-    assert deploy.state == "provisioning"
-
-    # -------------------------------------------------
-    # 3. WAIT FOR DEPLOYMENT STATE
-    # -------------------------------------------------
-    print("\n3) Waiting for deployment to progress")
-
-    state = None
-    for _ in range(30):
-        d = await deployer.GetDeployment(
-            model_deployment_pb2.GetDeploymentRequest(
-                deployment_id=deployment_id
-            )
-        )
-        state = d.state
-        print(f"   • current state: {state}")
-        if state in ("ready", "failed"):
-            break
-        await asyncio.sleep(1)
-
-    assert state == "ready", f"Deployment ended in state={state}"
-
-    # -------------------------------------------------
-    # 4. VERIFY llm-d RESOURCE
-    # -------------------------------------------------
-    print("\n4) Verifying llm-d resource")
-
-    row = await db.fetchrow(
-        """
-        SELECT llmd_resource_name
-        FROM model_deployments
-        WHERE deployment_id=$1
-        """,
-        UUID(deployment_id),
+    got = await stub.GetDeployment(
+        model_deployment_pb2.GetDeploymentRequest(deployment_id=str(deployment_id))
     )
+    assert got.pool_id == str(pool_id)
+    assert got.state == "PENDING"
+    assert got.replicas == 1
 
-    assert row and row["llmd_resource_name"]
-    print(f"   ✔ llm-d resource created: {row['llmd_resource_name']}")
+    outbox_events = await db_pool.fetchval(
+        "SELECT count(*) FROM outbox_events WHERE aggregate_id = $1",
+        deployment_id,
+    )
+    assert outbox_events == 1
+    topics = [t for t, p in event_bus.published if p and p.get("deployment_id") == str(deployment_id)]
+    assert "model.deploy.requested" in topics
 
-    print("\n=== MODEL DEPLOYMENT TEST PASSED ===\n")
 
-
-if __name__ == "__main__":
-    asyncio.run(test_model_deployment_e2e())
+async def test_get_unknown_deployment_is_not_found(stub):
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        await stub.GetDeployment(
+            model_deployment_pb2.GetDeploymentRequest(deployment_id=str(uuid4()))
+        )
+    assert exc.value.code() == grpc.StatusCode.NOT_FOUND

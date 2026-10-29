@@ -201,7 +201,7 @@ def test_bake_uses_resolved_root_device(monkeypatch):
     bake.bake_engine_ami(region="us-east-1", aws_env=AWS_ENV, ssm_instance_profile="p")
     bdm = ec2.run_kwargs["BlockDeviceMappings"][0]
     assert bdm["DeviceName"] == "/dev/xvda"
-    assert bdm["Ebs"]["VolumeSize"] == 100
+    assert bdm["Ebs"]["VolumeSize"] == bake._DEFAULT_ROOT_GB
 
 
 def test_dlami_root_device_falls_back(monkeypatch):

@@ -3,7 +3,7 @@ import grpc
 import asyncio
 import functools
 import os
-from adapters.base.adapter import ProviderAdapter
+from providers.base.adapter import ProviderAdapter
 from orchestration.v1 import (
     compute_node_pb2_grpc,
     compute_node_pb2,

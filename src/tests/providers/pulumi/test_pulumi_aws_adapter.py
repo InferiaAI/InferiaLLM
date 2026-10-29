@@ -31,8 +31,7 @@ from orchestration.state_machine.errors import (
 )
 
 _MAKE_STACK = (
-    "orchestration.provisioning.engine."
-    "adapters.pulumi.pulumi_aws_adapter._make_stack"
+    "providers.pulumi.pulumi_aws_adapter._make_stack"
 )
 
 
@@ -101,8 +100,7 @@ def test_run_pulumi_up_sync_returns_stack_outputs_on_success():
         "ami_id": MagicMock(value="ami-deadbeef"),
     })
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ):
         out = run_pulumi_up_sync(
@@ -117,8 +115,7 @@ def test_run_pulumi_up_sync_returns_stack_outputs_on_success():
 
 def test_run_pulumi_up_sync_raises_pulumi_cli_missing_on_filenotfounderror():
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         side_effect=FileNotFoundError("[Errno 2] No such file or directory: 'pulumi'"),
     ):
         with pytest.raises(PulumiCliMissingError):
@@ -136,8 +133,7 @@ def test_run_pulumi_up_sync_raises_invalid_credentials_on_auth_failure():
     )
     fake_stack.up.side_effect = err
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ):
         with pytest.raises(InvalidCredentialsError):
@@ -152,8 +148,7 @@ def test_run_pulumi_up_sync_raises_ami_not_found():
         "InvalidAMIID.NotFound: The image id '[ami-deadbeef]' does not exist"
     )
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ):
         with pytest.raises(AMINotFoundError):
@@ -169,8 +164,7 @@ def test_run_pulumi_up_sync_uses_local_workspace_with_env():
         "instance_id": MagicMock(value="i-x"),
     })
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ) as mk:
         run_pulumi_up_sync(
@@ -194,8 +188,7 @@ def test_run_pulumi_up_sync_passes_project_name_and_state_dir():
         "instance_id": MagicMock(value="i-x"),
     })
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ) as mk:
         run_pulumi_up_sync(
@@ -311,8 +304,7 @@ def test_run_pulumi_up_sync_raises_transient_on_throttling():
         "RequestLimitExceeded: Request rate limit exceeded"
     )
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ):
         with pytest.raises(PulumiTransientError):
@@ -327,8 +319,7 @@ def test_run_pulumi_up_sync_raises_transient_on_throttling_keyword():
         "operation failed: Throttling: rate exceeded"
     )
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ):
         with pytest.raises(PulumiTransientError):
@@ -343,8 +334,7 @@ def test_run_pulumi_up_sync_reraises_unknown_error():
     fake_stack = MagicMock()
     fake_stack.up.side_effect = RuntimeError("some unfamiliar pulumi failure")
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ):
         with pytest.raises(RuntimeError, match="some unfamiliar pulumi failure"):
@@ -360,8 +350,7 @@ def test_run_pulumi_up_sync_propagates_provisioning_errors():
     fake_stack = MagicMock()
     fake_stack.up.side_effect = AMINotFoundError("ami already classified")
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.pulumi_aws_adapter._make_stack",
+        "providers.pulumi.pulumi_aws_adapter._make_stack",
         return_value=fake_stack,
     ):
         with pytest.raises(AMINotFoundError, match="ami already classified"):

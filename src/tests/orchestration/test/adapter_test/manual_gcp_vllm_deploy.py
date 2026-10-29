@@ -8,7 +8,7 @@ Prerequisites:
   - `pip install "skypilot[gcp]"`
 
 Usage:
-  python -m orchestration.test.adapter_test.test_gcp_vllm_deploy
+  python -m tests.orchestration.test.adapter_test.manual_gcp_vllm_deploy
 """
 
 import asyncio

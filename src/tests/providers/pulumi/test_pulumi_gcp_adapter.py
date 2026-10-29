@@ -52,7 +52,11 @@ async def test_provision_node_kicks_off_async_task(fake_db, gcp_config, tmp_path
         "providers.pulumi.pulumi_gcp_adapter."
         "mint_bootstrap_token",
         new=AsyncMock(return_value=("tok-x", UUID(int=42))),
-    ):
+    ), patch(
+        "providers.pulumi.pulumi_gcp_adapter.ComputePoolRepository."
+        "get_or_generate_inference_token",
+        new=AsyncMock(return_value="inf-x"),
+    ) as get_token:
         adapter = PulumiGCPAdapter(db=fake_db, state_dir=str(tmp_path))
         result = await adapter.provision_node(
             provider_resource_id="n1-standard-4",
@@ -60,6 +64,7 @@ async def test_provision_node_kicks_off_async_task(fake_db, gcp_config, tmp_path
             org_id="o1",
             region="us-central1",
         )
+    get_token.assert_awaited_once_with(pool_id=pool_id)
     assert result["provider"] == "gcp"
     assert result["lifecycle_state"] == "provisioning"
     # Clean up background task
