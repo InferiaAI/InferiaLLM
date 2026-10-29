@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from unittest.mock import AsyncMock
 import json
 
 from orchestration.scheduling.autoscaler import Autoscaler
@@ -24,7 +25,7 @@ async def test_autoscaler_scale_up():
     """
     db_pool = await create_test_db_pool()
 
-    autoscaler_repo = AutoscalerRepository(db_pool)
+    autoscaler_repo = AutoscalerRepository(db_pool, event_bus=AsyncMock())
     adapter_stub = FakeAdapterStub()
 
     autoscaler = Autoscaler(autoscaler_repo, adapter_stub)

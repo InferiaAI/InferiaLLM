@@ -31,6 +31,11 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.orchestration.provisioning_state_machine.integration.conftest import (
+    ORG_HEADERS,
+    enqueue_aws_node,
+)
+
 
 @pytest.mark.asyncio
 async def test_lease_expiry_re_picks_up_job(app_with_real_db):
@@ -75,16 +80,11 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
         "pulumi_up.run_pulumi_up_sync",
         side_effect=_pulumi_first_hangs_then_succeeds,
     ):
-        resp = await client.post(
-            "/v1/nodes/add/aws",
-            json={"spec": {"instance_class": "normal_gpu",
-                           "instance_type":  "g6.xlarge",
-                           "region":         "us-east-1"}},
-            headers={"X-Organization-ID": "org-int",
-                     "Authorization": "Bearer test"},
-        )
-        assert resp.status_code == 200, resp.text
-        node_id = resp.json()["node_id"]
+        node_id = await enqueue_aws_node(pool, {
+            "instance_class": "normal_gpu",
+            "instance_type":  "g6.xlarge",
+            "region":         "us-east-1",
+        })
 
         # Drive the reconciler with a SHORT 0.2s lease so we can simulate
         # crash + recovery in test time. lease_seconds flows into Postgres
@@ -140,7 +140,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
 
         body = (await client.get(
             f"/v1/nodes/{node_id}/provisioning",
-            headers={"Authorization": "Bearer test"},
+            headers=ORG_HEADERS,
         )).json()
         assert body["current_phase"] == "ready", body
         assert body["terminal"] is True

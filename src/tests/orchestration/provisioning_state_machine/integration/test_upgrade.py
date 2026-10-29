@@ -68,11 +68,11 @@ async def test_migration_marks_inflight_inventory_and_exposes_via_http(
         # scheduling_policy).
         await conn.execute(
             """INSERT INTO compute_pools (
-                 id, pool_name, owner_type, provider, scheduling_policy,
-                 lifecycle_state, org_id
+                 id, pool_name, owner_type, owner_id, provider,
+                 scheduling_policy, lifecycle_state, org_id
                )
                VALUES (
-                 $1, 'p-test-upgrade', 'organization', 'aws',
+                 $1, 'p-test-upgrade', 'organization', 'org-upgrade', 'aws',
                  '{}'::jsonb, 'running', 'org-upgrade'
                )
                ON CONFLICT (id) DO NOTHING""",
@@ -101,7 +101,7 @@ async def test_migration_marks_inflight_inventory_and_exposes_via_http(
     # consumes when it renders the error banner + Retry button.
     body = (await client.get(
         f"/v1/nodes/{node_id}/provisioning",
-        headers={"Authorization": "Bearer test"},
+        headers={"X-Organization-ID": "org-upgrade", "Authorization": "Bearer test"},
     )).json()
     assert body["current_phase"] == "failed", body
     assert body["terminal"] is True, body

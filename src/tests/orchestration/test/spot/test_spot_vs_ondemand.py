@@ -24,7 +24,7 @@ async def test_spot_vs_ondemand():
             vcpu_total, vcpu_allocated,
             ram_gb_total, ram_gb_allocated
         )
-        VALUES ($1,'k8s',$2,'ready','spot',0,0,2,1,4,1)
+        VALUES ($1,'k8s',$2,'terminated','spot',0,0,2,1,4,1)
         RETURNING id
         """,
         pool_id,
@@ -41,7 +41,7 @@ async def test_spot_vs_ondemand():
             vcpu_total, vcpu_allocated,
             ram_gb_total, ram_gb_allocated
         )
-        VALUES ($1,'k8s',$2,'ready','on_demand',0,0,2,1,4,1)
+        VALUES ($1,'k8s',$2,'terminated','on_demand',0,0,2,1,4,1)
         RETURNING id
         """,
         pool_id,

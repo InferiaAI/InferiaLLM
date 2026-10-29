@@ -42,7 +42,7 @@ async def _apply_migrations(pool):
             await conn.execute(path.read_text())
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def pool(test_database_url):
     pool = await asyncpg.create_pool(test_database_url, min_size=2, max_size=25)
     await _apply_migrations(pool)
@@ -101,7 +101,7 @@ async def _cleanup(pool, job_ids, pool_id):
         await conn.execute("DELETE FROM compute_pools WHERE id = $1", pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_no_double_claim_under_20_concurrent_claimers(pool):
     """20 workers all calling claim_next_job → each gets a unique job."""
     job_ids, pool_id = await _seed_job(pool, n=20)
@@ -121,7 +121,7 @@ async def test_no_double_claim_under_20_concurrent_claimers(pool):
         await _cleanup(pool, job_ids, pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_claim_skips_leased_jobs(pool):
     """A job already leased by holder A is not claimable by holder B until
     the lease expires."""
@@ -137,7 +137,7 @@ async def test_claim_skips_leased_jobs(pool):
         await _cleanup(pool, job_ids, pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_claim_picks_up_expired_lease(pool):
     """If a lease's lease_expires_at < now(), another reconciler claims it."""
     job_ids, pool_id = await _seed_job(pool, n=1)
@@ -157,7 +157,7 @@ async def test_claim_picks_up_expired_lease(pool):
         await _cleanup(pool, job_ids, pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_cancelling_jobs_have_priority(pool):
     """Jobs in 'cancelling' phase are claimed before plain 'pending' jobs."""
     job_ids, pool_id = await _seed_job(pool, n=2)

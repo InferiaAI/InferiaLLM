@@ -2,7 +2,7 @@
 
 End-to-end:
 
-1. POST /v1/nodes/add/aws + drive one tick -> job lands in
+1. Enqueue an AWS node + drive one tick -> job lands in
    phase='provisioning' (preflight passed in the same tick).
 2. DELETE /v1/nodes/{id} -> request_cancel flips the job's phase to
    'cancelling' (the route returns 204).
@@ -20,6 +20,11 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+
+from tests.orchestration.provisioning_state_machine.integration.conftest import (
+    ORG_HEADERS,
+    enqueue_aws_node,
+)
 
 
 @pytest.mark.asyncio
@@ -64,16 +69,11 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
         "aws_orphan_sweep.sweep_node_instances", return_value=[],
     ) as sweep:
         # 1. Submit + drive one tick (preflight -> provisioning).
-        resp = await client.post(
-            "/v1/nodes/add/aws",
-            json={"spec": {"instance_class": "normal_gpu",
-                           "instance_type":  "g6.xlarge",
-                           "region":         "us-east-1"}},
-            headers={"X-Organization-ID": "org-int",
-                     "Authorization": "Bearer test"},
-        )
-        assert resp.status_code == 200, resp.text
-        node_id = resp.json()["node_id"]
+        node_id = await enqueue_aws_node(pool, {
+            "instance_class": "normal_gpu",
+            "instance_type":  "g6.xlarge",
+            "region":         "us-east-1",
+        })
         rec = app.state.reconciler
         await rec.tick_once()  # preflight -> provisioning
 
@@ -83,7 +83,7 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
         # row owns the lifecycle (see api/nodes.py::delete_node).
         resp = await client.delete(
             f"/v1/nodes/{node_id}",
-            headers={"Authorization": "Bearer test"},
+            headers=ORG_HEADERS,
         )
         assert resp.status_code in (200, 204), resp.text
 

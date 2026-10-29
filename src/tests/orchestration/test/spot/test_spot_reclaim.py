@@ -26,7 +26,7 @@ async def test_spot_reclaimer():
         )
         VALUES (
             $1, 'k8s', $2,
-            'ready', 'spot',
+            'terminated', 'spot',
             0,0,
             2,1,
             4,1

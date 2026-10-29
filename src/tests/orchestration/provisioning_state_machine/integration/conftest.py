@@ -3,7 +3,7 @@
 These fixtures stand up a minimal FastAPI app + a real Postgres-backed
 ProvisioningReconciler so each test can drive the state machine with
 ``await app.state.reconciler.tick_once()`` while exercising the full
-HTTP surface (POST /v1/nodes/add/aws, GET /provisioning, POST
+HTTP surface (GET /provisioning, POST
 /provisioning/retry, DELETE /nodes/{id}).
 
 Why a custom factory instead of orchestration.server.serve()?
@@ -13,7 +13,7 @@ Why a custom factory instead of orchestration.server.serve()?
   None of that fits a tick-driven integration test.
 * serve() wires the legacy ``NodeProvisioningRepo`` (event-log only)
   as ``provisioning_repo`` on the nodes router. The new state-machine
-  surface (POST /v1/nodes/add/aws, retry, cancel) needs the new
+  surface (retry, cancel) needs the new
   ``ProvisioningJobRepository`` — so the test factory wires that one.
 
 Gated on ``INFERIA_TEST_DATABASE_URL`` — when unset, every test below
@@ -62,6 +62,47 @@ async def _apply_migrations(conn: asyncpg.Connection) -> None:
         await conn.execute(path.read_text())
 
 
+ORG_ID = "org-int"
+ORG_HEADERS = {"X-Organization-ID": ORG_ID, "Authorization": "Bearer test"}
+
+
+async def enqueue_aws_node(db_pool, spec: dict) -> str:
+    """Create an AWS node the way /deploy's ColdStart does: an org-owned pool,
+    a placeholder inventory row and a preflight job. Returns the node id."""
+    from uuid import uuid4
+
+    from orchestration.repositories.inventory_repo import InventoryRepository
+    from orchestration.state_machine.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+
+    pool_id = uuid4()
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO organizations(id, name) VALUES($1, $1) ON CONFLICT DO NOTHING",
+            ORG_ID,
+        )
+        await conn.execute(
+            """INSERT INTO compute_pools(
+                   id, pool_name, owner_type, owner_id, org_id, provider,
+                   pool_type, allowed_gpu_types, max_cost_per_hour,
+                   scheduling_policy, provider_pool_id, is_active,
+                   lifecycle_state, gpu_count)
+               VALUES ($1, $2, 'organization', $3, $3, 'aws', 'cluster',
+                       ARRAY[$4], 0, '{}', $5, true, 'running', 1)""",
+            pool_id, f"p-{pool_id}", ORG_ID, spec["instance_type"],
+            f"placeholder:{pool_id}",
+        )
+    node_id = await InventoryRepository(db_pool).create_placeholder(
+        pool_id=pool_id, gpu_total=1, initial_alloc=0,
+    )
+    await ProvisioningJobRepository(db_pool).enqueue(
+        node_id=node_id, pool_id=pool_id, org_id=ORG_ID, provider="aws",
+        spec=spec,
+    )
+    return str(node_id)
+
+
 def _build_app(db_pool, *, reconciler) -> FastAPI:
     """Construct a minimal FastAPI app exposing /v1/nodes/* wired to
     real repos.
@@ -81,7 +122,7 @@ def _build_app(db_pool, *, reconciler) -> FastAPI:
     inventory_repo = InventoryRepository(db_pool)
     pool_repo = ComputePoolRepository(db_pool)
     # Wire BOTH repos: ProvisioningJobRepository (new state-machine queue,
-    # used by POST /add/aws thin enqueue + retry + cancel + the job-row
+    # used by enqueue_aws_node + retry + cancel + the job-row
     # read in GET /provisioning) and NodeProvisioningRepo (legacy event
     # log, used for the phase-summary view and GET /provisioning-logs).
     # Production server.py wires both side-by-side; the integration test

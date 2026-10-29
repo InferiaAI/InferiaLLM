@@ -19,6 +19,11 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.orchestration.provisioning_state_machine.integration.conftest import (
+    ORG_HEADERS,
+    enqueue_aws_node,
+)
+
 
 @pytest.mark.asyncio
 async def test_failed_job_retried_to_ready(app_with_real_db):
@@ -36,23 +41,18 @@ async def test_failed_job_retried_to_ready(app_with_real_db):
         "preflight.verify_credentials",
         side_effect=InvalidCredentialsError("bad creds"),
     ):
-        resp = await client.post(
-            "/v1/nodes/add/aws",
-            json={"spec": {"instance_class": "normal_gpu",
-                           "instance_type":  "g6.xlarge",
-                           "region":         "us-east-1"}},
-            headers={"X-Organization-ID": "org-int",
-                     "Authorization": "Bearer test"},
-        )
-        assert resp.status_code == 200, resp.text
-        node_id = resp.json()["node_id"]
+        node_id = await enqueue_aws_node(pool, {
+            "instance_class": "normal_gpu",
+            "instance_type":  "g6.xlarge",
+            "region":         "us-east-1",
+        })
 
         rec = app.state.reconciler
         await rec.tick_once()  # preflight fails
 
         body = (await client.get(
             f"/v1/nodes/{node_id}/provisioning",
-            headers={"Authorization": "Bearer test"},
+            headers=ORG_HEADERS,
         )).json()
         assert body["current_phase"] == "failed"
         # error.code matches the classifier output for InvalidCredentialsError
@@ -62,7 +62,7 @@ async def test_failed_job_retried_to_ready(app_with_real_db):
     # --- POST /retry resets to preflight ---------------------------------
     resp = await client.post(
         f"/v1/nodes/{node_id}/provisioning/retry",
-        headers={"Authorization": "Bearer test"},
+        headers=ORG_HEADERS,
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["phase"] == "preflight"
@@ -104,7 +104,7 @@ async def test_failed_job_retried_to_ready(app_with_real_db):
 
         body = (await client.get(
             f"/v1/nodes/{node_id}/provisioning",
-            headers={"Authorization": "Bearer test"},
+            headers=ORG_HEADERS,
         )).json()
         assert body["current_phase"] == "ready"
         # attempt_count was reset to 0 by reset_for_retry, and the
