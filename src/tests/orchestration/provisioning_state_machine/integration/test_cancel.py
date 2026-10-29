@@ -100,8 +100,10 @@ async def test_delete_mid_provision_triggers_cancel(app_with_real_db):
         assert destroy_called["value"], (
             "run_pulumi_destroy_sync was not invoked by CancelHandler"
         )
-        # The orphan-EC2 sweep ran with (node_id, region) as a backstop.
-        sweep.assert_called_once_with(node_id, "us-east-1")
+        # The orphan-EC2 sweep ran with (node_id, region) as a backstop; the
+        # third arg is the AWS env, which this test doesn't care about.
+        sweep.assert_called_once()
+        assert sweep.call_args.args[:2] == (node_id, "us-east-1")
         async with pool.acquire() as conn:
             job_count = await conn.fetchval(
                 "SELECT count(*) FROM provisioning_jobs WHERE node_id=$1",

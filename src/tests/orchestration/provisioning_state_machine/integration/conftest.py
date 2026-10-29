@@ -119,6 +119,14 @@ async def enqueue_aws_node(db_pool, spec: dict) -> str:
     return str(node_id)
 
 
+async def _fake_aws_context(job):
+    from providers.pulumi.credentials import AWSCredentials
+
+    return AWSCredentials(
+        access_key_id="AKIATEST", secret_access_key="test", region="us-east-1",
+    ), {}
+
+
 def _build_app(db_pool, *, reconciler) -> FastAPI:
     """Construct a minimal FastAPI app exposing /v1/nodes/* wired to
     real repos.
@@ -252,6 +260,9 @@ async def app_with_real_db(test_database_url) -> AsyncIterator[tuple]:
             lease_seconds=30,
             renew_interval_s=5.0,
             lease_holder="test-reconciler",
+            # Production loads these from Settings -> Providers -> AWS; the
+            # tests patch every AWS call, so any credentials will do.
+            load_aws_context=_fake_aws_context,
             # Mirror terminal phases (ready / terminated / failed) onto
             # compute_inventory.state so the integration tests can assert
             # the dashboard-visible state matches the job row's phase.
