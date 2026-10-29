@@ -11,6 +11,7 @@ import { render, act } from "@testing-library/react";
 
 // ── WebSocket stub ────────────────────────────────────────────────────────────
 const capturedWsUrls: string[] = [];
+const capturedWsProtocols: (string[] | undefined)[] = [];
 
 class MockWebSocket {
   url: string;
@@ -19,9 +20,10 @@ class MockWebSocket {
   onerror: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string[]) {
     this.url = url;
     capturedWsUrls.push(url);
+    capturedWsProtocols.push(protocols);
   }
 
   close() {}
@@ -69,6 +71,7 @@ describe("TerminalLogs — WS URL resolution", () => {
     origWS = window.WebSocket;
     window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     capturedWsUrls.length = 0;
+    capturedWsProtocols.length = 0;
     mockApiError = null;
     mockWsUrl = "/v1/workers/dep-1/logs/stream";
   });
@@ -158,7 +161,7 @@ describe("TerminalLogs — WS URL resolution", () => {
     expect(url).toMatch(/^wss:\/\/secure-legacy\//);
   });
 
-  it("JWT token is appended as query param to relative ws_url", async () => {
+  it("sends the token to the gateway as a subprotocol, not in the URL", async () => {
     mockWsUrl = "/v1/workers/dep-1/logs/stream";
     const { default: TerminalLogs } = await import("./TerminalLogs");
 
@@ -168,6 +171,20 @@ describe("TerminalLogs — WS URL resolution", () => {
     });
 
     const url = capturedWsUrls[capturedWsUrls.length - 1];
-    expect(url).toContain("token=tok");
+    expect(url).not.toContain("tok");
+    expect(capturedWsProtocols[capturedWsProtocols.length - 1]).toEqual(["inferia.v1", "bearer.tok"]);
+  });
+
+  it("sends no token to a host other than the gateway", async () => {
+    mockWsUrl = "ws://some-backend:9000/v1/logs";
+    const { default: TerminalLogs } = await import("./TerminalLogs");
+
+    await act(async () => {
+      render(<TerminalLogs deploymentId="dep-1" />);
+      await new Promise(r => setTimeout(r, 0));
+    });
+
+    expect(capturedWsUrls[capturedWsUrls.length - 1]).not.toContain("tok");
+    expect(capturedWsProtocols[capturedWsProtocols.length - 1]).toBeUndefined();
   });
 });

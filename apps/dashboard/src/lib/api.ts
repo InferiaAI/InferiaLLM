@@ -36,6 +36,19 @@ export function toWsUrl(path: string): string {
     return `${proto}//${u.host}${base}${path}`;
 }
 
+/** Browsers can't set Authorization on a WebSocket, and a token in the URL lands
+ *  in access logs, so it rides as a subprotocol beside one the gateway selects. */
+export const WS_SUBPROTOCOL = "inferia.v1";
+
+/** Open a WebSocket; it carries the session token only when it targets the gateway. */
+export function openSocket(url: string): WebSocket {
+    const token = getToken();
+    const toGateway = new URL(url).host === new URL(toWsUrl("/")).host;
+    return token && toGateway
+        ? new WebSocket(url, [WS_SUBPROTOCOL, `bearer.${token}`])
+        : new WebSocket(url);
+}
+
 // ── Silent-refresh state (shared across all axios instances) ────────
 let isRefreshing = false;
 let refreshSubscribers: Array<(token: string) => void> = [];

@@ -129,6 +129,26 @@ def _require_proxy_permission(
         authz_service.require_permission(user_context, PermissionEnum.DEPLOYMENT_LIST)
 
 
+# Browsers can't set Authorization on a WebSocket; a URL token lands in access
+# logs. The dashboard offers "bearer.<jwt>" beside this subprotocol, which we select.
+WS_SUBPROTOCOL = "inferia.v1"
+_WS_BEARER_PREFIX = "bearer."
+
+
+def _ws_token(websocket: WebSocket) -> str | None:
+    """The session token offered in Sec-WebSocket-Protocol, if the client also
+    offered WS_SUBPROTOCOL (so the handshake can select it)."""
+    offered = [
+        p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",")
+    ]
+    if WS_SUBPROTOCOL not in offered:
+        return None
+    for proto in offered:
+        if proto.startswith(_WS_BEARER_PREFIX) and len(proto) > len(_WS_BEARER_PREFIX):
+            return proto[len(_WS_BEARER_PREFIX):]
+    return None
+
+
 async def _get_ws_user_context(token: str) -> UserContext:
     """Authenticate a WebSocket token using the active auth provider.
 
@@ -198,9 +218,7 @@ async def proxy_request(
 
 @router.websocket("/deployment/ws")
 async def proxy_deployment_ws(websocket: WebSocket):
-    token = websocket.query_params.get("access_token") or websocket.query_params.get(
-        "token"
-    )
+    token = _ws_token(websocket)
     if not token:
         logger.warning("WebSocket connection rejected: no token provided")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -214,7 +232,7 @@ async def proxy_deployment_ws(websocket: WebSocket):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=WS_SUBPROTOCOL)
 
     upstream_base = ORCHESTRATION_URL.replace("http://", "ws://").replace(
         "https://", "wss://"
@@ -612,7 +630,7 @@ async def proxy_admin_workers_shell(websocket: WebSocket, node_id: str):
 
 
 async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath: str, permission):
-    token = websocket.query_params.get("access_token") or websocket.query_params.get("token")
+    token = _ws_token(websocket)
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
@@ -625,11 +643,11 @@ async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=WS_SUBPROTOCOL)
 
-    # Carry the upstream query string forward (deployment=… / container=…)
-    # but drop the access_token — orchestration uses the internal API key,
-    # and we don't want the user JWT travelling further than necessary.
+    # Carry the upstream query string forward (deployment=… / container=…).
+    # An old client's token parameter is dropped: orchestration uses the
+    # internal API key, and the user JWT goes no further than necessary.
     upstream_qs = urlencode([
         (k, v) for k, v in websocket.query_params.multi_items()
         if k not in ("access_token", "token")

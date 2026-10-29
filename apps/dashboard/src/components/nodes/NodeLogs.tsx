@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getToken } from "@/lib/tokenStore";
-import { toWsUrl } from "@/lib/api";
+import { openSocket, toWsUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   getProvisioningLogs,
@@ -81,13 +81,14 @@ function NodeLogsWS({
       setErrorMsg("No auth token. Sign in again.");
       return;
     }
-    const params = new URLSearchParams({ access_token: token });
+    const params = new URLSearchParams();
     if (deploymentId) params.set("deployment", deploymentId);
     if (containerId) params.set("container", containerId);
+    const qs = params.toString();
 
-    const url = toWsUrl(`/v1/admin/workers/${nodeId}/logs?${params.toString()}`);
+    const url = toWsUrl(`/v1/admin/workers/${nodeId}/logs${qs ? `?${qs}` : ""}`);
 
-    const ws = new WebSocket(url);
+    const ws = openSocket(url);
     wsRef.current = ws;
     setStatus("connecting");
     setErrorMsg("");
@@ -239,19 +240,7 @@ function DepinNodeLogs({ nodeId, className }: { nodeId: string; className?: stri
           socketUrl = toWsUrl(ws_url.startsWith("/") ? ws_url : `/${ws_url}`);
         }
 
-        // Append the JWT for gateway authentication (mirrors TerminalLogs).
-        const token = getToken();
-        if (token) {
-          try {
-            const parsed = new URL(socketUrl.startsWith("ws") ? socketUrl : `ws://${socketUrl}`);
-            parsed.searchParams.append("token", token);
-            socketUrl = parsed.toString();
-          } catch {
-            socketUrl += (socketUrl.includes("?") ? "&" : "?") + "token=" + token;
-          }
-        }
-
-        const ws = new WebSocket(socketUrl);
+        const ws = openSocket(socketUrl);
         wsRef.current = ws;
 
         ws.onopen = () => {

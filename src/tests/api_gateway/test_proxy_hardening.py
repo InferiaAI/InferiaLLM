@@ -136,7 +136,7 @@ def test_the_worker_websocket_needs_a_node_uuid(node_id, monkeypatch):
                         SimpleNamespace(connect=lambda *a, **k: connected.append(a)))
     with pytest.raises(WebSocketDisconnect):
         with TestClient(app).websocket_connect(
-            f"/v1/admin/workers/{node_id}/logs?access_token=t"
+            f"/v1/admin/workers/{node_id}/logs", subprotocols=["inferia.v1", "bearer.t"],
         ):
             pass
     assert connected == []

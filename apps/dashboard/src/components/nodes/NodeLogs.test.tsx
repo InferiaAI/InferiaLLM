@@ -67,6 +67,7 @@ describe("NodeLogs (AWS provisioning mode)", () => {
 
 // ── WS URL tests (NodeLogsWS path) ────────────────────────────────────────────
 const capturedWsUrls: string[] = [];
+const capturedWsProtocols: (string[] | undefined)[] = [];
 
 class MockWebSocket {
   url: string;
@@ -75,9 +76,10 @@ class MockWebSocket {
   onerror: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string[]) {
     this.url = url;
     capturedWsUrls.push(url);
+    capturedWsProtocols.push(protocols);
   }
 
   close() {}
@@ -99,6 +101,7 @@ describe("NodeLogs — WS URL is absolute (NodeLogsWS path)", () => {
     origWS = window.WebSocket;
     window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     capturedWsUrls.length = 0;
+    capturedWsProtocols.length = 0;
   });
 
   afterEach(() => {
@@ -123,11 +126,13 @@ describe("NodeLogs — WS URL is absolute (NodeLogsWS path)", () => {
     expect(url).toContain("/v1/admin/workers/node-log-test/logs");
   });
 
-  it("includes the access_token query param", () => {
+  it("sends the token as a subprotocol, not in the URL", () => {
     render(<NodeLogs nodeId="node-log-test" />);
 
     const url = capturedWsUrls[capturedWsUrls.length - 1];
-    expect(url).toContain("access_token=test-token");
+    expect(url).not.toContain("test-token");
+    expect(url).not.toContain("?");
+    expect(capturedWsProtocols[capturedWsProtocols.length - 1]).toEqual(["inferia.v1", "bearer.test-token"]);
   });
 
   it("includes optional deploymentId as query param when provided", () => {

@@ -286,6 +286,12 @@ def _check_image(image: str, recipe_image: Optional[str]) -> None:
     )
 
 
+def _custom_commands_allowed() -> bool:
+    """A deployment's own container command runs anything the image holds,
+    so it needs the operator's K8S_ALLOW_CUSTOM_COMMANDS."""
+    return os.environ.get("K8S_ALLOW_CUSTOM_COMMANDS", "").strip().lower() in ("1", "true", "yes")
+
+
 def _recipe_for(metadata: Optional[Dict]) -> recipes.ResolvedRecipe:
     md = metadata or {}
     return recipes.resolve(
@@ -496,6 +502,12 @@ class KubernetesAdapter(ProviderAdapter):
             env_values.update({e.name: e.value for e in extra})
         elif _engine == "vllm" and _model and args is None and command is None:
             args = _vllm_args(_model, port, (metadata or {}).get("max_model_len"))
+        elif (args is not None or command is not None) and not _custom_commands_allowed():
+            # Ollama's own start-up replaces whatever the dashboard sent.
+            raise ValueError(
+                "a custom container command is not allowed on this cluster; the "
+                "operator can set K8S_ALLOW_CUSTOM_COMMANDS=true"
+            )
 
         # Last, so the deployment's values win.
         config_env = (metadata or {}).get("env")
@@ -580,12 +592,14 @@ class KubernetesAdapter(ProviderAdapter):
 
         # A cluster-internal address only resolves for a control plane inside
         # the cluster, so this is an operator setting rather than a per-model
-        # one. metadata still wins for a one-off.
-        service_type = str(
-            (metadata or {}).get("service_type")
-            or os.environ.get("K8S_SERVICE_TYPE")
-            or "ClusterIP"
-        )
+        # one; a deployment can't choose, say, a public LoadBalancer.
+        service_type = str(os.environ.get("K8S_SERVICE_TYPE") or "ClusterIP")
+        asked_type = (metadata or {}).get("service_type")
+        if asked_type and str(asked_type) != service_type:
+            raise ValueError(
+                f"service type {asked_type!r} is not allowed; this cluster uses "
+                f"{service_type!r} (K8S_SERVICE_TYPE)"
+            )
         service = client.V1Service(
             metadata=client.V1ObjectMeta(name=pod_name, labels=labels),
             spec=client.V1ServiceSpec(

