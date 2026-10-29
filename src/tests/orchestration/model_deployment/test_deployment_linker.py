@@ -289,7 +289,7 @@ async def test_on_worker_ready_threads_node_provider_to_mirror(pool, monkeypatch
     captured = {}
 
     async def _spy(spec, *, recipe, artifact_uri, mirror_base, cache_repo,
-                   provider=None):
+                   provider=None, **_):
         captured["provider"] = provider
 
     monkeypatch.setattr(_dl_mod, "resolve_and_apply_mirror", _spy)

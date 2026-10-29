@@ -10,8 +10,8 @@ Strategy:
    ``asyncio.to_thread`` so the sleep does NOT block the event loop; the
    renewer continues to run on the main loop and can attempt to extend
    the lease independently.
-3. The reconciler escalates the raised RuntimeError through the
-   classifier; it gets ``UNCLASSIFIED`` (TRANSIENT by default) and the
+3. The reconciler escalates the raised ConnectionError through the
+   classifier; it gets ``NETWORK_ERROR`` (TRANSIENT) and the
    row is scheduled for retry. We also manually clear the lease columns
    to simulate the reconciler crashing without a clean release -- the
    next claim_next_job picks the job up regardless.
@@ -46,7 +46,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
 
     pulumi_calls = {"n": 0}
 
-    def _pulumi_first_hangs_then_succeeds(*, stack_name, program, env):
+    def _pulumi_first_hangs_then_succeeds(*, stack_name, program, env, state_dir=None):
         pulumi_calls["n"] += 1
         if pulumi_calls["n"] == 1:
             # Simulate a stalled stack.up -- sleep so the 0.2s test lease
@@ -55,7 +55,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
             # the event loop -- the renewer keeps running.
             import time
             time.sleep(0.6)
-            raise RuntimeError("simulated mid-pulumi crash")
+            raise ConnectionError("simulated mid-pulumi crash")
         return StackOutputs(
             instance_id="i-abc",
             public_dns=None,
@@ -99,7 +99,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
 
         # Tick 2: provisioning. First call sleeps past lease TTL then
         # raises -- the reconciler's exception handling classifies the
-        # RuntimeError, schedules retry, and returns. We swallow any
+        # ConnectionError, schedules retry, and returns. We swallow any
         # exception that bubbles up because we deliberately raised one.
         try:
             await rec1.tick_once()

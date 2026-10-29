@@ -231,6 +231,13 @@ async def app_with_real_db(test_database_url) -> AsyncIterator[tuple]:
     try:
         async with pool.acquire() as conn:
             await _apply_migrations(conn)
+            # tick_once claims the oldest open job in the shared DB; park jobs
+            # other test files left behind so it only drives this test's job.
+            await conn.execute(
+                "UPDATE provisioning_jobs SET phase='failed', lease_holder=NULL "
+                "WHERE phase IN ('pending','preflight','provisioning',"
+                "'bootstrapping','cancelling')"
+            )
 
         inventory_repo = InventoryRepository(pool)
         repo = ProvisioningJobRepository(pool)
