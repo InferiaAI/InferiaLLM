@@ -19,7 +19,7 @@ from pathlib import Path
 import asyncpg
 import pytest
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[6] / "infra" / "schema" / "migrations"
+_MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "infra" / "schema" / "migrations"
 MIGRATIONS = [
     _MIGRATIONS_DIR / "20260528a_node_state_failed.sql",
     _MIGRATIONS_DIR / "20260528b_provisioning_jobs.sql",
@@ -27,17 +27,9 @@ MIGRATIONS = [
 
 
 async def _apply_migrations(conn: asyncpg.Connection) -> None:
-    """Apply both migration files in order, splitting each on ';'.
-
-    The naive split on ';' is fine for the SQL in these files. The
-    files include a WARNING comment forbidding $$-quoted blocks; if
-    that ever becomes necessary, swap this for a real statement
-    splitter.
-    """
+    """Apply both migration files in order, each as one execute like cli_init.py."""
     for path in MIGRATIONS:
-        sql = path.read_text()
-        for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-            await conn.execute(stmt)
+        await conn.execute(path.read_text())
 
 
 @pytest.fixture

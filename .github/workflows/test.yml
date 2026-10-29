@@ -52,6 +52,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql://inferia:inferia@localhost:5432/inferia_test
       INFERIA_TEST_DATABASE_URL: postgresql://inferia:inferia@localhost:5432/inferia_test
+      POSTGRES_DSN: postgresql://inferia:inferia@localhost:5432/inferia_test
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
       POSTGRES_USER: inferia

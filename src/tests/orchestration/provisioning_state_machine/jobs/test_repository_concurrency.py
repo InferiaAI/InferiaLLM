@@ -35,16 +35,11 @@ def test_database_url() -> str:
 
 
 async def _apply_migrations(pool):
-    # WARNING: same fragility as tests/integration/test_migration.py — we split
-    # each .sql file on ';' to mirror cli_init.py's statement boundaries. If a
-    # future migration adds a $$-quoted block (PL/pgSQL, escaped string) the
-    # split will break here. The migration headers in 20260528{a,b} call this
-    # out; keep that constraint in mind when editing this helper.
+    # One execute per file, as cli_init.py does: splitting on ';' breaks on
+    # semicolons inside comments and string literals.
     async with pool.acquire() as conn:
         for path in MIGRATIONS:
-            sql = path.read_text()
-            for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-                await conn.execute(stmt)
+            await conn.execute(path.read_text())
 
 
 @pytest_asyncio.fixture(scope="module")

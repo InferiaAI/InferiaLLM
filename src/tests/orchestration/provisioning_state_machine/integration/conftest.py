@@ -56,13 +56,10 @@ def test_database_url() -> str:
 
 
 async def _apply_migrations(conn: asyncpg.Connection) -> None:
-    """Apply the provisioning migrations in order, splitting each file
-    on ';' the same way cli_init.py does in production. Idempotent
-    against an already-migrated DB."""
+    """Apply the provisioning migrations in order, each file as one execute
+    like cli_init.py does. Idempotent against an already-migrated DB."""
     for path in MIGRATIONS:
-        sql = path.read_text()
-        for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-            await conn.execute(stmt)
+        await conn.execute(path.read_text())
 
 
 def _build_app(db_pool, *, reconciler) -> FastAPI:

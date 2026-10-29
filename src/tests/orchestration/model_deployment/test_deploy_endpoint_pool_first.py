@@ -108,6 +108,16 @@ async def _seed_pool(
     return pool_id
 
 
+async def _pool_org(pool, pool_id: UUID) -> str:
+    """The org that owns the seeded pool; deploys must come from it."""
+    async with pool.acquire() as c:
+        return await c.fetchval("SELECT owner_id FROM compute_pools WHERE id=$1", pool_id)
+
+
+def _org_header(org_id: str) -> dict:
+    return {"X-Organization-ID": org_id}
+
+
 async def _seed_node(
     pool,
     pool_id: UUID,
@@ -170,11 +180,12 @@ async def test_deploy_to_empty_pool_returns_pending_node(app_and_pool):
     """ColdStart path: empty pool => PENDING_NODE + one provisioning job + one placeholder."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
+    org_id = await _pool_org(pool, pool_id)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id))
+        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id), headers=_org_header(org_id))
 
     assert resp.status_code == 202, resp.text
     body = resp.json()
@@ -212,6 +223,7 @@ async def test_deploy_to_warm_pool_returns_running(app_and_pool):
     a successful warm load stayed DEPLOYING forever."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
+    org_id = await _pool_org(pool, pool_id)
     node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=0)
 
     # Worker reports the model loaded successfully.
@@ -229,6 +241,7 @@ async def test_deploy_to_warm_pool_returns_running(app_and_pool):
         resp = await client.post(
             "/deployment/deploy",
             json=_deploy_payload(pool_id, gpu_per_replica=2),
+            headers=_org_header(org_id),
         )
 
     assert resp.status_code == 200, resp.text
@@ -317,11 +330,12 @@ async def test_deploy_to_terminating_pool_returns_409(app_and_pool):
     """Deploying to a terminating pool must return 409."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool, lifecycle_state="terminating")
+    org_id = await _pool_org(pool, pool_id)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id))
+        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id), headers=_org_header(org_id))
 
     assert resp.status_code == 409, resp.text
 
@@ -331,12 +345,13 @@ async def test_deploy_at_max_nodes_returns_503(app_and_pool):
     app, pool = app_and_pool
     # max_nodes=1, node fully allocated so no free slot; adding another node blocked.
     pool_id = await _seed_pool(pool, gpu_count=4, max_nodes=1)
+    org_id = await _pool_org(pool, pool_id)
     await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=4)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id))
+        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id), headers=_org_header(org_id))
 
     assert resp.status_code == 503, resp.text
     assert resp.headers.get("retry-after") == "60"
@@ -351,11 +366,12 @@ async def test_deploy_to_worker_pool_pending_no_provisioning_job(app_and_pool):
     """ColdStart with worker-pool metadata: PENDING_NODE returned, zero ProvisioningJobs."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool, metadata={"agent_kind": "worker"})
+    org_id = await _pool_org(pool, pool_id)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id))
+        resp = await client.post("/deployment/deploy", json=_deploy_payload(pool_id), headers=_org_header(org_id))
 
     assert resp.status_code == 202, resp.text
     body = resp.json()
@@ -374,7 +390,7 @@ async def test_deploy_duplicate_model_name_in_org_returns_409(app_and_pool):
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool, gpu_count=4)
     await _seed_ready_node(pool, pool_id, gpu_total=4)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -389,7 +405,7 @@ async def test_deploy_duplicate_model_name_in_org_returns_409(app_and_pool):
             "org_id": org_id,
             "ami_id": "ami-0123456789abcdef0",
             "configuration": {"artifact_uri": "hf://qwen3"},
-        })
+        }, headers=_org_header(org_id))
         assert r1.status_code == 200, r1.text
 
         # Second deploy with same model_name + same org => 409
@@ -403,7 +419,7 @@ async def test_deploy_duplicate_model_name_in_org_returns_409(app_and_pool):
             "org_id": org_id,
             "ami_id": "ami-0123456789abcdef0",
             "configuration": {"artifact_uri": "hf://qwen3"},
-        })
+        }, headers=_org_header(org_id))
         assert r2.status_code == 409, r2.text
         assert "already exists" in r2.text
 
@@ -436,7 +452,7 @@ async def test_build_provisioning_spec_derives_instance_class_and_region():
     assert spec["instance_class"] == "normal_gpu"  # catalog-derived
     assert spec["region"] == "us-east-1"
     assert spec["gpu_count"] == 1
-    assert spec["root_volume_gb"] == 130  # GPU DLAMI needs >=75GB
+    assert spec["root_volume_gb"] == 150  # GPU DLAMI needs >=75GB
 
 
 async def test_build_provisioning_spec_unknown_instance_type_raises_422():
@@ -546,7 +562,7 @@ async def test_deploy_vllm_requires_ami_id(app_and_pool):
     """vLLM deploy without ami_id → 422 with 'ami_id' in the message."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     body = {
         "model_name": "vllm-model",
@@ -562,7 +578,7 @@ async def test_deploy_vllm_requires_ami_id(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=body)
+        r = await client.post("/deployment/deploy", json=body, headers=_org_header(org_id))
 
     assert r.status_code == 422, r.text
     assert "ami_id" in r.text.lower()
@@ -572,7 +588,7 @@ async def test_deploy_vllm_with_ami_id_succeeds(app_and_pool):
     """vLLM deploy WITH ami_id proceeds past validation (PENDING_NODE on empty pool)."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     body = {
         "model_name": "vllm-model-ami",
@@ -588,7 +604,7 @@ async def test_deploy_vllm_with_ami_id_succeeds(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=body)
+        r = await client.post("/deployment/deploy", json=body, headers=_org_header(org_id))
 
     # ColdStart path → 202 PENDING_NODE (ami_id validation passed)
     assert r.status_code == 202, r.text
@@ -599,7 +615,7 @@ async def test_deploy_non_vllm_engine_no_ami_id_allowed(app_and_pool):
     """Non-vLLM engines (ollama) do not require ami_id."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     body = {
         "model_name": "ollama-model",
@@ -615,7 +631,7 @@ async def test_deploy_non_vllm_engine_no_ami_id_allowed(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=body)
+        r = await client.post("/deployment/deploy", json=body, headers=_org_header(org_id))
 
     # Any non-422 means we passed ami_id validation (real result may vary)
     assert r.status_code != 422, r.text
@@ -633,7 +649,7 @@ async def test_deploy_vllm_nosana_pool_no_ami_id_not_gated(app_and_pool, monkeyp
         # _build_provisioning_spec doesn't catalog-validate non-AWS providers.
         instance_type="nosana-gpu", region="global",
     )
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     # Stub the background helper so the fire-and-forget task is a no-op (no real
     # Nosana adapter call); we only care that the deploy was NOT 422-gated.
@@ -654,7 +670,7 @@ async def test_deploy_vllm_nosana_pool_no_ami_id_not_gated(app_and_pool, monkeyp
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=body)
+        r = await client.post("/deployment/deploy", json=body, headers=_org_header(org_id))
 
     # NOT gated: ColdStart on an empty pool → 202 PENDING_NODE.
     assert r.status_code == 202, r.text
@@ -683,7 +699,7 @@ async def test_deploy_vllm_omni_on_nosana_returns_422(app_and_pool, engine):
     pool_id = await _seed_pool(
         pool, provider="nosana", instance_type="nosana-gpu", region="global",
     )
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     body = {
         "model_name": f"{engine}-on-nosana",
@@ -698,7 +714,7 @@ async def test_deploy_vllm_omni_on_nosana_returns_422(app_and_pool, engine):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=body)
+        r = await client.post("/deployment/deploy", json=body, headers=_org_header(org_id))
 
     assert r.status_code == 422, r.text
     assert "aws" in r.text.lower()
@@ -718,7 +734,7 @@ async def test_deploy_aws_only_engine_on_aws_no_ami_succeeds(app_and_pool, engin
     pool → 202 PENDING_NODE, i.e. validation passed."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)  # provider defaults to aws
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     body = {
         "model_name": f"{engine}-on-aws",
@@ -734,7 +750,7 @@ async def test_deploy_aws_only_engine_on_aws_no_ami_succeeds(app_and_pool, engin
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=body)
+        r = await client.post("/deployment/deploy", json=body, headers=_org_header(org_id))
 
     assert r.status_code == 202, r.text
     assert r.json()["state"] == "PENDING_NODE"
@@ -789,7 +805,7 @@ async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
     configuration.env for the worker. The raw token never leaves the server."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     # Seed a ready node so we get a warm-path DEPLOYING and can introspect
     # the load_model call's spec.env for HF_TOKEN.
@@ -828,7 +844,7 @@ async def test_deploy_hf_token_name_injects_hf_token(app_and_pool):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            r = await client.post("/deployment/deploy", json=body_payload)
+            r = await client.post("/deployment/deploy", json=body_payload, headers=_org_header(org_id))
 
     assert r.status_code == 200, r.text
     # Confirm load_model was called with HF_TOKEN in spec.env
@@ -844,7 +860,7 @@ async def test_deploy_hf_token_name_does_not_clobber_explicit_hf_token(app_and_p
     overwrite it (setdefault semantics)."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
     await _seed_ready_node(pool, pool_id, gpu_total=4)
 
     from orchestration.workers.worker_controller.protocol import (
@@ -883,7 +899,7 @@ async def test_deploy_hf_token_name_does_not_clobber_explicit_hf_token(app_and_p
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            r = await client.post("/deployment/deploy", json=body_payload)
+            r = await client.post("/deployment/deploy", json=body_payload, headers=_org_header(org_id))
 
     assert r.status_code == 200, r.text
     call_kwargs = app.state.worker_controller.load_model.await_args.kwargs
@@ -898,7 +914,7 @@ async def test_deploy_hf_token_name_not_found_no_injection(app_and_pool):
     injected — the deploy proceeds normally without it."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
     await _seed_ready_node(pool, pool_id, gpu_total=4)
 
     from orchestration.workers.worker_controller.protocol import (
@@ -933,7 +949,7 @@ async def test_deploy_hf_token_name_not_found_no_injection(app_and_pool):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            r = await client.post("/deployment/deploy", json=body_payload)
+            r = await client.post("/deployment/deploy", json=body_payload, headers=_org_header(org_id))
 
     assert r.status_code == 200, r.text
     call_kwargs = app.state.worker_controller.load_model.await_args.kwargs
@@ -955,7 +971,7 @@ async def test_deploy_vllm_ami_id_persisted_in_configuration(app_and_pool):
     """
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
 
     body_payload = {
         "model_name": "ami-persist-test",
@@ -971,7 +987,7 @@ async def test_deploy_vllm_ami_id_persisted_in_configuration(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=body_payload)
+        r = await client.post("/deployment/deploy", json=body_payload, headers=_org_header(org_id))
 
     # ColdStart => 202 PENDING_NODE
     assert r.status_code == 202, r.text
@@ -997,7 +1013,7 @@ async def test_deploy_vllm_ami_id_in_configuration_alongside_hf_token(app_and_po
     configuration['env']['HF_TOKEN'] == resolved token."""
     app, pool = app_and_pool
     pool_id = await _seed_pool(pool)
-    org_id = str(uuid4())
+    org_id = await _pool_org(pool, pool_id)
     await _seed_ready_node(pool, pool_id, gpu_total=4)
 
     from orchestration.workers.worker_controller.protocol import (
@@ -1032,7 +1048,7 @@ async def test_deploy_vllm_ami_id_in_configuration_alongside_hf_token(app_and_po
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            r = await client.post("/deployment/deploy", json=body_payload)
+            r = await client.post("/deployment/deploy", json=body_payload, headers=_org_header(org_id))
 
     assert r.status_code == 200, r.text
     deploy_id = UUID(r.json()["deployment_id"])
@@ -1088,7 +1104,7 @@ async def test_deploy_external_workload_runs_without_pool(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=payload)
+        r = await client.post("/deployment/deploy", json=payload, headers=_org_header(org_id))
 
     assert r.status_code == 200, r.text
     assert r.json()["state"] == "RUNNING"
@@ -1148,7 +1164,7 @@ async def test_deploy_external_workload_ignores_missing_pool_id(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=payload)
+        r = await client.post("/deployment/deploy", json=payload, headers=_org_header(org_id))
 
     assert r.status_code == 200, r.text
     assert r.json()["state"] == "RUNNING"
@@ -1180,8 +1196,8 @@ async def test_deploy_external_workload_still_rejects_duplicate_name(app_and_poo
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        first = await client.post("/deployment/deploy", json=payload)
-        second = await client.post("/deployment/deploy", json=payload)
+        first = await client.post("/deployment/deploy", json=payload, headers=_org_header(org_id))
+        second = await client.post("/deployment/deploy", json=payload, headers=_org_header(org_id))
 
     assert first.status_code == 200, first.text
     assert second.status_code == 409, second.text
@@ -1209,6 +1225,6 @@ async def test_deploy_compute_workload_still_requires_pool_id(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        r = await client.post("/deployment/deploy", json=payload)
+        r = await client.post("/deployment/deploy", json=payload, headers=_org_header(str(uuid4())))
 
     assert r.status_code == 422, r.text
