@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getToken } from "@/lib/tokenStore";
-import { toWsUrl } from "@/lib/api";
+import { openSocket, toWsUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface NodeShellProps {
@@ -112,7 +112,7 @@ function NodeShellWS({ nodeId, deploymentId, containerId, className }: {
       return;
     }
 
-    const params = new URLSearchParams({ access_token: token });
+    const params = new URLSearchParams();
     if (deploymentId) params.set("deployment", deploymentId);
     if (containerId) params.set("container", containerId);
     params.set("shell", effectiveShell);
@@ -120,7 +120,7 @@ function NodeShellWS({ nodeId, deploymentId, containerId, className }: {
 
     const url = toWsUrl(`/v1/admin/workers/${nodeId}/shell?${params.toString()}`);
 
-    const ws = new WebSocket(url);
+    const ws = openSocket(url);
     wsRef.current = ws;
     setStatus("connecting");
     setErrorMsg("");

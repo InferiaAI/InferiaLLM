@@ -299,6 +299,11 @@ dashboard offers. To allow other images, list them in `K8S_ALLOWED_IMAGES`,
 comma-separated: an exact image, a repository (any tag), or a prefix ending in
 `/` (for example `registry.example.com/team/`).
 
+A deployment can't set its own container command (`command`/`cmd`) or Service
+type. The engines' own start-up still works. Set `K8S_ALLOW_CUSTOM_COMMANDS=true`
+to allow custom commands, for example the PyTorch template's `sleep infinity`.
+The Service type always comes from `K8S_SERVICE_TYPE`.
+
 #### On a GPU machine
 
 `deploy/gpu-kind.sh` takes a GPU machine from nothing to a cluster models can

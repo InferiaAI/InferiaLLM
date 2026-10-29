@@ -6,6 +6,7 @@ import NodeShell from "./NodeShell";
 // Captures the URL passed to `new WebSocket(url)` without attempting a real
 // TCP connection.
 const capturedWsUrls: string[] = [];
+const capturedWsProtocols: (string[] | undefined)[] = [];
 
 class MockWebSocket {
   url: string;
@@ -14,9 +15,10 @@ class MockWebSocket {
   onerror: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string[]) {
     this.url = url;
     capturedWsUrls.push(url);
+    capturedWsProtocols.push(protocols);
   }
 
   close() {}
@@ -67,6 +69,7 @@ describe("NodeShell — WS URL is absolute when Connect is clicked", () => {
     origWS = window.WebSocket;
     window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     capturedWsUrls.length = 0;
+    capturedWsProtocols.length = 0;
   });
 
   afterEach(() => {
@@ -93,12 +96,13 @@ describe("NodeShell — WS URL is absolute when Connect is clicked", () => {
     expect(url).toContain("/v1/admin/workers/node-abc/shell");
   });
 
-  it("includes the access_token query param", () => {
+  it("sends the token as a subprotocol, not in the URL", () => {
     render(<NodeShell nodeId="node-xyz" nodeState="ready" />);
     fireEvent.click(screen.getByRole("button", { name: /connect/i }));
 
     const url = capturedWsUrls[capturedWsUrls.length - 1];
-    expect(url).toContain("access_token=test-token");
+    expect(url).not.toContain("test-token");
+    expect(capturedWsProtocols[capturedWsProtocols.length - 1]).toEqual(["inferia.v1", "bearer.test-token"]);
   });
 
   it("includes shell binary in query params", () => {
