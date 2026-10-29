@@ -21,8 +21,8 @@ from orchestration.state_machine.jobs.repository import (
 
 
 MIGRATIONS = [
-    Path(__file__).resolve().parents[6] / "infra" / "schema" / "migrations" / "20260528a_node_state_failed.sql",
-    Path(__file__).resolve().parents[6] / "infra" / "schema" / "migrations" / "20260528b_provisioning_jobs.sql",
+    Path(__file__).resolve().parents[4] / "infra" / "schema" / "migrations" / "20260528a_node_state_failed.sql",
+    Path(__file__).resolve().parents[4] / "infra" / "schema" / "migrations" / "20260528b_provisioning_jobs.sql",
 ]
 
 

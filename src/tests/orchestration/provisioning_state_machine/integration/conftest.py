@@ -37,7 +37,7 @@ from httpx import ASGITransport, AsyncClient
 # split is intentional because Postgres forbids referencing a new enum
 # value in the same transaction it was added.
 _MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[6]
+    Path(__file__).resolve().parents[4]
     / "infra" / "schema" / "migrations"
 )
 MIGRATIONS = [
