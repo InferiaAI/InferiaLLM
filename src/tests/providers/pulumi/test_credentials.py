@@ -158,8 +158,7 @@ def test_verify_credentials_returns_caller_identity_on_success():
         "Arn": "arn:aws:iam::123:user/test",
     }
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.credentials._boto3_sts_client",
+        "providers.pulumi.credentials._boto3_sts_client",
         return_value=fake_client,
     ):
         ident = verify_credentials(_creds())
@@ -178,8 +177,7 @@ def test_verify_credentials_raises_invalid_credentials_on_authfailure():
     fake_client = MagicMock()
     fake_client.get_caller_identity.side_effect = err
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.credentials._boto3_sts_client",
+        "providers.pulumi.credentials._boto3_sts_client",
         return_value=fake_client,
     ):
         with pytest.raises(InvalidCredentialsError):
@@ -192,8 +190,7 @@ def test_verify_credentials_raises_network_error_on_endpoint_failure():
     fake_client = MagicMock()
     fake_client.get_caller_identity.side_effect = err
     with patch(
-        "orchestration.provisioning.engine."
-        "adapters.pulumi.credentials._boto3_sts_client",
+        "providers.pulumi.credentials._boto3_sts_client",
         return_value=fake_client,
     ):
         with pytest.raises(NetworkError):

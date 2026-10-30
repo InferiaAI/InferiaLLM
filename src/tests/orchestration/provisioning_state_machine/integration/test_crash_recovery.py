@@ -10,8 +10,8 @@ Strategy:
    ``asyncio.to_thread`` so the sleep does NOT block the event loop; the
    renewer continues to run on the main loop and can attempt to extend
    the lease independently.
-3. The reconciler escalates the raised RuntimeError through the
-   classifier; it gets ``UNCLASSIFIED`` (TRANSIENT by default) and the
+3. The reconciler escalates the raised ConnectionError through the
+   classifier; it gets ``NETWORK_ERROR`` (TRANSIENT) and the
    row is scheduled for retry. We also manually clear the lease columns
    to simulate the reconciler crashing without a clean release -- the
    next claim_next_job picks the job up regardless.
@@ -31,6 +31,11 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.orchestration.provisioning_state_machine.integration.conftest import (
+    ORG_HEADERS,
+    enqueue_aws_node,
+)
+
 
 @pytest.mark.asyncio
 async def test_lease_expiry_re_picks_up_job(app_with_real_db):
@@ -41,7 +46,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
 
     pulumi_calls = {"n": 0}
 
-    def _pulumi_first_hangs_then_succeeds(*, stack_name, program, env):
+    def _pulumi_first_hangs_then_succeeds(*, stack_name, program, env, state_dir=None):
         pulumi_calls["n"] += 1
         if pulumi_calls["n"] == 1:
             # Simulate a stalled stack.up -- sleep so the 0.2s test lease
@@ -50,7 +55,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
             # the event loop -- the renewer keeps running.
             import time
             time.sleep(0.6)
-            raise RuntimeError("simulated mid-pulumi crash")
+            raise ConnectionError("simulated mid-pulumi crash")
         return StackOutputs(
             instance_id="i-abc",
             public_dns=None,
@@ -75,16 +80,11 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
         "pulumi_up.run_pulumi_up_sync",
         side_effect=_pulumi_first_hangs_then_succeeds,
     ):
-        resp = await client.post(
-            "/v1/nodes/add/aws",
-            json={"spec": {"instance_class": "normal_gpu",
-                           "instance_type":  "g6.xlarge",
-                           "region":         "us-east-1"}},
-            headers={"X-Organization-ID": "org-int",
-                     "Authorization": "Bearer test"},
-        )
-        assert resp.status_code == 200, resp.text
-        node_id = resp.json()["node_id"]
+        node_id = await enqueue_aws_node(pool, {
+            "instance_class": "normal_gpu",
+            "instance_type":  "g6.xlarge",
+            "region":         "us-east-1",
+        })
 
         # Drive the reconciler with a SHORT 0.2s lease so we can simulate
         # crash + recovery in test time. lease_seconds flows into Postgres
@@ -99,7 +99,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
 
         # Tick 2: provisioning. First call sleeps past lease TTL then
         # raises -- the reconciler's exception handling classifies the
-        # RuntimeError, schedules retry, and returns. We swallow any
+        # ConnectionError, schedules retry, and returns. We swallow any
         # exception that bubbles up because we deliberately raised one.
         try:
             await rec1.tick_once()
@@ -140,7 +140,7 @@ async def test_lease_expiry_re_picks_up_job(app_with_real_db):
 
         body = (await client.get(
             f"/v1/nodes/{node_id}/provisioning",
-            headers={"Authorization": "Bearer test"},
+            headers=ORG_HEADERS,
         )).json()
         assert body["current_phase"] == "ready", body
         assert body["terminal"] is True

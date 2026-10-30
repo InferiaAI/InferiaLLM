@@ -1,6 +1,6 @@
 """End-to-end happy-path integration test.
 
-POST /v1/nodes/add/aws -> reconciler runs all phases -> ready.
+Enqueued AWS node -> reconciler runs all phases -> ready.
 
 Uses:
 - real Postgres (gated on INFERIA_TEST_DATABASE_URL)
@@ -17,10 +17,15 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.orchestration.provisioning_state_machine.integration.conftest import (
+    ORG_HEADERS,
+    enqueue_aws_node,
+)
+
 
 @pytest.mark.asyncio
 async def test_full_happy_path_to_ready(app_with_real_db):
-    """POST add/aws -> drive reconciler ticks -> phase=ready, inventory=ready."""
+    """Enqueue -> drive reconciler ticks -> phase=ready, inventory=ready."""
     from providers.pulumi.pulumi_aws_adapter import (
         StackOutputs,
     )
@@ -52,21 +57,13 @@ async def test_full_happy_path_to_ready(app_with_real_db):
             ami_id="ami-abc",
         ),
     ):
-        # Submit the request via the thin-enqueue HTTP path. The
-        # response returns immediately with node_id + job_id while the
-        # reconciler picks up the work asynchronously.
-        resp = await client.post(
-            "/v1/nodes/add/aws",
-            json={"spec": {
-                "instance_class": "normal_gpu",
-                "instance_type":  "g6.xlarge",
-                "region":         "us-east-1",
-            }},
-            headers={"X-Organization-ID": "org-int",
-                     "Authorization": "Bearer test"},
-        )
-        assert resp.status_code == 200, resp.text
-        node_id = resp.json()["node_id"]
+        # Enqueue the node + job as /deploy's ColdStart does; the
+        # reconciler picks up the work on the next tick.
+        node_id = await enqueue_aws_node(pool, {
+            "instance_class": "normal_gpu",
+            "instance_type":  "g6.xlarge",
+            "region":         "us-east-1",
+        })
 
         # Drive reconciler ticks until ready. Each tick advances one
         # phase; the BOOTSTRAPPING phase needs us to simulate worker
@@ -92,7 +89,7 @@ async def test_full_happy_path_to_ready(app_with_real_db):
         # dashboard's InstanceDetail consumes.
         resp = await client.get(
             f"/v1/nodes/{node_id}/provisioning",
-            headers={"Authorization": "Bearer test"},
+            headers=ORG_HEADERS,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()

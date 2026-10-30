@@ -3,7 +3,7 @@
 These fixtures stand up a minimal FastAPI app + a real Postgres-backed
 ProvisioningReconciler so each test can drive the state machine with
 ``await app.state.reconciler.tick_once()`` while exercising the full
-HTTP surface (POST /v1/nodes/add/aws, GET /provisioning, POST
+HTTP surface (GET /provisioning, POST
 /provisioning/retry, DELETE /nodes/{id}).
 
 Why a custom factory instead of orchestration.server.serve()?
@@ -13,7 +13,7 @@ Why a custom factory instead of orchestration.server.serve()?
   None of that fits a tick-driven integration test.
 * serve() wires the legacy ``NodeProvisioningRepo`` (event-log only)
   as ``provisioning_repo`` on the nodes router. The new state-machine
-  surface (POST /v1/nodes/add/aws, retry, cancel) needs the new
+  surface (retry, cancel) needs the new
   ``ProvisioningJobRepository`` — so the test factory wires that one.
 
 Gated on ``INFERIA_TEST_DATABASE_URL`` — when unset, every test below
@@ -22,8 +22,10 @@ is skipped cleanly so CI on machines without a test PG passes.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import AsyncIterator
+from unittest.mock import patch
 
 import asyncpg
 import pytest
@@ -37,13 +39,27 @@ from httpx import ASGITransport, AsyncClient
 # split is intentional because Postgres forbids referencing a new enum
 # value in the same transaction it was added.
 _MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[6]
+    Path(__file__).resolve().parents[4]
     / "infra" / "schema" / "migrations"
 )
 MIGRATIONS = [
     _MIGRATIONS_DIR / "20260528a_node_state_failed.sql",
     _MIGRATIONS_DIR / "20260528b_provisioning_jobs.sql",
 ]
+
+
+@pytest.fixture(autouse=True)
+def _pulumi_on_path():
+    """Preflight requires the pulumi binary; CI has none and the tests patch
+    every pulumi call, so report it present."""
+    real_which = shutil.which
+    with patch(
+        "orchestration.state_machine.phases.preflight.shutil.which",
+        side_effect=lambda name, *a, **kw: (
+            "/usr/bin/pulumi" if name == "pulumi" else real_which(name, *a, **kw)
+        ),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -56,13 +72,59 @@ def test_database_url() -> str:
 
 
 async def _apply_migrations(conn: asyncpg.Connection) -> None:
-    """Apply the provisioning migrations in order, splitting each file
-    on ';' the same way cli_init.py does in production. Idempotent
-    against an already-migrated DB."""
+    """Apply the provisioning migrations in order, each file as one execute
+    like cli_init.py does. Idempotent against an already-migrated DB."""
     for path in MIGRATIONS:
-        sql = path.read_text()
-        for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-            await conn.execute(stmt)
+        await conn.execute(path.read_text())
+
+
+ORG_ID = "org-int"
+ORG_HEADERS = {"X-Organization-ID": ORG_ID, "Authorization": "Bearer test"}
+
+
+async def enqueue_aws_node(db_pool, spec: dict) -> str:
+    """Create an AWS node the way /deploy's ColdStart does: an org-owned pool,
+    a placeholder inventory row and a preflight job. Returns the node id."""
+    from uuid import uuid4
+
+    from orchestration.repositories.inventory_repo import InventoryRepository
+    from orchestration.state_machine.jobs.repository import (
+        ProvisioningJobRepository,
+    )
+
+    pool_id = uuid4()
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO organizations(id, name) VALUES($1, $1) ON CONFLICT DO NOTHING",
+            ORG_ID,
+        )
+        await conn.execute(
+            """INSERT INTO compute_pools(
+                   id, pool_name, owner_type, owner_id, org_id, provider,
+                   pool_type, allowed_gpu_types, max_cost_per_hour,
+                   scheduling_policy, provider_pool_id, is_active,
+                   lifecycle_state, gpu_count)
+               VALUES ($1, $2, 'organization', $3, $3, 'aws', 'cluster',
+                       ARRAY[$4], 0, '{}', $5, true, 'running', 1)""",
+            pool_id, f"p-{pool_id}", ORG_ID, spec["instance_type"],
+            f"placeholder:{pool_id}",
+        )
+    node_id = await InventoryRepository(db_pool).create_placeholder(
+        pool_id=pool_id, gpu_total=1, initial_alloc=0,
+    )
+    await ProvisioningJobRepository(db_pool).enqueue(
+        node_id=node_id, pool_id=pool_id, org_id=ORG_ID, provider="aws",
+        spec=spec,
+    )
+    return str(node_id)
+
+
+async def _fake_aws_context(job):
+    from providers.pulumi.credentials import AWSCredentials
+
+    return AWSCredentials(
+        access_key_id="AKIATEST", secret_access_key="test", region="us-east-1",
+    ), {}
 
 
 def _build_app(db_pool, *, reconciler) -> FastAPI:
@@ -84,7 +146,7 @@ def _build_app(db_pool, *, reconciler) -> FastAPI:
     inventory_repo = InventoryRepository(db_pool)
     pool_repo = ComputePoolRepository(db_pool)
     # Wire BOTH repos: ProvisioningJobRepository (new state-machine queue,
-    # used by POST /add/aws thin enqueue + retry + cancel + the job-row
+    # used by enqueue_aws_node + retry + cancel + the job-row
     # read in GET /provisioning) and NodeProvisioningRepo (legacy event
     # log, used for the phase-summary view and GET /provisioning-logs).
     # Production server.py wires both side-by-side; the integration test
@@ -169,6 +231,13 @@ async def app_with_real_db(test_database_url) -> AsyncIterator[tuple]:
     try:
         async with pool.acquire() as conn:
             await _apply_migrations(conn)
+            # tick_once claims the oldest open job in the shared DB; park jobs
+            # other test files left behind so it only drives this test's job.
+            await conn.execute(
+                "UPDATE provisioning_jobs SET phase='failed', lease_holder=NULL "
+                "WHERE phase IN ('pending','preflight','provisioning',"
+                "'bootstrapping','cancelling')"
+            )
 
         inventory_repo = InventoryRepository(pool)
         repo = ProvisioningJobRepository(pool)
@@ -198,6 +267,9 @@ async def app_with_real_db(test_database_url) -> AsyncIterator[tuple]:
             lease_seconds=30,
             renew_interval_s=5.0,
             lease_holder="test-reconciler",
+            # Production loads these from Settings -> Providers -> AWS; the
+            # tests patch every AWS call, so any credentials will do.
+            load_aws_context=_fake_aws_context,
             # Mirror terminal phases (ready / terminated / failed) onto
             # compute_inventory.state so the integration tests can assert
             # the dashboard-visible state matches the job row's phase.

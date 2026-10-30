@@ -2,7 +2,7 @@ import asyncio
 from uuid import UUID
 import uuid
 from orchestration.infra.db import create_test_db_pool
-from tests.orchestration.infra.test_setup import uid
+from tests.orchestration.infra.setup_helpers import uid
 
 # gRPC stubs
 from orchestration.v1 import (

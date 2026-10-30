@@ -1,6 +1,7 @@
 import os
 import pytest
 import asyncpg
+from cli import init as cli_init
 from pytest_asyncio import fixture as pytest_asyncio_fixture
 
 pytestmark = pytest.mark.asyncio

@@ -100,6 +100,11 @@ def _createpool_payload(
     return payload
 
 
+def _org_header(payload: dict) -> dict:
+    """createpool owns the pool by the caller's org header, not the body."""
+    return {"X-Organization-ID": payload["owner_id"]}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -116,7 +121,7 @@ async def test_createpool_aws_does_not_provision(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -156,7 +161,7 @@ async def test_createpool_rejects_malformed_region(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 422, resp.text
     assert "us-east1" in resp.text
@@ -180,7 +185,7 @@ async def test_createpool_accepts_valid_region(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 200, resp.text
     pool_id = resp.json()["pool_id"]
@@ -202,7 +207,7 @@ async def test_createpool_nosana_does_not_create_placeholder(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 200, resp.text
     pool_id = resp.json()["pool_id"]
@@ -233,7 +238,7 @@ async def test_createpool_persists_metadata(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 200, resp.text
     pool_id = resp.json()["pool_id"]
@@ -270,10 +275,10 @@ async def test_createpool_duplicate_returns_409(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        first = await client.post("/deployment/createpool", json=payload)
+        first = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
         assert first.status_code == 200, first.text
 
-        second = await client.post("/deployment/createpool", json=payload)
+        second = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
         assert second.status_code == 409, (
             f"Expected 409 on duplicate, got {second.status_code}: {second.text}"
         )
@@ -287,7 +292,7 @@ async def test_createpool_invalid_provider_returns_400(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 400, (
         f"Expected 400 for invalid provider, got {resp.status_code}: {resp.text}"
@@ -317,7 +322,7 @@ async def test_createpool_aws_no_region_returns_422(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload_omitted)
+        resp = await client.post("/deployment/createpool", json=payload_omitted, headers=_org_header(payload_omitted))
 
     assert resp.status_code == 422, (
         f"Expected 422 for AWS pool with no region, got {resp.status_code}: {resp.text}"
@@ -333,7 +338,7 @@ async def test_createpool_aws_no_region_returns_422(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp2 = await client.post("/deployment/createpool", json=payload_empty)
+        resp2 = await client.post("/deployment/createpool", json=payload_empty, headers=_org_header(payload_empty))
 
     assert resp2.status_code == 422, (
         f"Expected 422 for AWS pool with empty region list, got {resp2.status_code}: {resp2.text}"
@@ -354,7 +359,7 @@ async def test_createpool_aws_with_region_returns_200(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 200, (
         f"Expected 200 for AWS pool with valid region, got {resp.status_code}: {resp.text}"
@@ -375,7 +380,7 @@ async def test_createpool_non_aws_without_region_returns_200(app_and_pool):
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.post("/deployment/createpool", json=payload)
+        resp = await client.post("/deployment/createpool", json=payload, headers=_org_header(payload))
 
     assert resp.status_code == 200, (
         f"Expected 200 for non-AWS pool without region, got {resp.status_code}: {resp.text}"

@@ -114,7 +114,7 @@ async def test_delete_pool_cascades_to_deployments(pool):
     # A pool WITH a live node: the delete defers the hard-delete to the
     # per-node reconciler finalizer, so the pool stays soft-deleted
     # ('terminating') after this request.
-    pool_id, deploy_id, _ = await _seed(pool, with_node=True)
+    pool_id, deploy_id, org_id = await _seed(pool, with_node=True)
 
     app = FastAPI()
     app.include_router(deployment_server.router)
@@ -126,7 +126,10 @@ async def test_delete_pool_cascades_to_deployments(pool):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            resp = await client.delete(f"/deployment/pool/{pool_id}")
+            resp = await client.delete(
+                f"/deployment/pool/{pool_id}",
+                headers={"X-Organization-ID": org_id},
+            )
 
     assert resp.status_code == 202, resp.text
 
@@ -199,7 +202,10 @@ async def test_delete_empty_pool_hard_deletes_and_frees_name(pool):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            resp = await client.delete(f"/deployment/pool/{pool_id}")
+            resp = await client.delete(
+                f"/deployment/pool/{pool_id}",
+                headers={"X-Organization-ID": org_id},
+            )
     assert resp.status_code == 202, resp.text
 
     new_pool_id = None
@@ -254,7 +260,7 @@ async def test_delete_empty_pool_hard_deletes_and_frees_name(pool):
 
 async def test_delete_pool_404_when_already_deleted(pool):
     """Soft-deleted (is_active=FALSE) pool → 404 (idempotent)."""
-    pool_id, _, _ = await _seed(pool)
+    pool_id, _, org_id = await _seed(pool)
     async with pool.acquire() as c:
         await c.execute(
             "UPDATE compute_pools SET is_active=FALSE WHERE id=$1", pool_id,
@@ -269,5 +275,8 @@ async def test_delete_pool_404_when_already_deleted(pool):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            resp = await client.delete(f"/deployment/pool/{pool_id}")
+            resp = await client.delete(
+                f"/deployment/pool/{pool_id}",
+                headers={"X-Organization-ID": org_id},
+            )
     assert resp.status_code == 404

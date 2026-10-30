@@ -1,10 +1,19 @@
 import json
 from uuid import UUID
 
+import grpc
+
 from orchestration.v1 import model_registry_pb2, model_registry_pb2_grpc
 
 
 ALLOWED_BACKENDS = {"vllm", "trt", "gguf"}
+
+
+def _config_json(config) -> str:
+    """asyncpg returns jsonb as a JSON string; dumping it again double-encodes."""
+    if isinstance(config, str):
+        return config
+    return json.dumps(config or {})
 
 
 class ModelRegistryService(
@@ -15,9 +24,9 @@ class ModelRegistryService(
 
     async def RegisterModel(self, request, context):
         if request.backend not in ALLOWED_BACKENDS:
-            context.abort(
-                code=3,  # INVALID_ARGUMENT
-                details=f"Unsupported backend: {request.backend}",
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                f"Unsupported backend: {request.backend}",
             )
             return
 
@@ -44,10 +53,7 @@ class ModelRegistryService(
             request.name, request.version
         )
         if not model:
-            context.abort(
-                code=5,  # NOT_FOUND
-                details="Model not found",
-            )
+            await context.abort(grpc.StatusCode.NOT_FOUND, "Model not found")
             return
 
         return model_registry_pb2.GetModelResponse(
@@ -56,7 +62,7 @@ class ModelRegistryService(
             version=model["version"],
             backend=model["backend"],
             artifact_uri=model["artifact_uri"],
-            config_json=json.dumps(model["config"] or {}),
+            config_json=_config_json(model["config"]),
         )
 
     async def ListModels(self, request, context):
@@ -72,7 +78,7 @@ class ModelRegistryService(
                     version=m["version"],
                     backend=m["backend"],
                     artifact_uri=m["artifact_uri"],
-                    config_json=json.dumps(m["config"] or {}),
+                    config_json=_config_json(m["config"]),
                 )
                 for m in models
             ]

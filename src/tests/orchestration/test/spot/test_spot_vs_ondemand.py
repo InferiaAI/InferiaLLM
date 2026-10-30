@@ -1,8 +1,12 @@
 import asyncio
 import uuid
 from orchestration.infra.db import create_test_db_pool
-from tests.orchestration.infra.test_setup import create_test_pool
+from tests.orchestration.infra.setup_helpers import create_test_pool
 from orchestration.infra.spot_reclaimer import SpotReclaimer
+
+import pytest
+
+pytestmark = pytest.mark.asyncio
 
 
 async def test_spot_vs_ondemand():
@@ -20,7 +24,7 @@ async def test_spot_vs_ondemand():
             vcpu_total, vcpu_allocated,
             ram_gb_total, ram_gb_allocated
         )
-        VALUES ($1,'k8s',$2,'ready','spot',0,0,2,1,4,1)
+        VALUES ($1,'k8s',$2,'terminated','spot',0,0,2,1,4,1)
         RETURNING id
         """,
         pool_id,
@@ -37,7 +41,7 @@ async def test_spot_vs_ondemand():
             vcpu_total, vcpu_allocated,
             ram_gb_total, ram_gb_allocated
         )
-        VALUES ($1,'k8s',$2,'ready','on_demand',0,0,2,1,4,1)
+        VALUES ($1,'k8s',$2,'terminated','on_demand',0,0,2,1,4,1)
         RETURNING id
         """,
         pool_id,

@@ -226,7 +226,7 @@ class ComputePoolManagerService(compute_pool_pb2_grpc.ComputePoolManagerServicer
     async def GetPool(self, request, context):
         row = await self.repo.get(UUID(request.pool_id))
         if not row:
-            context.abort(
+            await context.abort(
                 grpc.StatusCode.NOT_FOUND, f"Pool '{request.pool_id}' not found"
             )
             return

@@ -36,6 +36,9 @@ from orchestration.provisioning.engine.base import (
     ProviderAdapter,
     ProviderCapabilities,
 )
+from orchestration.repositories.pool_repo import (
+    ComputePoolRepository,
+)
 from orchestration.workers.worker_controller.auth import (
     mint_bootstrap_token,
 )
@@ -100,6 +103,9 @@ class PulumiGCPAdapter(PulumiProvisioningBase, ProviderAdapter):
             pool_id=UUID(pool_id) if isinstance(pool_id, str) else pool_id,
             org_id=org_id,
         )
+        inference_token = await ComputePoolRepository(
+            self._db
+        ).get_or_generate_inference_token(pool_id=pool_id)
         user_data = build_user_data(
             bootstrap_token=token,
             control_plane_url=settings.control_plane_external_url,
@@ -107,6 +113,7 @@ class PulumiGCPAdapter(PulumiProvisioningBase, ProviderAdapter):
             pool_id=pool_id,
             image=settings.worker_image,
             image_tag=settings.worker_image_tag,
+            inference_token=inference_token,
         )
 
         zone = region or cfg.cloud.gcp.region or "us-central1-a"

@@ -1,6 +1,8 @@
 from uuid import UUID
 from datetime import datetime, timezone
 
+import grpc
+
 from orchestration.v1 import (
     inventory_manager_pb2,
     inventory_manager_pb2_grpc,
@@ -55,7 +57,7 @@ class InventoryManagerService(
 
         node = await self.repo.get(node_id)
         if not node:
-            context.abort(5, "Node not found")
+            await context.abort(grpc.StatusCode.NOT_FOUND, "Node not found")
             return
 
         # ---------- STATE TRANSITION ----------

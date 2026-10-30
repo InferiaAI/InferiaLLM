@@ -1,7 +1,7 @@
 """Tests for gRPC context.abort() execution-stop bug (issue #34).
 
-In gRPC-aio, context.abort() does NOT raise an exception — the handler
-must return explicitly. These tests use a non-raising mock to verify
+In gRPC-aio, context.abort() is a coroutine: it must be awaited, and the
+handler returns right after it. These tests use a non-raising mock to verify
 that execution stops after abort (no invalid DB writes, no crashes).
 """
 
@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 
 def make_non_raising_context():
-    """Mock gRPC context where abort() does NOT raise (real gRPC-aio behavior)."""
+    """Mock gRPC context whose abort() records the await but does not raise."""
     ctx = MagicMock()
-    ctx.abort = MagicMock()  # does not raise, just records the call
+    ctx.abort = AsyncMock()
     return ctx
 
 
@@ -42,7 +42,7 @@ class TestModelRegistryAbortReturn:
         ctx = make_non_raising_context()
         await svc.RegisterModel(request, ctx)
 
-        ctx.abort.assert_called_once()
+        ctx.abort.assert_awaited_once()
         repo.register_model.assert_not_called()
 
     @pytest.mark.asyncio
@@ -60,7 +60,7 @@ class TestModelRegistryAbortReturn:
         # Should NOT raise TypeError from None["model_id"]
         await svc.GetModel(request, ctx)
 
-        ctx.abort.assert_called_once()
+        ctx.abort.assert_awaited_once()
 
 
 # ── ComputeNodeService removed: the gRPC compute_node service has been
@@ -95,7 +95,7 @@ class TestInventoryManagerAbortReturn:
         # Should NOT raise TypeError from None["state"]
         await svc.InvenHeartbeat(request, ctx)
 
-        ctx.abort.assert_called_once()
+        ctx.abort.assert_awaited_once()
         repo.mark_ready.assert_not_called()
         repo.update_heartbeat.assert_not_called()
         repo.update_usage.assert_not_called()

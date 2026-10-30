@@ -166,6 +166,15 @@ async def _seed_deploy(
     return deploy_id
 
 
+async def _owner_headers(pool, deploy_id: UUID) -> dict:
+    """The owning org's header; the deployment routes 404 any other caller."""
+    async with pool.acquire() as c:
+        org_id = await c.fetchval(
+            "SELECT org_id FROM model_deployments WHERE deployment_id=$1", deploy_id,
+        )
+    return {"X-Organization-ID": str(org_id)}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -188,7 +197,7 @@ async def test_terminate_pending_node_unbinds_and_releases(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+            "/deployment/terminate", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id)
         )
 
     assert resp.status_code == 200, resp.text
@@ -230,7 +239,7 @@ async def test_terminate_running_calls_unload_and_releases(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+            "/deployment/terminate", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id)
         )
 
     assert resp.status_code == 200, resp.text
@@ -283,7 +292,7 @@ async def test_terminate_last_deploy_triggers_destroy(app_and_pool):
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             resp = await client.post(
-                "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+                "/deployment/terminate", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id)
             )
 
     assert resp.status_code == 200, resp.text
@@ -342,7 +351,7 @@ async def test_terminate_with_other_deploys_does_not_destroy(app_and_pool):
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             resp = await client.post(
-                "/deployment/terminate", json={"deployment_id": str(deploy_id_0)}
+                "/deployment/terminate", json={"deployment_id": str(deploy_id_0)}, headers=await _owner_headers(pool, deploy_id_0)
             )
 
     assert resp.status_code == 200, resp.text
@@ -398,9 +407,9 @@ async def test_concurrent_double_terminate_releases_gpu_once(app_and_pool):
         ) as client:
             r1, r2 = await _asyncio.gather(
                 client.post("/deployment/terminate",
-                            json={"deployment_id": str(deploy_a)}),
+                            json={"deployment_id": str(deploy_a)}, headers=await _owner_headers(pool, deploy_a)),
                 client.post("/deployment/terminate",
-                            json={"deployment_id": str(deploy_a)}),
+                            json={"deployment_id": str(deploy_a)}, headers=await _owner_headers(pool, deploy_a)),
             )
 
     assert r1.status_code == 200 and r2.status_code == 200
@@ -428,7 +437,7 @@ async def test_terminate_already_terminal_is_noop(app_and_pool):
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             resp = await client.post(
-                "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+                "/deployment/terminate", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id)
             )
 
     assert resp.status_code == 200, resp.text
@@ -530,7 +539,7 @@ async def test_terminate_destroys_node_even_when_pool_soft_deleted(app_and_pool)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 "/deployment/terminate",
-                json={"deployment_id": str(deploy_id)},
+                json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id),
             )
     assert resp.status_code == 200
     mock_force_cancel.assert_awaited_once()
@@ -556,7 +565,7 @@ async def test_terminate_failed_deploy_destroys_orphan_node(app_and_pool):
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             resp = await client.post(
-                "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+                "/deployment/terminate", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id)
             )
     assert resp.status_code == 200
     assert resp.json()["status"] == "FAILED"
@@ -584,7 +593,7 @@ async def test_terminate_failed_deploy_keeps_node_with_other_live_deploy(app_and
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             resp = await client.post(
-                "/deployment/terminate", json={"deployment_id": str(failed)}
+                "/deployment/terminate", json={"deployment_id": str(failed)}, headers=await _owner_headers(pool, failed)
             )
     assert resp.status_code == 200
     mock_force_cancel.assert_not_awaited()
@@ -608,7 +617,7 @@ async def test_terminate_running_clears_target_node_id(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+            "/deployment/terminate", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id)
         )
 
     assert resp.status_code == 200, resp.text
@@ -641,7 +650,7 @@ async def test_terminate_deploying_clears_target_node_id(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/terminate", json={"deployment_id": str(deploy_id)}
+            "/deployment/terminate", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id)
         )
 
     assert resp.status_code == 200, resp.text

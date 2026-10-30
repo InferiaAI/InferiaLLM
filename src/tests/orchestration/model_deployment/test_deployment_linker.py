@@ -289,7 +289,7 @@ async def test_on_worker_ready_threads_node_provider_to_mirror(pool, monkeypatch
     captured = {}
 
     async def _spy(spec, *, recipe, artifact_uri, mirror_base, cache_repo,
-                   provider=None):
+                   provider=None, **_):
         captured["provider"] = provider
 
     monkeypatch.setattr(_dl_mod, "resolve_and_apply_mirror", _spy)
@@ -306,6 +306,13 @@ async def test_on_worker_ready_threads_node_provider_to_mirror(pool, monkeypatch
 
     await linker.on_worker_ready(node_id)
 
+    async with pool.acquire() as c:
+        state = await c.fetchval(
+            "SELECT state FROM model_deployments WHERE target_pool_id=$1", pool_id,
+        )
+    # load_model runs right after the mirror call; if it never ran, the deploy
+    # failed earlier and `state` says how.
+    assert controller.load_model.await_count == 1, f"deploy state={state}"
     assert captured.get("provider") == provider  # node's provider, verbatim
 
 

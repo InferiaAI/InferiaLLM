@@ -1,8 +1,12 @@
 import asyncio
 import uuid
 from orchestration.infra.db import create_test_db_pool
-from tests.orchestration.infra.test_setup import create_test_pool
+from tests.orchestration.infra.setup_helpers import create_test_pool
 from orchestration.infra.spot_reclaimer import SpotReclaimer
+
+import pytest
+
+pytestmark = pytest.mark.asyncio
 
 
 async def test_spot_reclaimer():
@@ -22,7 +26,7 @@ async def test_spot_reclaimer():
         )
         VALUES (
             $1, 'k8s', $2,
-            'ready', 'spot',
+            'terminated', 'spot',
             0,0,
             2,1,
             4,1

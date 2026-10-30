@@ -36,6 +36,7 @@ from tests.orchestration.model_deployment.test_terminate_endpoint_refcount impor
     _seed_pool,
     _seed_ready_node,
     _seed_deploy,
+    _owner_headers,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -51,22 +52,23 @@ _FORCE_CANCEL = (
 
 @pytest_asyncio.fixture(autouse=True)
 def _no_audit():
-    """log_audit_event / _lookup_org_id are unrelated to teardown; stub them so
-    the tests don't depend on the audit pipeline."""
-    with patch.object(deployment_server, "log_audit_event", AsyncMock()), \
-            patch.object(deployment_server, "_lookup_org_id",
-                         AsyncMock(return_value=str(uuid4()))):
+    """log_audit_event is unrelated to teardown; stub it so the tests don't
+    depend on the audit pipeline."""
+    with patch.object(deployment_server, "log_audit_event", AsyncMock()):
         yield
 
 
-async def _delete(deploy_id):
-    """DELETE /deployment/delete/{id} against an isolated app (the route's DB
-    access goes through POSTGRES_DSN, so no app.state.pool is needed)."""
+async def _delete(pool, deploy_id):
+    """DELETE /deployment/delete/{id} as the owning org, against an isolated app
+    (the route's DB access goes through POSTGRES_DSN, not app.state.pool)."""
     app = FastAPI()
     app.include_router(deployment_server.router)
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-        return await c.delete(f"/deployment/delete/{deploy_id}")
+        return await c.delete(
+            f"/deployment/delete/{deploy_id}",
+            headers=await _owner_headers(pool, deploy_id),
+        )
 
 
 async def _row_exists(pool, deploy_id) -> bool:
@@ -88,7 +90,7 @@ async def test_delete_failed_with_owned_node_destroys_and_drops(db_pool):  # noq
 
     with patch(_FORCE_CANCEL, new_callable=AsyncMock,
                return_value=True) as mock_force_cancel:
-        resp = await _delete(deploy_id)
+        resp = await _delete(pool, deploy_id)
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "DELETED"
@@ -128,7 +130,7 @@ async def test_delete_with_other_live_deploy_keeps_node_but_drops_row(db_pool): 
 
     with patch(_FORCE_CANCEL, new_callable=AsyncMock,
                return_value=True) as mock_force_cancel:
-        resp = await _delete(failed)
+        resp = await _delete(pool, failed)
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "DELETED"
@@ -156,7 +158,7 @@ async def test_delete_without_node_attempts_no_teardown(db_pool):  # noqa: F811
 
     with patch(_FORCE_CANCEL, new_callable=AsyncMock,
                return_value=True) as mock_force_cancel:
-        resp = await _delete(deploy_id)
+        resp = await _delete(pool, deploy_id)
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "DELETED"
@@ -186,7 +188,7 @@ async def test_delete_removes_deployment_terminal_logs(db_pool):  # noqa: F811
     assert before == 1
 
     with patch(_FORCE_CANCEL, new_callable=AsyncMock, return_value=True):
-        resp = await _delete(deploy_id)
+        resp = await _delete(pool, deploy_id)
     assert resp.status_code == 200, resp.text
 
     async with pool.acquire() as c:

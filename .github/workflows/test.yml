@@ -33,6 +33,32 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: inferia
+          POSTGRES_PASSWORD: inferia
+          POSTGRES_DB: inferia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U inferia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # The DB-backed tests read one of these, depending on when they were written.
+    env:
+      TEST_DATABASE_URL: postgresql://inferia:inferia@localhost:5432/inferia_test
+      INFERIA_TEST_DATABASE_URL: postgresql://inferia:inferia@localhost:5432/inferia_test
+      POSTGRES_DSN: postgresql://inferia:inferia@localhost:5432/inferia_test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: inferia
+      POSTGRES_PASSWORD: inferia
+      POSTGRES_DB: inferia_test
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -56,88 +82,12 @@ jobs:
           pip install skypilot
           pip install -e ".[dev]"
 
+      - name: Load test database schema
+        run: python scripts/load_test_schema.py
+
       - name: Run unit tests
         run: |
-          # Everything under src/tests runs. These do not, yet: see #308.
-          IGNORES=(
-            # Need a live Postgres.
-            --ignore=src/tests/infra/schema/migrations/test_20260530_pool_first_deployments.py
-            --ignore=src/tests/orchestration/model_cache/test_repo.py
-            --ignore=src/tests/orchestration/model_deployment/test_createpool_metadata_only.py
-            --ignore=src/tests/orchestration/model_deployment/test_delete_endpoint_node_teardown.py
-            --ignore=src/tests/orchestration/model_deployment/test_delete_pool_cascade_db.py
-            --ignore=src/tests/orchestration/model_deployment/test_deploy_endpoint_pool_first.py
-            --ignore=src/tests/orchestration/model_deployment/test_deployment_linker.py
-            --ignore=src/tests/orchestration/model_deployment/test_grpc_delete_refcount.py
-            --ignore=src/tests/orchestration/model_deployment/test_pool_placer.py
-            --ignore=src/tests/orchestration/model_deployment/test_start_resume.py
-            --ignore=src/tests/orchestration/model_deployment/test_terminate_endpoint_refcount.py
-            --ignore=src/tests/orchestration/repositories/test_inventory_finalize.py
-            --ignore=src/tests/orchestration/repositories/test_inventory_repo_gpu_refcount.py
-            --ignore=src/tests/orchestration/repositories/test_model_deployment_repo_extensions.py
-            --ignore=src/tests/orchestration/repositories/test_pool_repo_count_nodes.py
-
-            # Need live infrastructure or cloud credentials.
-            --ignore=src/tests/orchestration/infra/test_setup.py
-            --ignore=src/tests/orchestration/test/adapter_test/test_gcp_vllm_deploy.py
-            --ignore=src/tests/orchestration/test/adapter_test/test_k8s_compute_e2e.py
-            --ignore=src/tests/orchestration/test/adapter_test/test_model_deploy.py
-            --ignore=src/tests/orchestration/test/adapter_test/test_model_deploy_nosana.py
-            --ignore=src/tests/orchestration/test/adapter_test/test_skypilot_adapter.py
-            --ignore=src/tests/orchestration/test/e2e/test_e2e_control_plane.py
-            --ignore=src/tests/orchestration/test/integration/test_control_plane_e2e.py
-
-            # Currently failing.
-            --ignore=src/tests/api_gateway/test_app_startup_catalog.py
-            --ignore=src/tests/api_gateway/test_config_modes.py
-            --ignore=src/tests/api_gateway/test_oidc_role_mapping.py
-            --ignore=src/tests/cli/test_dashboard_config.py
-            --ignore=src/tests/common/test_cli_providers.py
-            --ignore=src/tests/common/test_cluster_naming.py
-            --ignore=src/tests/deploy/test_compose_ports.py
-            --ignore=src/tests/deploy/test_env_parity.py
-            --ignore=src/tests/orchestration/api/test_nodes.py
-            --ignore=src/tests/orchestration/provisioning_state_machine/reconciler/test_reaper.py
-            --ignore=src/tests/orchestration/repositories/test_finalize_pool_delete.py
-            --ignore=src/tests/orchestration/repositories/test_purge_node.py
-            --ignore=src/tests/orchestration/test/adapter_test/test_adapter_engine.py
-            --ignore=src/tests/orchestration/test/autoscaler/test_scale_down.py
-            --ignore=src/tests/orchestration/test/autoscaler/test_scale_up.py
-            --ignore=src/tests/orchestration/test/compute_pools_nodes/test_compute_node_grpc.py
-            --ignore=src/tests/orchestration/test/compute_pools_nodes/test_fake_adapter.py
-            --ignore=src/tests/orchestration/test/gang/test_gang_concurrency.py
-            --ignore=src/tests/orchestration/test/gang/test_gang_insufficient_capacity.py
-            --ignore=src/tests/orchestration/test/gang/test_gang_success.py
-            --ignore=src/tests/orchestration/test/model_deployment/test_model_deployment_e2e.py
-            --ignore=src/tests/orchestration/test/model_registry/test_model_registry.py
-            --ignore=src/tests/orchestration/test/placement_test/test_placement_engine.py
-            --ignore=src/tests/orchestration/test/quota/test_billing_events.py
-            --ignore=src/tests/orchestration/test/quota/test_hard_quota.py
-            --ignore=src/tests/orchestration/test/quota/test_quota_preemption.py
-            --ignore=src/tests/orchestration/test/quota/test_quota_release.py
-            --ignore=src/tests/orchestration/test/scheduler/test_concurrency.py
-            --ignore=src/tests/orchestration/test/spot/test_spot_allocation.py
-            --ignore=src/tests/orchestration/test/spot/test_spot_reclaim.py
-            --ignore=src/tests/orchestration/test/spot/test_spot_vs_ondemand.py
-            --ignore=src/tests/orchestration/test/test_aws_realtime_capacity.py
-            --ignore=src/tests/orchestration/test/test_blocking_calls.py
-            --ignore=src/tests/orchestration/test/test_grpc.py
-            --ignore=src/tests/orchestration/test/test_node_liveness.py
-            --ignore=src/tests/providers/aws/test_engine_ami_bake.py
-            --ignore=src/tests/providers/pulumi/test_base.py
-            --ignore=src/tests/providers/pulumi/test_credentials.py
-            --ignore=src/tests/providers/pulumi/test_pulumi_aws_adapter.py
-            --ignore=src/tests/providers/pulumi/test_pulumi_azure_adapter.py
-            --ignore=src/tests/providers/pulumi/test_pulumi_gcp_adapter.py
-            --ignore=src/tests/setup/test_setup_sh.py
-
-            # Pass alone, fail once the whole suite has run: something earlier
-            # leaves the settings in external mode.
-            --ignore=src/tests/api_gateway/test_config.py
-            --ignore=src/tests/orchestration/provisioning_state_machine/phases/test_pulumi_up.py
-          )
-          pytest src/tests "${IGNORES[@]}" \
-            -p no:twisted -p no:trio -p no:tornasync \
+          pytest src/tests \
             --junitxml=junit/test-results.xml \
             --cov=src \
             --cov-report=xml \

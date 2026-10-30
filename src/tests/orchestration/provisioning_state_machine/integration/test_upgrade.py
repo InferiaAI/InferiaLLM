@@ -40,7 +40,7 @@ import pytest
 # paths here (rather than the constant) so a change to the conftest list
 # is caught by this test failing rather than silently agreeing.
 _MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[6]
+    Path(__file__).resolve().parents[4]
     / "infra" / "schema" / "migrations"
 )
 MIGRATIONS = [
@@ -68,11 +68,11 @@ async def test_migration_marks_inflight_inventory_and_exposes_via_http(
         # scheduling_policy).
         await conn.execute(
             """INSERT INTO compute_pools (
-                 id, pool_name, owner_type, provider, scheduling_policy,
-                 lifecycle_state, org_id
+                 id, pool_name, owner_type, owner_id, provider,
+                 scheduling_policy, lifecycle_state, org_id
                )
                VALUES (
-                 $1, 'p-test-upgrade', 'organization', 'aws',
+                 $1, 'p-test-upgrade', 'organization', 'org-upgrade', 'aws',
                  '{}'::jsonb, 'running', 'org-upgrade'
                )
                ON CONFLICT (id) DO NOTHING""",
@@ -91,19 +91,17 @@ async def test_migration_marks_inflight_inventory_and_exposes_via_http(
     # This second pass picks up the row we just inserted via the
     # INSERT...SELECT in 20260528b's backfill section, plus the
     # UPDATE compute_inventory SET state='failed' right after it.
-    # Splitting on ';' matches cli_init.py's production behavior.
+    # One execute per file, as cli_init.py does.
     async with pool.acquire() as conn:
         for path in MIGRATIONS:
-            sql = path.read_text()
-            for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-                await conn.execute(stmt)
+            await conn.execute(path.read_text())
 
     # HTTP shape exposes the upgrade-abandoned failure. This is the
     # exact response shape the dashboard's InstanceDetail Overview tab
     # consumes when it renders the error banner + Retry button.
     body = (await client.get(
         f"/v1/nodes/{node_id}/provisioning",
-        headers={"Authorization": "Bearer test"},
+        headers={"X-Organization-ID": "org-upgrade", "Authorization": "Bearer test"},
     )).json()
     assert body["current_phase"] == "failed", body
     assert body["terminal"] is True, body

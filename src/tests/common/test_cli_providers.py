@@ -12,6 +12,7 @@ import pytest
 
 from cli.providers import (
     _build_dsn,
+    _decrypt_blob,
     _read_config,
     _write_config,
     cmd_list,
@@ -51,7 +52,8 @@ def _last_written(conn) -> dict:
     # execute was called with (_CONFIG_KEY, json_str)
     assert conn.execute.called, "No write was issued"
     args = conn.execute.call_args[0]
-    return json.loads(args[-1])
+    blob = _decrypt_blob(json.loads(args[-1]))
+    return blob["providers"]
 
 
 # ---------------------------------------------------------------------------

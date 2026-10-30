@@ -159,7 +159,7 @@ class TestXDSConsistency:
             },
         ]
         mock_repo = AsyncMock()
-        mock_repo.list_xds_nodes.return_value = fake_nodes
+        mock_repo.get_ready_nodes.return_value = fake_nodes
 
         from orchestration.api.xds import configure
         configure(inventory_repo=mock_repo)
@@ -181,7 +181,7 @@ class TestXDSConsistency:
             },
         ]
         mock_repo = AsyncMock()
-        mock_repo.list_xds_nodes.return_value = fake_nodes
+        mock_repo.get_ready_nodes.return_value = fake_nodes
 
         from orchestration.api.xds import configure
         configure(inventory_repo=mock_repo)
@@ -203,7 +203,7 @@ class TestXDSConsistency:
             },
         ]
         mock_repo = AsyncMock()
-        mock_repo.list_xds_nodes.return_value = fake_nodes
+        mock_repo.get_ready_nodes.return_value = fake_nodes
 
         from orchestration.api.xds import configure
         configure(inventory_repo=mock_repo)
@@ -225,7 +225,7 @@ class TestXDSConsistency:
             },
         ]
         mock_repo = AsyncMock()
-        mock_repo.list_xds_nodes.return_value = fake_nodes
+        mock_repo.get_ready_nodes.return_value = fake_nodes
 
         from orchestration.api.xds import configure
         configure(inventory_repo=mock_repo)
@@ -256,7 +256,7 @@ class TestEndToEndClusterConsistency:
             },
         ]
         mock_repo = AsyncMock()
-        mock_repo.list_xds_nodes.return_value = fake_nodes
+        mock_repo.get_ready_nodes.return_value = fake_nodes
 
         from orchestration.api.xds import configure
         configure(inventory_repo=mock_repo)
@@ -298,7 +298,7 @@ class TestEndToEndClusterConsistency:
             },
         ]
         mock_repo = AsyncMock()
-        mock_repo.list_xds_nodes.return_value = fake_nodes
+        mock_repo.get_ready_nodes.return_value = fake_nodes
 
         from orchestration.api.xds import configure
         configure(inventory_repo=mock_repo)

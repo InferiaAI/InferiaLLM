@@ -21,8 +21,8 @@ from orchestration.state_machine.jobs.repository import (
 
 
 MIGRATIONS = [
-    Path(__file__).resolve().parents[6] / "infra" / "schema" / "migrations" / "20260528a_node_state_failed.sql",
-    Path(__file__).resolve().parents[6] / "infra" / "schema" / "migrations" / "20260528b_provisioning_jobs.sql",
+    Path(__file__).resolve().parents[4] / "infra" / "schema" / "migrations" / "20260528a_node_state_failed.sql",
+    Path(__file__).resolve().parents[4] / "infra" / "schema" / "migrations" / "20260528b_provisioning_jobs.sql",
 ]
 
 
@@ -35,19 +35,14 @@ def test_database_url() -> str:
 
 
 async def _apply_migrations(pool):
-    # WARNING: same fragility as tests/integration/test_migration.py — we split
-    # each .sql file on ';' to mirror cli_init.py's statement boundaries. If a
-    # future migration adds a $$-quoted block (PL/pgSQL, escaped string) the
-    # split will break here. The migration headers in 20260528{a,b} call this
-    # out; keep that constraint in mind when editing this helper.
+    # One execute per file, as cli_init.py does: splitting on ';' breaks on
+    # semicolons inside comments and string literals.
     async with pool.acquire() as conn:
         for path in MIGRATIONS:
-            sql = path.read_text()
-            for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-                await conn.execute(stmt)
+            await conn.execute(path.read_text())
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def pool(test_database_url):
     pool = await asyncpg.create_pool(test_database_url, min_size=2, max_size=25)
     await _apply_migrations(pool)
@@ -73,11 +68,11 @@ async def _seed_job(pool, *, n: int = 20):
                  lifecycle_state, org_id
                )
                VALUES (
-                 $1, 'p-concurrency-' || $1::text, 'organization', 'aws',
+                 $1, $2, 'organization', 'aws',
                  '{}'::jsonb, 'running', 'org-concurrency'
                )
                ON CONFLICT (id) DO NOTHING""",
-            pool_id,
+            pool_id, f"p-concurrency-{pool_id}",
         )
         ids = []
         for _ in range(n):
@@ -85,8 +80,8 @@ async def _seed_job(pool, *, n: int = 20):
             await conn.execute(
                 """INSERT INTO compute_inventory (id, pool_id, provider,
                        provider_instance_id, state, agent_kind)
-                   VALUES ($1, $2, 'aws', 'placeholder:c-'||$1::text, 'provisioning', 'worker')""",
-                node_id, pool_id,
+                   VALUES ($1, $2, 'aws', $3, 'provisioning', 'worker')""",
+                node_id, pool_id, f"placeholder:c-{node_id}",
             )
             job_id = uuid.uuid4()
             await conn.execute(
@@ -106,7 +101,7 @@ async def _cleanup(pool, job_ids, pool_id):
         await conn.execute("DELETE FROM compute_pools WHERE id = $1", pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_no_double_claim_under_20_concurrent_claimers(pool):
     """20 workers all calling claim_next_job → each gets a unique job."""
     job_ids, pool_id = await _seed_job(pool, n=20)
@@ -126,7 +121,7 @@ async def test_no_double_claim_under_20_concurrent_claimers(pool):
         await _cleanup(pool, job_ids, pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_claim_skips_leased_jobs(pool):
     """A job already leased by holder A is not claimable by holder B until
     the lease expires."""
@@ -142,7 +137,7 @@ async def test_claim_skips_leased_jobs(pool):
         await _cleanup(pool, job_ids, pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_claim_picks_up_expired_lease(pool):
     """If a lease's lease_expires_at < now(), another reconciler claims it."""
     job_ids, pool_id = await _seed_job(pool, n=1)
@@ -162,7 +157,7 @@ async def test_claim_picks_up_expired_lease(pool):
         await _cleanup(pool, job_ids, pool_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_cancelling_jobs_have_priority(pool):
     """Jobs in 'cancelling' phase are claimed before plain 'pending' jobs."""
     job_ids, pool_id = await _seed_job(pool, n=2)

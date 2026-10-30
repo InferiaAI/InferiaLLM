@@ -39,6 +39,9 @@ from orchestration.models.model_deployment import (
 from orchestration.workers.worker_controller.controller import (
     WorkerController,
 )
+from tests.orchestration.model_deployment.test_terminate_endpoint_refcount import (
+    _owner_headers,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -220,7 +223,7 @@ async def test_resume_terminated_reprovisions_clears_stale_binding(app_and_pool)
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/start", json={"deployment_id": str(deploy_id)},
+            "/deployment/start", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id),
         )
 
     assert resp.status_code in (200, 202), resp.text
@@ -282,7 +285,7 @@ async def test_resume_warm_pool_binds_to_ready_node(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/start", json={"deployment_id": str(deploy_id)},
+            "/deployment/start", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id),
         )
 
     assert resp.status_code == 200, resp.text
@@ -320,7 +323,7 @@ async def test_resume_rejected_when_running(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/start", json={"deployment_id": str(deploy_id)},
+            "/deployment/start", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id),
         )
 
     assert resp.status_code == 422, resp.text
@@ -340,7 +343,8 @@ async def test_resume_deployment_missing_returns_404(app_and_pool):
     assert resp.status_code == 404, resp.text
 
 
-async def test_resume_bad_uuid_returns_400(app_and_pool):
+async def test_resume_bad_uuid_returns_404(app_and_pool):
+    """The ownership check runs first, so a malformed id reads as not found."""
     app, pool = app_and_pool
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -348,7 +352,7 @@ async def test_resume_bad_uuid_returns_400(app_and_pool):
         resp = await client.post(
             "/deployment/start", json={"deployment_id": "not-a-uuid"},
         )
-    assert resp.status_code == 400, resp.text
+    assert resp.status_code == 404, resp.text
 
 
 async def test_resume_pool_missing_returns_404(app_and_pool):
@@ -371,7 +375,7 @@ async def test_resume_pool_missing_returns_404(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/start", json={"deployment_id": str(deploy_id)},
+            "/deployment/start", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id),
         )
     assert resp.status_code == 404, resp.text
     assert "pool" in resp.text.lower()
@@ -389,7 +393,7 @@ async def test_resume_terminating_pool_returns_409(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/start", json={"deployment_id": str(deploy_id)},
+            "/deployment/start", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id),
         )
     assert resp.status_code == 409, resp.text
 
@@ -410,7 +414,7 @@ async def test_resume_external_workload_runs_without_placement(app_and_pool):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.post(
-            "/deployment/start", json={"deployment_id": str(deploy_id)},
+            "/deployment/start", json={"deployment_id": str(deploy_id)}, headers=await _owner_headers(pool, deploy_id),
         )
 
     assert resp.status_code == 200, resp.text
