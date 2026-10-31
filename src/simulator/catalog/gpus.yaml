@@ -1,0 +1,64 @@
+# GPU catalog for inferia-sim.
+#
+# Every number comes from the vendor's datasheet page. Never add a value
+# without a source. TFLOPS are DENSE (no structured sparsity): NVIDIA lists
+# Tensor Core figures "with sparsity" (2:4 structured sparsity doubles the
+# dense rate). Where a page lists only the sparse figure, the dense value is
+# half of it and the entry says so under `derived`.
+#
+# Units: memory in GB (10^9 bytes, as NVIDIA's datasheets use), bandwidth in
+# GB/s (10^9 bytes/s), compute in TFLOPS (10^12 FLOP/s).
+# `nvlink_gbps` is the per-GPU NVLink bandwidth as the datasheet states it
+# (total, both directions); 0 means the part has no NVLink.
+
+gpus:
+  H100-SXM-80GB:
+    memory_gb: 80
+    hbm_bandwidth_gbps: 3350
+    peak_tflops:
+      bf16: 989.5
+      fp16: 989.5
+      fp8: 1979
+    nvlink_gbps: 900
+    pcie_gbps: 128
+    source: https://www.nvidia.com/en-us/data-center/h100/
+    retrieved: "2026-10-31"
+    derived: "dense TFLOPS = datasheet 'with sparsity' figure / 2 (BF16/FP16 1,979; FP8 3,958)"
+
+  H100-NVL-94GB:
+    memory_gb: 94
+    hbm_bandwidth_gbps: 3900
+    peak_tflops:
+      bf16: 835.5
+      fp16: 835.5
+      fp8: 1670.5
+    nvlink_gbps: 600
+    pcie_gbps: 128
+    source: https://www.nvidia.com/en-us/data-center/h100/
+    retrieved: "2026-10-31"
+    derived: "dense TFLOPS = datasheet 'with sparsity' figure / 2 (BF16/FP16 1,671; FP8 3,341)"
+
+  A100-SXM-80GB:
+    memory_gb: 80
+    hbm_bandwidth_gbps: 2039
+    peak_tflops:
+      bf16: 312
+      fp16: 312
+    nvlink_gbps: 600
+    pcie_gbps: 64
+    source: https://www.nvidia.com/en-us/data-center/a100/
+    retrieved: "2026-10-31"
+    derived: null
+
+  L40S-48GB:
+    memory_gb: 48
+    hbm_bandwidth_gbps: 864
+    peak_tflops:
+      bf16: 362.05
+      fp16: 362.05
+      fp8: 733
+    nvlink_gbps: 0
+    pcie_gbps: 64
+    source: https://www.nvidia.com/en-us/data-center/l40s/
+    retrieved: "2026-10-31"
+    derived: "memory is GDDR6, not HBM; the field name is kept for uniformity. PCIe Gen4 x16 64 GB/s is the datasheet's bidirectional figure"

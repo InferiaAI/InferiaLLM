@@ -1,0 +1,34 @@
+# Thirty-two 8x H100 SXM nodes: Llama-3.1-70B (TP4) for chat and long context,
+# Llama-3.1-8B (TP1) for batch. A configurable scenario, not a benchmark claim.
+# Outputs are SIMULATED and, until calibration (T5), uncalibrated.
+name: 256xH100
+description: 32 nodes x 8 H100 SXM; 70B TP4 x 48 replicas (chat, long context) + 8B TP1 x 64 replicas (batch).
+cluster:
+  pools:
+    - {name: h100-large, gpu: H100-SXM-80GB, gpus_per_node: 8, nodes: 24}
+    - {name: h100-small, gpu: H100-SXM-80GB, gpus_per_node: 8, nodes: 8}
+models: [llama-3.1-70b, llama-3.1-8b]
+deployment:
+  - {name: chat-70b, model: llama-3.1-70b, pool: h100-large, tensor_parallel: 4, replicas: 48, max_model_len: 65536}
+  - {name: batch-8b, model: llama-3.1-8b, pool: h100-small, tensor_parallel: 1, replicas: 64, max_model_len: 32768}
+admission: {max_waiting_per_replica: 1024}
+workload:
+  arrival: {process: poisson, rate_rps: 300}
+  classes:
+    - class: interactive_chat
+      weight: 0.6
+      deployment: chat-70b
+      input_tokens: {dist: lognormal, median: 800, sigma: 1.0, max: 16384}
+      output_tokens: {dist: lognormal, median: 250, sigma: 0.8, max: 2048}
+      shared_prefix: {groups: 64, tokens: 512}
+    - class: long_context
+      weight: 0.1
+      deployment: chat-70b
+      input_tokens: {dist: lognormal, median: 20000, sigma: 0.5, max: 60000}
+      output_tokens: {dist: lognormal, median: 400, sigma: 0.6, max: 4096}
+    - class: batch
+      weight: 0.3
+      deployment: batch-8b
+      input_tokens: {dist: lognormal, median: 1500, sigma: 0.7, max: 16384}
+      output_tokens: {dist: lognormal, median: 400, sigma: 0.6, max: 4096}
+run: {seed: 1, duration_s: 300, warmup_s: 60, slo_ttft_p95_s: 2.0}
