@@ -60,7 +60,11 @@ router.include_router(auth_router)
 
 
 # --- Policy Engine: Internal Endpoints ---
+import math
+
 from api_gateway.policy.engine import policy_engine
+from common import extensions
+from common.extensions.protocols import QuotaContext, UsageEstimate, UsageEvent
 from pydantic import BaseModel
 
 
@@ -83,7 +87,21 @@ async def check_user_quota(
     Check if user has sufficient quota.
     Raises 429 if exceeded.
     """
-    await policy_engine.check_quota(db, request.user_id, request.model)
+    decision = await extensions.get("quota_policy").check(
+        QuotaContext(user_id=request.user_id, model=request.model),
+        UsageEstimate(),
+        db=db,
+    )
+    if not decision.allowed:
+        headers = None
+        if decision.retry_after_s is not None:
+            # Retry-After is whole seconds (RFC 9110 §10.2.3).
+            headers = {"Retry-After": str(max(0, math.ceil(decision.retry_after_s)))}
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=decision.reason or "Quota exceeded",
+            headers=headers,
+        )
     return {"status": "ok", "message": "Quota within limits"}
 
 
@@ -102,14 +120,16 @@ async def track_user_usage(
         db, request.user_id, request.model, request.usage
     )
 
-    # 2. Background DB persistence
-    background_tasks.add_task(
-        policy_engine.persist_usage_db,
-        db,
-        request.user_id,
-        request.model,
-        request.usage,
+    # 2. Background persistence through the configured usage sink
+    #    (default: PolicyEngine.persist_usage_db on the same session).
+    event = UsageEvent(
+        user_id=request.user_id,
+        model=request.model,
+        prompt_tokens=request.usage.get("prompt_tokens", 0),
+        completion_tokens=request.usage.get("completion_tokens", 0),
+        total_tokens=request.usage.get("total_tokens", 0),
     )
+    background_tasks.add_task(extensions.get("usage_sink").record, [event], db=db)
 
     return {"status": "ok", "message": "Usage tracking initiated"}
 

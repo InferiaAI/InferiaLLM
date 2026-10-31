@@ -10,6 +10,8 @@ from sqlalchemy.orm import joinedload
 from api_gateway.db.models import AuditLog
 from api_gateway.models import AuditLogFilter, AuditLogCreate, AuditLogResponse
 from api_gateway.schemas.logging import derive_category
+from common import extensions
+from common.extensions.protocols import AuditEvent
 
 logger = logging.getLogger(__name__)
 
@@ -32,28 +34,41 @@ class AuditService:
         Spawns a background task with its own DB session so the caller's
         request is not blocked by the audit commit round-trip.
         """
-        # Capture everything needed — the background task must not
-        # reference the caller's db session (it may be closed by then).
-        log_data = {
-            "id": str(uuid.uuid4()),
-            "timestamp": utcnow_naive(),
-            "user_id": event.user_id,
-            "org_id": event.org_id,
-            "action": event.action,
-            "category": event.category or derive_category(event.action),
-            "resource_type": event.resource_type,
-            "resource_id": event.resource_id,
-            "details": event.details,
-            "ip_address": event.ip_address,
-            "status": event.status,
-        }
+        audit_event = self._to_event(event)
+        sink = extensions.get("audit_sink")
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._write_audit_log(log_data))
+            loop.create_task(self._emit(sink, audit_event))
         except RuntimeError:
             # No running loop (e.g., during shutdown) — write synchronously
-            await self._write_audit_log(log_data)
+            await self._emit(sink, audit_event)
+
+    @staticmethod
+    def _to_event(event: AuditLogCreate) -> AuditEvent:
+        # Capture everything needed — the background task must not
+        # reference the caller's db session (it may be closed by then).
+        return AuditEvent(
+            id=str(uuid.uuid4()),
+            timestamp=utcnow_naive(),
+            user_id=event.user_id,
+            org_id=event.org_id,
+            action=event.action,
+            category=event.category or derive_category(event.action),
+            resource_type=event.resource_type,
+            resource_id=event.resource_id,
+            details=event.details,
+            ip_address=event.ip_address,
+            status=event.status,
+        )
+
+    @staticmethod
+    async def _emit(sink, audit_event: AuditEvent) -> None:
+        """Run the configured audit sink; a failing sink never breaks the caller."""
+        try:
+            await sink.emit(audit_event)
+        except Exception as e:
+            logger.error("Audit sink %s failed: %s", type(sink).__name__, e)
 
     async def log_event_sync(
         self,
@@ -83,18 +98,6 @@ class AuditService:
         await db.commit()
         await db.refresh(db_log)
         return db_log
-
-    async def _write_audit_log(self, log_data: dict) -> None:
-        """Background writer with its own DB session."""
-        try:
-            from api_gateway.db.database import AsyncSessionLocal
-
-            async with AsyncSessionLocal() as db:
-                db_log = AuditLog(**log_data)
-                db.add(db_log)
-                await db.commit()
-        except Exception as e:
-            logger.error("Failed to write audit log: %s", e)
 
     async def get_logs(
         self,

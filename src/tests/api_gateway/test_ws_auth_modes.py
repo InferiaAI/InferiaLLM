@@ -205,8 +205,10 @@ def test_resolve_token_exported_from_middleware():
     assert inspect.iscoroutinefunction(resolve_token_to_user_context)
 
 
-def test_proxy_routes_imports_resolve_token(monkeypatch):
-    """proxy_routes module must import resolve_token_to_user_context.
+def test_proxy_routes_imports_extensions(monkeypatch):
+    """proxy_routes must import the extension registry for the token_verifier
+    (the same seam the HTTP middleware uses; its default is
+    resolve_token_to_user_context — see test_extension_defaults.py).
 
     We verify this by checking the source without executing the module
     (to avoid the websockets import error at test collection time).
@@ -222,17 +224,17 @@ def test_proxy_routes_imports_resolve_token(monkeypatch):
     imported_names = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if node.module and "middleware" in node.module:
+            if node.module == "common":
                 for alias in node.names:
                     imported_names.append(alias.name)
 
-    assert "resolve_token_to_user_context" in imported_names, (
-        "proxy_routes.py must import resolve_token_to_user_context from middleware"
+    assert "extensions" in imported_names, (
+        "proxy_routes.py must import the extension registry from common"
     )
 
 
-def test_get_ws_user_context_calls_resolve_token(monkeypatch):
-    """_get_ws_user_context body must call resolve_token_to_user_context.
+def test_get_ws_user_context_calls_token_verifier(monkeypatch):
+    """_get_ws_user_context body must call the token_verifier's verify().
 
     Verified by AST-scanning the function body without executing the module.
     """
@@ -255,6 +257,6 @@ def test_get_ws_user_context_calls_resolve_token(monkeypatch):
                     elif isinstance(func, ast.Attribute):
                         called_names.append(func.attr)
 
-    assert "resolve_token_to_user_context" in called_names, (
-        "_get_ws_user_context must call resolve_token_to_user_context"
+    assert "verify" in called_names, (
+        "_get_ws_user_context must call extensions.get('token_verifier').verify"
     )

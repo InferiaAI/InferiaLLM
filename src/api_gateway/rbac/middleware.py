@@ -19,6 +19,7 @@ from api_gateway.rbac.jwks_verifier import (
     JWKSVerifyError,
 )
 from api_gateway.rbac.shadow_user import get_or_create_shadow_user
+from common import extensions
 
 logger = logging.getLogger(__name__)
 
@@ -341,22 +342,11 @@ async def auth_middleware(request: Request, call_next):
     if cached is not None:
         request.state.user = cached
     else:
-        mode = settings.auth_provider
-
         async with AsyncSessionLocal() as db:
             try:
-                if mode == "inferiaauth":
-                    try:
-                        user_context = await _resolve_local_token(db, token)  # superadmin recovery
-                    except HTTPException:
-                        user_context = await _resolve_external_token(db, token)
-                elif mode == "oidc":
-                    try:
-                        user_context = await _resolve_local_token(db, token)  # superadmin recovery
-                    except HTTPException:
-                        user_context = await _resolve_oidc_token(db, token)
-                else:  # local
-                    user_context = await _resolve_local_token(db, token)
+                # token_verifier extension; the default is
+                # resolve_token_to_user_context (per-AUTH_PROVIDER dispatch).
+                user_context = await extensions.get("token_verifier").verify(token, db=db)
 
                 request.state.user = user_context
                 _auth_cache[token] = user_context
