@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, Dict, Any
-from datetime import date, datetime
+from datetime import date
+from api_gateway.schemas.common import UTCDateTime
 
 class ConfigUpdateRequest(BaseModel):
     policy_type: str
@@ -11,7 +12,7 @@ class ConfigResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     policy_type: str
     config_json: Dict[str, Any]
-    updated_at: datetime
+    updated_at: UTCDateTime
 
 class UsageStatsResponse(BaseModel):
     key_name: str

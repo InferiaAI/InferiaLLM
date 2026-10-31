@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Literal
 from enum import Enum
-from datetime import datetime
+from api_gateway.schemas.common import UTCDateTime
 
 
 class PermissionEnum(str, Enum):
@@ -138,7 +138,7 @@ class UserInfoResponse(BaseModel):
     roles: List[str]
     permissions: List[str] = []
     org_id: Optional[str] = None
-    created_at: Optional[datetime] = None
+    created_at: Optional[UTCDateTime] = None
     is_active: bool
     totp_enabled: bool = False
     # Install-wide settings (roles, provider credentials) are superadmin-only.
@@ -162,8 +162,8 @@ class RoleResponse(BaseModel):
     name: str
     description: Optional[str] = None
     permissions: List[str]
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
 
 class PermissionResponse(BaseModel):

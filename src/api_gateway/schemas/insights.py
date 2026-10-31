@@ -4,6 +4,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from api_gateway.schemas.logging import InferenceLogResponse
+from api_gateway.schemas.common import UTCDateTime
 
 InsightsStatusFilter = Literal["all", "success", "error"]
 InsightsGranularity = Literal["hour", "day"]
@@ -53,7 +54,7 @@ class InsightsSummaryResponse(BaseModel):
 
 
 class InsightsTimeseriesBucket(BaseModel):
-    bucket_start: datetime
+    bucket_start: UTCDateTime
     requests: int = 0
     failed_requests: int = 0
     success_rate: float = 0.0

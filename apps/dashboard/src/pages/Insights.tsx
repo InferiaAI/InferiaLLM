@@ -62,7 +62,7 @@ function formatBucketLabel(value: string, granularity: InsightsGranularity): str
     if (granularity === "hour") {
         return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
     }
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 type State = {

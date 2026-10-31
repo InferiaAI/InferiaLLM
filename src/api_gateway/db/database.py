@@ -22,6 +22,9 @@ engine = create_async_engine(
     # Production Tuning: Increase pool size to handle higher concurrency
     pool_size=20,
     max_overflow=40,
+    # Columns are timestamp without time zone holding UTC; func.now() defaults
+    # follow the session timezone, so pin it rather than trust the server's.
+    connect_args={"server_settings": {"timezone": "UTC"}},
 )
 
 AsyncSessionLocal = async_sessionmaker(
