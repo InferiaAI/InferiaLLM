@@ -93,6 +93,7 @@ def test_kv_blocks_hand_computed():
         (lambda d: d["deployment"][0].update(allocator="contiguous"), "paged allocator"),
         (lambda d: d["deployment"][0].update(enable_chunked_prefill=False, max_num_batched_tokens=4096), "chunked prefill"),
         (lambda d: d["cluster"]["pools"][0].update(gpu="B200"), "unknown GPU"),
+        (lambda d: d["deployment"][0].update(max_num_seqs=512, max_num_batched_tokens=256), ">= max_num_seqs"),
         (lambda d: d.update(models=["gpt-5"]), "unknown model"),
         (lambda d: d["workload"]["classes"][0].update({"class": "vip"}), "class"),
         (lambda d: d["workload"]["classes"][0].update(deployment="nope"), "unknown deployment"),

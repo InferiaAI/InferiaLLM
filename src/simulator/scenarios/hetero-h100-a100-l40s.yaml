@@ -19,18 +19,20 @@ workload:
   arrival: {process: poisson, rate_rps: 20}
   classes:
     - class: interactive_chat
-      weight: 0.5
+      weight: 0.55
       deployment: chat-70b
       input_tokens: {dist: lognormal, median: 800, sigma: 1.0, max: 16384}
       output_tokens: {dist: lognormal, median: 250, sigma: 0.8, max: 2048}
       shared_prefix: {groups: 8, tokens: 512}
+    # Sized to ~40% of the A100 pool's prefill compute at the placeholder MFU:
+    # a ~22k-token prompt is ~4.9e14 FLOPs (~3.1 s on one A100 at MFU 0.5).
     - class: long_context
-      weight: 0.2
+      weight: 0.05
       deployment: long-8b
       input_tokens: {dist: lognormal, median: 20000, sigma: 0.5, max: 60000}
       output_tokens: {dist: lognormal, median: 400, sigma: 0.6, max: 4096}
     - class: batch
-      weight: 0.3
+      weight: 0.4
       deployment: batch-8b
       input_tokens: {dist: lognormal, median: 1500, sigma: 0.7, max: 12000}
       output_tokens: {dist: lognormal, median: 400, sigma: 0.6, max: 4096}

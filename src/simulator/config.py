@@ -70,6 +70,8 @@ class DeploymentConfig(_Strict):
     pool: str
     tensor_parallel: int = Field(1, gt=0)
     replicas: int = Field(1, gt=0)
+    # Scenario defaults, not vLLM's (its SchedulerConfig defaults are 128 / 2048 and
+    # engine args raise them per usage context; verify for the pinned version).
     max_num_seqs: int = Field(256, gt=0)
     max_num_batched_tokens: int = Field(8192, gt=0)
     max_model_len: int = Field(32768, gt=0)
@@ -88,6 +90,10 @@ class DeploymentConfig(_Strict):
     def _consistent(self) -> "DeploymentConfig":
         if self.allocator == "contiguous" and self.enable_prefix_caching:
             raise ValueError("prefix caching needs the paged allocator")
+        # Both checks mirror vLLM's SchedulerConfig validation
+        # (https://docs.vllm.ai/en/latest/api/vllm/config/scheduler/, read 2026-10-31).
+        if self.max_num_batched_tokens < self.max_num_seqs:
+            raise ValueError("max_num_batched_tokens must be >= max_num_seqs")
         if not self.enable_chunked_prefill and self.max_num_batched_tokens < self.max_model_len:
             raise ValueError(
                 "without chunked prefill, max_num_batched_tokens must be >= max_model_len"
@@ -230,6 +236,7 @@ class Scenario(_Strict):
             cap = pools[name].gpus_per_node * pools[name].nodes
             if n > cap:
                 raise ValueError(f"pool {name}: deployments need {n} GPUs, pool has {cap}")
+        place_replicas(self)  # mixed TP sizes can still fail to pack without spanning nodes
         for c in self.workload.classes:
             if c.deployment is None:
                 if len(self.deployment) != 1:
@@ -246,6 +253,30 @@ class Scenario(_Strict):
 
     def pool(self, name: str) -> PoolConfig:
         return next(p for p in self.cluster.pools if p.name == name)
+
+
+def place_replicas(s: "Scenario") -> list[tuple[DeploymentConfig, str]]:
+    """Pack replicas into pool GPUs in deployment order; returns (deployment, node) per replica.
+
+    A replica's TP group starts at a multiple of its TP size, so it never spans
+    two nodes (tensor_parallel divides gpus_per_node). Raises ValueError if the
+    pool runs out of GPUs.
+    """
+    cursor: dict[str, int] = {}
+    placed: list[tuple[DeploymentConfig, str]] = []
+    for dep in s.deployment:
+        pool = s.pool(dep.pool)
+        tp = dep.tensor_parallel
+        for _ in range(dep.replicas):
+            start = -(-cursor.get(pool.name, 0) // tp) * tp
+            if start + tp > pool.gpus_per_node * pool.nodes:
+                raise ValueError(
+                    f"pool {pool.name}: cannot place {dep.name} replicas without "
+                    "splitting a TP group across nodes; reorder deployments or add GPUs"
+                )
+            cursor[pool.name] = start + tp
+            placed.append((dep, f"{pool.name}-n{start // pool.gpus_per_node}"))
+    return placed
 
 
 def kv_blocks_per_replica(d: DeploymentConfig, gpu: GpuSpec, perf: PerfParams) -> int:
