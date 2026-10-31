@@ -1,6 +1,6 @@
 # Shared Interfaces (contract between sessions)
 
-**Version:** v1 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
+**Version:** v1.1 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
 **Owner:** Session 1. Other sessions propose changes under "Requests" in their status file; Session 1 updates this doc and bumps the version; the user merges.
 **Rule:** build against this document. If your code can't follow it, raise a request; don't silently diverge.
 
@@ -88,7 +88,7 @@ New Prometheus metrics use the prefix `inferia_` and the canonical names above (
 | `vllm:inter_token_latency_seconds` | `itl_seconds` |
 | `vllm:request_time_per_output_token_seconds` (per-request TPOT histogram) | per-request TPOT (not the same as ITL) |
 | `vllm:e2e_request_latency_seconds` | `e2e_seconds` (server-side) |
-| `vllm:prefix_cache_hits`, `vllm:prefix_cache_queries` (both counted in **tokens**) | `prefix_cache_hit_ratio` (token-based) |
+| `vllm:prefix_cache_hits`, `vllm:prefix_cache_queries` (both counted in **tokens**; scraped as `…_total` counters, e.g. `vllm:prefix_cache_hits_total`, as `llm-d-inference-sim` v1.0.0 exports them) | `prefix_cache_hit_ratio` (token-based) |
 
 ---
 
@@ -126,7 +126,12 @@ One enum, used by the API edge, the scheduler/admission logic, the simulator and
 - the latest docs (v0.9.0+) treat `x-llm-d-*` as canonical and accept `x-gateway-*` as deprecated aliases
 - the 0.8 docs list them the other way round
 
-Session 3 pins the llm-d version and records the exact names here.
+Session 3 has pinned **llm-d v1.0.0** (router v1.0.0, GIE v1.6.2). **The request-header names are NOT yet verified for v1.0.0**: Session 3's spike exercised prefix routing only, which uses no headers. Session 3 will confirm them (EPP source at v1.0.0 plus a live test) in its T3; until then, treat the table below as documentation-based.
+
+Verified facts for v1.0.0, from Session 3's spike:
+- **`InferenceObjective` API:** use **`llm-d.ai/v1`**. The EPP logs that `llm-d.ai/v1alpha2` is deprecated, even though the v1.0.0 guides still show it.
+- **CRDs:** the llm-d CRDs come from the llm-d router release manifests (`https://github.com/llm-d/llm-d-router/releases/download/v1.0.0/manifests.yaml`). GIE v1.6.2 `v1-manifests.yaml` contains only `inferencepools.inference.networking.k8s.io/v1`.
+- **Routing ground truth for tests:** `llm-d-inference-sim` returns `x-inference-pod`, `x-inference-port` and `x-inference-namespace` response headers when `POD_NAME` / `POD_NAMESPACE` are set.
 
 | InferiaLLM | Sent to the EPP as (latest naming) | Effect |
 |---|---|---|
@@ -162,7 +167,13 @@ The other routes are `"self_register"` (inferia-worker pools) and `"reconciler"`
 | logs | `get_logs`, `get_log_streaming_info` |
 | (cluster mode) | `provision_cluster`, `deploy_service`, `stop_service`, `get_cluster_status` (optional, non-abstract) |
 
-**Two ways to add llm-d.** Session 3 chooses in its spike ADR:
+**Session 3's proposal (ADR 0008, Proposed): option 1, with raw llm-d resources rendered from the pinned chart.**
+- **Pool metadata key:** `dataplane: "llm-d"`.
+- **`direct_provision`** passes `pool_meta["dataplane"]` into the adapter metadata.
+- **New hook:** `ProviderAdapter.capabilities_for(metadata) -> ProviderCapabilities`, defaulting to `get_capabilities()`, lets the llm-d mode enable `endpoint_http_probeable`.
+- **`provider_instance_id` prefix:** `inferia-llmd-<hex>`.
+
+**Two ways to add llm-d.** Session 3 chose option 1:
 1. **A data-plane mode of `KubernetesAdapter`** selected by pool metadata (for example `metadata.dataplane = "llm-d"`). No new provider key, so no `compute_pools.provider` DB enum change. *Recommended.*
 2. **A new adapter key in `ADAPTER_REGISTRY`** (for example `k8s-llmd`). Needs a check of the `compute_pools.provider` DB enum (`on_prem` is already an enum value aliasing `worker`) and probably a migration.
 
@@ -267,3 +278,7 @@ The target that both future providers must satisfy: Better Auth (self-hosted) an
   - **§6:** code locations for each OSS default.
   - **§7:** the contract is `UserContext`; actual per-mode claims documented (local tokens have no `permissions` claim).
   - **§8:** aligned with `inference_logs`; IPs excluded.
+- **v1.1** (2026-10-31, Session 1, from Session 3's spike):
+  - **§2:** `_total` counter names noted.
+  - **§4:** llm-d v1.0.0 pinned; `InferenceObjective` is `llm-d.ai/v1`; CRD source noted; `x-inference-pod` test header added. Header names explicitly unverified until Session 3's T3.
+  - **§5:** Session 3's proposed shape recorded (pool `dataplane` key, `capabilities_for` hook, id prefix; ADR 0008).
