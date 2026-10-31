@@ -96,6 +96,32 @@ and [KV-cache](https://github.com/llm-d/llm-d-inference-sim/blob/v1.0.0/docs/kv-
 - **Keep the EPP at one replica** with this routing config. The token-load-scorer's in-flight accounting and the KV index are per process (the guide's own note).
 - **`InferenceObjective` `llm-d.ai/v1alpha2` is deprecated in v1.0.0** (the EPP logs "use llm-d.ai/v1"). New objectives (per-class priority, plan WS6/WS7) should use `llm-d.ai/v1`.
 
+## Driving it from InferiaLLM (the llm-d data-plane mode)
+
+`up.sh` also applies `manifests/llmd-namespace-bootstrap.yaml`: namespace `inferia-llmd`, the shared EPP ServiceAccount and its RBAC, plus a least-privilege Role for InferiaLLM's orchestration. Do this once per namespace, as an admin. After that, a **k8s pool whose metadata has `"dataplane": "llm-d"`** serves every deployment through llm-d (code: `src/providers/k8s/llmd/`):
+
+```bash
+# pool (REST, via the gateway)
+POST /api/v1/deployment/createpool  {"provider":"k8s", ..., "metadata":{"dataplane":"llm-d"}}
+# deployment on it (only llm-d-inference-sim is supported for now; vLLM needs verified /v1/*/render)
+POST /api/v1/deployment/deploy      {"pool_id":"<id>","engine":"llm-d-inference-sim","inference_model":"sim-model",
+                                     "gpu_per_replica":0,"configuration":{"replicas":2}, ...}
+```
+
+Per deployment it creates `inferia-llmd-<hex>`: the model-server Deployment, an `InferencePool`, the router (Envoy + EPP), and their Services and ConfigMaps. The deployment turns RUNNING only after a request is served **through the router**. Terminating it deletes everything and verifies it is gone.
+
+| Setting (control-plane env) | Default | Purpose |
+|---|---|---|
+| `K8S_LLMD_NAMESPACE` | `inferia-llmd` | Namespace for llm-d deployments (must have the bootstrap applied) |
+| `K8S_SERVICE_TYPE` | `ClusterIP` | Existing adapter setting; `NodePort` lets an out-of-cluster control plane reach the router |
+| `UPSTREAM_ALLOWED_INTERNAL_HOSTS` | empty | Existing inference SSRF allowlist (exact hosts). A NodePort endpoint is a private node IP (kind: `172.18.0.x`), so an out-of-cluster control plane must list it; an in-cluster one uses Service DNS names and needs nothing |
+
+`K8S_LLMD_NAMESPACE` is not in `.env.example`, like the adapter's other `K8S_*` settings: `test_env_parity` requires `.env` and `.env.example` to have identical keys.
+
+Verified live on 2026-10-31 with InferiaLLM run from source against this cluster: create → RUNNING (`probe=ready`) → 6 chat turns through `/inf`, all served by the pod holding the cached prefix (token hit ratio 0.808) → terminate → delete → no objects or pods left.
+
+Running InferiaLLM from a venv: `inferiallm init` calls a bare `python3` for `bootstrap_db.py`, so put the venv's `bin/` first on `PATH` (or activate the venv). Otherwise it picks up the system interpreter.
+
 ## What this does not cover yet
 
 - **The Gateway-mode chart** (`llm-d-router-gateway`, behind a Gateway API implementation). That mode is needed for HTTPRoute weights (canary or model versions); standalone mode is enough for routing.
