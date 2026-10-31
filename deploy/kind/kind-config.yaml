@@ -1,0 +1,18 @@
+# kind cluster for the llm-d data-plane spike (plan WS2 / session-3 T1).
+# Host ports bind to 127.0.0.1 only and avoid the ports the local InferiaLLM
+# Docker stack and other services use (README §4.2: 3000, 8000, 8080, 10000, 18080).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # llm-d router (Envoy sidecar -> EPP ext_proc -> sim pods)
+      - containerPort: 30911
+        hostPort: 18911
+        listenAddress: "127.0.0.1"
+        protocol: TCP
+      # baseline: plain Service over the same sim pods (kube-proxy, no EPP)
+      - containerPort: 30912
+        hostPort: 18912
+        listenAddress: "127.0.0.1"
+        protocol: TCP
