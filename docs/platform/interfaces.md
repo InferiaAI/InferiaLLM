@@ -1,6 +1,6 @@
 # Shared Interfaces (contract between sessions)
 
-**Version:** v1.3 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
+**Version:** v1.3.1 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
 **Owner:** Session 1. Other sessions propose changes under "Requests" in their status file; Session 1 updates this doc and bumps the version; the user merges.
 **Rule:** build against this document. If your code can't follow it, raise a request; don't silently diverge.
 
@@ -181,7 +181,7 @@ The other routes are `"self_register"` (inferia-worker pools) and `"reconciler"`
 - **Endpoint:** the instance-named Service on the Envoy port **8081**.
 - **Settings:**
   - `K8S_LLMD_NAMESPACE` (default `inferia-llmd`; validated as a namespace name).
-  - `UPSTREAM_ALLOWED_INTERNAL_HOSTS` must include the node IPs when the endpoint is a NodePort on private addresses. This is a shared config variable, so verify every consumer (Mistakes Log 2026-06-14).
+  - `UPSTREAM_ALLOWED_INTERNAL_HOSTS` must include the node IPs when the endpoint is a NodePort on private addresses. **Consumers verified** (Session 3, re-checked by Session 1 on main): one runtime reader, `src/inference/config.py:177` → `core/service.py:95` (exact-host match), and one writer, `setup.sh --k8s` (~L656–663; it merges the kind node IPs and sets `K8S_SERVICE_TYPE=NodePort`). The llm-d mode reads it and never changes it.
 - **Per-namespace RBAC:** `deploy/kind/manifests/llmd-namespace-bootstrap.yaml` defines the EPP ServiceAccount `inferia-llmd-epp`, an `inferia-llmd-orchestrator` least-privilege Role, and `nodes get/list` only for NodePort. The GIE v1.6.2 and llm-d router v1.0.0 CRDs must be installed cluster-wide first. Session 4's Helm chart should ship the same.
 
 **Two ways to add llm-d.** Session 3 chose option 1:
@@ -314,3 +314,5 @@ The target that both future providers must satisfy: Better Auth (self-hosted) an
   - **§6:** signatures and value objects as built, including the optional `db` parameter and fail-fast config.
   - **§8:** `total_tokens` added.
 - **v1.3** (2026-10-31, Session 1, from Session 3's T2, checked in code): **§5** as-built llm-d mode (selection, sync `capabilities_for`, ids, status semantics, endpoint port, `K8S_LLMD_NAMESPACE`, `UPSTREAM_ALLOWED_INTERNAL_HOSTS`, RBAC bootstrap).
+
+- **v1.3.1:** `UPSTREAM_ALLOWED_INTERNAL_HOSTS` consumers verified.
