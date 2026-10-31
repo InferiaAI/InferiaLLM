@@ -1,6 +1,6 @@
 # Shared Interfaces (contract between sessions)
 
-**Version:** v1.1 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
+**Version:** v1.2 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
 **Owner:** Session 1. Other sessions propose changes under "Requests" in their status file; Session 1 updates this doc and bumps the version; the user merges.
 **Rule:** build against this document. If your code can't follow it, raise a request; don't silently diverge.
 
@@ -195,6 +195,23 @@ Each extension point is a Python `Protocol` with an open-source default implemen
 | `admission_policy` | `admit(ctx: RequestContext, cls: WorkloadClass, load: LoadSnapshot) -> AdmissionDecision` (ADMIT, QUEUE, or SHED with `retry_after_s`) | Bounded per-class queues + priority shedding |
 | `token_verifier` | `verify(token: str) -> UserContext` | Existing resolution: `resolve_token_to_user_context` (`src/api_gateway/rbac/middleware.py:380`) dispatching to `_resolve_local_token` / `_resolve_external_token` / `_resolve_oidc_token` |
 
+**As built by Session 4** (`src/common/extensions/protocols.py`, `registry.py`; branch `s4/enterprise-ui`, commits b90c0e8..3d6b03e; verified by Session 1 reading the code):
+- `AuditSink.emit(event: AuditEvent) -> None`
+- `UsageSink.record(events: Sequence[UsageEvent], *, db=None) -> None`
+- `QuotaPolicy.check(ctx: QuotaContext, estimate: UsageEstimate, *, db=None) -> QuotaDecision`
+- `TokenVerifier.verify(token, *, db=None) -> UserContext`
+
+The optional `db` passes the caller's session so the defaults keep using today's transaction.
+
+| Value object | Fields |
+|---|---|
+| `AuditEvent` | `action`, `user_id`, `org_id`, `category`, `resource_type`, `resource_id`, `details`, `ip_address`, `status`, `id`, `timestamp` |
+| `QuotaContext` | `user_id`, `model`, `org_id` |
+| `UsageEstimate` | `prompt_tokens`, `max_output_tokens`, `total_tokens`, `gpu_seconds` |
+| `QuotaDecision` | `allowed`, `reason`, `retry_after_s` |
+
+`UsageEvent` mirrors §8. Configuration problems fail at startup: unknown `INFERIA_EXT_*` names and empty values are startup errors (`ExtensionConfigError`). `admission_policy` is reserved for Session 3.
+
 **Rules:**
 - **Defaults keep current behaviour.** Adding an extension point must not change behaviour while the default is selected; prove it with the existing tests plus a test that swaps in a fake implementation.
 - **Core never imports enterprise code.** Implementations depend on core, never the reverse.
@@ -230,7 +247,7 @@ The target that both future providers must satisfy: Better Auth (self-hosted) an
   "deployment_id": "...", "model": "...", "request_type": "chat|completion|embedding|image|audio|video|...",
   "workload_class": "interactive_chat",
   "status_code": 200, "cancelled": false, "shed": false,
-  "prompt_tokens": 0, "completion_tokens": 0, "input_count": null, "n_items": null,
+  "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "input_count": null, "n_items": null,
   "ttft_ms": null, "latency_ms": 0, "is_streaming": true
 }
 ```
@@ -282,3 +299,6 @@ The target that both future providers must satisfy: Better Auth (self-hosted) an
   - **§2:** `_total` counter names noted.
   - **§4:** llm-d v1.0.0 pinned; `InferenceObjective` is `llm-d.ai/v1`; CRD source noted; `x-inference-pod` test header added. Header names explicitly unverified until Session 3's T3.
   - **§5:** Session 3's proposed shape recorded (pool `dataplane` key, `capabilities_for` hook, id prefix; ADR 0008).
+- **v1.2** (2026-10-31, Session 1, from Session 4's request, verified against its code):
+  - **§6:** signatures and value objects as built, including the optional `db` parameter and fail-fast config.
+  - **§8:** `total_tokens` added.
