@@ -2,6 +2,7 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional, Dict, Any, Union, List
 from datetime import datetime
 from uuid import UUID
+from api_gateway.schemas.common import UTCDateTime
 
 
 class InferenceLogCreate(BaseModel):
@@ -43,7 +44,7 @@ class InferenceLogResponse(BaseModel):
     error_message: Optional[str] = None
     is_streaming: bool
     applied_policies: Optional[List[str]] = None
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # Action → category mapping
@@ -99,7 +100,7 @@ class AuditLogCreate(BaseModel):
 
 class AuditLogResponse(BaseModel):
     id: str
-    timestamp: datetime
+    timestamp: UTCDateTime
     user_id: Optional[str]
     user_email: Optional[str] = None
     org_id: Optional[str] = None

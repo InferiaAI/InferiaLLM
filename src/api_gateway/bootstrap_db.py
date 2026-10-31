@@ -22,7 +22,11 @@ async def bootstrap(reset: bool = False):
         logger.error("DATABASE_URL not set!")
         return
 
-    engine = create_async_engine(DATABASE_URL, echo=True, future=True)
+    # UTC session, as in db/database.py, so the seeded rows' now() defaults are UTC.
+    engine = create_async_engine(
+        DATABASE_URL, echo=True, future=True,
+        connect_args={"server_settings": {"timezone": "UTC"}},
+    )
 
     async with engine.begin() as conn:
         if reset:

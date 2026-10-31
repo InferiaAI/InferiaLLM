@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Optional, List, Dict, Any, Literal
-from datetime import datetime
+from api_gateway.schemas.common import UTCDateTime
 
 
 # --- Organization ---
@@ -15,7 +15,7 @@ class OrganizationResponse(BaseModel):
     name: str
     api_key: Optional[str] = None
     log_payloads: bool = True
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 class OrganizationUpdate(BaseModel):
@@ -36,7 +36,7 @@ class UserResponse(BaseModel):
     email: str
     role: str
     org_id: Optional[str] = None
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # --- Invitation ---
@@ -53,8 +53,8 @@ class InviteResponse(BaseModel):
     token: str
     invite_link: str
     status: str
-    expires_at: datetime
-    created_at: datetime
+    expires_at: UTCDateTime
+    created_at: UTCDateTime
 
 
 class InvitationListResponse(BaseModel):
@@ -106,8 +106,8 @@ class DeploymentResponse(BaseModel):
     model_type: str = "inference"  # inference, embedding, image_generation, etc.
     auto_replica_enabled: bool = False
     tokens_per_second_threshold: Optional[float] = None
-    auto_replica_last_scale_at: Optional[datetime] = None
-    created_at: Optional[datetime] = None
+    auto_replica_last_scale_at: Optional[UTCDateTime] = None
+    created_at: Optional[UTCDateTime] = None
 
     # Validator to convert UUID to string
     @field_validator("id", mode="before")
@@ -131,8 +131,8 @@ class ApiKeyResponse(BaseModel):
     name: str
     prefix: str
     is_active: bool
-    created_at: datetime
-    last_used_at: Optional[datetime] = None
+    created_at: UTCDateTime
+    last_used_at: Optional[UTCDateTime] = None
 
 
 class ApiKeyCreatedResponse(ApiKeyResponse):
