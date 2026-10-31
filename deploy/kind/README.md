@@ -114,7 +114,7 @@ Per deployment it creates `inferia-llmd-<hex>`: the model-server Deployment, an 
 |---|---|---|
 | `K8S_LLMD_NAMESPACE` | `inferia-llmd` | Namespace for llm-d deployments (must have the bootstrap applied) |
 | `K8S_SERVICE_TYPE` | `ClusterIP` | Existing adapter setting; `NodePort` lets an out-of-cluster control plane reach the router |
-| `UPSTREAM_ALLOWED_INTERNAL_HOSTS` | empty | Existing inference SSRF allowlist (exact hosts). A NodePort endpoint is a private node IP (kind: `172.18.0.x`), so an out-of-cluster control plane must list it; an in-cluster one uses Service DNS names and needs nothing |
+| `UPSTREAM_ALLOWED_INTERNAL_HOSTS` | empty | Existing inference SSRF allowlist (exact hosts). A NodePort endpoint is a private node IP (kind: `172.18.0.x`), so an out-of-cluster control plane must list it (`setup.sh --k8s` already writes the cluster's node IPs here and sets `K8S_SERVICE_TYPE=NodePort`); an in-cluster one uses Service DNS names and needs nothing. Its only runtime consumer is the inference service (`src/inference/config.py`) |
 
 `K8S_LLMD_NAMESPACE` is not in `.env.example`, like the adapter's other `K8S_*` settings: `test_env_parity` requires `.env` and `.env.example` to have identical keys.
 
