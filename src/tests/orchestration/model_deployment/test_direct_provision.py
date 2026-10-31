@@ -84,6 +84,9 @@ def _make_adapter(node_spec=None, ready_url="https://ready.nosana.io/abc"):
     # make it awaitable, so replace it with a plain callable returning the
     # real capabilities (carries readiness_timeout_seconds).
     adapter.get_capabilities = lambda: NosanaAdapter.CAPABILITIES
+    # Likewise sync, and the real default delegates to get_capabilities; look
+    # it up at call time so a test that swaps get_capabilities is honoured.
+    adapter.capabilities_for = lambda metadata=None: adapter.get_capabilities()
     adapter.provision_node.return_value = node_spec if node_spec is not None else _node_spec()
     adapter.wait_for_ready.return_value = ready_url
     return adapter

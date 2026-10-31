@@ -6,8 +6,11 @@ from orchestration.provisioning.engine.base import (
     PricingModel,
     ProviderCapabilities,
 )
+from providers.k8s.llmd import resources as llmd
+from providers.k8s.llmd.dataplane import LlmdDataplane
 from typing import List, Dict, Optional
 import asyncio
+import dataclasses
 import functools
 import os
 import queue
@@ -304,6 +307,118 @@ class KubernetesAdapter(ProviderAdapter):
         self.core = client.CoreV1Api()
         self.apps = client.AppsV1Api()
         self.custom = client.CustomObjectsApi()
+        self.llmd_poll_seconds = float(self.CAPABILITIES.polling_interval_seconds)
+
+    # -----------------------------------------------------
+    # LLM-D DATA-PLANE MODE
+    # -----------------------------------------------------
+    # A pool with metadata dataplane="llm-d" is served through llm-d (an
+    # InferencePool + the EPP router); see providers/k8s/llmd. Lifecycle calls
+    # get only the instance id, so llm-d instances are told apart by prefix.
+    def capabilities_for(self, metadata: Optional[Dict] = None) -> ProviderCapabilities:
+        if not llmd.wants_llmd(metadata):
+            return self.CAPABILITIES
+        # The router's Service is the endpoint, so RUNNING waits for a request
+        # served through it (Mistakes Log 2026-06-17: premature RUNNING).
+        return dataclasses.replace(
+            self.CAPABILITIES,
+            endpoint_http_probeable=True,
+            endpoint_ready_timeout_seconds=self.CAPABILITIES.readiness_timeout_seconds,
+            features={
+                **self.CAPABILITIES.features,
+                "dataplane": llmd.DATAPLANE_LLMD,
+                "kv_aware_routing": True,
+            },
+        )
+
+    def _llmd(self) -> LlmdDataplane:
+        return LlmdDataplane(
+            core=self.core, apps=self.apps, custom=self.custom,
+            poll_seconds=self.llmd_poll_seconds,
+        )
+
+    @staticmethod
+    def _namespace_for(provider_instance_id: str) -> str:
+        if llmd.is_llmd_instance(provider_instance_id):
+            return llmd.llmd_namespace()
+        return "default"
+
+    async def _provision_llmd(self, *, pool_id: str, metadata: Dict) -> Dict:
+        name = llmd.new_instance_name()
+        namespace = llmd.llmd_namespace()
+        # Validates first: an unsupported deployment fails before anything exists.
+        spec = llmd.spec_from_metadata(
+            name=name, namespace=namespace, metadata=metadata, pool_id=pool_id,
+        )
+        await self._llmd().apply(spec)
+        return {
+            "provider": "k8s",
+            "provider_instance_id": name,
+            "instance_type": f"llm-d/{spec.engine}",
+            "hostname": name,
+            "expose_url": await self._resolve_url(llmd.gateway_service_name(name), namespace),
+            "gpu_total": int(metadata.get("gpu_allocated") or 0),
+            "vcpu_total": int(metadata.get("vcpu_allocated") or 1),
+            "ram_gb_total": int(metadata.get("ram_gb_allocated") or 1),
+            "node_class": "fixed",
+            "metadata": {
+                "namespace": namespace,
+                "pool_id": str(pool_id),
+                "dataplane": llmd.DATAPLANE_LLMD,
+                "engine": spec.engine,
+                "replicas": spec.replicas,
+                "port": llmd.PROXY_PORT,
+            },
+        }
+
+    async def _wait_for_ready_llmd(self, provider_instance_id: str, timeout: float) -> str:
+        """Poll until a model server is Ready and the router is available.
+
+        This is the precondition; direct provisioning then probes the returned
+        gateway URL over HTTP before marking RUNNING.
+        """
+        namespace = llmd.llmd_namespace()
+        dp = self._llmd()
+        deadline = time.monotonic() + timeout
+        while True:
+            state, detail = await dp.status(provider_instance_id, namespace)
+            if state == "ready":
+                return await self._resolve_url(
+                    llmd.gateway_service_name(provider_instance_id), namespace,
+                )
+            if state == "failed":
+                raise RuntimeError(f"llm-d instance {provider_instance_id} cannot start: {detail}")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"llm-d instance {provider_instance_id} not ready within {timeout}s "
+                    f"({state}: {detail})"
+                )
+            await asyncio.sleep(self.llmd_poll_seconds)
+
+    async def get_node_status(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """Liveness for llm-d instances; plain pods keep the base "unknown".
+
+        Conservative because the liveness worker tears down on a terminal
+        state: STOPPED only when the model servers are confirmed gone (404),
+        and "unknown" on anything uncertain.
+        """
+        if not llmd.is_llmd_instance(provider_instance_id):
+            return await super().get_node_status(
+                provider_instance_id=provider_instance_id,
+                provider_credential_name=provider_credential_name,
+            )
+        try:
+            state, _ = await self._llmd().status(
+                provider_instance_id, llmd.llmd_namespace(),
+            )
+        except Exception:  # noqa: BLE001 — never act on a failed poll
+            return "unknown"
+        return {"ready": "RUNNING", "missing": "STOPPED"}.get(state, "unknown")
 
     # -----------------------------------------------------
     # DISCOVER RESOURCES
@@ -379,6 +494,9 @@ class KubernetesAdapter(ProviderAdapter):
         """
         Provision a compute node by creating a Kubernetes pod.
         """
+        if llmd.wants_llmd(metadata):
+            return await self._provision_llmd(pool_id=pool_id, metadata=metadata or {})
+
         pod_name = f"inferia-worker-{uuid.uuid4().hex[:6]}"
         namespace = (metadata or {}).get("namespace", "default")
         # Kubernetes "command" REPLACES the image entrypoint, so "cmd" maps to
@@ -691,6 +809,9 @@ class KubernetesAdapter(ProviderAdapter):
         """
         import asyncio
 
+        if llmd.is_llmd_instance(provider_instance_id):
+            return await self._wait_for_ready_llmd(provider_instance_id, timeout)
+
         capabilities = self.get_capabilities()
         start = time.time()
         poll_interval = capabilities.polling_interval_seconds
@@ -785,6 +906,11 @@ class KubernetesAdapter(ProviderAdapter):
         All are removed even if one is already gone, so a partially created
         node leaves nothing behind.
         """
+        if llmd.is_llmd_instance(provider_instance_id):
+            # Deletes everything the instance owns and verifies it is gone.
+            await self._llmd().delete(provider_instance_id, llmd.llmd_namespace())
+            return
+
         namespace = "default"
         try:
             # Before the workload: KEDA writes to a StatefulSet it still owns.
@@ -820,9 +946,9 @@ class KubernetesAdapter(ProviderAdapter):
         """Fetch logs from the pod behind the StatefulSet.
 
         provider_instance_id names the StatefulSet, not a pod, so the pod is
-        resolved through its label.
+        resolved through its label (llm-d model pods carry the same label).
         """
-        namespace = "default"
+        namespace = self._namespace_for(provider_instance_id)
         try:
             pod_name = await self._pod_name_for(provider_instance_id, namespace)
             if not pod_name:
@@ -856,7 +982,7 @@ class KubernetesAdapter(ProviderAdapter):
                 "type": "subscribe_logs",
                 "provider": "k8s",
                 "instance": provider_instance_id,
-                "namespace": "default",
+                "namespace": self._namespace_for(provider_instance_id),
             },
             "supported": True,
         }

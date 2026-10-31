@@ -1,0 +1,113 @@
+# One-time setup for a namespace that hosts InferiaLLM's llm-d deployments
+# (src/providers/k8s/llmd). Apply once per namespace, as a cluster admin:
+#
+#   kubectl apply -f deploy/kind/manifests/llmd-namespace-bootstrap.yaml
+#
+# Per deployment, InferiaLLM then creates only namespaced Deployments, Services,
+# ConfigMaps and an InferencePool, so its own credentials never need RBAC verbs.
+# The rules below are those of llm-d-router-standalone v1.0.0's EPP (the chart
+# creates them per release), shared here by one ServiceAccount.
+# Change the namespace in every object (and K8S_LLMD_NAMESPACE) to use another.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: inferia-llmd
+  labels:
+    app.kubernetes.io/managed-by: inferiallm
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inferia-llmd-epp
+  namespace: inferia-llmd
+---
+# The EPP watches the pool's pods, the pool, and its objectives/rewrites.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: inferia-llmd-epp
+  namespace: inferia-llmd
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["llm-d.ai"]
+    resources: ["inferenceobjectives", "inferencemodelrewrites"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: inferia-llmd-epp
+  namespace: inferia-llmd
+subjects:
+  - kind: ServiceAccount
+    name: inferia-llmd-epp
+    namespace: inferia-llmd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: inferia-llmd-epp
+---
+# The EPP authenticates scrapes of its metrics endpoint (--metrics-endpoint-auth,
+# default true in v1.0.0) with token and access reviews, which are cluster-scoped.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inferia-llmd-epp-metrics-auth
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: inferia-llmd-epp-metrics-auth-inferia-llmd
+subjects:
+  - kind: ServiceAccount
+    name: inferia-llmd-epp
+    namespace: inferia-llmd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: inferia-llmd-epp-metrics-auth
+---
+# Least privilege for InferiaLLM's orchestration in this namespace. Bind it to
+# whatever identity orchestration runs as (an in-cluster ServiceAccount, or the
+# user in its kubeconfig); the kind demo uses the cluster-admin kubeconfig.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: inferia-llmd-orchestrator
+  namespace: inferia-llmd
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+# Only with K8S_SERVICE_TYPE=NodePort: the adapter reads node addresses to build
+# the endpoint URL. Bind alongside the Role above in that case.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inferia-llmd-orchestrator-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]

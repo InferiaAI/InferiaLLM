@@ -88,6 +88,11 @@ kubectl wait --for=condition=Established --timeout=60s \
   crd/inferenceobjectives.llm-d.ai >/dev/null
 ok "CRDs established"
 
+# ---- 3b. namespace bootstrap for InferiaLLM-managed llm-d deployments -------
+step "Bootstrapping namespace inferia-llmd for InferiaLLM's llm-d mode"
+kubectl apply -f "$HERE/manifests/llmd-namespace-bootstrap.yaml" >/dev/null
+ok "ServiceAccount, Roles and bindings in place"
+
 # ---- 4. model servers (sims) -----------------------------------------------
 step "Deploying llm-d-inference-sim pods in '$NAMESPACE'"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null

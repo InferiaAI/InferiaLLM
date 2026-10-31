@@ -162,6 +162,18 @@ def _build_metadata(d: dict) -> dict:
     return metadata
 
 
+def _apply_pool_dataplane(metadata: dict, pool_meta) -> None:
+    """The pool, and only the pool, picks the data plane (e.g. ``"llm-d"``).
+
+    A deployment's own configuration cannot select a different backend, so
+    any ``dataplane`` key it carries is replaced by the pool's or dropped.
+    """
+    metadata.pop("dataplane", None)
+    dataplane = (pool_meta or {}).get("dataplane") if isinstance(pool_meta, dict) else None
+    if dataplane:
+        metadata["dataplane"] = str(dataplane)
+
+
 async def _apply_mirror(metadata: dict, provider) -> None:
     """Point an in-cluster engine at the control plane's model mirror when the
     install has no egress, so the mirror is the only source.
@@ -171,7 +183,12 @@ async def _apply_mirror(metadata: dict, provider) -> None:
     not take the mirror yet.
     """
     engine = str(metadata.get("engine") or "").lower()
-    if provider != "k8s" or engine == "ollama" or not metadata.get("model_id"):
+    # The llm-d inference simulator has no weights to fetch.
+    if (
+        provider != "k8s"
+        or engine in ("ollama", "llm-d-inference-sim")
+        or not metadata.get("model_id")
+    ):
         return
     if _mc_deps.egress_allowed():
         return
@@ -273,6 +290,10 @@ async def provision_direct_node(
     provider_instance_id = None
     try:
         metadata = _build_metadata(d)
+        _apply_pool_dataplane(metadata, pool_meta)
+        # Per deployment: a pool's data plane can change what the adapter
+        # offers (k8s llm-d mode: an HTTP-probeable router endpoint).
+        caps = adapter.capabilities_for(metadata)
         await _apply_mirror(metadata, provider)
 
         node_spec = await adapter.provision_node(

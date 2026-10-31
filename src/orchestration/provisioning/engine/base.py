@@ -114,6 +114,16 @@ class ProviderAdapter(ABC):
         """Return provider capabilities. Override for dynamic capabilities."""
         return cls.CAPABILITIES
 
+    def capabilities_for(self, metadata: Optional[Dict] = None) -> ProviderCapabilities:
+        """Capabilities for one deployment, given its adapter metadata.
+
+        Defaults to the class capabilities. An adapter whose behaviour depends
+        on the pool (e.g. the Kubernetes adapter's llm-d data-plane mode, whose
+        endpoint is HTTP-probeable) overrides this; direct provisioning reads
+        it once the deployment's metadata is known.
+        """
+        return self.get_capabilities()
+
     # -------------------------------------------------
     # DISCOVERY
     # -------------------------------------------------
