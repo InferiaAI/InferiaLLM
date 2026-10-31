@@ -2384,7 +2384,10 @@ async def terminate_deployment_core(deploy_uuid, *, deps) -> dict:
                 )
                 if won:
                     await deploys.unbind(deploy_uuid, tx=conn)
-                    if target_node_id is not None and gpu_per_replica > 0:
+                    # Also for 0-GPU (CPU) deploys: release_gpu(node, 0)
+                    # decrements nothing but still reports whether the node
+                    # is now unused, so a CPU node is destroyed too.
+                    if target_node_id is not None:
                         result = await inventory.release_gpu(
                             target_node_id, gpu_per_replica, tx=conn,
                         )
@@ -2473,7 +2476,8 @@ async def terminate_deployment_core(deploy_uuid, *, deps) -> dict:
                         tx=conn,
                     )
                 await deploys.unbind(deploy_uuid, tx=conn)
-                if target_node_id is not None and gpu_per_replica > 0:
+                # See the PENDING_NODE branch: 0-GPU deploys release too.
+                if target_node_id is not None:
                     result = await inventory.release_gpu(
                         target_node_id, gpu_per_replica, tx=conn,
                     )
