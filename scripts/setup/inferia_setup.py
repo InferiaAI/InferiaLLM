@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pure logic for InferiaLLM's ``setup.sh``: secret generation, input validation,
-URL derivation, and complete ``.env`` rendering.
+URL derivation, complete ``.env`` rendering, and the host-port preflight.
 
 Runtime dependencies: **Python 3 standard library only** (so it runs from a bare
 checkout). The Fernet key is produced with stdlib base64/urandom — it is a valid
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 import re
 import secrets
@@ -213,6 +214,9 @@ def build_env(
     env["INFERIA_SSH_AUTHORIZED_KEYS_FILE"] = "./.ssh/authorized_keys"
     # --- Single-port web ---
     env["APP_PORT"] = str(app_port)
+    # Host side of docker-compose.yml's other published ports (see .env.example).
+    env["ORCHESTRATION_HOST_PORT"] = "8080"
+    env["ENVOY_HOST_PORT"] = "10000"
     env["FORWARDED_ALLOW_IPS"] = "*"
     env["ALLOWED_ORIGINS"] = urls["ALLOWED_ORIGINS"]
     env["DASHBOARD_API_GATEWAY_URL"] = urls["DASHBOARD_API_GATEWAY_URL"]
@@ -259,13 +263,17 @@ def build_env(
 
 # Secrets preserved verbatim across a --force regeneration: rotating the Fernet
 # key would orphan encrypted DB rows; rotating the Postgres password would lock
-# out the existing pgdata volume.
+# out the existing pgdata volume. The host-port overrides are kept too: they
+# are only ever set by hand to dodge a port clash on this machine (APP_PORT has
+# its own --app-port flag).
 _PRESERVE_KEYS = (
     "SECRET_ENCRYPTION_KEY",
     "LOG_ENCRYPTION_KEY",
     "POSTGRES_PASSWORD",
     "PG_ADMIN_PASSWORD",
     "DATABASE_URL",
+    "ORCHESTRATION_HOST_PORT",
+    "ENVOY_HOST_PORT",
 )
 
 
@@ -365,6 +373,285 @@ def parse_env_text(text: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# host-port preflight
+# --------------------------------------------------------------------------- #
+# `docker compose up` fails half-way (some containers created, the app not)
+# when a published host port is taken. setup.sh asks compose for the ports it
+# will publish and checks them first. Sources:
+#   * values: `docker compose config --format json` (fully interpolated, long
+#     syntax: published / host_ip / target / protocol);
+#   * env var names: `docker compose config --no-interpolate --format json`
+#     (same order; short syntax is left as written);
+#   * containers: `docker ps` (catches ports docker holds without a host
+#     socket, e.g. with the userland proxy disabled, and names the holder).
+# Port spec: https://docs.docker.com/reference/compose-file/services/#ports
+
+# Extra advice per variable, for variables whose change has side effects.
+_PORT_VAR_NOTES = {
+    "ORCHESTRATION_HOST_PORT": (
+        "Host-side CLI commands (inferiallm node/worker/models) then need "
+        "--orchestration-url http://localhost:<port>, or ORCHESTRATION_URL exported "
+        "in your shell. Do not put ORCHESTRATION_URL in .env: the app container "
+        "reads .env and must keep reaching orchestration on its own port."
+    ),
+}
+
+_VAR_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+_DOCKER_PS_PORT_RE = re.compile(
+    r"(?:(\[[^\]]*\]|[^,\s\[]+?):)?(\d+)(?:-(\d+))?->[^/,\s]+/(tcp|udp|sctp)"
+)
+
+
+class PortProbeError(Exception):
+    """A host port could not be checked (e.g. the host IP is not on this machine)."""
+
+
+class PortBinding:
+    __slots__ = ("service", "host_ip", "port", "protocol", "target", "env_var")
+
+    def __init__(self, service, host_ip, port, protocol, target, env_var):
+        self.service, self.host_ip, self.port = service, host_ip, port
+        self.protocol, self.target, self.env_var = protocol, target, env_var
+
+    def where(self) -> str:
+        ip = self.host_ip or "all interfaces"
+        return f"{ip} -> {self.service}:{self.target}"
+
+
+class PortConflict:
+    __slots__ = ("binding", "reason", "holder")
+
+    def __init__(self, binding, reason, holder=None):
+        self.binding, self.reason, self.holder = binding, reason, holder
+
+
+def _split_port_spec(spec: str) -> list:
+    """Split short-syntax ``[ip:]published:target[/proto]`` on ':' outside
+    ``${...}`` and ``[...]`` (IPv6)."""
+    spec = re.sub(r"/(tcp|udp|sctp)$", "", spec)
+    parts, buf, depth = [], [], 0
+    for ch in spec:
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        if ch == ":" and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    parts.append("".join(buf))
+    return parts
+
+
+def _published_env_var(entry):
+    """Name of the env var that sets the published (host) port of a raw
+    ``ports:`` entry, or None if it is hard-coded / ephemeral."""
+    if isinstance(entry, dict):
+        published = entry.get("published")
+    else:
+        parts = _split_port_spec(str(entry))
+        if len(parts) < 2:
+            return None
+        published = parts[-2]
+    m = _VAR_RE.search(str(published)) if published is not None else None
+    return m.group(1) if m else None
+
+
+def _expand_published(value) -> list:
+    if value in (None, ""):
+        return []
+    text = str(value)
+    if "-" in text:
+        lo, hi = text.split("-", 1)
+        return list(range(int(lo), int(hi) + 1))
+    return [int(text)]
+
+
+def compose_port_bindings(config: dict, raw: dict) -> list:
+    """Host ports the stack publishes, one PortBinding per (port, entry)."""
+    out = []
+    raw_services = (raw or {}).get("services") or {}
+    for name, svc in (config.get("services") or {}).items():
+        ports = (svc or {}).get("ports") or []
+        raw_ports = (raw_services.get(name) or {}).get("ports") or []
+        aligned = len(raw_ports) == len(ports)
+        for i, p in enumerate(ports):
+            var = _published_env_var(raw_ports[i]) if aligned else None
+            for port in _expand_published(p.get("published")):
+                out.append(PortBinding(
+                    service=name,
+                    host_ip=str(p.get("host_ip") or ""),
+                    port=port,
+                    protocol=str(p.get("protocol") or "tcp"),
+                    target=p.get("target"),
+                    env_var=var,
+                ))
+    return out
+
+
+def parse_docker_ps(text: str) -> list:
+    """Parse ``docker ps --format '{{.Label "com.docker.compose.project"}}\\t{{.Names}}\\t{{.Ports}}'``
+    into ``(project, container, host_ip, port, protocol)`` tuples."""
+    out = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        cols = line.split("\t")
+        if len(cols) < 3:
+            continue
+        project, name, ports = cols[0], cols[1], cols[2]
+        for m in _DOCKER_PS_PORT_RE.finditer(ports):
+            ip = (m.group(1) or "0.0.0.0").strip("[]")
+            lo = int(m.group(2))
+            hi = int(m.group(3) or lo)
+            for port in range(lo, hi + 1):
+                out.append((project, name, ip, port, m.group(4)))
+    return out
+
+
+def _all_interfaces(ip: str) -> bool:
+    return ip in ("", "0.0.0.0", "::")
+
+
+def _ips_overlap(a: str, b: str) -> bool:
+    return _all_interfaces(a) or _all_interfaces(b) or a == b
+
+
+def _probe(family, addr, port, protocol) -> bool:
+    import errno
+    import socket
+
+    kind = socket.SOCK_DGRAM if protocol == "udp" else socket.SOCK_STREAM
+    try:
+        s = socket.socket(family, kind)
+    except OSError:
+        return True  # address family unsupported here (e.g. no IPv6): nothing to clash with
+    try:
+        if family == socket.AF_INET6:
+            s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        if sys.platform.startswith("linux"):
+            # Mirror the daemon (Go's net.Listen sets SO_REUSEADDR): ignore
+            # TIME_WAIT leftovers. On Linux a LISTENing socket still conflicts.
+            # Elsewhere (BSD/macOS) SO_REUSEADDR would let a wildcard bind past
+            # a specific-address listener, so probe without it there.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((addr, port))
+        if kind == socket.SOCK_STREAM:
+            s.listen(1)
+        return True
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            return False
+        if e.errno == errno.EADDRNOTAVAIL:
+            raise PortProbeError(f"host IP {addr} is not available on this machine") from e
+        if e.errno == errno.EACCES:
+            return True  # privileged port: docker binds as root, so not a conflict
+        raise PortProbeError(f"cannot check {addr}:{port}: {e}") from e
+    finally:
+        s.close()
+
+
+def port_is_free(host_ip: str, port: int, protocol: str = "tcp") -> bool:
+    """True if docker could publish ``host_ip:port`` (all interfaces when '')."""
+    import ipaddress
+    import socket
+
+    if _all_interfaces(host_ip):
+        # docker publishes both 0.0.0.0 and [::] for an all-interfaces port.
+        return _probe(socket.AF_INET, "0.0.0.0", port, protocol) and _probe(
+            socket.AF_INET6, "::", port, protocol)
+    family = socket.AF_INET6 if ipaddress.ip_address(host_ip).version == 6 else socket.AF_INET
+    return _probe(family, host_ip, port, protocol)
+
+
+def check_ports(bindings, *, published=(), project="", is_free=port_is_free) -> list:
+    """Conflicts that would make `docker compose up` fail to bind."""
+    conflicts = []
+    seen = []
+    for b in bindings:
+        dup = next((o for o in seen if o.port == b.port and o.protocol == b.protocol
+                    and _ips_overlap(o.host_ip, b.host_ip)), None)
+        seen.append(b)
+        if dup is not None:
+            conflicts.append(PortConflict(
+                b, f"is published twice in the stack ({dup.service}:{dup.target} and "
+                   f"{b.service}:{b.target})"))
+            continue
+        holders = [p for p in published
+                   if p[3] == b.port and p[4] == b.protocol and _ips_overlap(p[2], b.host_ip)]
+        if any(p[0] == project and project for p in holders):
+            continue  # this stack already holds it; `compose up` keeps or recreates it
+        other = next((p for p in holders if p[0] != project or not project), None)
+        if other is not None:
+            conflicts.append(PortConflict(b, "is already published", holder=f"container {other[1]}"))
+            continue
+        try:
+            free = is_free(b.host_ip, b.port, b.protocol)
+        except PortProbeError as e:
+            conflicts.append(PortConflict(b, str(e)))
+            continue
+        if not free:
+            conflicts.append(PortConflict(b, "is already in use"))
+    return conflicts
+
+
+def suggest_free_port(start, host_ip, protocol, *, is_free=port_is_free, reserved=()):
+    for port in range(start + 1, min(start + 200, 65535) + 1):
+        if port in reserved:
+            continue
+        try:
+            if is_free(host_ip, port, protocol):
+                return port
+        except PortProbeError:
+            return None
+    return None
+
+
+def format_conflicts(conflicts, *, env_file, is_free=port_is_free, reserved=()) -> str:
+    lines = []
+    for c in conflicts:
+        b = c.binding
+        who = f" by {c.holder}" if c.holder else ""
+        lines.append(f"Host port {b.port}/{b.protocol} ({b.where()}) {c.reason}{who}.")
+        if c.holder is None and "use" in c.reason:
+            lines.append(f"    Find the process: ss -ltnp 'sport = :{b.port}'  "
+                         f"(macOS: lsof -nP -iTCP:{b.port} -sTCP:LISTEN)")
+        if b.env_var:
+            hint = suggest_free_port(b.port, b.host_ip, b.protocol, is_free=is_free,
+                                     reserved=set(reserved))
+            eg = f", e.g. {b.env_var}={hint}" if hint else ""
+            lines.append(f"    Fix: set {b.env_var} to a free port in {env_file}{eg}, "
+                         f"or stop whatever holds {b.port}.")
+            note = _PORT_VAR_NOTES.get(b.env_var)
+            if note:
+                lines.append(f"    Note: {note}")
+        else:
+            lines.append(f"    Fix: change the '{b.service}' ports: mapping in docker-compose.yml, "
+                         f"or stop whatever holds {b.port}.")
+    return "\n".join(lines)
+
+
+def _cmd_check_ports(a: argparse.Namespace) -> int:
+    try:
+        config = json.loads(Path(a.config).read_text())
+        raw = json.loads(Path(a.raw).read_text())
+    except (OSError, ValueError) as e:
+        sys.stderr.write(f"error: cannot read docker compose config output: {e}\n")
+        return 2
+    ps_text = Path(a.docker_ps).read_text() if a.docker_ps else ""
+    bindings = compose_port_bindings(config, raw)
+    conflicts = check_ports(bindings, published=parse_docker_ps(ps_text),
+                            project=str(config.get("name") or ""))
+    if conflicts:
+        sys.stderr.write(format_conflicts(conflicts, env_file=a.env_file,
+                                          reserved={b.port for b in bindings}) + "\n")
+        return 3
+    sys.stdout.write(" ".join(f"{b.port}/{b.protocol}" for b in bindings) + "\n")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 def _cmd_generate_env(a: argparse.Namespace) -> int:
@@ -445,6 +732,17 @@ def main(argv=None) -> int:
                         "(default: repo-root .env.example; falls back to a flat "
                         "render when absent)")
     g.set_defaults(func=_cmd_generate_env)
+
+    c = sub.add_parser("check-ports",
+                       help="fail (exit 3) if a host port the compose stack publishes is taken")
+    c.add_argument("--config", required=True,
+                   help="output of `docker compose config --format json`")
+    c.add_argument("--raw", required=True,
+                   help="output of `docker compose config --no-interpolate --format json`")
+    c.add_argument("--docker-ps", default=None,
+                   help="output of `docker ps --format` with project, name and ports columns")
+    c.add_argument("--env-file", default=".env", help="named in the fix-it message")
+    c.set_defaults(func=_cmd_check_ports)
 
     args = parser.parse_args(argv)
     return args.func(args)
