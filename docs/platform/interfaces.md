@@ -1,6 +1,6 @@
 # Shared Interfaces (contract between sessions)
 
-**Version:** v1.2 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
+**Version:** v1.3 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
 **Owner:** Session 1. Other sessions propose changes under "Requests" in their status file; Session 1 updates this doc and bumps the version; the user merges.
 **Rule:** build against this document. If your code can't follow it, raise a request; don't silently diverge.
 
@@ -173,6 +173,17 @@ The other routes are `"self_register"` (inferia-worker pools) and `"reconciler"`
 - **New hook:** `ProviderAdapter.capabilities_for(metadata) -> ProviderCapabilities`, defaulting to `get_capabilities()`, lets the llm-d mode enable `endpoint_http_probeable`.
 - **`provider_instance_id` prefix:** `inferia-llmd-<hex>`.
 
+**As built** (Session 3, branch `s3/dataplane`, commits 000b659..28e6ca6; verified live on kind by Session 3, and the signatures checked in code by Session 1):
+- **Mode selection.** The mode comes from pool metadata `dataplane: "llm-d"`, applied in `direct_provision._apply_pool_dataplane` (`direct_provision.py:165`). Values supplied by a deployment are dropped: only the pool decides.
+- **Capabilities hook.** `ProviderAdapter.capabilities_for(self, metadata: Optional[Dict] = None) -> ProviderCapabilities` is **sync**, defaulting to `get_capabilities()` (`provisioning/engine/base.py:117`; overridden in `k8s_adapter.py:318`). The llm-d mode returns `endpoint_http_probeable=True`, `endpoint_ready_timeout_seconds=900`, `features.dataplane="llm-d"` and `features.kv_aware_routing=True`.
+- **Instance ids** are `inferia-llmd-<6 hex>` (`src/providers/k8s/llmd/resources.py`, `LLMD_ID_PREFIX`).
+- **Status.** `get_node_status` returns `RUNNING` (ready), `STOPPED` (a confirmed 404) or `unknown`.
+- **Endpoint:** the instance-named Service on the Envoy port **8081**.
+- **Settings:**
+  - `K8S_LLMD_NAMESPACE` (default `inferia-llmd`; validated as a namespace name).
+  - `UPSTREAM_ALLOWED_INTERNAL_HOSTS` must include the node IPs when the endpoint is a NodePort on private addresses. This is a shared config variable, so verify every consumer (Mistakes Log 2026-06-14).
+- **Per-namespace RBAC:** `deploy/kind/manifests/llmd-namespace-bootstrap.yaml` defines the EPP ServiceAccount `inferia-llmd-epp`, an `inferia-llmd-orchestrator` least-privilege Role, and `nodes get/list` only for NodePort. The GIE v1.6.2 and llm-d router v1.0.0 CRDs must be installed cluster-wide first. Session 4's Helm chart should ship the same.
+
 **Two ways to add llm-d.** Session 3 chose option 1:
 1. **A data-plane mode of `KubernetesAdapter`** selected by pool metadata (for example `metadata.dataplane = "llm-d"`). No new provider key, so no `compute_pools.provider` DB enum change. *Recommended.*
 2. **A new adapter key in `ADAPTER_REGISTRY`** (for example `k8s-llmd`). Needs a check of the `compute_pools.provider` DB enum (`on_prem` is already an enum value aliasing `worker`) and probably a migration.
@@ -302,3 +313,4 @@ The target that both future providers must satisfy: Better Auth (self-hosted) an
 - **v1.2** (2026-10-31, Session 1, from Session 4's request, verified against its code):
   - **§6:** signatures and value objects as built, including the optional `db` parameter and fail-fast config.
   - **§8:** `total_tokens` added.
+- **v1.3** (2026-10-31, Session 1, from Session 3's T2, checked in code): **§5** as-built llm-d mode (selection, sync `capabilities_for`, ids, status semantics, endpoint port, `K8S_LLMD_NAMESPACE`, `UPSTREAM_ALLOWED_INTERNAL_HOSTS`, RBAC bootstrap).
