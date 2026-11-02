@@ -382,6 +382,7 @@ from typing import Dict
 class ResolveContextResponse(BaseModel):
     valid: bool
     error: Optional[str] = None
+    reason: Optional[str] = None
     deployment: Optional[Dict] = None
     rate_limit_config: Optional[Dict] = None
     user_id_context: Optional[str] = None
@@ -403,7 +404,9 @@ async def resolve_inference_context(
     )
 
     if not result["valid"]:
-        return ResolveContextResponse(valid=False, error=result["error"])
+        return ResolveContextResponse(
+            valid=False, error=result["error"], reason=result.get("reason")
+        )
 
     deployment = result["deployment"]
     config = result["config"]

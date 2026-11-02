@@ -100,6 +100,23 @@ class TestGatewayServiceErrors:
             assert exc.value.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_resolve_context_missing_model_returns_404(self):
+        """A wrong model name is not a credentials failure."""
+        from inference.core.service import GatewayService
+
+        message = "No deployment for model 'nope' of type 'inference' in this organization"
+        with patch(
+            "inference.core.service.api_gateway_client"
+        ) as mock_client:
+            mock_client.resolve_context = AsyncMock(
+                return_value={"valid": False, "error": message, "reason": "model_not_found"}
+            )
+            with pytest.raises(HTTPException) as exc:
+                await GatewayService.resolve_context("sk-1", "nope")
+            assert exc.value.status_code == 404
+            assert exc.value.detail == message
+
+    @pytest.mark.asyncio
     async def test_build_full_url_prevents_duplicate_v1(self):
         """URL builder prevents duplicate /v1/v1 paths."""
         from inference.core.service import GatewayService
