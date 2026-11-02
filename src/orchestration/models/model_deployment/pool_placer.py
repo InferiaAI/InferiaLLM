@@ -27,6 +27,8 @@ from uuid import UUID
 
 import asyncpg
 
+from orchestration.provisioning.engine.registry import is_direct_provision_provider
+
 
 @dataclass(frozen=True)
 class BindToReady:
@@ -97,6 +99,17 @@ class PoolPlacer:
         pool_id: UUID,
         gpu_required: int,
     ) -> PlacementDecision:
+        # Direct-adapter nodes each host one deployment.  GPU capacity models
+        # this naturally for GPU requests, but a CPU request needs an explicit
+        # occupancy check: ``free_gpu >= 0`` would otherwise bind every later
+        # CPU deployment to the first ready k8s/DePIN instance.
+        provider = await conn.fetchval(
+            "SELECT provider FROM compute_pools WHERE id = $1", pool_id
+        )
+        if provider is None:
+            raise ValueError(f"pool not found: {pool_id}")
+        exclusive_cpu_nodes = is_direct_provision_provider(str(provider))
+
         # 1. Try to bind onto an existing node (ready preferred,
         #    provisioning accepted, both must have capacity).
         row = await conn.fetchrow(
@@ -107,12 +120,22 @@ class PoolPlacer:
                AND state IN ('ready', 'provisioning')
                AND (metadata->>'terminating') IS DISTINCT FROM 'true'
                AND gpu_total - gpu_allocated >= $2
+               AND (
+                    NOT $3
+                    OR $2 > 0
+                    OR NOT EXISTS (
+                        SELECT 1
+                          FROM model_deployments d
+                         WHERE d.target_node_id = compute_inventory.id
+                           AND d.state IN ('PENDING_NODE', 'DEPLOYING', 'RUNNING')
+                    )
+               )
           ORDER BY (CASE WHEN state = 'ready' THEN 0 ELSE 1 END),
                    (gpu_total - gpu_allocated) ASC
              LIMIT 1
                FOR UPDATE SKIP LOCKED
             """,
-            pool_id, gpu_required,
+            pool_id, gpu_required, exclusive_cpu_nodes,
         )
         if row is not None:
             if row["state"] == "ready":
@@ -135,7 +158,7 @@ class PoolPlacer:
             """,
             pool_id,
         )
-        if pool_meta is None:
+        if pool_meta is None:  # defensive: row was deleted after the lock-free lookup
             raise ValueError(f"pool not found: {pool_id}")
 
         max_nodes = pool_meta["max_nodes"]

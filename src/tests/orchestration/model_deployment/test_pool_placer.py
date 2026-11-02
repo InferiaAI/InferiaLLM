@@ -63,6 +63,19 @@ async def _seed_node(p, pool_id, *, gpu_total=4, gpu_allocated=0,
     return nid
 
 
+async def _seed_active_deployment(p, pool_id, node_id, *, gpu_per_replica=0):
+    deployment_id = uuid4()
+    async with p.acquire() as c:
+        await c.execute(
+            """INSERT INTO model_deployments(
+                   deployment_id, model_name, pool_id, target_pool_id, target_node_id,
+                   replicas, gpu_per_replica, state
+               ) VALUES ($1, 'test-model', $2, $2, $3, 1, $4, 'RUNNING')""",
+            deployment_id, pool_id, node_id, gpu_per_replica,
+        )
+    return deployment_id
+
+
 async def test_empty_pool_returns_coldstart(pool):
     placer = PoolPlacer(pool)
     pool_id = await _seed_pool_row(pool)
@@ -77,6 +90,32 @@ async def test_ready_with_capacity_returns_bind_to_ready(pool):
     pool_id = await _seed_pool_row(pool)
     node_id = await _seed_node(pool, pool_id, gpu_total=4, gpu_allocated=1)
     decision = await placer.place(pool_id=pool_id, gpu_required=1)
+    assert isinstance(decision, BindToReady)
+    assert decision.node_id == node_id
+
+
+async def test_cpu_direct_adapter_node_with_active_deployment_cold_starts(pool):
+    """CPU direct-adapter instances are single-model, unlike worker nodes."""
+    placer = PoolPlacer(pool)
+    pool_id = await _seed_pool_row(pool, provider="k8s", gpu_count=0)
+    node_id = await _seed_node(pool, pool_id, gpu_total=0, gpu_allocated=0)
+    await _seed_active_deployment(pool, pool_id, node_id)
+
+    decision = await placer.place(pool_id=pool_id, gpu_required=0)
+
+    assert isinstance(decision, ColdStart)
+
+
+async def test_cpu_worker_node_can_still_host_another_deployment(pool):
+    """The occupancy rule is limited to direct adapters, not worker pools."""
+    placer = PoolPlacer(pool)
+    # ``on_prem`` is the persisted enum value for the worker adapter.
+    pool_id = await _seed_pool_row(pool, provider="on_prem", gpu_count=0)
+    node_id = await _seed_node(pool, pool_id, gpu_total=0, gpu_allocated=0)
+    await _seed_active_deployment(pool, pool_id, node_id)
+
+    decision = await placer.place(pool_id=pool_id, gpu_required=0)
+
     assert isinstance(decision, BindToReady)
     assert decision.node_id == node_id
 
