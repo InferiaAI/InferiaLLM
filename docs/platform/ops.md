@@ -82,6 +82,17 @@ assert asyncio.run(publish_usage_event("integration-user", "integration-model", 
 The full llm-d kind demo additionally requires an existing kind cluster and
 Kubernetes context; neither is created implicitly by this runbook.
 
+### Local Redis-to-Postgres validation
+
+On 2026-11-02, the same isolated Redis container and the local
+`inferia_test` Postgres database were used to run the actual stream consumer.
+Two events were persisted to `usage_stats` with their expected request and
+token counters, then `XPENDING inferia:usage:v1 api-gateway-usage` reported
+zero pending messages. This validates producer → Redis Stream → batch worker
+→ Postgres → ACK on local infrastructure. The worker also has a regression
+test for Redis's empty pending-entry frame, which must transition the stable
+consumer from replay mode to fresh-message reads.
+
 ## GPU lease handoff
 
 Run the CPU-safe rehearsal first:

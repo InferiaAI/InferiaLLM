@@ -15,6 +15,11 @@ GROUP = "api-gateway-usage"
 CONSUMER = "gateway-1"
 
 
+def _nonempty_rows(rows):
+    """Normalize Redis stream frames so an empty PEL is unambiguously empty."""
+    return [(stream, entries) for stream, entries in rows if entries]
+
+
 async def _run_usage_worker_once(stop: asyncio.Event) -> None:
     """Consume, persist, then ACK batches; unacked entries are redeliverable."""
     client = get_redis_client()
@@ -33,9 +38,15 @@ async def _run_usage_worker_once(stop: asyncio.Event) -> None:
                 GROUP, CONSUMER, {STREAM: "0" if pending else ">"}, count=100,
                 block=500 if not pending else None,
             )
-            if pending and not rows:
-                pending = False
-                continue
+            if pending:
+                # Redis clients may return a stream frame with an empty entry
+                # list for ``0`` rather than ``[]``. It is still an empty PEL:
+                # switch to ``>`` or a fresh consumer would never receive new
+                # events.
+                rows = _nonempty_rows(rows)
+                if not rows:
+                    pending = False
+                    continue
             for _, entries in rows:
                 events = []
                 ids = []

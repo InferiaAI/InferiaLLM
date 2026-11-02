@@ -3,6 +3,15 @@ import asyncio
 import pytest
 
 
+def test_empty_pending_stream_frame_does_not_block_fresh_reads():
+    from api_gateway.gateway.usage_stream_worker import _nonempty_rows
+
+    assert _nonempty_rows([("inferia:usage:v1", [])]) == []
+    assert _nonempty_rows([("inferia:usage:v1", [("1-0", {"data": "{}"})])]) == [
+        ("inferia:usage:v1", [("1-0", {"data": "{}"})])
+    ]
+
+
 @pytest.mark.asyncio
 async def test_usage_worker_retries_after_a_transient_failure(monkeypatch):
     from api_gateway.gateway import usage_stream_worker as worker
