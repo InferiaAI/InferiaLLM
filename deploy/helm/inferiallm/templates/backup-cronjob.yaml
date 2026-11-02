@@ -1,0 +1,61 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-backup
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.backup.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.backup.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "inferiallm.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pg-dump
+              image: {{ printf "%s:%s" .Values.database.bundled.image.repository .Values.database.bundled.image.tag }}
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  umask 077
+                  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                  target="/backups/{{ include "inferiallm.fullname" . }}-${stamp}.dump.gz"
+                  pg_dump --format=custom --no-owner --no-privileges \
+                    --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" "$PGDATABASE" \
+                    | gzip -c > "${target}"
+                  test -s "${target}"
+                  echo "wrote ${target}"
+              env:
+                - name: PGHOST
+                  value: {{ include "inferiallm.databaseHost" . | quote }}
+                - name: PGPORT
+                  value: {{ .Values.database.port | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.database.name | quote }}
+                - name: PGUSER
+                  value: {{ .Values.database.user | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "inferiallm.secretName" . }}
+                      key: POSTGRES_PASSWORD
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ include "inferiallm.backupPvcName" . }}
+{{- end }}

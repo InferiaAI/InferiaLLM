@@ -67,6 +67,10 @@ app.kubernetes.io/component: redis
 {{- printf "%s-data" (include "inferiallm.fullname" .) }}
 {{- end }}
 
+{{- define "inferiallm.backupPvcName" -}}
+{{- printf "%s-backups" (include "inferiallm.fullname" .) }}
+{{- end }}
+
 {{- define "inferiallm.priorityClassName" -}}
 {{- default (printf "%s-critical" (include "inferiallm.fullname" .)) .Values.priorityClass.name }}
 {{- end }}

@@ -15,6 +15,25 @@ spec:
     requests:
       storage: {{ .Values.persistence.size }}
 {{- end }}
+{{- if .Values.backup.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "inferiallm.backupPvcName" . }}
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  accessModes:
+    {{- toYaml .Values.backup.persistence.accessModes | nindent 4 }}
+  {{- if .Values.backup.persistence.storageClass }}
+  storageClassName: {{ .Values.backup.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.persistence.size }}
+{{- end }}
 {{- if and .Values.redis.bundled.enabled .Values.redis.bundled.persistence.enabled }}
 ---
 apiVersion: v1

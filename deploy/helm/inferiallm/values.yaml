@@ -160,6 +160,20 @@ migration:
   # Extra time to wait for the database before failing the hook.
   waitSeconds: 120
 
+# Database backups are intentionally opt-in. The CronJob writes compressed
+# logical dumps to a dedicated PVC; configure a CSI-backed storage class with
+# an external retention/replication policy for production.
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  persistence:
+    size: 20Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+
 serviceAccount:
   create: true
   name: ""
@@ -170,8 +184,7 @@ securityContext:
   allowPrivilegeEscalation: false
 
 # llm-d data plane. The chart only plumbs the settings; the CRDs
-# (GIE v1.6.2 + llm-d-router v1.0.0) and the per-namespace RBAC from
-# deploy/kind/manifests/llmd-namespace-bootstrap.yaml must be installed first.
+# (GIE v1.6.2 + llm-d-router v1.0.0) must be installed first.
 # See README.md §llm-d.
 llmd:
   enabled: false

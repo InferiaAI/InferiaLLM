@@ -18,6 +18,12 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "inferiallm.app.selectorLabels" . | nindent 14 }}
+        {{- if .Values.backup.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "inferiallm.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: backup
+        {{- end }}
         {{- if .Values.migration.enabled }}
         - podSelector:
             matchLabels:
