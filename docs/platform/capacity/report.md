@@ -45,6 +45,29 @@ The timing model had `calibration: uncalibrated` (`mfu=0.5`, HBM efficiency
 `0.8`, 3 ms fixed step overhead), so this baseline only exercises simulator
 behaviour and must not be used to size hardware.
 
+## Reproducible baseline: 64×H100
+
+```bash
+PYTHONPATH=src /home/pranav/.venvs/inferia-py311/bin/python \
+  -m simulator.cli run 64xH100 --seed 1 \
+  --out /tmp/inferia-capacity-64h100 --write-requests
+```
+
+| Metric | Result | Evidence |
+|---|---:|---|
+| Requests | 18,091 completed; 0 failed/shed/unfinished | SIMULATED |
+| Request / output throughput | 60.63 requests/s / 22,491.2 tokens/s | SIMULATED |
+| TTFT p50 / p95 / p99 | 0.115 / 0.657 / 1.418 s | SIMULATED |
+| ITL p50 / p95 | 0.0217 / 0.1110 s | SIMULATED |
+| KV prefix hit ratio | 0.215 (token basis) | SIMULATED |
+| KV utilization mean / p95 | 0.238 / 0.392 | SIMULATED |
+| GPU utilization mean | 0.813 | SIMULATED |
+| TTFT p95 SLO (2 s) | met | SIMULATED |
+
+This is a distinct 70B TP=4 workload and is not comparable to the 8B baseline
+as a scaling-efficiency claim. It only confirms deterministic execution of the
+configured multi-node scenario before calibration.
+
 ## Calibration gate
 
 The GPU lease harness is ready at
@@ -56,7 +79,7 @@ saturation; a higher error will be reported rather than hidden.
 
 ## Remaining CPU runs
 
-- Run and archive the 64× and 256× scenario baselines.
+- Run and archive the 256× scenario baseline.
 - Run policy sweeps for saturation, prefix routing, offload and P/D transfer.
 - Generate standard plots from the resulting request/timeline artifacts.
 - Model S1–S3 user populations only after calibrated per-cell measurements
