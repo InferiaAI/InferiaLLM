@@ -69,6 +69,12 @@ Result on 2026-10-31 (two runs, seeds 1 and 2, each from a fresh cluster). Label
 
 The ceiling for this workload is about 5/6 × 0.97 ≈ 0.81: each session's first turn always misses, and later turns reuse only the full 64-token blocks of the prefix. llm-d reaches it. It also spread the 12 sessions exactly 3 per pod, so the stickiness is cache affinity, not every request piling onto one pod. Latency differs only because the sim charges 200 µs per *uncached* prompt token; that is a simulated cost, not GPU performance.
 
+Latest fresh-cluster smoke (2026-11-02): all 144 requests returned HTTP 200.
+The llm-d entry point achieved 1.000 stickiness, 1.00 pod/session and a 0.809
+token prefix-hit ratio; the baseline achieved 0.333 stickiness, 3.33
+pods/session and a 0.431 token prefix-hit ratio. The result artifact was
+written to `/tmp/inferia-kind-prefix-routing/results.json` on the test host.
+
 ## Versions and sources (pinned)
 
 | Component | Pin | Official source |

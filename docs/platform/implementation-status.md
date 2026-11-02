@@ -7,11 +7,11 @@ performance validation.
 | Area | Status | Evidence / boundary |
 |---|---|---|
 | Architecture spec, ADRs, ten diagrams | Verified | `spec.md`, `adr/`, ten committed DOT/SVG pairs |
-| llm-d kind prefix-routing spike | Verified CPU | `deploy/kind/`; engine timing remains simulated |
+| llm-d kind prefix-routing spike | Verified CPU | 2026-11-02 fresh-cluster smoke: 144/144 HTTP 200; 0.809 EPP vs 0.431 baseline token cache-hit ratio; engine timing remains simulated |
 | llm-d routing metadata and stream cancellation | Verified CPU | inference routing/cancellation tests |
 | Async usage pipeline | Verified CPU | Redis Streams producer, batch gateway consumer, retry worker tests; runbook documents at-least-once semantics |
 | Simulator core, KV, routing, failure/retry | Verified CPU | simulator config/KV/perf/CLI suites and targeted engine tests |
-| Offload, P/D and autoscale model | Verified CPU | explicit tier, transfer, signal/cooldown tests; numbers uncalibrated |
+| Offload, P/D and autoscale model | Verified CPU | explicit tier, transfer, signal/cooldown tests plus runnable P/D policy sweep; numbers uncalibrated |
 | Capacity baselines and KV sweep | Verified CPU | 8×/64× reports plus runnable sweep/chart; **SIMULATED** only |
 | Helm self-hosting foundation | Verified render | default and backup-enabled `helm template` renders |
 | Backup/recovery documentation | Implemented | `ops.md`; a live restore drill remains environment-dependent |

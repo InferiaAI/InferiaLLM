@@ -10,12 +10,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("comparison", type=Path)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--metric", choices=("ttft_p95_s", "e2e_p95_s"), default="ttft_p95_s")
     args = parser.parse_args()
     data = json.loads(args.comparison.read_text())
     if data.get("label") != "SIMULATED":
         raise ValueError("only explicitly SIMULATED sweep data can be rendered")
     rows = data["variants"]
-    values = [row["ttft_p95_s"] for row in rows]
+    values = [row[args.metric] for row in rows]
+    metric_label = "TTFT p95" if args.metric == "ttft_p95_s" else "end-to-end p95"
     width, height, left, bottom = 760, 430, 100, 70
     plot_h, plot_w = 270, 580
     maximum = max(values) * 1.1
@@ -33,7 +35,7 @@ def main() -> int:
         )
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
 <rect width="100%" height="100%" fill="white"/>
-<text x="{left}" y="38" font-family="sans-serif" font-size="22" font-weight="bold">KV saturation policy sweep — TTFT p95</text>
+<text x="{left}" y="38" font-family="sans-serif" font-size="22" font-weight="bold">Simulator policy sweep — {metric_label}</text>
 <text x="{left}" y="58" font-family="sans-serif" font-size="13">Uncalibrated simulator stress result; lower is better</text>
 <line x1="{left}" y1="{bottom}" x2="{left}" y2="{bottom + plot_h}" stroke="black"/>
 <line x1="{left}" y1="{bottom + plot_h}" x2="{left + plot_w}" y2="{bottom + plot_h}" stroke="black"/>
