@@ -24,6 +24,7 @@ from ..rate_limiter import rate_limiter
 from ..request_logger import RequestLogger
 from ..service import GatewayService
 from ..stream_processor import StreamProcessor
+from ..llmd_routing import trusted_llmd_headers
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class CompletionHandler:
         background_tasks: BackgroundTasks,
         ip_address: Optional[str] = None,
         sandbox: bool = False,
+        client_headers: Optional[Dict[str, str]] = None,
     ):
         start_time = time.time()
         applied_policies = []
@@ -101,6 +103,9 @@ class CompletionHandler:
         provider_key, extra_headers = provider_auth(deployment, engine)
         provider_headers = adapter.get_headers(provider_key)
         provider_headers.update(extra_headers)
+        provider_headers.update(
+            trusted_llmd_headers(deployment, org_id, client_headers or {})
+        )
 
         # --- Envoy proxy routing ---
         # When ENVOY_URL is configured and the deployment is worker-hosted,

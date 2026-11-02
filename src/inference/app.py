@@ -229,6 +229,7 @@ async def create_completion(
         background_tasks=background_tasks,
         ip_address=client_ip,
         sandbox=is_sandbox,
+        client_headers=dict(request.headers),
     )
 
 
