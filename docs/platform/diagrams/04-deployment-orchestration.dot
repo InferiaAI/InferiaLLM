@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; node [shape=box style=rounded]; registry[label="Model registry + recipe"]; orch[label="Orchestration\nplacement / state machine"]; k8s[label="Kubernetes\nDeployment + Service"]; pool[label="InferencePool / route"]; pods[label="Ready engine pods"]; registry->orch->k8s->pods; orch->pool; pool->pods; label="Model deployment and orchestration (target)"; }

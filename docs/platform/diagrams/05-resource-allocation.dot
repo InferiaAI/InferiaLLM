@@ -1,0 +1,1 @@
+digraph G { rankdir=TB; node [shape=box style=rounded]; org[label="Org quota"]; classes[label="Workload classes\nchat · batch · audio · video"]; pools[label="GPU pools\npriority / tenancy"]; nodes[label="Nodes\nGPU / MIG / TP groups"]; replicas[label="Engine replicas"]; org->classes->pools->nodes->replicas; label="GPU and CPU resource allocation (target)"; }

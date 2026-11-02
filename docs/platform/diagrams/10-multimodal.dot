@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; node [shape=box style=rounded]; api[label="Unified API"]; classifier[label="Workload classifier"]; chat[label="Chat / vision pool"]; audio[label="Realtime audio pool"]; batch[label="Batch / video jobs"]; api->classifier; classifier->chat; classifier->audio; classifier->batch; label="Multimodal inference and workload classes (target)"; }

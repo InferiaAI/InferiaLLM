@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; node [shape=box style=rounded]; prefill[label="Prefill replica"]; transfer[label="KV transfer\nRDMA / Ethernet"]; decode[label="Decode replica"]; tp[label="TP group\ninside node / NVLink"]; prefill->transfer->decode; tp->prefill; tp->decode; label="Distributed inference and P/D disaggregation (target)"; }

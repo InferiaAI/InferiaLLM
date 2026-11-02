@@ -1,0 +1,1 @@
+digraph G { rankdir=TB; node [shape=box style=rounded]; cp[label="Control plane\nregistry · placement · quotas\nPostgres / Redis"]; dp[label="Data plane\nedge · Envoy/EPP · engines"]; client[label="Clients"]; client->dp; cp->dp [label="desired state / routes"]; label="Control plane versus data plane"; }
