@@ -49,6 +49,12 @@ queued = Gauge(
     ["deployment"],
 )
 
+shed_total = Counter(
+    "inferia_shed_total",
+    "Requests rejected before reaching an upstream engine.",
+    ["deployment", "reason", "workload_class"],
+)
+
 
 def observe_request(
     *,

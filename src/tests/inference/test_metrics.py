@@ -31,6 +31,18 @@ def _in_flight(deployment):
     return _gauge("inferia_upstream_in_flight_requests", deployment)
 
 
+def _shed(deployment):
+    value = REGISTRY.get_sample_value(
+        "inferia_shed_total",
+        {
+            "deployment": deployment,
+            "reason": "upstream_concurrency_limit",
+            "workload_class": "unknown",
+        },
+    )
+    return 0.0 if value is None else value
+
+
 def _limiter(per_deployment=1, timeout=5.0):
     with patch("inference.core.concurrency_limiter.settings") as s:
         s.upstream_global_max_in_flight = 0
@@ -239,6 +251,7 @@ class TestConcurrencyGauges:
             async with limiter.limit("d-429"):
                 pass
         assert exc.value.status_code == 429
+        assert _shed("d-429") == 1.0
 
         assert _queued("d-429") == 0.0, "the rejected request is no longer waiting"
 

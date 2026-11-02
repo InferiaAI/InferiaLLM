@@ -46,12 +46,19 @@ class UpstreamConcurrencyLimiter:
                 )
             return self._deployment_semaphores[deployment_key]
 
-    async def _acquire_or_timeout(self, semaphore: asyncio.Semaphore):
+    async def _acquire_or_timeout(
+        self, semaphore: asyncio.Semaphore, deployment_key: str
+    ):
         try:
             await asyncio.wait_for(
                 semaphore.acquire(), timeout=self._acquire_timeout_seconds
             )
         except asyncio.TimeoutError as e:
+            metrics.shed_total.labels(
+                deployment=deployment_key,
+                reason="upstream_concurrency_limit",
+                workload_class="unknown",
+            ).inc()
             raise HTTPException(
                 status_code=429,
                 detail="Server is handling too many concurrent requests. Please retry.",
@@ -74,14 +81,14 @@ class UpstreamConcurrencyLimiter:
             counted_queued = True
 
             if self._global_semaphore is not None:
-                await self._acquire_or_timeout(self._global_semaphore)
+                await self._acquire_or_timeout(self._global_semaphore, deployment_key)
                 acquired_global = True
 
             deployment_semaphore = await self._get_or_create_deployment_semaphore(
                 deployment_key
             )
             if deployment_semaphore is not None:
-                await self._acquire_or_timeout(deployment_semaphore)
+                await self._acquire_or_timeout(deployment_semaphore, deployment_key)
                 acquired_deployment = True
 
             metrics.queued.labels(deployment=deployment_key).dec()
