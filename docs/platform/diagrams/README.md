@@ -17,6 +17,9 @@ Current coverage:
 2. Request/response lifecycle
 3. Control plane vs data plane
 4. Deployment orchestration routes
+5. GPU/CPU resource allocation
+6. KV-cache lifecycle
+7. Distributed inference and inter-node communication
 
 ### Notes on the current batch
 
@@ -30,3 +33,9 @@ Current coverage:
   guarantee. Provider readiness and persisted lifecycle state remain provider-
   specific; its direct-adapter, reconciler and self-registration labels mirror
   the current deployment-server routing contract.
+- The resource-allocation diagram shows established provider provisioning around
+  an explicitly target-state placement feedback loop. It does not claim a
+  queue/KV/TTFT placement scorer is implemented.
+- The KV and distributed-inference diagrams are target architecture views for
+  WS3/WS4. They distinguish engine-resident paged KV from proposed offload,
+  cache-aware routing, P/D disaggregation, and cross-node KV transfer.

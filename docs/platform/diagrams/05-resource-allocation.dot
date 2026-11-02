@@ -1,0 +1,21 @@
+digraph resource_allocation {
+  graph [rankdir=TB, bgcolor="white", pad="0.26", nodesep="0.35", ranksep="0.58", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  intent [label="Deployment intent\nmodel · engine · pool · replica count\nGPU/CPU/memory requirements", fillcolor="#FFF3D7", color="#A76600"];
+  route [label="Orchestration route\ndirect adapter / reconciler\nself-registration", fillcolor="#DCEBFA", color="#2D5B8D"];
+  inventory [label="Provider inventory\nnode capacity · availability\nprovider-specific constraints", fillcolor="#DFF3E4", color="#286A45"];
+  placement [label="Placement scoring\nTARGET — WS2/WS3\nfit · queue · KV/TTFT signals", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  provision [label="Provider resource creation\nKubernetes workload / cloud node\nDePIN job / worker deployment", fillcolor="#DFF3E4", color="#286A45"];
+  runtime [label="Allocated runtime\nCPU: request handling / control\nGPU: model weights + KV + compute", fillcolor="#F4E6FB", color="#75428A"];
+  engine [label="Engine scheduler\ncontinuous batching\nGPU residency decisions", fillcolor="#F4E6FB", color="#75428A"];
+
+  intent -> route;
+  route -> inventory [label="pool/provider selection"];
+  inventory -> placement [label="candidate capacity"];
+  placement -> provision [label="selected allocation"];
+  provision -> runtime [label="ready resources"];
+  runtime -> engine [label="engine process"];
+  engine -> placement [label="queue/KV/TTFT feedback\nTARGET", style=dashed, constraint=false];
+}
