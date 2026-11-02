@@ -28,10 +28,16 @@ performance number is explicitly classified as **MEASURED**, **SIMULATED**, or
   GPU-lease handoff.
 - [Implementation status](implementation-status.md) — verified CPU work,
   partial areas and hardware-gated evidence.
+- [Traceability matrix](traceability.md) — requirements mapped to the owning
+  artifact and evidence boundary.
+- [Evidence-label audit](evidence-audit.md) — the review of SIMULATED,
+  MEASURED (platform), and GPU-pending claims.
+- [Cross-link validation](cross-link-validation.md) — local and branch-owned
+  link resolution status.
 
 ## Capacity and calibration
 
-- [Capacity report](capacity/report.md) — reproducible 8× and 64× scenario
+- [Capacity report](capacity/report.md) — reproducible 8×, 64× and 256× scenario
   baselines, all currently **SIMULATED** and uncalibrated.
 - [GPU lease harness](../../bench/lease/run_lease.sh) — dry-run safe; only an
   explicit `--execute` on a GPU host produces **MEASURED** output.
@@ -43,3 +49,8 @@ pipeline can be exercised locally. GPU calibration, real vLLM saturation,
 multimodal engine smoke tests and calibrated capacity extrapolation remain
 pending access to a suitable GPU lease. Those gaps are intentional evidence
 boundaries, not simulated substitutes.
+
+For a CPU-safe review flow, use the [demo runbook](demo-runbook.md) and
+[presentation outline](presentation.md). Implementation links above resolve
+once their committed Session 2–4 worktree changes are integrated; their branch
+provenance is recorded in the traceability matrix.
