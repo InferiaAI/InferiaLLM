@@ -1,0 +1,61 @@
+{{- if .Values.migration.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-migrate
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+data:
+  migrate.sh: |
+    #!/bin/sh
+    set -eu
+
+    echo "Waiting for the database at ${PG_HOST}:${PG_PORT}..."
+    attempts=${MIGRATION_WAIT_SECONDS:-120}
+    i=0
+    while [ "$i" -lt "$attempts" ]; do
+      i=$((i + 2))
+      rc=0
+      python3 - <<'PY' || rc=$?
+    import asyncio
+    import os
+    import sys
+
+    import asyncpg
+
+
+    async def main():
+        try:
+            conn = await asyncpg.connect(os.environ["DATABASE_URL"], timeout=3)
+        except Exception as exc:
+            print(f"database not reachable: {exc}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            present = await conn.fetchval("SELECT to_regclass('public.organizations')")
+        finally:
+            await conn.close()
+        sys.exit(0 if present is not None else 1)
+
+
+    asyncio.run(main())
+    PY
+      if [ "$rc" -eq 0 ]; then
+        echo "Schema present; applying migrations"
+        inferiallm migrate
+        exit 0
+      fi
+      if [ "$rc" -eq 1 ]; then
+        echo "Empty database; running first-time init"
+        inferiallm init
+        exit 0
+      fi
+      sleep 2
+    done
+    echo "Database did not become reachable in ${attempts}s" >&2
+    exit 1
+{{- end }}

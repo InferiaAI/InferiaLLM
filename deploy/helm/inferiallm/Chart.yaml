@@ -1,0 +1,13 @@
+apiVersion: v2
+name: inferiallm
+description: InferiaLLM — self-hostable inference platform control plane (unified web app)
+type: application
+version: 0.1.0
+appVersion: "latest"
+kubeVersion: ">=1.28.0-0"
+keywords:
+  - inferiallm
+  - inference
+  - llm
+  - kubernetes
+home: https://github.com/InferiaAI/InferiaLLM

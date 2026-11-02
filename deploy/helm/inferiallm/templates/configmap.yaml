@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "inferiallm.configMapName" . }}
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.app.environment | quote }}
+  LOG_LEVEL: {{ .Values.app.logLevel | quote }}
+  APP_PORT: {{ .Values.app.port | quote }}
+  AUTH_PROVIDER: {{ .Values.app.authProvider | quote }}
+  {{- if .Values.app.allowedOrigins }}
+  ALLOWED_ORIGINS: {{ .Values.app.allowedOrigins | quote }}
+  {{- end }}
+  {{- if .Values.app.externalAuthUrl }}
+  EXTERNAL_AUTH_URL: {{ .Values.app.externalAuthUrl | quote }}
+  {{- end }}
+  DATABASE_SSL: {{ .Values.database.ssl | quote }}
+  PG_HOST: {{ include "inferiallm.databaseHost" . | quote }}
+  PG_PORT: {{ .Values.database.port | quote }}
+  PG_ADMIN_USER: {{ .Values.database.adminUser | quote }}
+  INFERIA_DB: {{ .Values.database.name | quote }}
+  REDIS_HOST: {{ include "inferiallm.redisHost" . | quote }}
+  REDIS_PORT: {{ .Values.redis.port | quote }}
+  REDIS_DB: {{ .Values.redis.db | quote }}
+  REDIS_SSL: {{ .Values.redis.ssl | quote }}
+  INFERIA_MODEL_EGRESS: {{ .Values.app.modelEgress | quote }}
+  INFERIA_MODEL_CACHE_DIR: "/var/lib/inferia/models"
+  {{- if .Values.llmd.enabled }}
+  K8S_LLMD_NAMESPACE: {{ .Values.llmd.namespace | quote }}
+  {{- if .Values.llmd.upstreamAllowedInternalHosts }}
+  UPSTREAM_ALLOWED_INTERNAL_HOSTS: {{ .Values.llmd.upstreamAllowedInternalHosts | quote }}
+  {{- end }}
+  {{- end }}
+  {{- range $key, $value := .Values.app.extraEnv }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

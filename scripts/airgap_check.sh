@@ -37,8 +37,12 @@ fail() { printf 'FAIL  %s\n' "$1"; exit 1; }
 pass() { printf 'PASS  %s\n' "$1"; }
 
 need_key() {
-  KEY=$(grep -E '^INTERNAL_API_KEY=' .env | cut -d= -f2- | tr -d '"' | tr -d '\r')
+  # `|| true`: under pipefail a non-matching grep would exit before fail() runs.
+  KEY=$(grep -E '^INTERNAL_API_KEY=' .env | cut -d= -f2- | tr -d '"' | tr -d '\r' || true)
   [ -n "$KEY" ] || fail "INTERNAL_API_KEY not found in .env"
+  # Orchestration's host port (docker-compose.yml publishes 127.0.0.1:<this>:8080).
+  ORCH_PORT=$(grep -E '^ORCHESTRATION_HOST_PORT=' .env | cut -d= -f2- | tr -d '"' | tr -d '\r' || true)
+  ORCH_PORT=${ORCH_PORT:-8080}
 }
 
 need_egress_off() {
@@ -68,7 +72,7 @@ stage1() {
     printf '{\"model_type\":\"llama\",\"hidden_size\":16}' > $STAGE_DIR/config.json
     head -c 65536 /dev/urandom > $STAGE_DIR/model.safetensors
   "
-  curl -sf -o /dev/null -X POST http://localhost:8080/v1/models/import \
+  curl -sf -o /dev/null -X POST http://localhost:${ORCH_PORT}/v1/models/import \
     -H 'Content-Type: application/json' \
     -H "X-Internal-API-Key: $KEY" -H 'X-Gateway-Request: true' \
     -d "{\"format\":\"hf\",\"from\":\"airgap-demo\",\"model_id\":\"$MODEL\"}" \

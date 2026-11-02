@@ -1,0 +1,131 @@
+{{- if and .Values.llmd.enabled .Values.llmd.rbac.create }}
+# Keep these permissions in sync with
+# deploy/kind/manifests/llmd-namespace-bootstrap.yaml.  The llm-d CRDs are
+# intentionally not installed by this application chart.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.llmd.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inferia-llmd-epp
+  namespace: {{ .Values.llmd.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: inferia-llmd-epp
+  namespace: {{ .Values.llmd.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["llm-d.ai"]
+    resources: ["inferenceobjectives", "inferencemodelrewrites"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: inferia-llmd-epp
+  namespace: {{ .Values.llmd.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: inferia-llmd-epp
+    namespace: {{ .Values.llmd.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: inferia-llmd-epp
+---
+# The EPP metrics endpoint authenticates with TokenReview and SubjectAccessReview.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-llmd-epp-metrics-auth
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-llmd-epp-metrics-auth
+subjects:
+  - kind: ServiceAccount
+    name: inferia-llmd-epp
+    namespace: {{ .Values.llmd.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "inferiallm.fullname" . }}-llmd-epp-metrics-auth
+---
+# The unified app includes orchestration, so bind its release-scoped service
+# account to only the resources the llm-d adapter creates and observes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-llmd-orchestrator
+  namespace: {{ .Values.llmd.namespace }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-llmd-orchestrator
+  namespace: {{ .Values.llmd.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "inferiallm.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "inferiallm.fullname" . }}-llmd-orchestrator
+---
+# Node reads are necessary only when deployments use NodePort endpoints.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-llmd-orchestrator-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-llmd-orchestrator-nodes
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "inferiallm.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "inferiallm.fullname" . }}-llmd-orchestrator-nodes
+{{- end }}

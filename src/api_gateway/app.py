@@ -15,6 +15,7 @@ from common.exception_handlers import register_exception_handlers
 
 from common.logger import setup_logging
 from common.app_setup import setup_cors, add_standard_health_routes
+from common import extensions
 from api_gateway.config import httpx_verify, settings
 from api_gateway.gateway.middleware import (
     RequestIDMiddleware,
@@ -75,10 +76,17 @@ async def _maybe_declare_catalog() -> None:
             )
 
 
+# Extension kinds this service calls (common/extensions, interfaces.md §6).
+GATEWAY_EXTENSION_KINDS = ("audit_sink", "usage_sink", "quota_policy", "token_verifier")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup
+    # Fail fast on a bad INFERIA_EXT_* value before touching the database.
+    extensions.validate(GATEWAY_EXTENSION_KINDS)
+
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Environment: {settings.environment}")
     logger.info(

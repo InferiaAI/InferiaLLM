@@ -55,6 +55,7 @@ APP_CONTAINER="inferia-app"
 FOLLOW_LOGS=0
 GEN_PW=""
 NO_INSTALL_DOCKER=0
+SKIP_PORT_CHECK=0
 
 # How docker is invoked. Normally just `docker`; if the daemon is only reachable
 # via sudo right after a fresh install (the current shell isn't in the `docker`
@@ -126,6 +127,7 @@ Lifecycle:
   --no-up                   Only (re)generate .env; do not touch Docker
   --no-install-docker       Do not auto-install Docker; fail if it is missing
   --reset-db                docker compose down -v before bringing up (DESTROYS data)
+  --skip-port-check         Skip the host-port pre-flight before docker compose up
   --down                    Stop the stack and exit
   --logs                    Follow app logs after a successful start
 
@@ -166,6 +168,7 @@ parse_args() {
       --no-up) NO_UP=1; shift ;;
       --no-install-docker) NO_INSTALL_DOCKER=1; shift ;;
       --reset-db) RESET_DB=1; shift ;;
+      --skip-port-check) SKIP_PORT_CHECK=1; shift ;;
       --down) DO_DOWN=1; shift ;;
       --k8s) SETUP_K8S=1; shift ;;
       --k8s-cluster) K8S_CLUSTER="$2"; SETUP_K8S=1; shift 2 ;;
@@ -546,6 +549,43 @@ ensure_ssh_file() {
   fi
 }
 
+# Every host port the stack publishes must be free before `docker compose up`,
+# or compose fails half-way with "address already in use" after creating some
+# containers. The ports come from compose itself (same file, same --env-file,
+# so the same interpolation as `up`); scripts/setup/inferia_setup.py does the
+# checking and names the variable to change.
+port_preflight() {
+  section "Host ports"
+  if [[ $SKIP_PORT_CHECK -eq 1 ]]; then
+    warn "--skip-port-check: not checking host ports"
+    return 0
+  fi
+  local tmp rc=0
+  tmp="$(mktemp -d)"
+  if ! compose config --format json >"$tmp/config.json" 2>"$tmp/err" \
+     || ! compose config --no-interpolate --format json >"$tmp/raw.json" 2>>"$tmp/err"; then
+    err "docker compose config failed:"
+    sed 's/^/    /' "$tmp/err" >&2
+    rm -rf "$tmp"
+    die "fix the compose configuration (or $ENV_FILE) and re-run"
+  fi
+  # Columns are separated by literal TAB characters (project, name, ports).
+  "${DOCKER[@]}" ps --format '{{.Label "com.docker.compose.project"}}	{{.Names}}	{{.Ports}}' \
+    >"$tmp/ps.txt" 2>/dev/null || : >"$tmp/ps.txt"
+  local out
+  out="$("$PYTHON" "$HELPER" check-ports --config "$tmp/config.json" --raw "$tmp/raw.json" \
+          --docker-ps "$tmp/ps.txt" --env-file "$ENV_FILE" 2>"$tmp/conflicts")" || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    while IFS= read -r line; do
+      if [[ "$line" == " "* ]]; then printf '  %s\n' "$line" >&2; else err "$line"; fi
+    done <"$tmp/conflicts"
+    rm -rf "$tmp"
+    die "host port pre-flight failed (bypass with --skip-port-check)"
+  fi
+  rm -rf "$tmp"
+  ok "Host ports free: ${out}"
+}
+
 stale_volume_guard() {
   # A freshly generated PG password won't authenticate against an existing
   # pgdata volume created with a different one.
@@ -841,6 +881,7 @@ main() {
   fi
 
   preflight
+  port_preflight
   k8s_prepare
   compose_up
   wait_local_health

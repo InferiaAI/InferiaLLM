@@ -39,8 +39,10 @@ class TestGatewayRouterErrors:
 
         request = QuotaCheckRequest(user_id="user-1", model="gpt-4")
 
+        # The check runs through the quota_policy extension, whose default
+        # calls the policy engine singleton.
         with patch(
-            "api_gateway.gateway.router.policy_engine"
+            "api_gateway.policy.engine.policy_engine"
         ) as mock_pe:
             mock_pe.check_quota = AsyncMock(
                 side_effect=HTTPException(status_code=429, detail="Quota exceeded")

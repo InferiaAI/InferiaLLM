@@ -85,7 +85,9 @@ services:
       - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
       - "${APP_PORT:-8000}:${APP_PORT:-8000}"   # Unified web: /api gateway, /inf inference, /v2 OCI mirror, / dashboard
-      - "127.0.0.1:8080:8080"                       # Orchestration, host only: the CLI uses it, nothing remote should
+      # Orchestration, host only: the CLI uses it, nothing remote should. Change the
+      # host side with ORCHESTRATION_HOST_PORT; the container side stays HTTP_PORT's 8080.
+      - "127.0.0.1:${ORCHESTRATION_HOST_PORT:-8080}:8080"
     deploy:
       resources:
         limits:
@@ -114,7 +116,7 @@ services:
     container_name: inferia-envoy
     restart: unless-stopped
     ports:
-      - "10000:10000"
+      - "${ENVOY_HOST_PORT:-10000}:10000"
     volumes:
       - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
     depends_on:

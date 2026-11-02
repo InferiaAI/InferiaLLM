@@ -1,0 +1,92 @@
+{{- if .Values.redis.bundled.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-redis
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "inferiallm.redis.selectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-redis
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "inferiallm.redis.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "inferiallm.redis.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: redis
+          image: {{ printf "%s:%s" .Values.redis.bundled.image.repository .Values.redis.bundled.image.tag }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "inferiallm.secretName" . }}
+                  key: REDIS_PASSWORD
+                  optional: true
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              ARGS="--appendonly {{ ternary "yes" "no" .Values.redis.bundled.persistence.enabled }}"
+              if [ -n "${REDIS_PASSWORD:-}" ]; then
+                exec redis-server $ARGS --requirepass "$REDIS_PASSWORD"
+              fi
+              exec redis-server $ARGS
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'if [ -n "${REDIS_PASSWORD:-}" ]; then redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping; else redis-cli ping; fi'
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'if [ -n "${REDIS_PASSWORD:-}" ]; then redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping; else redis-cli ping; fi'
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.redis.bundled.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.redis.bundled.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "inferiallm.fullname" . }}-redis
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

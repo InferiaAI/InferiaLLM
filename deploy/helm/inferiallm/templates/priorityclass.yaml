@@ -1,0 +1,11 @@
+{{- if .Values.priorityClass.enabled }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ include "inferiallm.priorityClassName" . }}
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+value: {{ .Values.priorityClass.value }}
+globalDefault: false
+description: "InferiaLLM control plane: keep it serving during node pressure."
+{{- end }}

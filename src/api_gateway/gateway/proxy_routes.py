@@ -20,10 +20,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from api_gateway.rbac.middleware import (
-    get_current_user_from_request,
-    resolve_token_to_user_context,
-)
+from api_gateway.rbac.middleware import get_current_user_from_request
 from api_gateway.models import UserContext, PermissionEnum
 from api_gateway.rbac.authorization import authz_service
 from api_gateway.config import settings
@@ -31,6 +28,7 @@ from common.service_ports import orchestration_http_url
 from api_gateway.gateway.http_client import gateway_http_client
 from api_gateway.gateway.rate_limiter import rate_limiter
 from api_gateway.db.database import AsyncSessionLocal
+from common import extensions
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +99,13 @@ def _require_proxy_permission(
 async def _get_ws_user_context(token: str) -> UserContext:
     """Authenticate a WebSocket token using the active auth provider.
 
-    Delegates to resolve_token_to_user_context which mirrors the HTTP
-    middleware branching (local-only, inferiaauth, or oidc).  Raises
+    Delegates to the token_verifier extension, the same one the HTTP
+    middleware uses (default: resolve_token_to_user_context, which branches
+    local-only, inferiaauth, or oidc).  Raises
     HTTPException(401) on failure; callers should close the WS with 1008.
     """
     async with AsyncSessionLocal() as db:
-        return await resolve_token_to_user_context(db, token)
+        return await extensions.get("token_verifier").verify(token, db=db)
 
 
 async def proxy_request(
