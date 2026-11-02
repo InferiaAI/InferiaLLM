@@ -109,8 +109,12 @@ def build_manifest(result: SimResult, scenario: Scenario, config_hash: str, comm
         },
         "workload": {
             "description": scenario.description,
-            "dataset": "synthetic",
-            "arrival": f"poisson rate={scenario.workload.arrival.rate_rps}",
+            "dataset": (
+                f"{scenario.workload.arrival.trace_dataset} ({scenario.workload.arrival.trace_license})"
+                if scenario.workload.arrival.process == "trace"
+                else "synthetic"
+            ),
+            "arrival": f"{scenario.workload.arrival.process} rate={scenario.workload.effective_rate_rps()}",
             "input_tokens": "; ".join(f"{m.workload_class.value}: {describe(m.input_tokens)}" for m in mixes),
             "output_tokens": "; ".join(f"{m.workload_class.value}: {describe(m.output_tokens)}" for m in mixes),
         },

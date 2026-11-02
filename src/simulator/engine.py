@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import heapq
 import itertools
+import random
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -75,7 +76,47 @@ class Simulation:
         self._requests = requests
         self.replicas: list[Replica] = []
         self._by_deployment: dict[str, list[Replica]] = {}
+        self._session_replicas: dict[tuple[str, str], Replica] = {}
         self._place_replicas()
+
+    def _route(self, req: Request, rr: dict[str, int], rng: random.Random) -> Replica:
+        """Choose a deployment-local replica according to the configured policy."""
+        group = self._by_deployment[req.deployment]
+        policy = self.scenario.router.policy
+        if policy in ("round_robin", "class_to_pool"):
+            replica = group[rr[req.deployment] % len(group)]
+            rr[req.deployment] += 1
+            return replica
+        if policy == "random":
+            return rng.choice(group)
+        if policy == "session_affinity" and req.session_id is not None:
+            key = (req.deployment, req.session_id)
+            return self._session_replicas.setdefault(key, group[rr[req.deployment] % len(group)])
+        if policy == "least_outstanding":
+            def outstanding(r: Replica) -> tuple[int, int, int]:
+                queued = len(r.running) + len(r.waiting) + len(r.swapped)
+                # Equal request counts should not make a 4k-token prefill as
+                # attractive as a nearly completed short request.
+                remaining = sum(req.prompt_len + req.output_len - req.num_computed for req in r.running)
+                remaining += sum(req.prompt_len + req.output_len for _, req in r.waiting)
+                return (queued, remaining, r.index)
+            return min(group, key=outstanding)
+        if policy == "kv_aware":
+            cfg = self.scenario.router
+            def score(r: Replica) -> float:
+                cached = r.kv.cached_prefix_tokens(req.segments(), req.prompt_len) if hasattr(r.kv, "cached_prefix_tokens") else 0
+                load = len(r.running) + len(r.waiting) + len(r.swapped)
+                return cfg.kv_overlap_weight * cached - cfg.load_penalty_weight * load
+            scores = [score(r) for r in group]
+            if len(set(scores)) == 1:
+                replica = group[rr[req.deployment] % len(group)]
+                rr[req.deployment] += 1
+                return replica
+            return max(group, key=lambda r: (score(r), -r.index))
+        # A session-less affinity request falls back to stable round robin.
+        replica = group[rr[req.deployment] % len(group)]
+        rr[req.deployment] += 1
+        return replica
 
     def _place_replicas(self) -> None:
         s = self.scenario
@@ -92,6 +133,7 @@ class Simulation:
         horizon = run.duration_s + run.max_drain_s if run.drain else run.duration_s
         stats = [ReplicaStats() for _ in self.replicas]
         rr = {name: 0 for name in self._by_deployment}
+        router_rng = random.Random(f"{self.seed}:router")
         records: list[Request] = []
         live: dict[int, Request] = {}
         itl = LogHistogram()
@@ -168,9 +210,7 @@ class Simulation:
             if kind == _ARRIVAL:
                 req: Request = obj
                 push_next_arrival()
-                group = self._by_deployment[req.deployment]
-                replica = group[rr[req.deployment] % len(group)]
-                rr[req.deployment] += 1
+                replica = self._route(req, rr, router_rng)
                 outcome = replica.admit(req)
                 if outcome is None:
                     live[req.rid] = req

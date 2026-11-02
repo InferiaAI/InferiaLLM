@@ -1,10 +1,8 @@
 """Scenario configuration (docs/platform/interfaces.md §9).
 
 A scenario is a YAML file validated by these Pydantic models. Every model
-forbids unknown keys, and options the engine does not implement yet are not
-accepted (for example ``router.policy`` only allows ``round_robin`` until the
-router slice lands). A scenario therefore never configures behaviour that the
-simulator would silently ignore.
+forbids unknown keys, and every option is validated up front so a scenario
+never configures behaviour that the simulator would silently ignore.
 
 Top-level keys: hardware, cluster, models, deployment, router, autoscaler,
 admission, workload, failures, run.
@@ -23,6 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from simulator.classes import WorkloadClass
 from simulator.hardware import GB, GpuSpec, get_gpu, get_model
+
+ALLOWED_TRACE_LICENSES = frozenset(
+    {"Apache-2.0", "MIT", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "BSD-3-Clause", "ODC-By-1.0"}
+)
 
 
 class _Strict(BaseModel):
@@ -53,6 +55,7 @@ class PoolConfig(_Strict):
     gpu: str
     gpus_per_node: int = Field(gt=0)
     nodes: int = Field(gt=0)
+    zone: str = "zone-a"
 
     @model_validator(mode="after")
     def _known_gpu(self) -> "PoolConfig":
@@ -62,6 +65,23 @@ class PoolConfig(_Strict):
 
 class ClusterConfig(_Strict):
     pools: list[PoolConfig] = Field(min_length=1)
+
+
+class OffloadConfig(_Strict):
+    """Secondary KV-cache tier (CPU RAM or NVMe) for evicted prefix blocks."""
+
+    tier: Literal["cpu", "nvme"] = "cpu"
+    capacity_gb: float = Field(gt=0)
+    bandwidth_gbps: float = Field(64.0, gt=0)
+
+
+class DisaggregationConfig(_Strict):
+    """Prefill/decode disaggregation within a deployment."""
+
+    prefill_replicas: int = Field(gt=0)
+    decode_replicas: int = Field(gt=0)
+    transfer_bandwidth_gbps: float = Field(400.0, gt=0)
+    transfer_latency_s: float = Field(0.0005, ge=0)
 
 
 class DeploymentConfig(_Strict):
@@ -85,11 +105,16 @@ class DeploymentConfig(_Strict):
     contiguous_reserve: Literal["max_model_len", "request"] = "max_model_len"
     preemption: Literal["recompute", "swap"] = "recompute"
     swap_space_gb: float = Field(4.0, ge=0)  # per GPU, CPU RAM
+    eviction: Literal["lru", "prefix_depth"] = "lru"
+    offload: Optional[OffloadConfig] = None
+    disaggregation: Optional[DisaggregationConfig] = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "DeploymentConfig":
         if self.allocator == "contiguous" and self.enable_prefix_caching:
             raise ValueError("prefix caching needs the paged allocator")
+        if self.allocator == "contiguous" and self.offload is not None:
+            raise ValueError("offload tier needs the paged allocator")
         # Both checks mirror vLLM's SchedulerConfig validation
         # (https://docs.vllm.ai/en/latest/api/vllm/config/scheduler/, read 2026-10-31).
         if self.max_num_batched_tokens < self.max_num_seqs:
@@ -98,19 +123,59 @@ class DeploymentConfig(_Strict):
             raise ValueError(
                 "without chunked prefill, max_num_batched_tokens must be >= max_model_len"
             )
+        if self.disaggregation is not None:
+            total = self.disaggregation.prefill_replicas + self.disaggregation.decode_replicas
+            if total != self.replicas:
+                raise ValueError(
+                    "disaggregation prefill_replicas + decode_replicas must equal replicas"
+                )
         return self
 
 
+RouterPolicy = Literal[
+    "round_robin",
+    "random",
+    "least_outstanding",
+    "kv_aware",
+    "session_affinity",
+    "class_to_pool",
+]
+
+
 class RouterConfig(_Strict):
-    policy: Literal["round_robin"] = "round_robin"
+    policy: RouterPolicy = "round_robin"
+    kv_overlap_weight: float = Field(1.0, ge=0)
+    load_penalty_weight: float = Field(0.5, ge=0)
+    class_pools: dict[str, str] = Field(default_factory=dict)
 
 
 class AutoscalerConfig(_Strict):
-    enabled: Literal[False] = False
+    enabled: bool = False
+    metric: Literal["queue_depth", "kv_utilization", "ttft_p95"] = "queue_depth"
+    target: float = Field(10.0, gt=0)
+    interval_s: float = Field(15.0, gt=0)
+    cooldown_s: float = Field(60.0, ge=0)
+    min_replicas: int = Field(1, gt=0)
+    max_replicas: Optional[int] = Field(None, gt=0)
+    warm_pool: int = Field(0, ge=0)
+    cold_start_s: float = Field(120.0, ge=0)
+    warm_start_s: float = Field(5.0, ge=0)
+
+
+class FailureEvent(_Strict):
+    at_s: float = Field(ge=0)
+    scope: Literal["replica", "node", "zone", "fraction"] = "replica"
+    target: Optional[Union[int, str]] = None
+    fraction: Optional[float] = Field(None, gt=0, le=1)
+    recover_after_s: Optional[float] = Field(None, gt=0)
 
 
 class FailuresConfig(_Strict):
-    enabled: Literal[False] = False
+    enabled: bool = False
+    retry_max_attempts: int = Field(1, ge=0)
+    retry_budget_fraction: float = Field(0.10, ge=0, le=100.0)
+    retry_backoff_s: float = Field(0.05, ge=0)
+    events: list[FailureEvent] = Field(default_factory=list)
 
 
 class AdmissionConfig(_Strict):
@@ -150,6 +215,13 @@ class SharedPrefix(_Strict):
     tokens: int = Field(gt=0)
 
 
+class SessionConfig(_Strict):
+    """Multi-turn conversation sessions where each turn appends to the prefix."""
+
+    turns: int = Field(gt=1)
+    think_time_s: float = Field(gt=0)
+
+
 class ClassMix(_Strict):
     workload_class: WorkloadClass = Field(alias="class")
     weight: float = Field(gt=0)
@@ -157,18 +229,75 @@ class ClassMix(_Strict):
     input_tokens: TokenDist = Field(discriminator="dist")
     output_tokens: TokenDist = Field(discriminator="dist")
     shared_prefix: Optional[SharedPrefix] = None
+    sessions: Optional[SessionConfig] = None
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class DiurnalConfig(_Strict):
+    peak_multiplier: float = Field(2.0, gt=0)
+    period_s: float = Field(86400.0, gt=0)
+
+
+class BurstConfig(_Strict):
+    multiplier: float = Field(gt=1.0)
+    start_s: Optional[float] = Field(None, ge=0)
+    duration_s: Optional[float] = Field(None, gt=0)
+    mean_burst_s: float = Field(30.0, gt=0)
+    mean_quiet_s: float = Field(120.0, gt=0)
+
+
+class HawkesConfig(_Strict):
+    alpha: float = Field(0.4, ge=0, lt=1.0)
+    beta: float = Field(1.0, gt=0)
+
+
+class PopulationConfig(_Strict):
+    """Analytical user-population model (plan WS5 / D4)."""
+
+    registered_users: int = Field(gt=0)
+    active_ratio: float = Field(gt=0, le=1.0)
+    requests_per_active_user_per_day: float = Field(gt=0)
+    peak_to_avg: float = Field(3.0, gt=0)
+
+    def peak_rps(self) -> float:
+        dau = self.registered_users * self.active_ratio
+        avg_rps = dau * self.requests_per_active_user_per_day / 86400.0
+        return avg_rps * self.peak_to_avg
+
+
 class ArrivalConfig(_Strict):
-    process: Literal["poisson"] = "poisson"
+    process: Literal["poisson", "nhpp", "mmpp", "hawkes", "trace"] = "poisson"
     rate_rps: float = Field(gt=0)
+    diurnal: Optional[DiurnalConfig] = None
+    burst: Optional[BurstConfig] = None
+    hawkes: Optional[HawkesConfig] = None
+    trace_path: Optional[str] = None
+    trace_license: Optional[str] = None
+    trace_dataset: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_process(self) -> "ArrivalConfig":
+        if self.process == "trace":
+            if not self.trace_path:
+                raise ValueError("trace arrival process requires trace_path")
+            if not self.trace_license or self.trace_license not in ALLOWED_TRACE_LICENSES:
+                raise ValueError(
+                    f"trace replay requires a verified open trace_license in "
+                    f"{sorted(ALLOWED_TRACE_LICENSES)}"
+                )
+        return self
 
 
 class WorkloadConfig(_Strict):
     arrival: ArrivalConfig
+    population: Optional[PopulationConfig] = None
     classes: list[ClassMix] = Field(min_length=1)
+
+    def effective_rate_rps(self) -> float:
+        if self.population is not None:
+            return self.population.peak_rps()
+        return self.arrival.rate_rps
 
 
 class RunConfig(_Strict):
@@ -222,7 +351,10 @@ class Scenario(_Strict):
                     f"deployment {d.name}: tensor_parallel must divide gpus_per_node "
                     "(cross-node parallelism is not modelled)"
                 )
-            used[d.pool] = used.get(d.pool, 0) + d.replicas * d.tensor_parallel
+            max_rep = d.replicas
+            if self.autoscaler.enabled and self.autoscaler.max_replicas is not None:
+                max_rep = max(max_rep, self.autoscaler.max_replicas)
+            used[d.pool] = used.get(d.pool, 0) + max_rep * d.tensor_parallel
             model = get_model(d.model)
             if d.max_model_len > model.max_position_embeddings:
                 raise ValueError(f"deployment {d.name}: max_model_len exceeds the model's maximum")
@@ -238,24 +370,31 @@ class Scenario(_Strict):
                 raise ValueError(f"pool {name}: deployments need {n} GPUs, pool has {cap}")
         place_replicas(self)  # mixed TP sizes can still fail to pack without spanning nodes
         for c in self.workload.classes:
-            if c.deployment is None:
+            mapped = self.router.class_pools.get(c.workload_class.value) if self.router.policy == "class_to_pool" else None
+            dep_name = c.deployment or mapped
+            if dep_name is None:
                 if len(self.deployment) != 1:
                     raise ValueError(
                         f"class {c.workload_class.value}: name a deployment (several exist)"
                     )
-            elif c.deployment not in names:
+            elif dep_name not in names:
                 raise ValueError(f"class {c.workload_class.value}: unknown deployment")
         return self
 
     def deployment_for(self, mix: ClassMix) -> DeploymentConfig:
-        name = mix.deployment or self.deployment[0].name
+        mapped = (
+            self.router.class_pools.get(mix.workload_class.value)
+            if self.router.policy == "class_to_pool"
+            else None
+        )
+        name = mix.deployment or mapped or self.deployment[0].name
         return next(d for d in self.deployment if d.name == name)
 
     def pool(self, name: str) -> PoolConfig:
         return next(p for p in self.cluster.pools if p.name == name)
 
 
-def place_replicas(s: "Scenario") -> list[tuple[DeploymentConfig, str]]:
+def place_replicas(s: "Scenario", max_for_autoscale: bool = False) -> list[tuple[DeploymentConfig, str]]:
     """Pack replicas into pool GPUs in deployment order; returns (deployment, node) per replica.
 
     A replica's TP group starts at a multiple of its TP size, so it never spans
@@ -267,7 +406,10 @@ def place_replicas(s: "Scenario") -> list[tuple[DeploymentConfig, str]]:
     for dep in s.deployment:
         pool = s.pool(dep.pool)
         tp = dep.tensor_parallel
-        for _ in range(dep.replicas):
+        count = dep.replicas
+        if max_for_autoscale and s.autoscaler.enabled and s.autoscaler.max_replicas is not None:
+            count = max(count, s.autoscaler.max_replicas)
+        for _ in range(count):
             start = -(-cursor.get(pool.name, 0) // tp) * tp
             if start + tp > pool.gpus_per_node * pool.nodes:
                 raise ValueError(

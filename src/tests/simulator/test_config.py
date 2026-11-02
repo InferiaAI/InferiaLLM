@@ -82,9 +82,7 @@ def test_kv_blocks_hand_computed():
     "mutate, message",
     [
         (lambda d: d.update(unknown_key=1), "extra"),
-        (lambda d: d["router"].update(policy="kv_aware") if "router" in d else d.update(router={"policy": "kv_aware"}), "round_robin"),
-        (lambda d: d.update(autoscaler={"enabled": True}), "enabled"),
-        (lambda d: d.update(failures={"enabled": True}), "enabled"),
+        (lambda d: d["router"].update(policy="not-a-policy") if "router" in d else d.update(router={"policy": "not-a-policy"}), "policy"),
         (lambda d: d["deployment"][0].update(model="llama-3.1-70b"), "not in models"),
         (lambda d: d["deployment"][0].update(pool="nope"), "unknown pool"),
         (lambda d: d["deployment"][0].update(tensor_parallel=2), "tensor_parallel"),

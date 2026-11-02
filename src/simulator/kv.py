@@ -187,6 +187,23 @@ class PagedBlockManager(_Base):
             hits += 1
         return hits * self.block_size
 
+    def cached_prefix_tokens(self, segments: Segments, num_tokens: int) -> int:
+        """Return cached full-prefix tokens for a request not yet admitted.
+
+        Routing needs this estimate before it selects a replica, so it cannot
+        register a temporary request layout in the allocator.
+        """
+        if not self.enable_prefix_caching:
+            return 0
+        layout = _Layout(segments)
+        hits = 0
+        for i in range((num_tokens - 1) // self.block_size):
+            key = layout.key(i, self.block_size)
+            if key is None or key not in self._cache:
+                break
+            hits += 1
+        return hits * self.block_size
+
     def allocate(self, rid: int, num_tokens: int, hit_tokens: int = 0) -> bool:
         """Make the request hold enough blocks for ``num_tokens`` tokens.
 

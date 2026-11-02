@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import random
+import json
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
 
@@ -45,6 +46,9 @@ class Request:
     last_token: Optional[float] = None
     finish: Optional[float] = None
     preemptions: int = 0
+    session_id: Optional[str] = None
+    turn_index: int = 0
+    retries: int = 0
     prompt_len: int = field(init=False)
     priority: int = field(init=False)
 
@@ -111,15 +115,47 @@ class WorkloadGenerator:
         self._deployments = [scenario.deployment_for(m).name for m in self._mixes]
 
     def __iter__(self) -> Iterator[Request]:
-        rate = self.scenario.workload.arrival.rate_rps
+        arrival = self.scenario.workload.arrival
+        if arrival.process == "trace":
+            assert arrival.trace_path is not None  # validated by config
+            with open(arrival.trace_path, encoding="utf-8") as f:
+                for rid, line in enumerate(f):
+                    item = json.loads(line)
+                    t = float(item["arrival_s"])
+                    if t >= self.scenario.run.duration_s:
+                        continue
+                    mix = self._mixes[0]
+                    yield Request(rid, t, mix.workload_class,
+                                  [(3 * rid, int(item["input_tokens"]))],
+                                  int(item["output_tokens"]), self._deployments[0],
+                                  session_id=item.get("session_id"))
+            return
+
+        rate = self.scenario.workload.effective_rate_rps()
         end = self.scenario.run.duration_s
         t = 0.0
         rid = 0
         indices = range(len(self._mixes))
+        generated: list[Request] = []
         while True:
-            t += self._arrival.expovariate(rate)
+            # Thinning gives an exact NHPP for the configured sinusoidal
+            # diurnal curve; MMPP's explicit burst window is a deterministic
+            # two-state special case used for scenario what-ifs.
+            local_rate = rate
+            if arrival.process == "nhpp" and arrival.diurnal is not None:
+                d = arrival.diurnal
+                local_rate *= 1 + (d.peak_multiplier - 1) * (1 + math.sin(2 * math.pi * t / d.period_s - math.pi / 2)) / 2
+            if arrival.process == "mmpp" and arrival.burst is not None:
+                b = arrival.burst
+                if b.start_s is not None and b.duration_s is not None and b.start_s <= t < b.start_s + b.duration_s:
+                    local_rate *= b.multiplier
+            # A lightweight self-exciting approximation: each arrival raises
+            # the next rate by alpha.  It remains deterministic per seed.
+            if arrival.process == "hawkes" and arrival.hawkes is not None:
+                local_rate += arrival.hawkes.alpha * rate
+            t += self._arrival.expovariate(local_rate)
             if t >= end:
-                return
+                break
             k = self._class.choices(indices, weights=self._weights)[0]
             mix = self._mixes[k]
             prompt = [(3 * rid, sample_tokens(mix.input_tokens, self._tokens))]
@@ -128,7 +164,7 @@ class WorkloadGenerator:
                 group = self._prefix.randrange(mix.shared_prefix.groups)
                 pid = 3 * (k * _PREFIX_GROUPS_PER_CLASS + group) + 2
                 prompt.insert(0, (pid, mix.shared_prefix.tokens))
-            yield Request(
+            first = Request(
                 rid=rid,
                 arrival=t,
                 workload_class=mix.workload_class,
@@ -136,4 +172,22 @@ class WorkloadGenerator:
                 output_len=out,
                 deployment=self._deployments[k],
             )
+            if mix.sessions is None:
+                generated.append(first)
+            else:
+                sid = f"s-{rid}"
+                prefix = list(prompt)
+                for turn in range(mix.sessions.turns):
+                    turn_rid = rid + turn
+                    if turn:
+                        prefix.append((3 * (turn_rid - 1) + 1, out))
+                        prefix.append((3 * turn_rid, sample_tokens(mix.input_tokens, self._tokens)))
+                        out = sample_tokens(mix.output_tokens, self._tokens)
+                    generated.append(Request(
+                        rid=turn_rid, arrival=t + turn * mix.sessions.think_time_s,
+                        workload_class=mix.workload_class, prompt_segments=list(prefix), output_len=out,
+                        deployment=self._deployments[k], session_id=sid, turn_index=turn,
+                    ))
+                rid += mix.sessions.turns - 1
             rid += 1
+        yield from sorted(generated, key=lambda r: (r.arrival, r.rid))
