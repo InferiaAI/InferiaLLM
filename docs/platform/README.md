@@ -24,6 +24,8 @@ performance number is explicitly classified as **MEASURED**, **SIMULATED**, or
   foundation.
 - [Benchmark guide](../../bench/README.md) — CPU simulation, KV sweeps and
   GPU-lease rehearsal.
+- [Operations runbook](ops.md) — backup/restore, usage-stream recovery and
+  GPU-lease handoff.
 
 ## Capacity and calibration
 
