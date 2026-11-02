@@ -73,9 +73,11 @@ class Replica:
         perf: PerfParams,
         admission: AdmissionConfig,
         node: str,
+        role: str = "unified",
     ):
         self.index = index
         self.node = node
+        self.role = role
         self.dep = deployment
         self.gpu = gpu
         self.admission = admission
@@ -148,6 +150,25 @@ class Replica:
         for req in requests:
             self.kv.remove(req.rid)
         return requests
+
+    def transfer_out(self, req: Request) -> None:
+        """Detach a prefilled request after its first token for P/D serving."""
+        self.running.remove(req)
+        self.kv.remove(req.rid)
+        req.status = "pending"
+
+    def accept_transfer(self, req: Request) -> bool:
+        """Install transferred KV on a decode replica without recomputing it."""
+        reserve = self.dep.max_model_len if self.dep.contiguous_reserve == "max_model_len" else req.prompt_len + req.output_len
+        self.kv.add_request(req.rid, req.segments(), reserve_tokens=reserve)
+        if not self.kv.allocate(req.rid, req.num_tokens):
+            self.kv.remove(req.rid)
+            return False
+        self.kv.commit(req.rid, req.num_tokens)
+        req.status = "running"
+        req.replica = self.index
+        self.running.append(req)
+        return True
 
     # -- one iteration -----------------------------------------------------------------
 

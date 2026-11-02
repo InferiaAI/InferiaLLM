@@ -8,9 +8,9 @@ measurements, and until calibration (T5) the performance model uses
 **uncalibrated** efficiency placeholders.
 
 Status: the CPU-verifiable scheduler, workload, routing, queue-depth
-autoscaling, failure/retry and CPU/NVMe offload slices are implemented. The
-remaining simulator work is P/D disaggregation, scale-in, and Parquet/plot
-artifacts.
+autoscaling, failure/retry, CPU/NVMe offload, and prefill/decode
+disaggregation slices are implemented. The remaining simulator work is
+scale-in and Parquet/plot artifacts.
 
 ## Run it
 
@@ -40,7 +40,7 @@ options are rejected. Top-level keys:
 | `hardware.perf` | Roofline efficiencies: `mfu` (0.5), `hbm_efficiency` (0.8), `step_overhead_s` (0.003), `collective_latency_s` (1e-5), `activation_reserve_gb` per GPU (2.0), `calibration` label. **Defaults are uncalibrated placeholders.** |
 | `cluster.pools[]` | `name`, `gpu` (catalog name), `gpus_per_node`, `nodes` |
 | `models[]` | Catalog model names used by deployments |
-| `deployment[]` | `name`, `model`, `pool`, `tensor_parallel`, `replicas`, `max_num_seqs`, `max_num_batched_tokens`, `max_model_len`, `block_size` (16), `gpu_memory_utilization` (0.92), `enable_chunked_prefill`, `enable_prefix_caching`, `allocator` (`paged` \| `contiguous`), `contiguous_reserve` (`max_model_len` \| `request`), `preemption` (`recompute` \| `swap`), `swap_space_gb` per GPU, or `offload: {tier: cpu|nvme, capacity_gb, bandwidth_gbps}` with swap preemption |
+| `deployment[]` | `name`, `model`, `pool`, `tensor_parallel`, `replicas`, `max_num_seqs`, `max_num_batched_tokens`, `max_model_len`, `block_size` (16), `gpu_memory_utilization` (0.92), `enable_chunked_prefill`, `enable_prefix_caching`, `allocator` (`paged` \| `contiguous`), `contiguous_reserve` (`max_model_len` \| `request`), `preemption` (`recompute` \| `swap`), `swap_space_gb` per GPU, `offload: {tier: cpu|nvme, capacity_gb, bandwidth_gbps}`, or `disaggregation: {prefill_replicas, decode_replicas, transfer_bandwidth_gbps, transfer_latency_s}` |
 | `router.policy` | `round_robin`, `random`, `least_outstanding`, `kv_aware`, `session_affinity`, or `class_to_pool` |
 | `autoscaler` | Queue-depth, KV-utilization, or observed TTFT-p95 scale-out with cooldown, min replica count, warm pool and cold/warm start delays. Scale-in is not modelled yet. |
 | `failures` | Timed replica, node, zone or fraction outages; optional recovery; retries only before first token, bounded by attempts and retry budget. |
@@ -93,6 +93,9 @@ one per forward pass plus arrivals, scaling and outage/recovery events;
 requests arriving at the same instant join the same step. A hard outage
 cleans the failed replica's KV state. Only requests that have not emitted a
 token can retry, so the model never silently duplicates streamed output.
+When prefill/decode disaggregation is enabled, a prefill replica emits the
+first token, then a configured KV transfer makes the request runnable on a
+decode replica without re-prefilling the prompt.
 
 ## Outputs
 
@@ -125,6 +128,6 @@ contiguous allocation, chunked/non-chunked prefill and admission.
 - Embedding lookup counted as a matmul; no CUDA-graph or kernel effects; no sampling cost.
 - vLLM V1 preempts only by recompute; `swap` models V0-style swapping.
 - Block keys are 64-bit hashes (collision probability ~1e-4 at 6e7 distinct blocks).
-- Not yet: P/D disaggregation, scale-in, Parquet/plots (T3).
+- Not yet: autoscaler scale-in and Parquet/plots (T3).
 - Speed: ~600 simulated requests/s of wall time on the 8xH100 scenario; the
   1M-requests-in-5-minutes budget (T8) needs profiling work.

@@ -33,6 +33,7 @@ _SCALE_READY = 4
 _RETRY = 5
 _FAILURE = 6
 _RECOVER = 7
+_TRANSFER_READY = 8
 
 
 @dataclass
@@ -89,12 +90,14 @@ class Simulation:
         if not self._active:
             self._active = {r.index for r in self.replicas}
 
-    def _route(self, req: Request, rr: dict[str, int], rng: random.Random) -> Replica:
+    def _route(self, req: Request, rr: dict[str, int], rng: random.Random, stage: Optional[str] = None) -> Replica:
         """Choose a deployment-local replica according to the configured policy."""
         group = [
             r for r in self._by_deployment[req.deployment]
             if r.index in self._active and r.index not in self._failed
         ]
+        if stage is not None:
+            group = [r for r in group if r.role == stage]
         if not group:
             raise RuntimeError(f"no active replicas for deployment {req.deployment}")
         policy = self.scenario.router.policy
@@ -135,9 +138,15 @@ class Simulation:
 
     def _place_replicas(self) -> None:
         s = self.scenario
+        placed_per_deployment: dict[str, int] = {}
         for dep, node in place_replicas(s, max_for_autoscale=s.autoscaler.enabled):
             gpu = get_gpu(s.pool(dep.pool).gpu)
-            r = Replica(len(self.replicas), dep, get_model(dep.model), gpu, s.hardware.perf, s.admission, node)
+            ordinal = placed_per_deployment.get(dep.name, 0)
+            placed_per_deployment[dep.name] = ordinal + 1
+            role = "unified"
+            if dep.disaggregation is not None:
+                role = "prefill" if ordinal < dep.disaggregation.prefill_replicas else "decode"
+            r = Replica(len(self.replicas), dep, get_model(dep.model), gpu, s.hardware.perf, s.admission, node, role)
             self.replicas.append(r)
             self._by_deployment.setdefault(dep.name, []).append(r)
 
@@ -220,7 +229,9 @@ class Simulation:
 
         def admit(req: Request) -> None:
             """Route and admit an initial arrival or a pre-first-token retry."""
-            replica = self._route(req, rr, router_rng)
+            deployment = next(d for d in s.deployment if d.name == req.deployment)
+            stage = "prefill" if deployment.disaggregation else None
+            replica = self._route(req, rr, router_rng, stage)
             outcome = replica.admit(req)
             if outcome is None:
                 if not replica.busy:
@@ -361,6 +372,19 @@ class Simulation:
                         live.pop(req.rid, None)
                         n_in_system -= 1
                         records.append(req)
+            elif kind == _TRANSFER_READY:
+                req, i = obj
+                replica = self.replicas[i]
+                if i in self._failed or not replica.accept_transfer(req):
+                    req.status = "failed"
+                    req.reason = "kv_transfer_failed"
+                    req.finish = now
+                    live.pop(req.rid, None)
+                    n_in_system -= 1
+                    records.append(req)
+                elif not replica.busy:
+                    replica.busy = True
+                    heapq.heappush(heap, (now, _KICK, next(seq), i))
             else:
                 i: int = obj
                 if i in self._failed or i not in steps:
@@ -375,6 +399,14 @@ class Simulation:
                         stats[i].output_tokens += 1
                     if gap is not None and w0 <= req.arrival < w1:
                         itl.add(gap)
+                    if replica.role == "prefill" and req.generated < req.output_len:
+                        replica.transfer_out(req)
+                        decoder = self._route(req, rr, router_rng, "decode")
+                        cfg = replica.dep.disaggregation
+                        assert cfg is not None
+                        bytes_to_transfer = req.num_tokens * replica.perf.model.kv_bytes_per_token()
+                        delay = cfg.transfer_latency_s + bytes_to_transfer / (cfg.transfer_bandwidth_gbps * 1e9 / 8)
+                        heapq.heappush(heap, (now + delay, _TRANSFER_READY, next(seq), (req, decoder.index)))
                 for req in finished:
                     del live[req.rid]
                     n_in_system -= 1

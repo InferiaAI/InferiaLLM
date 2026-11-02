@@ -124,6 +124,22 @@ def test_queue_autoscaler_activates_warm_replica():
     assert sim._active == {0, 1}
 
 
+def test_prefill_decode_disaggregation_transfers_kv_to_decode_replica():
+    s = scenario(
+        deployment={"replicas": 2, "disaggregation": {"prefill_replicas": 1, "decode_replicas": 1,
+                                                          "transfer_bandwidth_gbps": 8,
+                                                          "transfer_latency_s": 0.01}},
+        pool={"nodes": 2},
+    )
+    req = Request(rid=1, arrival=0.0, workload_class=WorkloadClass.INTERACTIVE_CHAT,
+                  prompt_segments=[(2, 1000)], output_len=3, deployment="chat-8b")
+    result, summ = run(s, requests=[req])
+    assert [r.role for r in result.replicas] == ["prefill", "decode"]
+    assert result.records[0].status == "completed"
+    assert result.records[0].replica == 1
+    assert summ["totals"]["completed"] == 1
+
+
 @pytest.mark.parametrize("metric,target", [("kv_utilization", 0.001), ("ttft_p95", 0.0001)])
 def test_autoscaler_supports_kv_and_ttft_signals(metric, target):
     s = scenario(
