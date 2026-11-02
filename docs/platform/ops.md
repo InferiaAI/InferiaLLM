@@ -63,6 +63,25 @@ redis-cli XPENDING inferia:usage:v1 api-gateway-usage
 Investigate growing pending counts before deleting any stream entries. A
 consumer restart is safe; unacknowledged events are deliberately replayed.
 
+### Local Redis validation
+
+An isolated Redis 7 container on `127.0.0.1:56379` was used to verify the
+actual inference producer on 2026-11-02. The following published one event to
+`inferia:usage:v1`; `XRANGE` showed the expected `user_id`, model and token
+counts:
+
+```bash
+REDIS_PORT=56379 PYTHONPATH=src python -c '
+import asyncio
+from inference.core.usage_events import publish_usage_event
+assert asyncio.run(publish_usage_event("integration-user", "integration-model", {
+    "prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5,
+}))'
+```
+
+The full llm-d kind demo additionally requires an existing kind cluster and
+Kubernetes context; neither is created implicitly by this runbook.
+
 ## GPU lease handoff
 
 Run the CPU-safe rehearsal first:
