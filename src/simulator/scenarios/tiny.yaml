@@ -1,0 +1,19 @@
+# Smoke-test scenario: one Llama-3.1-8B replica on one H100, light chat load.
+# A scenario, not a claim: every output is SIMULATED and uncalibrated.
+name: tiny
+description: One H100, one Llama-3.1-8B replica, 2 req/s of chat for 60 s.
+cluster:
+  pools:
+    - {name: h100, gpu: H100-SXM-80GB, gpus_per_node: 1, nodes: 1}
+models: [llama-3.1-8b]
+deployment:
+  - {name: chat-8b, model: llama-3.1-8b, pool: h100, max_model_len: 8192}
+workload:
+  arrival: {process: poisson, rate_rps: 2}
+  classes:
+    - class: interactive_chat
+      weight: 1
+      input_tokens: {dist: lognormal, median: 400, sigma: 0.8, max: 4096}
+      output_tokens: {dist: lognormal, median: 200, sigma: 0.6, max: 1024}
+      shared_prefix: {groups: 4, tokens: 256}
+run: {seed: 1, duration_s: 60, warmup_s: 10, slo_ttft_p95_s: 1.0}

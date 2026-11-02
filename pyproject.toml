@@ -107,6 +107,8 @@ dev = [
   "pytest-httpserver>=1.0",
   "PyJWT[crypto]>=2.8",
   "respx>=0.21",
+  # Property-based tests for the simulator's KV block manager (src/tests/simulator).
+  "hypothesis>=6.100",
 ]
 
 [tool.setuptools]
@@ -135,6 +137,8 @@ orchestration = [
   # only in the source tree is not there at runtime.
   "recipes/*.yaml",
 ]
+# inferia-sim: GPU/model catalog and bundled scenario files.
+simulator = ["catalog/*.yaml", "scenarios/*.yaml"]
 
 [tool.setuptools.exclude-package-data]
 "*" = [
@@ -149,6 +153,7 @@ orchestration = [
 # -------------------------
 [project.scripts]
 inferiallm = "cli:main"
+inferia-sim = "simulator.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["src/tests"]

@@ -1,0 +1,40 @@
+# Model catalog for inferia-sim.
+#
+# Architecture fields are copied from each model's Hugging Face config.json.
+# Parameter counts are NOT copied: hardware.py derives them from the
+# architecture (embeddings + attention + MLP + norms + LM head), and a test
+# checks them against the published sizes.
+#
+# The meta-llama repos are gated, so the configs were read from unsloth's
+# ungated mirrors, whose config.json matches the upstream architecture.
+
+models:
+  llama-3.1-8b:
+    hf_id: meta-llama/Llama-3.1-8B-Instruct
+    num_layers: 32
+    hidden_size: 4096
+    intermediate_size: 14336
+    num_attention_heads: 32
+    num_kv_heads: 8
+    head_dim: 128
+    vocab_size: 128256
+    tie_word_embeddings: false
+    max_position_embeddings: 131072
+    dtype: bf16
+    source: https://huggingface.co/unsloth/Meta-Llama-3.1-8B-Instruct/raw/main/config.json
+    retrieved: "2026-10-31"
+
+  llama-3.1-70b:
+    hf_id: meta-llama/Llama-3.1-70B-Instruct
+    num_layers: 80
+    hidden_size: 8192
+    intermediate_size: 28672
+    num_attention_heads: 64
+    num_kv_heads: 8
+    head_dim: 128  # not in config.json; = hidden_size / num_attention_heads
+    vocab_size: 128256
+    tie_word_embeddings: false
+    max_position_embeddings: 131072
+    dtype: bf16
+    source: https://huggingface.co/unsloth/Meta-Llama-3.1-70B-Instruct/raw/main/config.json
+    retrieved: "2026-10-31"
