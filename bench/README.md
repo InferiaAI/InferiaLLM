@@ -56,3 +56,15 @@ bash bench/lease/run_lease.sh --execute \
 version, GPU model, driver and HBM. `benchmark.log` contains the tool output.
 Use the same workload matrix in the simulator calibration report; do not turn a
 dry run or a simulator result into a hardware claim.
+
+After replaying the lease workload in `inferia-sim`, compare summaries:
+
+```bash
+python bench/lease/compare_calibration.py \
+  --measured bench/results/<lease>/summary.json \
+  --simulated bench/results/<replay>/summary.json \
+  --out bench/results/<lease>/calibration-error.json
+```
+
+The comparator refuses mislabelled inputs and reports per-metric error plus
+MAPE against the 15% calibration target.
