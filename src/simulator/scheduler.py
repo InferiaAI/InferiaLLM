@@ -254,6 +254,8 @@ class Replica:
         tokens: list[tuple[Request, Optional[float]]] = []
         finished: list[Request] = []
         for req, n, _ in step.items:
+            if req.status == "failed":
+                continue
             req.num_computed += n
             self.kv.commit(req.rid, req.num_computed)
             if req.num_computed < req.num_tokens:

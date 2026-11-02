@@ -75,3 +75,15 @@ simulated KV transfer (latency plus configured bandwidth) before decoding.
 pytest -q src/tests/simulator/test_t3.py -k disaggregation
 1 passed, 20 deselected
 ```
+
+## T3 failures and retries (2026-11-02)
+
+Replica/node/zone failure events now remove impacted work. Requests that have
+emitted a token fail as mid-stream loss; waiting work retries subject to the
+configured retry budget, attempt cap, and backoff. These are simulated
+resilience outcomes, not production reliability measurements.
+
+```text
+pytest -q src/tests/simulator/test_t3.py -k 'failure_retries or retry_budget'
+2 passed, 19 deselected
+```

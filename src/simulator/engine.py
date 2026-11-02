@@ -26,8 +26,9 @@ from simulator.workload import Request, WorkloadGenerator
 # completion at time t is processed before an idle replica's kick at t, so
 # requests arriving at the same instant join the same first step.
 _ARRIVAL = 0
-_STEP_DONE = 1
-_KICK = 2
+_FAILURE = 1
+_STEP_DONE = 2
+_KICK = 3
 
 
 @dataclass
@@ -61,6 +62,7 @@ class SimResult:
     in_system_integral_window: float
     invariant_checks: int
     autoscaler_scaleups: int = 0
+    failure_retries: int = 0
 
 
 class Simulation:
@@ -152,6 +154,8 @@ class Simulation:
         live: dict[int, Request] = {}
         itl = LogHistogram()
         steps: dict[int, Step] = {}
+        down: set[int] = set()
+        retry_count = 0
         heap: list = []
         seq = itertools.count()
         checks = 0
@@ -213,6 +217,9 @@ class Simulation:
         integral_window = 0.0
         now = 0.0
         push_next_arrival()
+        if s.failures.enabled:
+            for event in s.failures.events:
+                heapq.heappush(heap, (event.at_s, _FAILURE, next(seq), event))
         while heap:
             t = heap[0][0]
             if t > horizon:
@@ -232,8 +239,9 @@ class Simulation:
                     scaleups += after - before
                 outcome = replica.admit(req)
                 if outcome is None:
-                    live[req.rid] = req
-                    n_in_system += 1
+                    if req.rid not in live:
+                        live[req.rid] = req
+                        n_in_system += 1
                     if not replica.busy:
                         replica.busy = True  # a step is pending; no second kick
                         heapq.heappush(heap, (now, _KICK, next(seq), replica.index))
@@ -242,6 +250,39 @@ class Simulation:
                     req.reason = reason or None
                     req.finish = now
                     records.append(req)
+            elif kind == _FAILURE:
+                event = obj
+                affected = []
+                for replica in self.replicas:
+                    if event.scope == "replica" and replica.index == event.target:
+                        affected.append(replica)
+                    elif event.scope == "node" and replica.node == event.target:
+                        affected.append(replica)
+                    elif event.scope == "zone" and s.pool(replica.dep.pool).zone == event.target:
+                        affected.append(replica)
+                for replica in affected:
+                    down.add(replica.index)
+                    self._available_at[replica.index] = float("inf")
+                    impacted = list(replica.running) + [r for _, r in replica.waiting] + [r for _, r in replica.swapped]
+                    replica.running.clear(); replica.waiting.clear(); replica.swapped.clear()
+                    for req in impacted:
+                        replica.kv.remove(req.rid)
+                        if req.first_token is not None:
+                            req.status, req.reason, req.finish = "failed", "node_lost_mid_stream", now
+                            if req.rid in live:
+                                del live[req.rid]; n_in_system -= 1
+                            records.append(req)
+                        else:
+                            budget = max(1, int((len(live) + len(records)) * s.failures.retry_budget_fraction))
+                            if req.retries < s.failures.retry_max_attempts and retry_count < budget:
+                                req.retries += 1; retry_count += 1
+                                req.arrival = now + s.failures.retry_backoff_s
+                                heapq.heappush(heap, (req.arrival, _ARRIVAL, next(seq), req))
+                            else:
+                                req.status, req.reason, req.finish = "failed", "retry_budget_exceeded", now
+                                if req.rid in live:
+                                    del live[req.rid]; n_in_system -= 1
+                                records.append(req)
             elif kind == _KICK:
                 start_step(obj, now)
             else:
@@ -285,4 +326,5 @@ class Simulation:
             in_system_integral_window=integral_window,
             invariant_checks=checks,
             autoscaler_scaleups=max(scaleups, sum(1 for at in self._available_at.values() if 0 < at <= end_time)),
+            failure_retries=retry_count,
         )

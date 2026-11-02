@@ -228,6 +228,7 @@ def summarize(result: SimResult, scenario: Scenario, config_hash: str, command: 
             "metric": scenario.autoscaler.metric,
             "target": scenario.autoscaler.target,
         },
+        "failures": {"enabled": scenario.failures.enabled, "retries": result.failure_retries},
         "littles_law": {
             "full_horizon": {
                 "L": result.in_system_integral_full / end,
