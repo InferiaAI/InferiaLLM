@@ -26,6 +26,8 @@ performance number is explicitly classified as **MEASURED**, **SIMULATED**, or
   GPU-lease rehearsal.
 - [Operations runbook](ops.md) — backup/restore, usage-stream recovery and
   GPU-lease handoff.
+- [Implementation status](implementation-status.md) — verified CPU work,
+  partial areas and hardware-gated evidence.
 
 ## Capacity and calibration
 
