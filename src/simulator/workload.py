@@ -49,6 +49,7 @@ class Request:
     session_id: Optional[str] = None
     turn_index: int = 0
     retries: int = 0
+    kv_transferred: bool = False
     prompt_len: int = field(init=False)
     priority: int = field(init=False)
 

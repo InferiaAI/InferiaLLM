@@ -65,3 +65,13 @@ end-to-end SVG plots, each visibly watermarked `SIMULATED`.
 pytest -q src/tests/simulator/test_t3.py -k write_outputs
 1 passed, 20 deselected
 ```
+
+## T3 prefill/decode transfer timing (2026-11-02)
+
+The disaggregation model now retains prefill TTFT and adds one explicitly
+simulated KV transfer (latency plus configured bandwidth) before decoding.
+
+```text
+pytest -q src/tests/simulator/test_t3.py -k disaggregation
+1 passed, 20 deselected
+```

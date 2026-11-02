@@ -216,6 +216,16 @@ class Replica:
         duration = cost.total_s + self.perf.transfer_time(swap_bytes)
         if offload_bytes and self.dep.offload is not None:
             duration += offload_bytes / (self.dep.offload.bandwidth_gbps * 1e9)
+        if self.dep.disaggregation is not None:
+            transfer = self.dep.disaggregation
+            for req, n, _ in items:
+                # The prompt step emits token one (and establishes TTFT) on
+                # the prefill side. Before its first decode iteration, move
+                # prompt KV once to the decode side.
+                if req.generated == 1 and n == 1 and not req.kv_transferred:
+                    duration += transfer.transfer_latency_s
+                    duration += req.prompt_len * (self.block_bytes / self.dep.block_size) / (transfer.transfer_bandwidth_gbps * 1e9)
+                    req.kv_transferred = True
         self.steps += 1
         return Step(now, duration, items, cost)
 
