@@ -15,7 +15,7 @@ GROUP = "api-gateway-usage"
 CONSUMER = "gateway-1"
 
 
-async def run_usage_worker(stop: asyncio.Event) -> None:
+async def _run_usage_worker_once(stop: asyncio.Event) -> None:
     """Consume, persist, then ACK batches; unacked entries are redeliverable."""
     client = get_redis_client()
     try:
@@ -65,4 +65,21 @@ async def run_usage_worker(stop: asyncio.Event) -> None:
     except asyncio.CancelledError:
         raise
     except Exception:
-        logger.exception("Usage stream worker stopped after an unexpected error")
+        # The supervisor reconnects. In particular, a Redis restart must not
+        # permanently disable usage persistence in a long-lived gateway pod.
+        raise
+
+
+async def run_usage_worker(stop: asyncio.Event) -> None:
+    """Keep consuming across transient Redis/database failures."""
+    while not stop.is_set():
+        try:
+            await _run_usage_worker_once(stop)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Usage stream worker failed; retrying in one second")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=1)
+            except asyncio.TimeoutError:
+                pass
