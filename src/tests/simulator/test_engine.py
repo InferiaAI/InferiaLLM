@@ -34,6 +34,8 @@ def scenario(**overrides):
             d.setdefault(key, {}).update(value)
         elif key == "rate":
             d["workload"]["arrival"]["rate_rps"] = value
+        elif key == "pool":
+            d["cluster"]["pools"][0].update(value)
         else:
             d[key] = value
     return parse_scenario(yaml.safe_dump(d).encode())
@@ -104,6 +106,22 @@ def test_different_seed_changes_the_run():
     _, b = run(scenario(), seed=2)
     assert a["totals"]["requests"] != b["totals"]["requests"] or a["latency"] != b["latency"]
     assert b["manifest"]["seed"] == 2
+
+
+def test_queue_autoscaler_activates_warm_replica():
+    s = scenario(
+        deployment={"replicas": 2},
+        pool={"nodes": 2},
+        rate=80,
+        autoscaler={"enabled": True, "target": 1, "interval_s": 0.1,
+                    "min_replicas": 1, "max_replicas": 2, "warm_pool": 0,
+                    "warm_start_s": 0.01, "cold_start_s": 10},
+        run={"duration_s": 2, "warmup_s": 0},
+    )
+    sim = Simulation(s)
+    assert sim._active == {0}
+    sim.run()
+    assert sim._active == {0, 1}
 
 
 def test_littles_law_exact_over_a_drained_horizon_and_close_at_steady_state():

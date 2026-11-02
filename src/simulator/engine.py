@@ -28,6 +28,8 @@ from simulator.workload import Request, WorkloadGenerator
 _ARRIVAL = 0
 _STEP_DONE = 1
 _KICK = 2
+_AUTOSCALE = 3
+_SCALE_READY = 4
 
 
 @dataclass
@@ -77,11 +79,17 @@ class Simulation:
         self.replicas: list[Replica] = []
         self._by_deployment: dict[str, list[Replica]] = {}
         self._session_replicas: dict[tuple[str, str], Replica] = {}
+        self._active: set[int] = set()
+        self._pending_scale: set[int] = set()
         self._place_replicas()
+        if not self._active:
+            self._active = {r.index for r in self.replicas}
 
     def _route(self, req: Request, rr: dict[str, int], rng: random.Random) -> Replica:
         """Choose a deployment-local replica according to the configured policy."""
-        group = self._by_deployment[req.deployment]
+        group = [r for r in self._by_deployment[req.deployment] if r.index in self._active]
+        if not group:
+            raise RuntimeError(f"no active replicas for deployment {req.deployment}")
         policy = self.scenario.router.policy
         if policy in ("round_robin", "class_to_pool"):
             replica = group[rr[req.deployment] % len(group)]
@@ -120,11 +128,19 @@ class Simulation:
 
     def _place_replicas(self) -> None:
         s = self.scenario
-        for dep, node in place_replicas(s):
+        for dep, node in place_replicas(s, max_for_autoscale=s.autoscaler.enabled):
             gpu = get_gpu(s.pool(dep.pool).gpu)
             r = Replica(len(self.replicas), dep, get_model(dep.model), gpu, s.hardware.perf, s.admission, node)
             self.replicas.append(r)
             self._by_deployment.setdefault(dep.name, []).append(r)
+
+        if s.autoscaler.enabled:
+            keep = s.autoscaler.min_replicas + s.autoscaler.warm_pool
+            self._active = {
+                replica.index
+                for group in self._by_deployment.values()
+                for replica in group[:keep]
+            }
 
     def run(self) -> SimResult:
         s = self.scenario
@@ -199,6 +215,8 @@ class Simulation:
         integral_window = 0.0
         now = 0.0
         push_next_arrival()
+        if s.autoscaler.enabled:
+            heapq.heappush(heap, (0.0, _AUTOSCALE, next(seq), None))
         while heap:
             t = heap[0][0]
             if t > horizon:
@@ -225,6 +243,22 @@ class Simulation:
                     records.append(req)
             elif kind == _KICK:
                 start_step(obj, now)
+            elif kind == _AUTOSCALE:
+                active = [r for r in self.replicas if r.index in self._active]
+                queued = sum(len(r.waiting) + len(r.running) for r in active)
+                cfg = s.autoscaler
+                limit = cfg.max_replicas or len(self.replicas)
+                if queued > cfg.target and len(active) + len(self._pending_scale) < limit:
+                    candidate = next((r for r in self.replicas if r.index not in self._active and r.index not in self._pending_scale), None)
+                    if candidate is not None:
+                        self._pending_scale.add(candidate.index)
+                        delay = cfg.warm_start_s if len(active) < cfg.min_replicas + cfg.warm_pool else cfg.cold_start_s
+                        heapq.heappush(heap, (now + delay, _SCALE_READY, next(seq), candidate.index))
+                if now + cfg.interval_s <= horizon:
+                    heapq.heappush(heap, (now + cfg.interval_s, _AUTOSCALE, next(seq), None))
+            elif kind == _SCALE_READY:
+                self._pending_scale.discard(obj)
+                self._active.add(obj)
             else:
                 i: int = obj
                 replica = self.replicas[i]
