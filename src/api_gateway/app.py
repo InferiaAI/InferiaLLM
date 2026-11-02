@@ -9,6 +9,7 @@ This is the main entry point for the API Gateway that includes:
 """
 
 from fastapi import FastAPI
+import asyncio
 from contextlib import asynccontextmanager
 
 from common.exception_handlers import register_exception_handlers
@@ -112,16 +113,27 @@ async def lifespan(app: FastAPI):
     # Declare catalog to InferiaAuth (best-effort, never raises)
     await _maybe_declare_catalog()
 
+    from api_gateway.gateway.usage_stream_worker import run_usage_worker
+    usage_stop = asyncio.Event()
+    usage_task = asyncio.create_task(run_usage_worker(usage_stop), name="usage-stream-worker")
     yield
     # Shutdown
     logger.info(f"Shutting down {settings.app_name}")
     config_manager.stop_polling()
+    usage_stop.set()
+    usage_task.cancel()
+    try:
+        await usage_task
+    except asyncio.CancelledError:
+        pass
 
     from api_gateway.gateway.http_client import gateway_http_client
     from api_gateway.gateway.rate_limiter import rate_limiter
 
     await gateway_http_client.close_all()
     await rate_limiter.close()
+    from api_gateway.gateway.redis_pool import close_redis_pool
+    await close_redis_pool()
 
     if settings.is_external_mode:
         from api_gateway.rbac.external_auth import close_client

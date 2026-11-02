@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from inference.client import api_gateway_client
 from inference.core import metrics
+from inference.core.usage_events import publish_usage_event
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,10 @@ class RequestLogger:
             input_count, n_items,
         )
 
-        # Log + track in parallel
+        # Log + track in parallel. Redis Streams decouples usage persistence
+        # from request completion; the HTTP call remains a compatibility
+        # fallback only when Redis is unavailable.
+        published = await publish_usage_event(user_id, model, usage)
         await asyncio.gather(
             api_gateway_client.log_inference(
                 deployment_id=deployment_id,
@@ -108,7 +112,7 @@ class RequestLogger:
                 request_type=request_type,
                 input_count=input_count or n_items,
             ),
-            api_gateway_client.track_usage(user_id, model, usage),
+            asyncio.sleep(0) if published else api_gateway_client.track_usage(user_id, model, usage),
         )
 
     @staticmethod
