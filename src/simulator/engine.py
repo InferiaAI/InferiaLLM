@@ -30,6 +30,9 @@ _STEP_DONE = 1
 _KICK = 2
 _AUTOSCALE = 3
 _SCALE_READY = 4
+_RETRY = 5
+_FAILURE = 6
+_RECOVER = 7
 
 
 @dataclass
@@ -81,13 +84,17 @@ class Simulation:
         self._session_replicas: dict[tuple[str, str], Replica] = {}
         self._active: set[int] = set()
         self._pending_scale: set[int] = set()
+        self._failed: set[int] = set()
         self._place_replicas()
         if not self._active:
             self._active = {r.index for r in self.replicas}
 
     def _route(self, req: Request, rr: dict[str, int], rng: random.Random) -> Replica:
         """Choose a deployment-local replica according to the configured policy."""
-        group = [r for r in self._by_deployment[req.deployment] if r.index in self._active]
+        group = [
+            r for r in self._by_deployment[req.deployment]
+            if r.index in self._active and r.index not in self._failed
+        ]
         if not group:
             raise RuntimeError(f"no active replicas for deployment {req.deployment}")
         policy = self.scenario.router.policy
@@ -159,6 +166,7 @@ class Simulation:
         checks = 0
 
         source = iter(self._requests if self._requests is not None else WorkloadGenerator(s, self.seed))
+        retries_used = 0
 
         last_arrival = [0.0]
 
@@ -209,6 +217,34 @@ class Simulation:
             steps[i] = step
             heapq.heappush(heap, (end, _STEP_DONE, next(seq), i))
 
+        def admit(req: Request) -> None:
+            """Route and admit an initial arrival or a pre-first-token retry."""
+            replica = self._route(req, rr, router_rng)
+            outcome = replica.admit(req)
+            if outcome is None:
+                if not replica.busy:
+                    replica.busy = True
+                    heapq.heappush(heap, (now, _KICK, next(seq), replica.index))
+                return
+            req.status, _, reason = outcome.partition(":")
+            req.reason = reason or None
+            req.finish = now
+            records.append(req)
+
+        def failure_targets(event) -> list[int]:
+            if event.scope == "replica":
+                return [event.target]
+            if event.scope == "node":
+                return [r.index for r in self.replicas if r.node == event.target]
+            if event.scope == "zone":
+                return [
+                    r.index for r in self.replicas
+                    if s.pool(r.dep.pool).zone == event.target
+                ]
+            available = [r.index for r in self.replicas if r.index not in self._failed]
+            count = max(1, round(len(available) * event.fraction))
+            return available[:count]
+
         n_in_system = 0
         last_t = 0.0
         integral_full = 0.0
@@ -217,6 +253,9 @@ class Simulation:
         push_next_arrival()
         if s.autoscaler.enabled:
             heapq.heappush(heap, (0.0, _AUTOSCALE, next(seq), None))
+        if s.failures.enabled:
+            for event in s.failures.events:
+                heapq.heappush(heap, (event.at_s, _FAILURE, next(seq), event))
         while heap:
             t = heap[0][0]
             if t > horizon:
@@ -228,21 +267,15 @@ class Simulation:
             if kind == _ARRIVAL:
                 req: Request = obj
                 push_next_arrival()
-                replica = self._route(req, rr, router_rng)
-                outcome = replica.admit(req)
-                if outcome is None:
-                    live[req.rid] = req
-                    n_in_system += 1
-                    if not replica.busy:
-                        replica.busy = True  # a step is pending; no second kick
-                        heapq.heappush(heap, (now, _KICK, next(seq), replica.index))
-                else:
-                    req.status, _, reason = outcome.partition(":")
-                    req.reason = reason or None
-                    req.finish = now
-                    records.append(req)
+                live[req.rid] = req
+                n_in_system += 1
+                admit(req)
+                if req.status in ("failed", "shed"):
+                    del live[req.rid]
+                    n_in_system -= 1
             elif kind == _KICK:
-                start_step(obj, now)
+                if obj not in self._failed:
+                    start_step(obj, now)
             elif kind == _AUTOSCALE:
                 active = [r for r in self.replicas if r.index in self._active]
                 queued = sum(len(r.waiting) + len(r.running) for r in active)
@@ -258,9 +291,57 @@ class Simulation:
                     heapq.heappush(heap, (now + cfg.interval_s, _AUTOSCALE, next(seq), None))
             elif kind == _SCALE_READY:
                 self._pending_scale.discard(obj)
-                self._active.add(obj)
+                if obj not in self._failed:
+                    self._active.add(obj)
+            elif kind == _FAILURE:
+                targets = failure_targets(obj)
+                for i in targets:
+                    if i in self._failed:
+                        continue
+                    self._failed.add(i)
+                    self._pending_scale.discard(i)
+                    replica = self.replicas[i]
+                    steps.pop(i, None)  # a stale step-done event becomes a no-op
+                    for req in replica.fail_all():
+                        can_retry = (
+                            req.first_token is None
+                            and req.retries < s.failures.retry_max_attempts
+                            and retries_used < max(1, round((len(live) + len(records)) * s.failures.retry_budget_fraction))
+                        )
+                        if can_retry:
+                            retries_used += 1
+                            req.retries += 1
+                            req.status = "pending"
+                            req.reason = None
+                            req.num_computed = req.generated = 0
+                            req.first_scheduled = req.first_token = req.last_token = None
+                            heapq.heappush(heap, (now + s.failures.retry_backoff_s, _RETRY, next(seq), req))
+                        else:
+                            req.status = "failed"
+                            req.reason = "replica_failure"
+                            req.finish = now
+                            live.pop(req.rid, None)
+                            n_in_system -= 1
+                            records.append(req)
+                if obj.recover_after_s is not None:
+                    heapq.heappush(heap, (now + obj.recover_after_s, _RECOVER, next(seq), targets))
+            elif kind == _RECOVER:
+                self._failed.difference_update(obj)
+            elif kind == _RETRY:
+                if req := live.get(obj.rid):
+                    try:
+                        admit(req)
+                    except RuntimeError:
+                        req.status = "failed"
+                        req.reason = "no_healthy_replica"
+                        req.finish = now
+                        live.pop(req.rid, None)
+                        n_in_system -= 1
+                        records.append(req)
             else:
                 i: int = obj
+                if i in self._failed or i not in steps:
+                    continue
                 replica = self.replicas[i]
                 tokens, finished = replica.finish_step(steps.pop(i), now)
                 in_win = w0 <= now <= w1

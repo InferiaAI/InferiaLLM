@@ -7,10 +7,10 @@ results. Every output is labelled **SIMULATED**
 measurements, and until calibration (T5) the performance model uses
 **uncalibrated** efficiency placeholders.
 
-Status: T1–T2 of Session 2's plan, covering one or more replicas per
-deployment with static class→deployment routing. Users and sessions,
-routers, the autoscaler, failures, disaggregation and offload tiers come in
-T3; each will be accepted by the config schema only once it is implemented.
+Status: the CPU-verifiable scheduler, workload, routing, queue-depth
+autoscaling and failure/retry slices are implemented. The remaining simulator
+work is P/D disaggregation, explicit offload-tier economics, additional
+autoscaler signals/scale-in, and Parquet/plot artifacts.
 
 ## Run it
 
@@ -41,8 +41,9 @@ options are rejected. Top-level keys:
 | `cluster.pools[]` | `name`, `gpu` (catalog name), `gpus_per_node`, `nodes` |
 | `models[]` | Catalog model names used by deployments |
 | `deployment[]` | `name`, `model`, `pool`, `tensor_parallel`, `replicas`, `max_num_seqs`, `max_num_batched_tokens`, `max_model_len`, `block_size` (16), `gpu_memory_utilization` (0.92), `enable_chunked_prefill`, `enable_prefix_caching`, `allocator` (`paged` \| `contiguous`), `contiguous_reserve` (`max_model_len` \| `request`), `preemption` (`recompute` \| `swap`), `swap_space_gb` per GPU |
-| `router.policy` | `round_robin` only (more in T3) |
-| `autoscaler`, `failures` | `enabled: false` only (T3) |
+| `router.policy` | `round_robin`, `random`, `least_outstanding`, `kv_aware`, `session_affinity`, or `class_to_pool` |
+| `autoscaler` | Queue-depth scale-out with a min replica count, warm pool and cold/warm start delays. `kv_utilization` and `ttft_p95` are reserved for a later slice. |
+| `failures` | Timed replica, node, zone or fraction outages; optional recovery; retries only before first token, bounded by attempts and retry budget. |
 | `admission` | `max_waiting_per_replica` (shed beyond it), `retry_after_s` |
 | `workload.arrival` | `process: poisson`, `rate_rps` |
 | `workload.classes[]` | `class` (interfaces §3), `weight`, `deployment` (required when there are several), `input_tokens` / `output_tokens` (`{dist: fixed, value}` or `{dist: lognormal, median, sigma, min, max}`), optional `shared_prefix: {groups, tokens}` placed before the input tokens |
@@ -86,8 +87,10 @@ or swap with recompute fallback). Admission rejects prompt + output >
 fixed overhead; formulas in the module docstring.
 
 **Engine** (`engine.py`): `heapq` events ordered by (time, kind, sequence),
-one per forward pass plus one per arrival; requests arriving at the same
-instant join the same step.
+one per forward pass plus arrivals, scaling and outage/recovery events;
+requests arriving at the same instant join the same step. A hard outage
+cleans the failed replica's KV state. Only requests that have not emitted a
+token can retry, so the model never silently duplicates streamed output.
 
 ## Outputs
 
@@ -120,7 +123,7 @@ contiguous allocation, chunked/non-chunked prefill and admission.
 - Embedding lookup counted as a matmul; no CUDA-graph or kernel effects; no sampling cost.
 - vLLM V1 preempts only by recompute; `swap` models V0-style swapping.
 - Block keys are 64-bit hashes (collision probability ~1e-4 at 6e7 distinct blocks).
-- Not yet: sessions/multi-turn, bursts/diurnal arrivals, routing policies,
-  autoscaling, failures, P/D disaggregation, offload tiers, Parquet/plots (T3).
+- Not yet: P/D disaggregation, explicit CPU/NVMe offload-tier economics,
+  KV-utilization/TTFT autoscaling and scale-in, Parquet/plots (T3).
 - Speed: ~600 simulated requests/s of wall time on the 8xH100 scenario; the
   1M-requests-in-5-minutes budget (T8) needs profiling work.

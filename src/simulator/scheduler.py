@@ -123,6 +123,24 @@ class Replica:
     def has_work(self) -> bool:
         return bool(self.running or self.waiting or self.swapped)
 
+    def fail_all(self) -> list[Request]:
+        """Discard every request assigned to this replica after a hard failure.
+
+        The engine decides whether each request can be retried.  Keeping this
+        operation in the scheduler guarantees both allocator implementations
+        release their state before a retry is admitted elsewhere.
+        """
+        requests = list(self.running)
+        requests.extend(req for _, req in self.waiting)
+        requests.extend(req for _, req in self.swapped)
+        self.running.clear()
+        self.waiting.clear()
+        self.swapped.clear()
+        self.busy = False
+        for req in requests:
+            self.kv.remove(req.rid)
+        return requests
+
     # -- one iteration -----------------------------------------------------------------
 
     def schedule(self, now: float) -> Optional[Step]:

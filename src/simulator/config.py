@@ -173,7 +173,9 @@ class FailureEvent(_Strict):
 class FailuresConfig(_Strict):
     enabled: bool = False
     retry_max_attempts: int = Field(1, ge=0)
-    retry_budget_fraction: float = Field(0.10, ge=0, le=100.0)
+    # Fraction of requests admitted at the time of a failure that may be retried.
+    # This keeps retry storms from hiding an outage in the simulated workload.
+    retry_budget_fraction: float = Field(0.10, ge=0, le=1.0)
     retry_backoff_s: float = Field(0.05, ge=0)
     events: list[FailureEvent] = Field(default_factory=list)
 
@@ -369,6 +371,22 @@ class Scenario(_Strict):
             if n > cap:
                 raise ValueError(f"pool {name}: deployments need {n} GPUs, pool has {cap}")
         place_replicas(self)  # mixed TP sizes can still fail to pack without spanning nodes
+        if self.failures.enabled:
+            replica_count = len(place_replicas(self))
+            nodes = {node for _, node in place_replicas(self)}
+            zones = {p.zone for p in self.cluster.pools}
+            for event in self.failures.events:
+                if event.scope == "replica":
+                    if not isinstance(event.target, int) or not 0 <= event.target < replica_count:
+                        raise ValueError("replica failure target must be a valid replica index")
+                elif event.scope == "node":
+                    if not isinstance(event.target, str) or event.target not in nodes:
+                        raise ValueError("node failure target must name a placed node")
+                elif event.scope == "zone":
+                    if not isinstance(event.target, str) or event.target not in zones:
+                        raise ValueError("zone failure target must name a configured zone")
+                elif event.fraction is None:
+                    raise ValueError("fraction failure needs fraction")
         for c in self.workload.classes:
             mapped = self.router.class_pools.get(c.workload_class.value) if self.router.policy == "class_to_pool" else None
             dep_name = c.deployment or mapped

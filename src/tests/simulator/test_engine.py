@@ -124,6 +124,46 @@ def test_queue_autoscaler_activates_warm_replica():
     assert sim._active == {0, 1}
 
 
+def test_replica_failure_retries_only_a_request_without_a_first_token():
+    s = scenario(
+        deployment={"replicas": 2}, pool={"nodes": 2},
+        failures={"enabled": True, "retry_max_attempts": 1, "retry_budget_fraction": 1,
+                  "retry_backoff_s": 0.01,
+                  "events": [{"at_s": 0.001, "scope": "replica", "target": 0}]},
+    )
+    req = Request(rid=1, arrival=0.0, workload_class=WorkloadClass.INTERACTIVE_CHAT,
+                  prompt_segments=[(2, 2000)], output_len=2, deployment="chat-8b")
+    result, summ = run(s, requests=[req])
+    rec = result.records[0]
+    assert rec.status == "completed"
+    assert rec.retries == 1
+    assert rec.replica == 1
+    assert summ["totals"]["completed"] == 1
+
+
+def test_failure_after_first_token_is_not_retried_and_recovery_restores_replica():
+    s = scenario(
+        failures={"enabled": True, "retry_max_attempts": 1, "retry_budget_fraction": 1,
+                  "events": [{"at_s": 0.02, "scope": "replica", "target": 0,
+                              "recover_after_s": 0.01}]},
+    )
+    req = Request(rid=1, arrival=0.0, workload_class=WorkloadClass.INTERACTIVE_CHAT,
+                  prompt_segments=[(2, 10)], output_len=100, deployment="chat-8b")
+    sim = Simulation(s, requests=[req])
+    result = sim.run()
+    assert result.records[0].status == "failed"
+    assert result.records[0].reason == "replica_failure"
+    assert result.records[0].retries == 0
+    assert sim._failed == set()
+
+
+def test_node_and_zone_failure_targets_are_validated():
+    with pytest.raises(ValueError, match="node failure target"):
+        scenario(failures={"enabled": True, "events": [{"at_s": 1, "scope": "node", "target": "gone"}]})
+    with pytest.raises(ValueError, match="fraction failure"):
+        scenario(failures={"enabled": True, "events": [{"at_s": 1, "scope": "fraction"}]})
+
+
 def test_littles_law_exact_over_a_drained_horizon_and_close_at_steady_state():
     _, summ = run(scenario(rate=8, run={"duration_s": 400, "warmup_s": 100}))
     full = summ["littles_law"]["full_horizon"]
