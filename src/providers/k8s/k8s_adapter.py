@@ -1,5 +1,6 @@
 from kubernetes import client, config
 from orchestration import recipes
+from orchestration.models.model_deployment.vllm_settings import settings_for_dispatch
 from orchestration.provisioning.engine.base import (
     ProviderAdapter,
     AdapterType,
@@ -60,6 +61,15 @@ _SCALE_DOWN_STABILISATION_SECONDS = 30
 _DEFAULT_KEEP_ALIVE = "-1"
 
 
+# Real `vllm serve` flags (checked against v0.22.1): an unknown one stops it starting.
+_VLLM_VALUE_FLAGS = (
+    "tensor_parallel_size", "pipeline_parallel_size",
+    "dtype", "max_model_len", "max_num_seqs", "gpu_memory_utilization",
+    "quantization", "kv_cache_dtype",
+)
+_VLLM_SWITCH_FLAGS = ("enforce_eager", "trust_remote_code")
+
+
 def _ollama_startup(model_id: str, keep_alive: str):
     """Command, args, env and readiness probe for an Ollama container.
 
@@ -82,7 +92,7 @@ def _ollama_startup(model_id: str, keep_alive: str):
     return ["/bin/sh", "-c"], [script], env
 
 
-def _vllm_args(model_id: str, port: int, max_model_len=None):
+def _vllm_args(model_id: str, port: int, settings: Optional[Dict] = None):
     """Args only: the image's entrypoint is already `vllm serve`."""
     args = [
         model_id,
@@ -90,8 +100,13 @@ def _vllm_args(model_id: str, port: int, max_model_len=None):
         "--host", "0.0.0.0",
         "--port", str(port),
     ]
-    if max_model_len:
-        args += ["--max-model-len", str(max_model_len)]
+    settings = settings or {}
+    for key in _VLLM_VALUE_FLAGS:
+        if settings.get(key) is not None:
+            args += ["--" + key.replace("_", "-"), str(settings[key])]
+    for key in _VLLM_SWITCH_FLAGS:
+        if settings.get(key) is True:
+            args.append("--" + key.replace("_", "-"))
     return args
 
 
@@ -501,7 +516,9 @@ class KubernetesAdapter(ProviderAdapter):
             command, args, extra = _ollama_startup(_model, keep_alive)
             env_values.update({e.name: e.value for e in extra})
         elif _engine == "vllm" and _model and args is None and command is None:
-            args = _vllm_args(_model, port, (metadata or {}).get("max_model_len"))
+            args = _vllm_args(_model, port, await settings_for_dispatch(
+                metadata, _model, ((metadata or {}).get("env") or {}).get("HF_TOKEN"),
+            ))
         elif (args is not None or command is not None) and not _custom_commands_allowed():
             # Ollama's own start-up replaces whatever the dashboard sent.
             raise ValueError(

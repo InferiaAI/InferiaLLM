@@ -134,3 +134,25 @@ describe("calculatePoolCompatibilityWithFit", () => {
     expect(queried.some(u => !u.includes("/health"))).toBe(false);
   });
 });
+
+describe("the weight estimate follows the engine (#431)", () => {
+  const big = () => pool({ gpu_specs: [{ gpu_type: "A10G", vram: 64 }] });
+  const seven = { ...HF_CONFIG_14B, num_hidden_layers: 28 };
+  // vLLM loads the checkpoint's own type: 7B parameters at 16 bits, not 4-bit GGUF.
+  const required = (quantization: string, dtype: string, engine?: string) =>
+    calculatePoolCompatibility("Qwen/Qwen2.5-7B-Instruct", big(), seven, quantization, dtype, undefined, engine)!.requiredVram;
+
+  it("prices an unquantized vLLM model at its real size", () => {
+    expect(required("", "auto", "vllm")).toBeGreaterThan(14);
+  });
+
+  it("gives quantized vLLM weights a smaller size", () => {
+    expect(required("fp8", "auto", "vllm")).toBeLessThan(required("", "auto", "vllm"));
+    expect(required("awq", "auto", "vllm")).toBeLessThan(required("fp8", "auto", "vllm"));
+  });
+
+  it("keeps Ollama at its 4-bit builds, whatever the vLLM fields say", () => {
+    expect(required("", "auto", "ollama")).toBeLessThan(required("", "auto", "vllm") / 2);
+    expect(required("fp8", "bfloat16", "ollama")).toBe(required("", "auto", "ollama"));
+  });
+});

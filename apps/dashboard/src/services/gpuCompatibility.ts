@@ -75,6 +75,10 @@ export const MODEL_PROFILES: Record<string, ModelProfile> = {
  * Weights per quantization level (BPW / 8)
  */
 export const QUANTIZATION_WEIGHTS: Record<string, number> = {
+    "auto": 2.0, // vLLM loads the checkpoint's own type, nearly always 16-bit
+    "fp8": 1.0,
+    "awq": 0.58,
+    "gptq": 0.58,
     "float16": 2.0,
     "bfloat16": 2.0,
     "float32": 4.0,
@@ -88,6 +92,7 @@ export const QUANTIZATION_WEIGHTS: Record<string, number> = {
 };
 
 const QUANTIZATION_THROUGHPUT_EFFICIENCY: Record<string, number> = {
+    "auto": 0.22,
     "float32": 0.14,
     "float16": 0.22,
     "bfloat16": 0.22,

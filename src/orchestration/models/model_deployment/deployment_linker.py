@@ -39,6 +39,10 @@ from orchestration.models.model_deployment.mirror_decision import (
     resolve_and_apply_mirror,
 )
 from orchestration.models.model_cache import deps as _mc_deps
+from orchestration.models.model_deployment.vllm_settings import (
+    VLLM_ENGINES,
+    settings_for_dispatch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +240,11 @@ class DeploymentLinker:
         gpu_required = int(deploy.get("gpu_per_replica") or 1)
         try:
             spec = _spec_from_pending(deploy, gpu_required)
+            if str(deploy.get("engine") or "vllm").lower() in VLLM_ENGINES:
+                spec["config"] = await settings_for_dispatch(
+                    deploy.get("configuration"), spec["model"]["artifact_uri"],
+                    spec["env"].get("HF_TOKEN"),
+                )
             try:
                 from orchestration.config import settings as _s
                 _mirror_base = getattr(_s, "model_mirror_base", "") or ""

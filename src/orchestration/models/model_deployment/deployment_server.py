@@ -21,6 +21,11 @@ from orchestration.v1 import (
 )
 
 from common.service_ports import orchestration_grpc_addr, depin_sidecar_url
+from orchestration.models.model_deployment.vllm_settings import (
+    VLLM_ENGINES,
+    invalid_settings,
+    settings_for_dispatch,
+)
 from common.exception_handlers import errors_without_input
 
 from orchestration.repositories.provider_repo import (
@@ -739,6 +744,12 @@ class PreflightResponse(BaseModel):
 
 class TerminateDeploymentRequest(BaseModel):
     deployment_id: str
+
+
+def _refuse_invalid_vllm_settings(configuration) -> None:
+    errors = invalid_settings(configuration)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
 
 
 class UpdateDeploymentRequest(BaseModel):
@@ -1502,6 +1513,10 @@ async def place_and_provision(
                 # deploy handler for hf_token_name) to the warm-path load spec.
                 "env": dict(_cfg.get("env") or {}),
             }
+            if str(engine or "vllm").lower() in VLLM_ENGINES:
+                spec["config"] = await settings_for_dispatch(
+                    _cfg, spec["model"]["artifact_uri"], spec["env"].get("HF_TOKEN"),
+                )
             try:
                 from orchestration.config import settings as _s
                 _mirror_base = getattr(_s, "model_mirror_base", "") or ""
@@ -1816,6 +1831,8 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             status_code=422,
             detail=f"engine '{req.engine}' is only supported on AWS pools",
         )
+
+    _refuse_invalid_vllm_settings(req.configuration)
 
     # 1c. Persist ami_id into configuration so the /start resume path can
     # reuse the operator's selected AMI instead of falling back to resolve_ami.
@@ -2176,6 +2193,7 @@ async def update_deployment(
     await _require_own_deployment(request, deployment_id)
     if req.endpoint is not None and await _in_a_pool(request, deployment_id):
         raise _pool_endpoint_refused()
+    _refuse_invalid_vllm_settings(req.configuration)
     # Persist control-plane-only fields (auto_replica) directly to DB
     # before/after the gRPC call, since gRPC doesn't carry these.
     if (

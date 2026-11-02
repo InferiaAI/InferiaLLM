@@ -45,6 +45,11 @@ def _clamp_max_model_len(
     return None
 
 
+def _gpu_util(metadata: Dict) -> float:
+    """The form saves gpu_memory_utilization; gpu_util is the older name."""
+    return metadata.get("gpu_memory_utilization", metadata.get("gpu_util", 0.80))
+
+
 TERMINAL_JOB_STATES = {2, 3, 4, "COMPLETED", "STOPPED", "FAILED", "QUIT"}
 
 # Normalize mixed int/string job states from Nosana API to a canonical string
@@ -309,7 +314,7 @@ class NosanaAdapter(ProviderAdapter):
             # context + co-tenants, and vLLM ABORTS at startup if free < gpu_util*total.
             # 0.95 reliably failed the free-memory check on real nodes. See create_vllm_job.
             job_config = {
-                "gpu_util": metadata.get("gpu_util", 0.80),
+                "gpu_util": _gpu_util(metadata),
                 "dtype": metadata.get("dtype", "auto"),
                 "enforce_eager": metadata.get("enforce_eager", False),
                 "max_model_len": effective_mml,
