@@ -55,3 +55,13 @@ measurement or calibration result.
 pytest -q src/tests/simulator/test_t3.py -k autoscaler
 1 passed, 20 deselected
 ```
+
+## T3 output artifacts (2026-11-02)
+
+`write_outputs(..., write_plots=True)` now writes dependency-free TTFT and
+end-to-end SVG plots, each visibly watermarked `SIMULATED`.
+
+```text
+pytest -q src/tests/simulator/test_t3.py -k write_outputs
+1 passed, 20 deselected
+```

@@ -251,7 +251,21 @@ _REQUEST_FIELDS = [
 ]
 
 
-def write_outputs(summary: dict, result: SimResult, out_dir: Path, write_requests: bool) -> None:
+def _simulated_svg(title: str, values: list[float]) -> str:
+    """Small dependency-free SVG artifact; intentionally watermarked."""
+    width, height = 640, 240
+    peak = max(values, default=1.0) or 1.0
+    points = " ".join(
+        f"{40 + i * 560 / max(1, len(values) - 1):.1f},{200 - value / peak * 150:.1f}"
+        for i, value in enumerate(values)
+    )
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
+            f'<rect width="100%" height="100%" fill="white"/><text x="24" y="28">{title}</text>'
+            f'<polyline fill="none" stroke="#2563eb" stroke-width="2" points="{points}"/>'
+            '<text x="430" y="220" fill="#94a3b8" font-size="24">SIMULATED</text></svg>')
+
+
+def write_outputs(summary: dict, result: SimResult, out_dir: Path, write_requests: bool, write_plots: bool = False) -> None:
     """Write summary.json, manifest.json and, optionally, requests.csv."""
     out_dir.mkdir(parents=True, exist_ok=True)
     if write_requests:
@@ -263,6 +277,14 @@ def write_outputs(summary: dict, result: SimResult, out_dir: Path, write_request
                 row[1] = r.workload_class.value
                 w.writerow(row)
         summary["artifacts"]["requests"] = "requests.csv"
+    if write_plots:
+        plots = {
+            "ttft.svg": [r.ttft or 0.0 for r in result.records if r.status == "completed"],
+            "e2e.svg": [r.e2e or 0.0 for r in result.records if r.status == "completed"],
+        }
+        for name, values in plots.items():
+            (out_dir / name).write_text(_simulated_svg(name[:-4].upper(), values), encoding="utf-8")
+        summary["artifacts"]["plots"] = list(plots)
     for name, obj in (("summary.json", summary), ("manifest.json", summary["manifest"])):
         with open(out_dir / name, "w", encoding="utf-8") as f:
             json.dump(obj, f, indent=2, sort_keys=True)
