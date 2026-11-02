@@ -1,10 +1,10 @@
 # InferiaLLM Platform — Engineering Specification
 
-**Status:** v0.3 (2026-11-02). CPU-verifiable simulator, data-plane and deployment foundations are implemented on the platform branch; GPU performance evidence remains explicitly pending calibration.
+**Status:** v0.4 (2026-11-02). CPU-verifiable simulator, data-plane and deployment foundations are implemented on the platform branch; GPU performance evidence remains explicitly pending calibration.
 **Companion documents:** [`interfaces.md`](interfaces.md) (contracts between components) · [`adr/`](adr/README.md) (decision records) · `diagrams/` (the ten required diagrams) · `capacity/` (calibration and capacity report, Session 2).
 **Evidence rule:** every number carries MEASURED, SIMULATED or EXTRAPOLATED ([ADR 0005](adr/0005-three-evidence-tiers.md)).
 
-**Verification:** on 2026-11-02, all local code references and internal Markdown destinations in this document were checked. References to the simulator, llm-d adapter, and extension registry resolve in the respectively owned Session 2, 3, and 4 worktrees; they are not yet merged into this branch.
+**Verification:** on 2026-11-02, local code references and internal Markdown destinations in this document were checked against this branch. The simulator, llm-d adapter, extension registry, Helm chart and operational runbook are present here.
 
 ---
 
@@ -12,32 +12,32 @@
 
 | Brief item | Spec section | Workstream (plan) | Status |
 |---|---|---|---|
-| §1 Complete architecture | §2 | WS1 | Skeleton |
-| §1 Request lifecycle | §3 | WS1, WS2 | Skeleton |
+| §1 Complete architecture | §2 | WS1 | Implemented and reconciled |
+| §1 Request lifecycle | §3 | WS1, WS2 | Implemented; CPU-verified cancellation/usage path |
 | §1 Control plane vs data plane | §2.2 | WS1 | Drafted |
 | §1 Orchestration, scheduling, routing, resources | §4, §5 | WS2, WS6 | In progress (llm-d mode built, S3 T2) |
-| §1 Distributed inference across nodes | §6 | WS2, WS3 | TODO |
-| §1 Horizontal scaling and fault tolerance | §7, §8 | WS7, WS3 | TODO |
+| §1 Distributed inference across nodes | §6 | WS2, WS3 | Simulator model + failure handling; real fabric measurement pending GPU |
+| §1 Horizontal scaling and fault tolerance | §7, §8 | WS7, WS3 | Simulator scaling/failure model; platform recovery drills partial |
 | §1 Build in-house vs adopt | §2.3 | WS1 | Drafted ([ADR 0001](adr/0001-control-plane-builds-data-plane-adopts.md)) |
 | §2 Ten diagrams | `diagrams/` | WS1 | Delivered (sources + SVGs) |
 | §3 Component responsibilities | §2.1 | WS1 | Drafted |
 | §3 Technology selection + justification | §2.4 | WS1 | Drafted |
-| §3 API specifications | §9 | WS1, WS6 | Skeleton |
+| §3 API specifications | §9 | WS1, WS6 | Existing surfaces documented; durable jobs/real-time audio remain future work |
 | §3 Data flow and protocols | §3.2 | WS1 | Drafted |
-| §3 Database and metadata | §10 | WS1, WS9 | Skeleton |
+| §3 Database and metadata | §10 | WS1, WS9 | Existing models documented; project/cost extensions remain future work |
 | §3 Caching architecture | §11 | WS1 | Drafted |
-| §3 Security boundaries | §12 | WS1, WS9 | Skeleton |
-| §3 Failure scenarios and recovery | §8 | WS7 | TODO |
-| §3 Bottlenecks and mitigations | §13 | WS5 | TODO (from capacity runs) |
-| §3 Deployment architecture | §14 | WS8 | TODO |
+| §3 Security boundaries | §12 | WS1, WS9 | Implemented controls; enterprise expansion remains follow-on |
+| §3 Failure scenarios and recovery | §8 | WS7 | Simulator failure/retry plus usage/restore recovery documented |
+| §3 Bottlenecks and mitigations | §13 | WS5 | CPU baseline evidence; GPU calibration pending |
+| §3 Deployment architecture | §14 | WS8 | Compose/Helm/air-gap/restore paths documented |
 | §3 Testing and benchmarking strategy | §15 | WS3, WS5 | Drafted |
 | §4–5 Simulation engine, GPU/infra simulation | §16 | WS3 | In progress (S2 T1–T2 done) |
 | §6 KV cache management | §5 | WS3, WS4 | In progress |
 | §7 Load testing and capacity | `capacity/report.md` | WS5 | CPU baselines + KV sweep; GPU calibration pending |
-| §8 Unified multimodal interface | §9.2 | WS6 | Skeleton |
+| §8 Unified multimodal interface | §9.2 | WS6 | Handler foundation; durable jobs and GPU smoke pending |
 | §9 Workload-specific scheduling | §4.3 | WS6 | Drafted ([ADR 0006](adr/0006-workload-classes-and-pools.md)) |
-| §10 Reliability and fault tolerance | §8 | WS7 | TODO |
-| §11 Self-hosted architecture | §14 | WS8 | TODO |
+| §10 Reliability and fault tolerance | §8 | WS7 | CPU-verified simulation and local stream/restore drills |
+| §11 Self-hosted architecture | §14 | WS8 | Helm render and local restore verified |
 | §12 Enterprise controls | §12, §17 | WS9 | In progress (extension registry, S4 T1) |
 | Part B Restructure readiness | §18 | — | Drafted |
 
@@ -120,19 +120,42 @@ The simulator implements paged blocks, full-block prefix caching, eviction, reco
 Tensor parallel groups remain node-local. The simulator models prefill/decode replica roles and a configured KV transfer latency/bandwidth; a failure of either transfer endpoint after first token fails the request rather than duplicating output. Cross-node and real-engine transfer measurements remain GPU-lease work.
 
 ## 7. Horizontal scaling
-Cells as the unit of scale ([ADR 0004](adr/0004-hyperscale-through-cells.md)). _TODO (WS3, WS5): cell sizing from capacity runs._
+Cells are the unit of scale ([ADR 0004](adr/0004-hyperscale-through-cells.md)).
+The 8×, 64× and 256× H100 scenarios are reproducible simulator baselines;
+the 256× scenario intentionally crosses its placeholder-model knee and misses
+the 2 s TTFT p95 SLO. These are **SIMULATED**, not sizing recommendations.
+Cell counts for user populations remain blocked on GPU calibration.
 
 ## 8. Failure scenarios and recovery
-_TODO (WS7): failure matrix (pod, node, zone, region, control plane, Redis, Postgres), retries with budget, cancellation, backpressure, load shedding, rolling upgrades, model versions._
+
+| Failure | Behaviour implemented or verified | Boundary |
+|---|---|---|
+| Replica/pod before first token | Simulator retries within configured attempt/budget limits | SIMULATED |
+| Replica/pod after first token | Fails rather than duplicating output | SIMULATED |
+| P/D transfer endpoint | Fails the transferred request as `kv_transfer_failed` | SIMULATED |
+| Client disconnect | Upstream stream is closed and cancellation is recorded | CPU tests |
+| Redis usage worker interruption | Unacknowledged entries are replayed; worker reconnects | CPU tests + local Redis/Postgres drill |
+| Postgres recovery | Custom-format dump restores into a fresh database | Local drill; Helm PVC wiring not exercised |
+
+Admission limits, queue shedding, rolling upgrades and regional failover are
+design boundaries rather than completed production drills. The simulator has
+queue limits, failures, retries, autoscaling and warm-pool controls; its
+numbers remain uncalibrated.
 
 ## 9. API specifications
 ### 9.1 Existing surfaces
-OpenAI-compatible chat/completions, embeddings, audio, images, video handlers (`src/inference/core/handlers/`); Anthropic messages surface (`src/inference/core/surfaces/anthropic.py`). _TODO: endpoint table._
+OpenAI-compatible chat/completions, embeddings, audio, images and video are
+handled under `src/inference/core/handlers/`; the Anthropic messages surface
+is in `src/inference/core/surfaces/anthropic.py`. The unified app routes
+inference under `/inf`; the public contract is intentionally owned by the
+handler schemas rather than duplicated here.
 ### 9.2 Unified multimodal interface
-_TODO (WS6): async job API for video/batch; real-time audio over WebSocket._
+The handler foundations exist, but a durable video/batch job API and
+real-time audio WebSocket path are not complete. Real-engine multimodal smoke
+testing remains a GPU-lease gate.
 
 ## 10. Database and metadata
-Gateway models: `src/api_gateway/db/models/` (users, orgs, roles, API keys, audit, inference logs, usage, policies, deployments, invitations, settings). No project entity yet (_TODO WS9: projects ADR_). Orchestration schema: `src/orchestration/db/schema.sql`, migrations in `src/infra/schema/migrations/`.
+Gateway models: `src/api_gateway/db/models/` (users, orgs, roles, API keys, audit, inference logs, usage, policies, deployments, invitations, settings). There is no project entity yet; that is follow-on enterprise work. Orchestration schema: `src/orchestration/db/schema.sql`, migrations in `src/infra/schema/migrations/`.
 
 ## 11. Caching architecture
 | Cache | Where | What |
@@ -144,13 +167,30 @@ Gateway models: `src/api_gateway/db/models/` (users, orgs, roles, API keys, audi
 | Model weights | `src/orchestration/models/model_cache/`, HF/OCI mirrors | Avoid repeated downloads; air-gap support |
 
 ## 12. Security boundaries
-_TODO (WS9): trust boundaries (client ↔ edge, edge ↔ engine, control plane ↔ cluster), header stripping, least-privilege RBAC for the llm-d mode (`deploy/kind/manifests/llmd-namespace-bootstrap.yaml`), secrets handling, identity contract (`interfaces.md` §7)._
+The client boundary terminates at the inference edge; untrusted routing
+headers are stripped and trusted `x-inferia-*` / llm-d metadata is derived
+only from authenticated request context (`interfaces.md` §4). The edge-to-
+engine boundary is restricted by the upstream allowlist, and the control
+plane-to-cluster boundary uses the llm-d namespace bootstrap manifests. RBAC,
+SSO/API-key verification, audit and extension contracts remain in the gateway.
+Secrets are configuration, not request metadata. The identity claim contract
+is defined in `interfaces.md` §7; a self-hosted IdP replacement is later work.
 
 ## 13. Bottlenecks and mitigations
-_TODO (WS5): from measured platform limits and capacity runs._
+KV pressure, queueing and cache-affinity loss are modelled bottlenecks. The
+CPU simulator exercises paged allocation, prefix reuse, recompute/swap/CPU/
+NVMe policies, P/D transfer and autoscaling. The local llm-d smoke confirmed
+platform cache affinity (0.809 token hit ratio versus 0.431 kube-proxy
+baseline), with simulated engine timing. GPU measurement is required before
+throughput, saturation or hardware mitigation claims are made.
 
 ## 14. Deployment architecture
-_TODO (WS8): single node (Compose), Kubernetes (Helm), air-gapped, upgrades, backup/restore._
+Single-node development uses `docker-compose.yml`. The Helm chart in
+`deploy/helm/inferiallm/` renders the self-hosted foundation, including an
+optional durable-PVC PostgreSQL backup CronJob. Air-gap controls and model
+cache/mirror support are owned by the orchestration model-cache path and
+`scripts/airgap_check.sh`. The local `pg_dump`/`pg_restore` drill passed; a
+cluster-backed backup CronJob/PVC drill remains environment-dependent.
 
 ## 15. Testing and benchmarking strategy
 - **Unit and integration tests** with a recorded baseline; CI-equivalent suite as the regression gate.
@@ -161,10 +201,19 @@ _TODO (WS8): single node (Compose), Kubernetes (Helm), air-gapped, upgrades, bac
 - Every result has a manifest (`interfaces.md` §1).
 
 ## 16. Simulator
-_TODO (WS3): summary of the model; detailed docs live with `src/simulator/`._
+`inferia-sim` is a seeded discrete-event model with roofline timing,
+continuous batching, paged KV allocation, prefix caching, offload tiers,
+P/D transfer, admission, autoscaling and failure/retry events. Scenario YAML
+is Pydantic-validated and output carries a configuration hash. Its detailed
+contract is in `src/simulator/README.md`; it is explicitly uncalibrated until
+the GPU lease comparator records measured error.
 
 ## 17. Enterprise controls
-Extension points with open-source defaults (`interfaces.md` §6). _TODO (WS9): projects, model access policies, quotas, cost reporting, audit coverage._
+Extension points with open-source defaults (`interfaces.md` §6) cover audit,
+usage, quotas and token verification. Existing gateway models cover users,
+organizations, roles, API keys, policies, audit and daily usage. Projects,
+model-access policies, expanded cost reporting and a full audit-coverage
+review remain follow-on enterprise work.
 
 ## 18. Readiness for the later restructure (brief Part B)
 Today's design keeps the monorepo/open-core move cheap: plugin seams with open-source defaults, frameworks wrapped behind our interfaces, an identity contract both future providers can satisfy, contracts written as schemas, new code in self-contained folders ([ADR 0007](adr/0007-auth-diffusion-monorepo-decisions.md)).
