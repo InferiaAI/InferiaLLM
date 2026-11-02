@@ -1,0 +1,186 @@
+# Default values for inferiallm.
+#
+# Secrets are NOT set here. Either point the chart at an existing Secret:
+#   secrets.existingSecret: inferiallm-secrets
+# or let it create one (secrets.create=true) and fill secrets.data. Empty
+# values are generated on install and preserved on upgrade.
+#
+# See README.md for the kind smoke test and for the llm-d data-plane
+# prerequisites (the chart does not install the llm-d CRDs or its RBAC).
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: inferiaai/inferiallm
+  # Empty means .Chart.AppVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# single: 1 control-plane replica, bundled Postgres + Redis.
+# ha: 2 replicas by default, PDB keeps one serving, anti-affinity spreads pods.
+#     Bundled Postgres/Redis are still single-replica — use managed services for
+#     a real HA install (set database.bundled.enabled=false / redis.bundled.enabled=false).
+mode: single
+
+app:
+  replicaCount: 1
+  port: 8000
+  logLevel: INFO
+  environment: production
+  # Same-origin defaults are fine for a single hostname. Set the full origin(s),
+  # comma separated, when the dashboard is served from another host.
+  allowedOrigins: ""
+  authProvider: local
+  externalAuthUrl: ""
+  modelEgress: true
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Extra plain env (ConfigMap) / secret-backed env (Secret).
+  extraEnv: {}
+  extraEnvFrom: []
+
+secrets:
+  # Use a pre-created Secret instead of letting the chart manage one.
+  existingSecret: ""
+  create: true
+  superadminEmail: admin@example.com
+  # Leave blank to generate. Generated values survive `helm upgrade`.
+  data:
+    JWT_SECRET_KEY: ""
+    INTERNAL_API_KEY: ""
+    SECRET_ENCRYPTION_KEY: ""   # Fernet key (urlsafe base64, 32 bytes)
+    LOG_ENCRYPTION_KEY: ""      # AES-256 key, 64 hex chars
+    POSTGRES_PASSWORD: ""
+    PG_ADMIN_PASSWORD: ""       # defaults to POSTGRES_PASSWORD
+    REDIS_PASSWORD: ""
+    SUPERADMIN_PASSWORD: ""
+
+# Application database. `bundled.enabled=false` uses an external/managed server.
+database:
+  bundled:
+    enabled: true
+    image:
+      repository: postgres
+      tag: "15"
+    persistence:
+      enabled: true
+      size: 8Gi
+      storageClass: ""
+    resources: {}
+  host: ""
+  port: 5432
+  name: inferia
+  user: inferia
+  ssl: false
+  # Full DSN override. When empty it is built from the fields above and the
+  # POSTGRES_PASSWORD secret. Set this when an existing secret must be used, or
+  # when the password needs URL escaping.
+  url: ""
+  # Superuser used only by the migration hook / first-boot init.
+  adminUser: inferia
+
+redis:
+  bundled:
+    enabled: true
+    image:
+      repository: redis
+      tag: "7"
+    persistence:
+      enabled: false
+      size: 1Gi
+      storageClass: ""
+    resources: {}
+  host: ""
+  port: 6379
+  db: 0
+  ssl: false
+
+# One PVC backs /data, the model cache and the Pulumi state (subPaths).
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  models:
+    enabled: true
+  pulumiState:
+    enabled: true
+
+# Public key installed on every provisioned EC2 worker.
+ssh:
+  authorizedKeys: ""
+  existingSecret: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: inferiallm.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+
+priorityClass:
+  enabled: true
+  # Empty means a release-scoped name (<fullname>-critical).
+  name: ""
+  value: 1000000
+
+migration:
+  enabled: true
+  backoffLimit: 3
+  # Extra time to wait for the database before failing the hook.
+  waitSeconds: 120
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext: {}
+securityContext:
+  allowPrivilegeEscalation: false
+
+# llm-d data plane. The chart only plumbs the settings; the CRDs
+# (GIE v1.6.2 + llm-d-router v1.0.0) and the per-namespace RBAC from
+# deploy/kind/manifests/llmd-namespace-bootstrap.yaml must be installed first.
+# See README.md §llm-d.
+llmd:
+  enabled: false
+  namespace: inferia-llmd
+  upstreamAllowedInternalHosts: ""
+  # Creates the namespace-local service accounts and least-privilege RBAC used
+  # by the raw llm-d resources rendered by KubernetesAdapter. The cluster-wide
+  # GIE and llm-d-router CRDs remain an explicit administrator prerequisite.
+  rbac:
+    create: true
+
+# Optional Grafana (not installed here). Left for Session 4 T6 dashboards.

@@ -1,0 +1,44 @@
+InferiaLLM is installed.
+
+1. Open the dashboard (single port serves /, /api, /inf, /v2):
+
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "inferiallm.fullname" . }} 8080:{{ .Values.service.port }}
+
+   then visit http://localhost:8080/
+
+   {{- if .Values.ingress.enabled }}
+   Ingress hosts: {{ range .Values.ingress.hosts }}{{ .host }} {{ end }}
+   {{- end }}
+
+2. Sign in with the superadmin:
+
+   email:    {{ .Values.secrets.superadminEmail }}
+   {{- if not .Values.secrets.existingSecret }}
+   password: kubectl --namespace {{ .Release.Namespace }} get secret {{ include "inferiallm.secretName" . }} -o jsonpath='{.data.SUPERADMIN_PASSWORD}' | base64 -d
+   {{- else }}
+   password: value of SUPERADMIN_PASSWORD in secret {{ include "inferiallm.secretName" . }}
+   {{- end }}
+
+3. Migrations run as a post-install/post-upgrade Helm hook
+   ({{ include "inferiallm.fullname" . }}-migrate). On a fresh install the hook
+   waits for the database, then runs `inferiallm init`; on upgrade it runs
+   `inferiallm migrate`. Use `helm install/upgrade --wait` so the hook runs only
+   after the bundled Postgres is ready.
+
+   {{- if .Values.database.bundled.enabled }}
+   Bundled Postgres is a single replica for evaluation. For production set
+   database.bundled.enabled=false and point database.host at a managed server.
+   {{- end }}
+   {{- if .Values.redis.bundled.enabled }}
+   Bundled Redis is a single replica and not persistent by default.
+   {{- end }}
+
+   {{- if .Values.llmd.enabled }}
+4. llm-d data plane: install its CRDs (GIE v1.6.2 + llm-d-router v1.0.0) and
+   the per-namespace RBAC from deploy/kind/manifests/llmd-namespace-bootstrap.yaml
+   before deploying a pool with metadata.dataplane=llm-d. The chart only sets
+   K8S_LLMD_NAMESPACE={{ .Values.llmd.namespace }}.
+   {{- end }}
+
+5. Secrets: {{ if .Values.secrets.existingSecret }}using existing secret {{ .Values.secrets.existingSecret }}{{ else }}managed by the chart as {{ include "inferiallm.secretName" . }} (generated values survive `helm upgrade`){{ end }}.
+   Never put secrets in values.yaml for a real install.
