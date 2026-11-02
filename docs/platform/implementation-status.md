@@ -16,6 +16,7 @@ performance validation.
 | Helm self-hosting foundation | Verified render | default and backup-enabled `helm template` renders |
 | Backup/recovery documentation | Implemented | `ops.md`; a live restore drill remains environment-dependent |
 | Enterprise identity/RBAC/extension seams | Existing + documented | existing control-plane code and extension registry |
+| Dashboard production build | Verified CPU | `npm run build` completed after lockfile install; existing bundle-size warning and dependency audit findings remain |
 | Dashboard infrastructure/capacity views | Not verified complete | requires focused UI implementation/review |
 | Full multimodal class/job workflow | Partial | endpoint foundations exist; GPU engine smoke tests pending |
 | Real vLLM calibration | Blocked on GPU | lease runner rehearsed; must collect real H100/A10 evidence |
