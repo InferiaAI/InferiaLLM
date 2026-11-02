@@ -77,6 +77,27 @@ class TestGatewayRouterErrors:
             mock_pe.increment_redis_only.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_track_usage_batch_updates_each_quota_and_schedules_one_sink_call(self):
+        from api_gateway.gateway.router import (
+            UsageTrackBatchRequest,
+            UsageTrackRequest,
+            track_usage_batch,
+        )
+
+        request = UsageTrackBatchRequest(events=[
+            UsageTrackRequest(user_id="user-1", model="gpt-4", usage={"total_tokens": 10}),
+            UsageTrackRequest(user_id="user-2", model="gpt-4", usage={"total_tokens": 20}),
+        ])
+        with patch("api_gateway.gateway.router.policy_engine") as mock_pe:
+            mock_pe.increment_redis_only = AsyncMock()
+            mock_db = AsyncMock()
+            mock_bg = MagicMock()
+            response = await track_usage_batch(request, mock_bg, mock_db)
+        assert response == {"status": "ok", "events": 2}
+        assert mock_pe.increment_redis_only.await_count == 2
+        mock_bg.add_task.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_create_log_returns_log_id(self):
         """Log creation returns a log ID."""
         from api_gateway.gateway.router import create_inference_log

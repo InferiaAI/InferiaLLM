@@ -3,7 +3,7 @@ API Gateway router for inference endpoints.
 Handles request routing to the orchestration layer.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from api_gateway.db.database import get_db
 from fastapi import (
@@ -79,6 +79,12 @@ class UsageTrackRequest(BaseModel):
     usage: Dict[str, int]  # prompt_tokens, completion_tokens, total_tokens
 
 
+class UsageTrackBatchRequest(BaseModel):
+    """A batch delivered by the inference usage-stream consumer."""
+
+    events: List[UsageTrackRequest]
+
+
 @router.post("/policy/check_quota")
 async def check_user_quota(
     request: QuotaCheckRequest, db: AsyncSession = Depends(get_db)
@@ -132,6 +138,36 @@ async def track_user_usage(
     background_tasks.add_task(extensions.get("usage_sink").record, [event], db=db)
 
     return {"status": "ok", "message": "Usage tracking initiated"}
+
+
+@router.post("/policy/track_usage_batch")
+async def track_usage_batch(
+    request: UsageTrackBatchRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply quota counters immediately and persist one usage-event batch.
+
+    The caller retries an unacknowledged Redis Stream message, so persistence
+    implementations must tolerate at-least-once delivery. The default sink
+    keeps the pre-existing per-event database behaviour while enterprise
+    sinks may implement an event-id dedupe strategy.
+    """
+    events = [
+        UsageEvent(
+            user_id=item.user_id,
+            model=item.model,
+            prompt_tokens=item.usage.get("prompt_tokens", 0),
+            completion_tokens=item.usage.get("completion_tokens", 0),
+            total_tokens=item.usage.get("total_tokens", 0),
+        )
+        for item in request.events
+    ]
+    for item in request.events:
+        await policy_engine.increment_redis_only(db, item.user_id, item.model, item.usage)
+    if events:
+        background_tasks.add_task(extensions.get("usage_sink").record, events, db=db)
+    return {"status": "ok", "events": len(events)}
 
 
 # --- Inference Logging ---
