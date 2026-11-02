@@ -1,6 +1,6 @@
 # InferiaLLM Platform — Engineering Specification
 
-**Status:** skeleton v0.2 (2026-11-02, Session 1). The engineering-spec skeleton has been cross-checked against the Session 1 checkout and the delivered Session 2–4 worktrees. Sections marked _TODO (WSx)_ are filled as the owning workstream lands.
+**Status:** skeleton v0.3 (2026-11-02, Session 1). The engineering-spec skeleton and WS1 diagrams have been checked against the Session 1 checkout and committed Session 2–4 worktree tips. Sections marked _TODO (WSx)_ are filled as the owning workstream lands.
 **Companion documents:** [`interfaces.md`](interfaces.md) (contracts between components) · [`adr/`](adr/README.md) (decision records) · `diagrams/` (the ten required diagrams) · `capacity/` (calibration and capacity report, Session 2).
 **Evidence rule:** every number carries MEASURED, SIMULATED or EXTRAPOLATED ([ADR 0005](adr/0005-three-evidence-tiers.md)).
 
@@ -19,7 +19,7 @@
 | §1 Distributed inference across nodes | §6 | WS2, WS3 | TODO |
 | §1 Horizontal scaling and fault tolerance | §7, §8 | WS7, WS3 | TODO |
 | §1 Build in-house vs adopt | §2.3 | WS1 | Drafted ([ADR 0001](adr/0001-control-plane-builds-data-plane-adopts.md)) |
-| §2 Ten diagrams | `diagrams/` | WS1 | TODO (T4) |
+| §2 Ten diagrams | `diagrams/` | WS1 | Complete (T4; architecture and target-state boundaries) |
 | §3 Component responsibilities | §2.1 | WS1 | Drafted |
 | §3 Technology selection + justification | §2.4 | WS1 | Drafted |
 | §3 API specifications | §9 | WS1, WS6 | Skeleton |
@@ -29,16 +29,16 @@
 | §3 Security boundaries | §12 | WS1, WS9 | Skeleton |
 | §3 Failure scenarios and recovery | §8 | WS7 | TODO |
 | §3 Bottlenecks and mitigations | §13 | WS5 | TODO (from capacity runs) |
-| §3 Deployment architecture | §14 | WS8 | TODO |
+| §3 Deployment architecture | §14 | WS8 | Partial committed evidence; production rollout TODO |
 | §3 Testing and benchmarking strategy | §15 | WS3, WS5 | Drafted |
-| §4–5 Simulation engine, GPU/infra simulation | §16 | WS3 | In progress (S2 T1–T2 done) |
-| §6 KV cache management | §5 | WS3, WS4 | In progress |
+| §4–5 Simulation engine, GPU/infra simulation | §16 | WS3 | Implemented in S2 T1–T2; unmerged, uncalibrated |
+| §6 KV cache management | §5 | WS3, WS4 | Simulator model implemented; production integration TODO |
 | §7 Load testing and capacity | `capacity/report.md` | WS5 | TODO |
 | §8 Unified multimodal interface | §9.2 | WS6 | Skeleton |
 | §9 Workload-specific scheduling | §4.3 | WS6 | Drafted ([ADR 0006](adr/0006-workload-classes-and-pools.md)) |
 | §10 Reliability and fault tolerance | §8 | WS7 | TODO |
-| §11 Self-hosted architecture | §14 | WS8 | TODO |
-| §12 Enterprise controls | §12, §17 | WS9 | In progress (extension registry, S4 T1) |
+| §11 Self-hosted architecture | §14 | WS8 | Partial: kind/llm-d harness and port configurability committed; Helm uncommitted |
+| §12 Enterprise controls | §12, §17 | WS9 | Initial extension registry implemented; unmerged |
 | Part B Restructure readiness | §18 | — | Drafted |
 
 ---
@@ -109,12 +109,29 @@ HTTP/1.1 + SSE at the edge; HTTP to engines and routers; ZMQ for vLLM KV events 
 ### 4.1 Deploy paths
 Four provisioning routes (`deployment_server._provisioning_route`): `direct_adapter` (Kubernetes incl. llm-d mode, Nosana, Akash), `reconciler` (AWS/GCP/Azure via Pulumi), `self_register` (inferia-worker), and the legacy node-based strategies (`interfaces.md` §5).
 ### 4.2 Placement and autoscaling
-_TODO (WS2, WS3): placement scoring, autoscaler signals (queue, KV utilisation, TTFT), cold-start handling._
+The committed llm-d adapter slice routes Kubernetes deployments that opt into
+`metadata.dataplane: "llm-d"` through a router endpoint and waits for a request
+through that router before reporting readiness. Placement scoring and
+autoscaling signals (queue, KV utilisation, TTFT), cold-start handling, and
+their policy thresholds remain _TODO (WS2, WS3)_. The simulator has no
+calibrated evidence for those policies yet.
 ### 4.3 Workload classes
 Per-request classes select pool, queue policy, SLO and preemption ([ADR 0006](adr/0006-workload-classes-and-pools.md); `interfaces.md` §3). Mapped to llm-d `InferenceObjective` priorities and per-org fairness ids.
 
 ## 5. KV cache management
-_TODO (WS3, WS4). Will cover: paged allocation (vLLM), prefix caching (APC, token-based hit counters), eviction, cache-aware routing (llm-d precise prefix scoring, measured 0.809 token hit ratio vs 0.445 random on kind — MEASURED (platform), engine timing simulated), saturation and preemption (recompute vs swap), offload tiers, distributed cache considerations, and the limitations of each._
+The committed simulator implements a paged block manager with reference counts,
+LRU free-block eviction, full-block chained-key prefix caching, CPU swap and a
+contiguous allocator for comparison. Its scheduler models priority, chunked
+prefill, admission and recompute/swap preemption. These are **SIMULATED**
+behaviours, not vLLM runtime measurements; performance efficiencies and
+overheads remain uncalibrated placeholders pending GPU leases.
+
+The committed kind harness measured platform routing behaviour with
+`llm-d-inference-sim`: precise prefix routing achieved a 0.809 token hit ratio
+versus 0.445/0.458 for the random baseline in two fresh-cluster runs. This is
+**MEASURED (platform), engine timing simulated**. Production cache-aware
+routing, cache tiers/offload, saturation policy and distributed cache design
+remain _TODO (WS3, WS4)_.
 
 ## 6. Distributed inference
 _TODO (WS2, WS3): TP inside a node, P/D disaggregation and KV transfer, cross-node limits, what A10/H100 leases can and cannot measure._
@@ -150,7 +167,19 @@ _TODO (WS9): trust boundaries (client ↔ edge, edge ↔ engine, control plane �
 _TODO (WS5): from measured platform limits and capacity runs._
 
 ## 14. Deployment architecture
-_TODO (WS8): single node (Compose), Kubernetes (Helm), air-gapped, upgrades, backup/restore._
+**Committed deployment evidence:** `deploy/kind/` provides an idempotent,
+single-node, CPU-only kind harness for the llm-d EPP plus four
+`llm-d-inference-sim` pods. It installs pinned Gateway API Inference Extension
+and llm-d CRDs, uses an isolated context, and has an explicit cleanup script.
+The Kubernetes adapter's llm-d mode creates a model deployment, `InferencePool`,
+router, Services and ConfigMaps in a bootstrap-managed namespace. The mode
+currently supports `llm-d-inference-sim`; real vLLM requires verified render
+compatibility.
+
+Compose host ports are configurable and preflight-checked by the committed WS8
+slice. A Helm chart exists only as uncommitted Session 4 work and is therefore
+not architecture evidence. Air-gapped operation, upgrades, backup/restore and
+production HA remain _TODO (WS8)_.
 
 ## 15. Testing and benchmarking strategy
 - **Unit and integration tests** with a recorded baseline; CI-equivalent suite as the regression gate.
@@ -161,10 +190,31 @@ _TODO (WS8): single node (Compose), Kubernetes (Helm), air-gapped, upgrades, bac
 - Every result has a manifest (`interfaces.md` §1).
 
 ## 16. Simulator
-_TODO (WS3): summary of the model; detailed docs live with `src/simulator/`._
+`inferia-sim` is a committed but unmerged discrete-event simulator: arrivals →
+replicas → continuous batching → paged KV cache → latency, throughput and
+memory reports. It validates strict YAML scenarios, ships GPU/model catalogs
+and five bundled scenarios, embeds a results manifest, and supports
+deterministic reruns using a scenario and seed. Its test suite covers request
+and KV conservation, deterministic reruns, Little's law, hand-computed
+roofline/KV values, cache behaviour, saturation, scheduling and admission.
+
+All outputs are **SIMULATED**. The current T1–T2 scope is static
+class-to-deployment routing and one or more replicas; it does not yet cover
+sessions, bursty arrivals, routing policies, autoscaling, failures,
+prefill/decode disaggregation, offload tiers or calibrated GPU performance.
+GPU calibration is pending and must precede any capacity claim.
 
 ## 17. Enterprise controls
-Extension points with open-source defaults (`interfaces.md` §6). _TODO (WS9): projects, model access policies, quotas, cost reporting, audit coverage._
+The committed but unmerged extension registry provides Protocol-based
+`audit_sink`, `usage_sink`, `quota_policy` and `token_verifier` seams with
+open-source defaults, selected by `INFERIA_EXT_<KIND>=module:Class`.
+Configuration is validated at service startup; invalid overrides fail closed
+instead of falling back silently. Audit and usage execute off the request path;
+the token verifier is used by HTTP and WebSocket authentication. The
+`admission_policy` kind is reserved, with no default yet.
+
+Projects, model access policies, richer quota/cost reporting and audit
+coverage remain _TODO (WS9)_.
 
 ## 18. Readiness for the later restructure (brief Part B)
 Today's design keeps the monorepo/open-core move cheap: plugin seams with open-source defaults, frameworks wrapped behind our interfaces, an identity contract both future providers can satisfy, contracts written as schemas, new code in self-contained folders ([ADR 0007](adr/0007-auth-diffusion-monorepo-decisions.md)).
