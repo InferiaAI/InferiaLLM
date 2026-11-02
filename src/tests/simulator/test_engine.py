@@ -124,6 +124,33 @@ def test_queue_autoscaler_activates_warm_replica():
     assert sim._active == {0, 1}
 
 
+@pytest.mark.parametrize("metric,target", [("kv_utilization", 0.001), ("ttft_p95", 0.0001)])
+def test_autoscaler_supports_kv_and_ttft_signals(metric, target):
+    s = scenario(
+        deployment={"replicas": 2}, pool={"nodes": 2}, rate=80,
+        autoscaler={"enabled": True, "metric": metric, "target": target, "interval_s": 0.01,
+                    "cooldown_s": 0, "min_replicas": 1, "max_replicas": 2,
+                    "warm_start_s": 0.001, "cold_start_s": 0.001},
+        run={"duration_s": 1, "warmup_s": 0},
+    )
+    sim = Simulation(s)
+    sim.run()
+    assert sim._active == {0, 1}
+
+
+def test_autoscaler_cooldown_limits_repeated_scale_out():
+    s = scenario(
+        deployment={"replicas": 3}, pool={"nodes": 3}, rate=80,
+        autoscaler={"enabled": True, "target": 1, "interval_s": 0.01, "cooldown_s": 10,
+                    "min_replicas": 1, "max_replicas": 3,
+                    "warm_start_s": 0.001, "cold_start_s": 0.001},
+        run={"duration_s": 1, "warmup_s": 0},
+    )
+    sim = Simulation(s)
+    sim.run()
+    assert sim._active == {0, 1}
+
+
 def test_replica_failure_retries_only_a_request_without_a_first_token():
     s = scenario(
         deployment={"replicas": 2}, pool={"nodes": 2},

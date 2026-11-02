@@ -18,7 +18,7 @@ from typing import Iterable, Optional
 
 from simulator.config import Scenario, place_replicas
 from simulator.hardware import get_gpu, get_model
-from simulator.metrics import LogHistogram, WeightedBins, overlap
+from simulator.metrics import LogHistogram, WeightedBins, overlap, percentile
 from simulator.scheduler import Replica, Step
 from simulator.workload import Request, WorkloadGenerator
 
@@ -160,6 +160,7 @@ class Simulation:
         records: list[Request] = []
         live: dict[int, Request] = {}
         itl = LogHistogram()
+        observed_ttft: list[float] = []
         steps: dict[int, Step] = {}
         heap: list = []
         seq = itertools.count()
@@ -250,6 +251,7 @@ class Simulation:
         integral_full = 0.0
         integral_window = 0.0
         now = 0.0
+        last_scale_at = float("-inf")
         push_next_arrival()
         if s.autoscaler.enabled:
             heapq.heappush(heap, (0.0, _AUTOSCALE, next(seq), None))
@@ -277,16 +279,37 @@ class Simulation:
                 if obj not in self._failed:
                     start_step(obj, now)
             elif kind == _AUTOSCALE:
-                active = [r for r in self.replicas if r.index in self._active]
-                queued = sum(len(r.waiting) + len(r.running) for r in active)
+                active = [
+                    r for r in self.replicas
+                    if r.index in self._active and r.index not in self._failed
+                ]
                 cfg = s.autoscaler
                 limit = cfg.max_replicas or len(self.replicas)
-                if queued > cfg.target and len(active) + len(self._pending_scale) < limit:
-                    candidate = next((r for r in self.replicas if r.index not in self._active and r.index not in self._pending_scale), None)
+                if cfg.metric == "queue_depth":
+                    signal = sum(len(r.waiting) + len(r.running) for r in active)
+                elif cfg.metric == "kv_utilization":
+                    signal = (
+                        sum(r.kv.stats().used / r.kv.stats().total for r in active) / len(active)
+                        if active else 0.0
+                    )
+                else:
+                    signal = percentile(observed_ttft, 95) or 0.0
+                if (
+                    signal > cfg.target
+                    and now - last_scale_at >= cfg.cooldown_s
+                    and len(active) + len(self._pending_scale) < limit
+                ):
+                    candidate = next((
+                        r for r in self.replicas
+                        if r.index not in self._active
+                        and r.index not in self._pending_scale
+                        and r.index not in self._failed
+                    ), None)
                     if candidate is not None:
                         self._pending_scale.add(candidate.index)
                         delay = cfg.warm_start_s if len(active) < cfg.min_replicas + cfg.warm_pool else cfg.cold_start_s
                         heapq.heappush(heap, (now + delay, _SCALE_READY, next(seq), candidate.index))
+                        last_scale_at = now
                 if now + cfg.interval_s <= horizon:
                     heapq.heappush(heap, (now + cfg.interval_s, _AUTOSCALE, next(seq), None))
             elif kind == _SCALE_READY:
@@ -346,6 +369,8 @@ class Simulation:
                 tokens, finished = replica.finish_step(steps.pop(i), now)
                 in_win = w0 <= now <= w1
                 for req, gap in tokens:
+                    if req.first_token == now:
+                        observed_ttft.append(req.ttft)
                     if in_win:
                         stats[i].output_tokens += 1
                     if gap is not None and w0 <= req.arrival < w1:

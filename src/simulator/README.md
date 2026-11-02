@@ -9,8 +9,8 @@ measurements, and until calibration (T5) the performance model uses
 
 Status: the CPU-verifiable scheduler, workload, routing, queue-depth
 autoscaling, failure/retry and CPU/NVMe offload slices are implemented. The
-remaining simulator work is P/D disaggregation, additional autoscaler
-signals/scale-in, and Parquet/plot artifacts.
+remaining simulator work is P/D disaggregation, scale-in, and Parquet/plot
+artifacts.
 
 ## Run it
 
@@ -42,7 +42,7 @@ options are rejected. Top-level keys:
 | `models[]` | Catalog model names used by deployments |
 | `deployment[]` | `name`, `model`, `pool`, `tensor_parallel`, `replicas`, `max_num_seqs`, `max_num_batched_tokens`, `max_model_len`, `block_size` (16), `gpu_memory_utilization` (0.92), `enable_chunked_prefill`, `enable_prefix_caching`, `allocator` (`paged` \| `contiguous`), `contiguous_reserve` (`max_model_len` \| `request`), `preemption` (`recompute` \| `swap`), `swap_space_gb` per GPU, or `offload: {tier: cpu|nvme, capacity_gb, bandwidth_gbps}` with swap preemption |
 | `router.policy` | `round_robin`, `random`, `least_outstanding`, `kv_aware`, `session_affinity`, or `class_to_pool` |
-| `autoscaler` | Queue-depth scale-out with a min replica count, warm pool and cold/warm start delays. `kv_utilization` and `ttft_p95` are reserved for a later slice. |
+| `autoscaler` | Queue-depth, KV-utilization, or observed TTFT-p95 scale-out with cooldown, min replica count, warm pool and cold/warm start delays. Scale-in is not modelled yet. |
 | `failures` | Timed replica, node, zone or fraction outages; optional recovery; retries only before first token, bounded by attempts and retry budget. |
 | `admission` | `max_waiting_per_replica` (shed beyond it), `retry_after_s` |
 | `workload.arrival` | `process: poisson`, `rate_rps` |
@@ -125,7 +125,6 @@ contiguous allocation, chunked/non-chunked prefill and admission.
 - Embedding lookup counted as a matmul; no CUDA-graph or kernel effects; no sampling cost.
 - vLLM V1 preempts only by recompute; `swap` models V0-style swapping.
 - Block keys are 64-bit hashes (collision probability ~1e-4 at 6e7 distinct blocks).
-- Not yet: P/D disaggregation, KV-utilization/TTFT autoscaling and scale-in,
-  Parquet/plots (T3).
+- Not yet: P/D disaggregation, scale-in, Parquet/plots (T3).
 - Speed: ~600 simulated requests/s of wall time on the 8xH100 scenario; the
   1M-requests-in-5-minutes budget (T8) needs profiling work.
