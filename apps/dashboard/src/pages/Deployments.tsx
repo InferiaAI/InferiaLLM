@@ -473,7 +473,7 @@ function DeploymentActions({
   onDelete: (id: string) => void;
   align?: "start" | "end";
 }) {
-  const isRunning = ["READY", "RUNNING", "PENDING", "DEPLOYING", "RETRYING"].includes(deployment.status);
+  const isRunning = ["READY", "RUNNING", "PENDING", "PENDING_NODE", "DEPLOYING", "RETRYING"].includes(deployment.status);
   const canStart = ["STOPPED", "TERMINATED", "FAILED"].includes(deployment.status);
   const canDelete = ["STOPPED", "TERMINATED", "FAILED"].includes(deployment.status);
 
