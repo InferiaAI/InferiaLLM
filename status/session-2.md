@@ -22,6 +22,23 @@ pytest -q src/tests/simulator/test_t3.py -k 'session_affinity or kv_aware or lea
 Remaining T3 work is intentionally not claimed complete: eviction/offload,
 autoscaling, failure/retry handling,
 prefill/decode disaggregation, and plot output. `test_t3.py` remains an
-uncommitted acceptance-test scaffold for those follow-up slices. At this
-checkpoint its full run reports 13 passed and 8 failed; the failures are the
-remaining work named above.
+uncommitted acceptance-test scaffold for those follow-up slices. Before the
+KV slice its full run reported 13 passed and 8 failed.
+
+## T3 KV cache: eviction and offload (2026-11-02)
+
+Implemented `lru` and `prefix_depth` eviction for cached-free paged KV
+blocks. A configured CPU/NVMe offload tier now retains evicted prefix keys,
+restores them on a later prefix hit, charges the configured bandwidth, and
+reports restored-block counts.
+
+```text
+pytest -q src/tests/simulator/test_t3.py -k 'prefix_depth_eviction or offload_tier or engine_offload'
+3 passed, 18 deselected
+```
+
+Still excluded from this slice: autoscaling, failure/retry handling,
+prefill/decode disaggregation, and plot output.
+
+The full scaffold after this slice reports **16 passed, 5 failed**; those
+five failures correspond only to the explicitly excluded areas.

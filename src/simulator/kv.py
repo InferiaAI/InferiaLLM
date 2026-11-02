@@ -148,17 +148,27 @@ class PagedBlockManager(_Base):
         block_size: int,
         enable_prefix_caching: bool = True,
         cpu_num_blocks: int = 0,
+        eviction: str = "lru",
+        offload_num_blocks: int = 0,
     ):
         super().__init__(num_blocks, block_size, cpu_num_blocks)
         self.enable_prefix_caching = enable_prefix_caching
+        if eviction not in ("lru", "prefix_depth"):
+            raise ValueError("eviction must be lru or prefix_depth")
+        self.eviction_policy = eviction
         self._ref = [0] * num_blocks
         self._key: list[Optional[int]] = [None] * num_blocks
+        self._depth = [0] * num_blocks
         self._cache: dict[int, int] = {}  # key -> block
         self._free_q: OrderedDict[int, None] = OrderedDict((b, None) for b in range(num_blocks))
         self._layouts: dict[int, _Layout] = {}
         self._blocks: dict[int, list[int]] = {}
         self._hashed: dict[int, int] = {}  # rid -> blocks already offered to the cache
         self._num_cached_free = 0
+        self._offload_capacity = offload_num_blocks
+        self._offload_cache: OrderedDict[int, int] = OrderedDict()  # key -> prefix depth
+        self.offload_hits = 0
+        self._reload_blocks_since_last = 0
 
     # -- requests -------------------------------------------------------------------
 
@@ -185,7 +195,32 @@ class PagedBlockManager(_Base):
             if key is None or key not in self._cache:
                 break
             hits += 1
+        # GPU and secondary-tier blocks are both useful prefix hits.  The
+        # latter are restored on allocation and charged as a transfer.
+        for i in range(hits, (num_tokens - 1) // self.block_size):
+            key = layout.key(i, self.block_size)
+            if key is None or key not in self._offload_cache:
+                break
+            hits += 1
         return hits * self.block_size
+
+    def lookup_with_offload(self, rid: int, num_tokens: int) -> tuple[int, int]:
+        """Return (HBM hit tokens, secondary-tier hit tokens)."""
+        if not self.enable_prefix_caching:
+            return 0, 0
+        layout = self._layouts[rid]
+        gpu = offload = 0
+        for i in range((num_tokens - 1) // self.block_size):
+            key = layout.key(i, self.block_size)
+            if key is None:
+                break
+            if key in self._cache:
+                gpu += 1
+            elif key in self._offload_cache:
+                offload += 1
+            else:
+                break
+        return gpu * self.block_size, offload * self.block_size
 
     def cached_prefix_tokens(self, segments: Segments, num_tokens: int) -> int:
         """Return cached full-prefix tokens for a request not yet admitted.
@@ -216,12 +251,19 @@ class PagedBlockManager(_Base):
         self._check_allocatable(rid)
         blocks = self._blocks.get(rid)
         hit_blocks: list[int] = []
+        restore_keys: list[tuple[int, int]] = []
         if hit_tokens:
             if blocks:
                 raise ValueError("prefix hits are only valid on a request's first allocation")
             layout = self._layouts[rid]
             for i in range(hit_tokens // self.block_size):
-                hit_blocks.append(self._cache[layout.key(i, self.block_size)])
+                key = layout.key(i, self.block_size)
+                if key in self._cache:
+                    hit_blocks.append(self._cache[key])
+                elif key in self._offload_cache:
+                    restore_keys.append((key, self._offload_cache.pop(key)))
+                else:
+                    raise ValueError("hit_tokens exceeds cache contents")
         have = len(blocks) if blocks else 0
         need = self._blocks_for(num_tokens) - have - len(hit_blocks)
         touched_free = sum(1 for b in hit_blocks if self._ref[b] == 0)
@@ -237,19 +279,54 @@ class PagedBlockManager(_Base):
             self._ref[b] += 1
             blocks.append(b)
         self._hashed[rid] = max(self._hashed[rid], len(hit_blocks))
-        for _ in range(max(need, 0)):
-            b, _ = self._free_q.popitem(last=False)
+        for allocated in range(max(need, 0)):
+            b = self._pop_free_block()
             key = self._key[b]
             if key is not None:  # evict from the prefix cache
                 self._num_cached_free -= 1
+                if self._offload_capacity:
+                    self._offload_cache[key] = self._depth[b]
+                    self._offload_cache.move_to_end(key)
+                    while len(self._offload_cache) > self._offload_capacity:
+                        self._offload_cache.popitem(last=False)
                 self._key[b] = None
+                self._depth[b] = 0
                 if self._cache.get(key) == b:
                     del self._cache[key]
                 self.evictions += 1
             self._ref[b] = 1
             blocks.append(b)
+            if allocated < len(restore_keys):
+                restore_key, depth = restore_keys[allocated]
+                self._cache[restore_key] = b
+                self._key[b] = restore_key
+                self._depth[b] = depth
+        self.offload_hits += len(restore_keys)
+        self._reload_blocks_since_last += len(restore_keys)
         self._tokens[rid] = max(num_tokens, self._tokens.get(rid, 0))
         return True
+
+    def consume_offload_reload_blocks(self) -> int:
+        n = self._reload_blocks_since_last
+        self._reload_blocks_since_last = 0
+        return n
+
+    def _pop_free_block(self) -> int:
+        """Select an evictable block without making the policy observable to users."""
+        # A plain free block never evicts useful cache content, regardless of
+        # policy.  The OrderedDict order is still the allocation order for it.
+        for b in self._free_q:
+            if self._key[b] is None:
+                del self._free_q[b]
+                return b
+        if self.eviction_policy == "prefix_depth":
+            cached = [b for b in self._free_q if self._key[b] is not None]
+            if cached:
+                b = max(cached, key=lambda block: (self._depth[block], -list(self._free_q).index(block)))
+                del self._free_q[b]
+                return b
+        b, _ = self._free_q.popitem(last=False)
+        return b
 
     def commit(self, rid: int, num_computed_tokens: int) -> None:
         """Offer the request's newly computed full blocks to the prefix cache."""
@@ -265,6 +342,7 @@ class PagedBlockManager(_Base):
             if key is not None and key not in self._cache:
                 self._cache[key] = b
                 self._key[b] = key
+                self._depth[b] = i
         self._hashed[rid] = max(self._hashed[rid], full)
 
     def release(self, rid: int) -> None:

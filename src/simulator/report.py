@@ -205,6 +205,7 @@ def summarize(result: SimResult, scenario: Scenario, config_hash: str, command: 
             "prefix_cache_hit_ratio": hits / query if query else 0.0,
             "prefix_cache_basis": "tokens",
             "evictions": sum(r.kv.evictions for r in replicas),
+            "offload_reloaded_blocks": sum(getattr(r.kv, "offload_hits", 0) for r in replicas),
             "swapped_out_blocks": sum(r.kv.swapped_out_blocks for r in replicas),
             "internal_waste_ratio_mean": weighted([s.waste_ratio.mean() for s in stats]),
             "external_fragmentation_mean": weighted([s.ext_frag.mean() for s in stats]),

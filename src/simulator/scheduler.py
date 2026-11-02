@@ -86,8 +86,14 @@ class Replica:
         if deployment.preemption == "swap":
             cpu_blocks = int(deployment.swap_space_gb * GB * deployment.tensor_parallel // self.block_bytes)
         if deployment.allocator == "paged":
+            offload_blocks = 0
+            if deployment.offload is not None:
+                offload_blocks = int(
+                    deployment.offload.capacity_gb * GB * deployment.tensor_parallel // self.block_bytes
+                )
             self.kv = PagedBlockManager(
-                blocks, deployment.block_size, deployment.enable_prefix_caching, cpu_blocks
+                blocks, deployment.block_size, deployment.enable_prefix_caching, cpu_blocks,
+                eviction=deployment.eviction, offload_num_blocks=offload_blocks,
             )
         else:
             self.kv = ContiguousAllocator(blocks, deployment.block_size, cpu_blocks)
@@ -131,6 +137,7 @@ class Replica:
         scheduled: dict[int, tuple[Request, int, int]] = {}
         preempted = False
         swap_bytes = 0.0
+        offload_bytes = 0.0
 
         # Decodes first, then running prefills (vLLM: "batches all pending decode
         # requests before scheduling any prefill"); each group keeps start order.
@@ -182,6 +189,12 @@ class Replica:
                     break
                 if not self.kv.allocate(req.rid, hit + n, hit_tokens=hit):
                     break
+                if hasattr(self.kv, "consume_offload_reload_blocks"):
+                    reloads = self.kv.consume_offload_reload_blocks()
+                    if reloads and self.dep.offload is not None:
+                        # Gbit/s -> bytes/s.  The fixed latency is paid once
+                        # per restore batch, like a DMA submission.
+                        offload_bytes += reloads * self.block_bytes
                 heapq.heappop(self.waiting)
                 self.query_tokens += req.num_tokens
                 self.hit_tokens += hit
@@ -201,6 +214,8 @@ class Replica:
         items = list(scheduled.values())
         cost = self.perf.step_time([(n, c) for _, n, c in items])
         duration = cost.total_s + self.perf.transfer_time(swap_bytes)
+        if offload_bytes and self.dep.offload is not None:
+            duration += offload_bytes / (self.dep.offload.bandwidth_gbps * 1e9)
         self.steps += 1
         return Step(now, duration, items, cost)
 
