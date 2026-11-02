@@ -233,6 +233,14 @@ class CompletionHandler:
             try:
                 async for chunk in processed_stream:
                     yield chunk
+            except asyncio.CancelledError:
+                # Starlette cancels a streaming response when its client goes
+                # away.  Let cancellation close the upstream generator (and
+                # therefore its httpx response), but retain an honest usage
+                # record instead of treating it as a successful completion.
+                status_code = 499
+                error_message = "Client disconnected"
+                raise
             except HTTPException as e:
                 status_code = e.status_code
                 error_message = str(e.detail) if hasattr(e, "detail") else str(e)
