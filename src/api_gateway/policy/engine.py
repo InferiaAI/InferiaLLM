@@ -146,7 +146,11 @@ class PolicyEngine:
         if not row:
             return {
                 "valid": False,
-                "error": "Deployment not found for model in this organization",
+                "error": (
+                    f"No deployment for model '{model}' of type '{model_type}' "
+                    "in this organization"
+                ),
+                "reason": "model_not_found",
             }
 
         deployment, organization = row
@@ -263,13 +267,18 @@ class PolicyEngine:
             # The two branches above fail for unrelated reasons, and one message
             # for both sends the reader looking in the wrong place.
             if key_is_bound:
-                error = "This API key is bound to a deployment that no longer exists"
-            else:
-                error = (
+                return {
+                    "valid": False,
+                    "error": "This API key is bound to a deployment that no longer exists",
+                }
+            return {
+                "valid": False,
+                "error": (
                     f"No deployment for model '{model}' of type '{model_type}' "
                     "in this organization"
-                )
-            return {"valid": False, "error": error}
+                ),
+                "reason": "model_not_found",
+            }
 
         deployment, organization = row
 

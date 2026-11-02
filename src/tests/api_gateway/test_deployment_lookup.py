@@ -149,3 +149,62 @@ class TestWhatAMissSays:
 
         assert got["valid"] is False
         assert "API Key" in got["error"]
+
+
+@pytest.mark.asyncio
+class TestWhichFailuresAreAMissingModel:
+    """Only these become a 404; the rest stay credential problems."""
+
+    async def test_an_unknown_model_is_marked(self):
+        engine = _engine()
+        engine.verify_api_key.return_value = _key()
+        db, _ = _db_returning_nothing()
+
+        got = await engine.resolve_context(db, "sk-1", "m")
+
+        assert got["reason"] == "model_not_found"
+
+    async def test_an_unknown_sandbox_model_is_marked_and_named(self):
+        engine = _engine()
+        db, _ = _db_returning_nothing()
+
+        got = await engine.resolve_context(db, "sandbox:org-1:user-1", "m", sandbox=True)
+
+        assert got["reason"] == "model_not_found"
+        assert "'m'" in got["error"]
+
+    async def test_an_invalid_key_is_not_marked(self):
+        engine = _engine()
+        engine.verify_api_key.return_value = None
+        db, _ = _db_returning_nothing()
+
+        got = await engine.resolve_context(db, "sk-bad", "m")
+
+        assert "reason" not in got
+
+    async def test_a_dangling_bound_key_is_not_marked(self):
+        engine = _engine()
+        engine.verify_api_key.return_value = _key(deployment_id=BOUND_ID)
+        db, _ = _db_returning_nothing()
+
+        got = await engine.resolve_context(db, "sk-1", "m")
+
+        assert "reason" not in got
+
+    async def test_the_router_passes_the_reason_on(self):
+        from unittest.mock import patch
+
+        from api_gateway.gateway.router import (
+            ResolveContextRequest,
+            resolve_inference_context,
+        )
+
+        with patch("api_gateway.gateway.router.policy_engine") as pe:
+            pe.resolve_context = AsyncMock(
+                return_value={"valid": False, "error": "x", "reason": "model_not_found"}
+            )
+            got = await resolve_inference_context(
+                ResolveContextRequest(api_key="sk-1", model="m"), AsyncMock()
+            )
+
+        assert got.reason == "model_not_found"

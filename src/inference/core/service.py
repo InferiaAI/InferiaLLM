@@ -47,8 +47,10 @@ class GatewayService:
         )
 
         if not context.get("valid"):
+            # A wrong model name must not read as a bad API key.
+            status_code = 404 if context.get("reason") == "model_not_found" else 401
             raise HTTPException(
-                status_code=401, detail=context.get("error", "Unauthorized")
+                status_code=status_code, detail=context.get("error", "Unauthorized")
             )
 
         return context
