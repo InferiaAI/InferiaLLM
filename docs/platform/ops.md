@@ -45,6 +45,14 @@ The chart intentionally refuses to enable a backup without `existingClaim`.
 Never test a restore against the production database in place; use a fresh
 database/PVC or a clearly isolated namespace.
 
+### Local restore drill
+
+On 2026-11-02, the isolated local `inferia_test` Postgres database was dumped
+in custom format and restored into a fresh `inferia_restore_20261102` scratch
+database. The restored `usage_stats` table contained the expected two rows.
+This verifies the `pg_dump`/`pg_restore` procedure locally; it does not
+validate the Helm CronJob's PVC, credentials, or cluster scheduling.
+
 ## Usage-stream outage
 
 Inference writes usage events to the Redis Stream `inferia:usage:v1`. The API

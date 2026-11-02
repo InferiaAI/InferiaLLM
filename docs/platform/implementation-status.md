@@ -14,7 +14,7 @@ performance validation.
 | Offload, P/D and autoscale model | Verified CPU | explicit tier, transfer, signal/cooldown tests plus runnable P/D policy sweep; numbers uncalibrated |
 | Capacity baselines and KV sweep | Verified CPU | 8×/64× reports plus runnable sweep/chart; **SIMULATED** only |
 | Helm self-hosting foundation | Verified render | default and backup-enabled `helm template` renders |
-| Backup/recovery documentation | Implemented | `ops.md`; a live restore drill remains environment-dependent |
+| Backup/recovery documentation | Verified local | `pg_dump`/`pg_restore` completed into a fresh scratch DB; Helm CronJob PVC/credentials remain environment-dependent |
 | Enterprise identity/RBAC/extension seams | Existing + documented | existing control-plane code and extension registry |
 | Dashboard production build | Verified CPU | `npm run build` completed after lockfile install; existing bundle-size warning and dependency audit findings remain |
 | Dashboard infrastructure/capacity views | Not verified complete | requires focused UI implementation/review |
