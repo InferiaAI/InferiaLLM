@@ -42,3 +42,16 @@ prefill/decode disaggregation, and plot output.
 
 The full scaffold after this slice reports **16 passed, 5 failed**; those
 five failures correspond only to the explicitly excluded areas.
+
+## T3 autoscaling (2026-11-02)
+
+Autoscaling now models pre-validated dormant capacity activating after a
+control-loop interval. Warm-pool capacity uses `warm_start_s`; additional
+cold capacity uses `cold_start_s`. Results expose simulated scale-up counts
+and the configured metric/target. This is a scheduling model, not a GPU
+measurement or calibration result.
+
+```text
+pytest -q src/tests/simulator/test_t3.py -k autoscaler
+1 passed, 20 deselected
+```

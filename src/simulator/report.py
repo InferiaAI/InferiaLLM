@@ -222,6 +222,12 @@ def summarize(result: SimResult, scenario: Scenario, config_hash: str, command: 
             "max_waiting_per_replica": scenario.admission.max_waiting_per_replica,
             "retry_after_s": scenario.admission.retry_after_s,
         },
+        "autoscaler": {
+            "enabled": scenario.autoscaler.enabled,
+            "scale_ups": result.autoscaler_scaleups,
+            "metric": scenario.autoscaler.metric,
+            "target": scenario.autoscaler.target,
+        },
         "littles_law": {
             "full_horizon": {
                 "L": result.in_system_integral_full / end,

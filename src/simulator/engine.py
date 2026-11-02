@@ -60,6 +60,7 @@ class SimResult:
     in_system_integral_full: float
     in_system_integral_window: float
     invariant_checks: int
+    autoscaler_scaleups: int = 0
 
 
 class Simulation:
@@ -77,11 +78,12 @@ class Simulation:
         self.replicas: list[Replica] = []
         self._by_deployment: dict[str, list[Replica]] = {}
         self._session_replicas: dict[tuple[str, str], Replica] = {}
+        self._available_at: dict[int, float] = {}
         self._place_replicas()
 
-    def _route(self, req: Request, rr: dict[str, int], rng: random.Random) -> Replica:
+    def _route(self, req: Request, rr: dict[str, int], rng: random.Random, now: float) -> Replica:
         """Choose a deployment-local replica according to the configured policy."""
-        group = self._by_deployment[req.deployment]
+        group = [r for r in self._by_deployment[req.deployment] if self._available_at[r.index] <= now]
         policy = self.scenario.router.policy
         if policy in ("round_robin", "class_to_pool"):
             replica = group[rr[req.deployment] % len(group)]
@@ -120,11 +122,22 @@ class Simulation:
 
     def _place_replicas(self) -> None:
         s = self.scenario
-        for dep, node in place_replicas(s):
+        for dep, node in place_replicas(s, max_for_autoscale=True):
             gpu = get_gpu(s.pool(dep.pool).gpu)
             r = Replica(len(self.replicas), dep, get_model(dep.model), gpu, s.hardware.perf, s.admission, node)
             self.replicas.append(r)
             self._by_deployment.setdefault(dep.name, []).append(r)
+        # Capacity is pre-validated and provisioned as dormant replicas. The
+        # control loop activates them after its first observation interval;
+        # warm-pool replicas model a short startup, cold replicas a long one.
+        for dep_name, group in self._by_deployment.items():
+            configured = next(d for d in s.deployment if d.name == dep_name)
+            for ordinal, replica in enumerate(group):
+                at = 0.0
+                if s.autoscaler.enabled and ordinal >= configured.replicas:
+                    delay = s.autoscaler.warm_start_s if ordinal - configured.replicas < s.autoscaler.warm_pool else s.autoscaler.cold_start_s
+                    at = s.autoscaler.interval_s + delay
+                self._available_at[replica.index] = at
 
     def run(self) -> SimResult:
         s = self.scenario
@@ -134,6 +147,7 @@ class Simulation:
         stats = [ReplicaStats() for _ in self.replicas]
         rr = {name: 0 for name in self._by_deployment}
         router_rng = random.Random(f"{self.seed}:router")
+        scaleups = 0
         records: list[Request] = []
         live: dict[int, Request] = {}
         itl = LogHistogram()
@@ -210,7 +224,12 @@ class Simulation:
             if kind == _ARRIVAL:
                 req: Request = obj
                 push_next_arrival()
-                replica = self._route(req, rr, router_rng)
+                before = sum(1 for at in self._available_at.values() if at <= now)
+                replica = self._route(req, rr, router_rng, now)
+                after = sum(1 for at in self._available_at.values() if at <= now)
+                # Count activation once when this arrival first observes it.
+                if self.scenario.autoscaler.enabled and after > before:
+                    scaleups += after - before
                 outcome = replica.admit(req)
                 if outcome is None:
                     live[req.rid] = req
@@ -265,4 +284,5 @@ class Simulation:
             in_system_integral_full=integral_full,
             in_system_integral_window=integral_window,
             invariant_checks=checks,
+            autoscaler_scaleups=max(scaleups, sum(1 for at in self._available_at.values() if 0 < at <= end_time)),
         )
