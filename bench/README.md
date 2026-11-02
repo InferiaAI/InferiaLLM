@@ -33,6 +33,9 @@ explicit CPU/NVMe tiers. It writes one JSON summary per variant plus a compact
 ```bash
 PYTHONPATH=src python bench/simulator/run_kv_sweep.py \
   --out bench/results/sim-kv-sweep
+python bench/simulator/render_kv_sweep.py \
+  bench/results/sim-kv-sweep/comparison.json \
+  --out bench/results/sim-kv-sweep/ttft-p95.svg
 ```
 
 ## GPU calibration lease
