@@ -81,6 +81,14 @@ returned HTTP 200 from a healthy remaining pod. This is **MEASURED
 (platform), engine timing simulated**; it is not a test of real-engine output
 replay or GPU fault tolerance.
 
+Bounded platform-load smoke (2026-11-02): 200 sessions × 3 turns (600 total
+requests), with 50 sessions in flight, completed with 0 errors. llm-d kept
+stickiness at 1.000 and distributed 141–156 requests to each of the four pods;
+the token prefix-hit ratio was 0.589. This is **MEASURED (platform), engine
+timing simulated**, not a throughput benchmark or the unverified 10k
+concurrency exercise. The artifact was written to
+`/tmp/inferia-kind-load-600/results.json` on the test host.
+
 ## Versions and sources (pinned)
 
 | Component | Pin | Official source |

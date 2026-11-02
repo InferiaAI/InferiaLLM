@@ -21,7 +21,7 @@ performance validation.
 | Full multimodal class/job workflow | Partial | endpoint foundations exist; GPU engine smoke tests pending |
 | Real vLLM calibration | Blocked on GPU | lease runner rehearsed; must collect real H100/A10 evidence |
 | Real KV saturation/offload and multimodal smoke | Blocked on GPU | must remain **MEASURED** only after lease execution |
-| 10k real-concurrency kind exercise | Not verified | environment/hardware dependent; simulator path exists |
+| Bounded kind concurrency exercise | Verified CPU | 600 requests / 50 concurrent sessions: 0 errors, 1.000 llm-d stickiness; engine timing simulated. The 10k exercise remains unverified. |
 
 ## Next gates
 
