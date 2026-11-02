@@ -1,0 +1,28 @@
+digraph system_context {
+  graph [rankdir=LR, bgcolor="white", pad="0.25", nodesep="0.55", ranksep="0.85", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.12,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  client [label="Clients\nOpenAI / Anthropic APIs", fillcolor="#FFF3D7", color="#A76600"];
+  web [label="Unified web app\n/ → dashboard\n/api → gateway\n/inf → inference\n/v2 → OCI mirror", fillcolor="#DFF3E4", color="#286A45"];
+  gateway [label="API gateway\nauth · RBAC · policy · audit\ncontrol-plane APIs"];
+  edge_api [label="Inference edge\nauth/quota cache · limits\nstreaming · usage", fillcolor="#DCEBFA", color="#2D5B8D"];
+  orchestrator [label="Orchestration\ndeployments · pools · placement\nprovisioning · Envoy xDS"];
+  router [label="llm-d EPP + Envoy\ncache/load-aware routing\n(adopted; Kubernetes mode)", fillcolor="#F4E6FB", color="#75428A"];
+  engines [label="Inference engines\nvLLM · SGLang · vLLM-Omni\nInferiaDiffusion", fillcolor="#F4E6FB", color="#75428A"];
+  providers [label="Provider adapters\nKubernetes · AWS/Pulumi\nNosana · Akash · workers"];
+  data [label="Postgres · Redis\nmetadata · queues · events", fillcolor="#FCE8E6", color="#9A3E31"];
+
+  client -> web [label="HTTPS"];
+  web -> gateway [label="management"];
+  web -> edge_api [label="inference"];
+  gateway -> data [label="metadata / audit"];
+  gateway -> orchestrator [label="control APIs"];
+  orchestrator -> providers [label="provision / reconcile"];
+  orchestrator -> data [label="state / events"];
+  providers -> router [label="Kubernetes llm-d deployment"];
+  edge_api -> router [label="llm-d endpoint"];
+  edge_api -> engines [label="other deployment endpoints"];
+  router -> engines [label="chosen endpoint"];
+  edge_api -> data [label="cached auth/quota source\nasync usage: TODO WS2", style=dashed];
+}
