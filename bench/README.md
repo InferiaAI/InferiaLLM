@@ -24,6 +24,17 @@ inferia-sim run 8xH100 --seed 1 --out bench/results/sim-8xh100-seed1 --write-req
 The latter result is **SIMULATED**, even though the scenario uses an H100
 catalog entry.
 
+## KV policy sweep
+
+This CPU-only comparison exercises recompute preemption, legacy CPU swap, and
+explicit CPU/NVMe tiers. It writes one JSON summary per variant plus a compact
+`comparison.json`; every value is labelled **SIMULATED**.
+
+```bash
+PYTHONPATH=src python bench/simulator/run_kv_sweep.py \
+  --out bench/results/sim-kv-sweep
+```
+
 ## GPU calibration lease
 
 1. Start vLLM with the intended model and record its flags separately.

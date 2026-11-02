@@ -80,7 +80,25 @@ saturation; a higher error will be reported rather than hidden.
 ## Remaining CPU runs
 
 - Run and archive the 256× scenario baseline.
-- Run policy sweeps for saturation, prefix routing, offload and P/D transfer.
+- Run prefix-routing and P/D-transfer policy sweeps.
 - Generate standard plots from the resulting request/timeline artifacts.
 - Model S1–S3 user populations only after calibrated per-cell measurements
   establish a defensible scaling basis.
+
+## KV saturation policy sweep
+
+The CPU sweep is reproducible with:
+
+```bash
+PYTHONPATH=src python bench/simulator/run_kv_sweep.py \
+  --out bench/results/sim-kv-sweep
+```
+
+Its default pressure workload completed 611 requests in each policy but showed
+the expected preemption/latency trade-off: recompute had TTFT p95 203.22 s;
+legacy CPU swap 219.15 s; explicit CPU tier 235.63 s; and deliberately slow
+NVMe 351.05 s. The swap variants moved 32,915 KV blocks while recompute moved
+none. These are **SIMULATED, uncalibrated** stress results—not evidence that
+offload is slower on real hardware. They validate that tier bandwidth and
+preemption policy change the modelled saturation outcome, which the GPU lease
+must calibrate.
