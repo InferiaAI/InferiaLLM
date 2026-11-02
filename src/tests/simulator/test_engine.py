@@ -265,6 +265,24 @@ def test_swap_without_cpu_space_falls_back_to_recompute():
     assert summ["totals"]["completed"] == summ["totals"]["requests"]
 
 
+def test_explicit_offload_tier_sets_capacity_and_charges_its_bandwidth():
+    fast = _pressure(preemption="swap", offload={"tier": "cpu", "capacity_gb": 2,
+                                                   "bandwidth_gbps": 400})
+    slow = _pressure(preemption="swap", offload={"tier": "nvme", "capacity_gb": 2,
+                                                   "bandwidth_gbps": 8})
+    fast_result, fast_summary = run(fast)
+    slow_result, slow_summary = run(slow)
+    assert fast_result.replicas[0].kv.cpu_num_blocks == int(2 * 1_000_000_000 // fast_result.replicas[0].block_bytes)
+    assert fast_summary["kv"]["swapped_out_blocks"] > 0
+    assert slow_summary["kv"]["swapped_out_blocks"] > 0
+    assert slow_result.end_time > fast_result.end_time
+
+
+def test_offload_configuration_requires_swap_preemption():
+    with pytest.raises(ValueError, match="requires preemption"):
+        _pressure(offload={"tier": "cpu", "capacity_gb": 1})
+
+
 def test_lower_priority_class_is_the_preemption_victim():
     # ~8.7k tokens of KV. A batch request starts first, then 8 chat requests join.
     # Together they outgrow the cache; the batch request must be preempted, and once

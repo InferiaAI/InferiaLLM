@@ -115,6 +115,8 @@ class DeploymentConfig(_Strict):
             raise ValueError("prefix caching needs the paged allocator")
         if self.allocator == "contiguous" and self.offload is not None:
             raise ValueError("offload tier needs the paged allocator")
+        if self.offload is not None and self.preemption != "swap":
+            raise ValueError("offload tier requires preemption: swap")
         # Both checks mirror vLLM's SchedulerConfig validation
         # (https://docs.vllm.ai/en/latest/api/vllm/config/scheduler/, read 2026-10-31).
         if self.max_num_batched_tokens < self.max_num_seqs:

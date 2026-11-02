@@ -83,7 +83,15 @@ class Replica:
         self.block_bytes = deployment.block_size * model.kv_bytes_per_token()
         blocks = kv_blocks_per_replica(deployment, gpu, perf)
         cpu_blocks = 0
-        if deployment.preemption == "swap":
+        self.offload_bandwidth_bytes_s: Optional[float] = None
+        if deployment.offload is not None:
+            # ``capacity_gb`` is the attached tier for this replica, unlike
+            # the legacy per-GPU ``swap_space_gb`` setting.
+            cpu_blocks = int(deployment.offload.capacity_gb * GB // self.block_bytes)
+            # Both the PCIe link and the tier itself carry each copy.  The
+            # configured units are gigabits/sec; convert to bytes/sec.
+            self.offload_bandwidth_bytes_s = deployment.offload.bandwidth_gbps * 1e9 / 8
+        elif deployment.preemption == "swap":
             cpu_blocks = int(deployment.swap_space_gb * GB * deployment.tensor_parallel // self.block_bytes)
         if deployment.allocator == "paged":
             self.kv = PagedBlockManager(
@@ -218,7 +226,10 @@ class Replica:
             return None
         items = list(scheduled.values())
         cost = self.perf.step_time([(n, c) for _, n, c in items])
-        duration = cost.total_s + self.perf.transfer_time(swap_bytes)
+        transfer_s = self.perf.transfer_time(swap_bytes)
+        if self.offload_bandwidth_bytes_s is not None:
+            transfer_s += swap_bytes / self.offload_bandwidth_bytes_s
+        duration = cost.total_s + transfer_s
         self.steps += 1
         return Step(now, duration, items, cost)
 
