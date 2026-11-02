@@ -171,6 +171,9 @@ class Simulation:
         itl = LogHistogram()
         observed_ttft: list[float] = []
         steps: dict[int, Step] = {}
+        # A request has already emitted its first token while in this map;
+        # failure of either transfer endpoint must not retry it.
+        transfers: dict[int, tuple[Request, int, int]] = {}
         heap: list = []
         seq = itertools.count()
         checks = 0
@@ -357,6 +360,16 @@ class Simulation:
                             live.pop(req.rid, None)
                             n_in_system -= 1
                             records.append(req)
+                    for rid, (req, source, destination) in list(transfers.items()):
+                        if i not in (source, destination):
+                            continue
+                        del transfers[rid]
+                        req.status = "failed"
+                        req.reason = "kv_transfer_failed"
+                        req.finish = now
+                        if live.pop(req.rid, None) is not None:
+                            n_in_system -= 1
+                            records.append(req)
                 if obj.recover_after_s is not None:
                     heapq.heappush(heap, (now + obj.recover_after_s, _RECOVER, next(seq), targets))
             elif kind == _RECOVER:
@@ -374,6 +387,9 @@ class Simulation:
                         records.append(req)
             elif kind == _TRANSFER_READY:
                 req, i = obj
+                transfers.pop(req.rid, None)
+                if req.rid not in live:
+                    continue
                 replica = self.replicas[i]
                 if i in self._failed or not replica.accept_transfer(req):
                     req.status = "failed"
@@ -406,6 +422,7 @@ class Simulation:
                         assert cfg is not None
                         bytes_to_transfer = req.num_tokens * replica.perf.model.kv_bytes_per_token()
                         delay = cfg.transfer_latency_s + bytes_to_transfer / (cfg.transfer_bandwidth_gbps * 1e9 / 8)
+                        transfers[req.rid] = (req, i, decoder.index)
                         heapq.heappush(heap, (now + delay, _TRANSFER_READY, next(seq), (req, decoder.index)))
                 for req in finished:
                     del live[req.rid]
