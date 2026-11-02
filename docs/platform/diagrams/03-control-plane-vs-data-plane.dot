@@ -1,0 +1,32 @@
+digraph control_plane_vs_data_plane {
+  graph [rankdir=LR, bgcolor="white", pad="0.28", nodesep="0.5", ranksep="0.8", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  subgraph cluster_control {
+    label="Control plane — may be slow"; color="#C97700"; style="rounded,dashed"; fontname="Arial"; fontsize=11;
+    gateway [label="API gateway\nauth admin · RBAC · audit\nmanagement APIs", fillcolor="#FFF3D7", color="#A76600"];
+    orchestration [label="Orchestration\nplacements · deployments\nprovisioning · xDS", fillcolor="#FFF3D7", color="#A76600"];
+    metadata [label="Postgres / Redis\nmetadata · audit · queues", fillcolor="#FCE8E6", color="#9A3E31"];
+    providers [label="Providers\nKubernetes · cloud · DePIN\nself-hosted workers", fillcolor="#FFF3D7", color="#A76600"];
+    gateway -> orchestration [label="deployment intent"];
+    gateway -> metadata [label="read/write"];
+    orchestration -> metadata [label="state/events"];
+    orchestration -> providers [label="provision/reconcile"];
+  }
+
+  subgraph cluster_data {
+    label="Data plane — latency-sensitive request path"; color="#2D5B8D"; style="rounded"; fontname="Arial"; fontsize=11;
+    client [label="Client", fillcolor="#DCEBFA", color="#2D5B8D"];
+    edge_api [label="Inference edge\ncached auth + quota\nlimits + SSE", fillcolor="#DCEBFA", color="#2D5B8D"];
+    router [label="Envoy / llm-d EPP\nendpoint selection", fillcolor="#DCEBFA", color="#2D5B8D"];
+    engine [label="Inference engine\nvLLM / SGLang / diffusion", fillcolor="#DCEBFA", color="#2D5B8D"];
+    client -> edge_api [label="inference"];
+    edge_api -> router [label="llm-d deployments"];
+    edge_api -> engine [label="other deployments"];
+    router -> engine [label="chosen endpoint"];
+  }
+
+  orchestration -> router [label="endpoint/xDS configuration", style=dashed, constraint=false];
+  metadata -> edge_api [label="cached auth/quota source\nno synchronous DB write per request", style=dashed, constraint=false];
+}

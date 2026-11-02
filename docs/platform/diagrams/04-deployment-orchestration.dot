@@ -1,0 +1,28 @@
+digraph deployment_orchestration {
+  graph [rankdir=TB, bgcolor="white", pad="0.25", nodesep="0.45", ranksep="0.55", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  request [label="Deployment request\nmodel + pool + provider", fillcolor="#FFF3D7", color="#A76600"];
+  route [label="deployment_server\nselect provisioning route", fillcolor="#DCEBFA", color="#2D5B8D"];
+  direct [label="direct_adapter\nKubernetes · Nosana · Akash", fillcolor="#DFF3E4", color="#286A45"];
+  reconcile [label="reconciler\nAWS / GCP / Azure via Pulumi", fillcolor="#DFF3E4", color="#286A45"];
+  register [label="self_register\ninferia-worker", fillcolor="#DFF3E4", color="#286A45"];
+  legacy [label="legacy node strategies", fillcolor="#F4F4F4", color="#666666"];
+  adapter [label="Provider adapter\nresource creation + readiness", fillcolor="#F4E6FB", color="#75428A"];
+  state [label="Deployment / node state\nmetadata + events", fillcolor="#FCE8E6", color="#9A3E31"];
+  endpoint [label="Ready deployment endpoint\nengine or llm-d router", fillcolor="#F4E6FB", color="#75428A"];
+
+  request -> route;
+  route -> direct;
+  route -> reconcile;
+  route -> register;
+  route -> legacy;
+  direct -> adapter;
+  reconcile -> adapter;
+  register -> adapter;
+  legacy -> adapter;
+  adapter -> state [label="state transitions"];
+  adapter -> endpoint [label="ready"];
+  state -> route [label="reconcile / lifecycle", style=dashed, constraint=false];
+}
