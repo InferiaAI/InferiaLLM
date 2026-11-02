@@ -20,6 +20,8 @@ performance number is explicitly classified as **MEASURED**, **SIMULATED**, or
   paging, routing, admission, offload, failure handling and P/D transfer.
 - [kind llm-d demo](../../deploy/kind/README.md) — CPU-only precise-prefix
   routing demonstration. Its engine timing is simulated.
+- [KV offload contract](kv-offload.md) — validated direct-vLLM CPU-tier
+  rendering; NVMe/LMCache and real-engine results remain GPU-pending.
 - [Helm chart](../../deploy/helm/inferiallm) — self-hosted deployment
   foundation.
 - [Benchmark guide](../../bench/README.md) — CPU simulation, KV sweeps and

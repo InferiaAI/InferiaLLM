@@ -179,6 +179,11 @@ def spec_from_metadata(
             "tokenizes through the model servers' /v1/*/render endpoints, which "
             "the pinned vLLM recipe is not verified to serve."
         )
+    if md.get("kv_cache") is not None:
+        raise LlmdSpecError(
+            "kv_cache offload is not supported by the llm-d inference simulator; "
+            "use the direct vLLM deployment path after GPU validation"
+        )
 
     model = md.get("model_id")
     if not isinstance(model, str) or not _MODEL.match(model):

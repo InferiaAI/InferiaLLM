@@ -8,6 +8,7 @@ from orchestration.provisioning.engine.base import (
 )
 from providers.k8s.llmd import resources as llmd
 from providers.k8s.llmd.dataplane import LlmdDataplane
+from providers.k8s import kv_offload
 from typing import List, Dict, Optional
 import asyncio
 import dataclasses
@@ -85,7 +86,7 @@ def _ollama_startup(model_id: str, keep_alive: str):
     return ["/bin/sh", "-c"], [script], env
 
 
-def _vllm_args(model_id: str, port: int, max_model_len=None):
+def _vllm_args(model_id: str, port: int, max_model_len=None, kv_cache=None):
     """Args only: the image's entrypoint is already `vllm serve`."""
     args = [
         model_id,
@@ -95,6 +96,8 @@ def _vllm_args(model_id: str, port: int, max_model_len=None):
     ]
     if max_model_len:
         args += ["--max-model-len", str(max_model_len)]
+    if kv_cache is not None:
+        args += kv_offload.vllm_args(kv_cache)
     return args
 
 
@@ -549,6 +552,13 @@ class KubernetesAdapter(ProviderAdapter):
 
         _engine = str((metadata or {}).get("engine") or "").lower()
         _model = (metadata or {}).get("model_id")
+        kv_cache = kv_offload.from_metadata(
+            metadata or {},
+            engine=_engine,
+            gpu_allocated=gpu_allocated,
+            ram_gb_allocated=ram_gb_allocated,
+            custom_command=args is not None or command is not None,
+        )
         env_values = dict(recipe.env)
         if _engine == "ollama" and _model:
             keep_alive = str(
@@ -557,7 +567,9 @@ class KubernetesAdapter(ProviderAdapter):
             command, args, extra = _ollama_startup(_model, keep_alive)
             env_values.update({e.name: e.value for e in extra})
         elif _engine == "vllm" and _model and args is None and command is None:
-            args = _vllm_args(_model, port, (metadata or {}).get("max_model_len"))
+            args = _vllm_args(
+                _model, port, (metadata or {}).get("max_model_len"), kv_cache,
+            )
 
         # Last, so the deployment's values win.
         config_env = (metadata or {}).get("env")

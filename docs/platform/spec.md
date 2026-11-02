@@ -184,6 +184,10 @@ platform cache affinity (0.809 token hit ratio versus 0.431 kube-proxy
 baseline), with simulated engine timing. GPU measurement is required before
 throughput, saturation or hardware mitigation claims are made.
 
+The direct-vLLM Kubernetes path has a [validated CPU KV-tier rendering
+contract](kv-offload.md). It renders engine flags and reserves Pod memory only;
+NVMe/LMCache and real offload behavior remain explicitly GPU-pending.
+
 ## 14. Deployment architecture
 Single-node development uses `docker-compose.yml`. The Helm chart in
 `deploy/helm/inferiallm/` renders the self-hosted foundation, including an

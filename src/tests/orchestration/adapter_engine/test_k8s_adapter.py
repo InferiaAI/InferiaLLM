@@ -1366,6 +1366,75 @@ async def test_vllm_max_model_len_is_passed_only_when_set(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_vllm_renders_validated_hbm_and_cpu_kv_offload(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    async def _direct(func, *args, **kwargs):
+        return func(*args, **kwargs)
+    monkeypatch.setattr(k8s_adapter_module, "_run_sync", _direct)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_vllm_metadata(
+            ram_gb_allocated=18,
+            kv_cache={
+                "hbm_utilization": 0.9,
+                "cpu_offload": {"gib": 16, "backend": "native"},
+            },
+        ),
+    )
+
+    container = _container_of(a)
+    assert container.args[-6:] == [
+        "--gpu-memory-utilization", "0.9",
+        "--kv-offloading-size", "16",
+        "--kv-offloading-backend", "native",
+    ]
+    assert container.resources.requests["memory"] == "18Gi"
+    assert container.resources.limits["memory"] == "18Gi"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kv_cache,match", [
+    ({"cpu_offload": {"gib": 8}}, "headroom"),
+    ({"cpu_offload": {"gib": 2, "backend": "lmcache"}}, "LMCache"),
+    ({"nvme": {"gib": 20}}, "NVMe"),
+])
+async def test_vllm_refuses_unverified_or_underprovisioned_kv_tiers(monkeypatch, kv_cache, match):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    async def _direct(func, *args, **kwargs):
+        return func(*args, **kwargs)
+    monkeypatch.setattr(k8s_adapter_module, "_run_sync", _direct)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+
+    with pytest.raises(ValueError, match=match):
+        await a.provision_node(
+            provider_resource_id="node-1", pool_id="p1",
+            metadata=_vllm_metadata(kv_cache=kv_cache),
+        )
+
+    assert not a.core.create_namespaced_service.called
+    assert not a.apps.create_namespaced_stateful_set.called
+
+
+@pytest.mark.asyncio
+async def test_vllm_refuses_kv_offload_when_custom_args_could_drop_it(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    async def _direct(func, *args, **kwargs):
+        return func(*args, **kwargs)
+    monkeypatch.setattr(k8s_adapter_module, "_run_sync", _direct)
+    a = _adapter()
+
+    with pytest.raises(ValueError, match="must own vLLM arguments"):
+        await a.provision_node(
+            provider_resource_id="node-1", pool_id="p1",
+            metadata=_vllm_metadata(cmd=["--model", "other"], kv_cache={"hbm_utilization": 0.9}),
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_deployment_image_wins_over_the_recipe(monkeypatch):
     monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
     a = _adapter()

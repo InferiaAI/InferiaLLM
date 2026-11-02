@@ -12,6 +12,7 @@ performance validation.
 | Async usage pipeline | Verified CPU | Redis producer → batch worker → local Postgres → ACK verified; retry and empty-pending-frame regression tests; runbook documents at-least-once semantics |
 | Simulator core, KV, routing, failure/retry | Verified CPU | simulator config/KV/perf/CLI suites and targeted engine tests |
 | Offload, P/D and autoscale model | Verified CPU | explicit tier, transfer, signal/cooldown tests plus runnable P/D policy sweep; numbers uncalibrated |
+| vLLM KV offload deployment contract | Verified render | direct-vLLM native CPU tier renders validated flags and Pod memory; llm-d sim, NVMe and LMCache are explicitly refused; real-engine validation is GPU-pending |
 | Capacity baselines and KV sweep | Verified CPU | 8×/64× reports plus runnable sweep/chart; **SIMULATED** only |
 | Helm self-hosting foundation | Verified render | default and backup-enabled `helm template` renders |
 | Backup/recovery documentation | Verified local | `pg_dump`/`pg_restore` completed into a fresh scratch DB; Helm CronJob PVC/credentials remain environment-dependent |

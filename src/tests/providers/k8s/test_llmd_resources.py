@@ -63,6 +63,11 @@ def test_vllm_is_refused_until_render_endpoints_are_verified():
         _spec(metadata={"engine": "vllm"})
 
 
+def test_kv_offload_is_not_silently_ignored_by_the_simulator():
+    with pytest.raises(r.LlmdSpecError, match="kv_cache offload"):
+        _spec(metadata={"kv_cache": {"cpu_offload": {"gib": 4}}})
+
+
 def test_unknown_engine_is_refused_not_silently_defaulted():
     with pytest.raises(r.LlmdSpecError):
         _spec(metadata={"engine": "ollama"})
