@@ -100,6 +100,12 @@ export function extractHfArchitecture(hfConfig: any): ModelArchitecture {
 
 // ---- Compatibility Calculation for a Pool ----
 
+// Ollama pulls 4-bit GGUF builds, whatever the vLLM fields say; undefined means
+// that default. vLLM loads what the settings ask for.
+function weightFormat(engineType: string | undefined, quantization: string, dtype: string): string | undefined {
+  return engineType === "ollama" ? undefined : quantization || dtype;
+}
+
 export function calculatePoolCompatibility(
   modelId: string,
   pool: any,
@@ -107,6 +113,7 @@ export function calculatePoolCompatibility(
   quantization: string,
   dtype: string,
   externalRegistry?: ExternalModel[],
+  engineType?: string,
 ): CompatibilityResult | null {
   if (!pool || !modelId) return null;
   const resources = resolvePoolGpuResources(pool);
@@ -114,7 +121,7 @@ export function calculatePoolCompatibility(
   return calculateCompatibility(
     modelId,
     pool.gpu_specs?.[0]?.gpu_type || pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
-    quantization || dtype,
+    weightFormat(engineType, quantization, dtype),
     {
       vram: resources.vramKnown
         ? (resources.aggregatedVram ?? resources.singleGpuVram)
@@ -128,19 +135,6 @@ export function calculatePoolCompatibility(
     },
     externalRegistry,
   );
-}
-
-// ---- Quantization Mapping ----
-
-export function mapBestQuantToVllm(quant: string): string | undefined {
-  const lower = quant.toLowerCase();
-  if (lower.includes('f16') || lower.includes('fp16') || lower.includes('bf16') || lower.includes('bfloat16') || lower.includes('float16') || lower === 'native') {
-    return undefined;
-  }
-  if (lower.includes('fp8')) return 'fp8';
-  if (lower.includes('gptq')) return 'gptq';
-  if (lower.includes('awq')) return 'awq';
-  return 'awq';
 }
 
 // ---- Fit Color Utility ----
@@ -311,7 +305,7 @@ export async function calculatePoolCompatibilityWithFit(
       const baseResult = calculateCompatibility(
         modelId,
         pool.gpu_specs?.[0]?.gpu_type || pool.allowed_gpu_types?.[0] || "GENERIC-GPU",
-        quantization || dtype,
+        weightFormat(engineType, quantization, dtype),
         {
           vram: resources.aggregatedVram ?? resources.singleGpuVram,
           bandwidth: resources.aggregatedBandwidth,
@@ -353,7 +347,7 @@ export async function calculatePoolCompatibilityWithFit(
     }
   }
 
-  const base = calculatePoolCompatibility(modelId, pool, hfConfig, quantization, dtype, externalRegistry);
+  const base = calculatePoolCompatibility(modelId, pool, hfConfig, quantization, dtype, externalRegistry, engineType);
   if (!base) return null;
 
   const paramsB = extractParamsFromModelId(modelId);

@@ -22,7 +22,7 @@ import {
   type ModelTypeKey
 } from "@/services/huggingfaceService"
 import { fetchExternalRegistry, type ExternalModel } from "@/services/gpuCompatibility"
-import { resolvePoolGpuResources, extractHfArchitecture, calculatePoolCompatibilityWithFit, mapBestQuantToVllm } from "@/services/modelPlanner"
+import { resolvePoolGpuResources, extractHfArchitecture, calculatePoolCompatibilityWithFit } from "@/services/modelPlanner"
 import { getOllamaModels, searchOllamaModels, formatModelSize, type OllamaModel } from "@/services/ollamaService"
 import {
   CompatibilityPanel,
@@ -36,7 +36,7 @@ import {
   PreflightBanner,
 } from "@/components/deployment/configSections"
 import { ConfigService } from "@/services/configService"
-import { buildDiffusionSpec, buildVllmOmniSpec } from "./newDeploymentSpec"
+import { buildDiffusionSpec, buildVllmJobSpec, buildVllmOmniSpec } from "./newDeploymentSpec"
 
 // --- Constants ---
 
@@ -318,8 +318,8 @@ const initialState: State = {
   embeddingDimensions: "384",
   maxSequenceLength: "512",
   batchSize: "32",
-  maxModelLen: "4192",
-  gpuUtil: "0.80",
+  maxModelLen: "",
+  gpuUtil: "",
   hfToken: "",
   selectedProvider: "",
   customProviderName: "",
@@ -328,7 +328,7 @@ const initialState: State = {
   apiKey: "",
   // vLLM runtime hints (used by compatibility widget "Apply Settings")
   dtype: "auto",
-  enforceEager: true,
+  enforceEager: false,
   quantization: "",
   isAdvancedOpen: false,
   // Advanced Embedding defaults
@@ -757,22 +757,11 @@ export default function NewDeployment() {
   // Split vLLM Logic into dedicated function to avoid multiple setState calls in one effect
   const buildJobSpec = useCallback(() => {
     if ((selectedEngine === "vllm" || selectedEngine === "sglang") && modelType === "inference") {
-      const finalModelId = modelId || "meta-llama/Meta-Llama-3-8B-Instruct";
-      const spec: any = {
-        model_id: finalModelId,
-        engine: selectedEngine,
-        expose: [{ "port": 9000, "health_checks": [{ "body": JSON.stringify({ model: finalModelId, messages: [{ role: "user", content: "Respond with a single word: Ready" }], stream: false }), "path": "/v1/chat/completions", "type": "http", "method": "POST", "headers": { "Content-Type": "application/json" }, "continuous": false, "expected_status": 200 }] }],
-        gpu: true,
-      }
-      
-      if (state.prefillReplicas !== "0" || state.decodeReplicas !== "0") {
-        spec.prefill_replicas = parseInt(state.prefillReplicas) || 0;
-        spec.decode_replicas = parseInt(state.decodeReplicas) || 0;
-        if (state.prefillGpuIndices) spec.prefill_gpu_indices = state.prefillGpuIndices.split(",").map(Number);
-        if (state.decodeGpuIndices) spec.decode_gpu_indices = state.decodeGpuIndices.split(",").map(Number);
-      }
-
-      return JSON.stringify(spec, null, 4)
+      return buildVllmJobSpec({
+        modelId, engine: selectedEngine, maxModelLen, gpuUtil, dtype, quantization, enforceEager,
+        prefillReplicas: state.prefillReplicas, decodeReplicas: state.decodeReplicas,
+        prefillGpuIndices: state.prefillGpuIndices, decodeGpuIndices: state.decodeGpuIndices,
+      })
     } else if (selectedEngine === "ollama") {
       const finalModelId = modelId || "llama3:8b";
       return JSON.stringify({ model_id: finalModelId, engine: "ollama", image: "ollama/ollama:latest", cmd: ["serve"], expose: [{ port: 11434, type: "http" }], gpu: true }, null, 4)
@@ -837,7 +826,7 @@ export default function NewDeployment() {
       return JSON.stringify({ image: "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime", cmd: ["sleep", "infinity"], gpu: true }, null, 4)
     }
     return ""
-  }, [selectedEngine, modelId, modelType, hfToken, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload, state.gpuPerReplica, state.prefillReplicas, state.decodeReplicas, state.prefillGpuIndices, state.decodeGpuIndices])
+  }, [selectedEngine, modelId, modelType, hfToken, maxModelLen, gpuUtil, dtype, quantization, enforceEager, batchSize, maxBatchTokens, pooling, requiredCpu, requiredRam, gpuEnabled, state.trustRemoteCode, state.modelOffload, state.groupOffload, state.gpuPerReplica, state.prefillReplicas, state.decodeReplicas, state.prefillGpuIndices, state.decodeGpuIndices])
 
   useEffect(() => {
     const spec = buildJobSpec()
@@ -1188,22 +1177,6 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
     enabled: !!selectedPool && !!modelId && (selectedEngine === "vllm" || selectedEngine === "ollama"),
     staleTime: 1000 * 60 * 5,
   });
-
-  // Auto-apply llmfit recommendations when compatibility data arrives
-  useEffect(() => {
-    if (!compatibility) return;
-
-    if (compatibility.contextLength) {
-      dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: compatibility.contextLength.toString() });
-    }
-
-    if (compatibility.bestQuant) {
-      const mapped = mapBestQuantToVllm(compatibility.bestQuant);
-      if (mapped) {
-        dispatch({ type: 'SET_FIELD', field: 'quantization', value: mapped });
-      }
-    }
-  }, [compatibility])
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">

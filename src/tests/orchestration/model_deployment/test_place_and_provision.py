@@ -951,3 +951,54 @@ async def test_bind_to_ready_warm_path_ok_status_runs_and_publishes(monkeypatch)
 
     # GPU not released on success.
     inventory.release_gpu.assert_not_awaited()
+
+
+@pytest.mark.parametrize("configuration,expected", [
+    ({"max_model_len": 8192, "gpu_memory_utilization": 0.8, "dtype": "bfloat16",
+      "quantization": "fp8", "enforce_eager": True},
+     {"max_model_len": 8192, "gpu_memory_utilization": 0.8, "dtype": "bfloat16",
+      "quantization": "fp8", "enforce_eager": True}),
+    ({}, {}),
+])
+async def test_bind_to_ready_warm_path_sends_vllm_settings(monkeypatch, configuration, expected):
+    """Settings saved at the top of the configuration reach the worker (#431)."""
+    async def _no_mirror(*a, **k):
+        return None
+
+    async def _context_unknown(model_id, hf_token=None):
+        return None
+
+    from orchestration.models.model_deployment import mirror_decision, preflight
+
+    monkeypatch.setattr(mirror_decision, "resolve_and_apply_mirror", _no_mirror)
+    monkeypatch.setattr(preflight, "fetch_native_max_len", _context_unknown)
+
+    deploy_id, pool_id, node_id = uuid4(), uuid4(), uuid4()
+    placer = AsyncMock(spec=PoolPlacer)
+    placer.place.return_value = BindToReady(node_id=node_id)
+    inventory = AsyncMock(spec=InventoryRepository)
+    inventory.allocate_gpu.return_value = True
+    controller = AsyncMock(spec=WorkerController)
+    controller.load_model.return_value = CommandResultBody(
+        in_reply_to="x", status="ok", detail="", endpoint_url="http://127.0.0.1:9000",
+    )
+    deps = SimpleNamespace(
+        db_pool=_make_db_pool(advertise_url="http://10.0.0.9:8080"),
+        controller=controller, inventory=inventory,
+        deploys=AsyncMock(spec=ModelDeploymentRepository), placer=placer,
+        jobs_repo=AsyncMock(spec=ProvisioningJobRepository),
+    )
+    source = SimpleNamespace(
+        engine="vllm", configuration=json.dumps(configuration),
+        inference_model="org/model", model_name="my-model", gpu_per_replica=1,
+    )
+
+    await place_and_provision(
+        deploy_id=deploy_id, pool_id=pool_id,
+        pool_row={"id": pool_id, "provider": "on_prem"},
+        pool_meta={}, gpu_per_replica=1, org_id=str(uuid4()),
+        engine="vllm", load_spec_source=source, deps=deps,
+    )
+
+    spec = controller.load_model.call_args.kwargs["spec"]
+    assert spec["config"] == expected

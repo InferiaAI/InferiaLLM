@@ -54,6 +54,17 @@ def test_unknown_engine_falls_back():
 # Fixtures
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
+def _model_context_unknown(monkeypatch):
+    """No Hugging Face lookup for a max_model_len; the tests about it set their own."""
+    async def _fetch(model_id, hf_token=None):
+        return None
+
+    monkeypatch.setattr(
+        "orchestration.models.model_deployment.preflight.fetch_native_max_len", _fetch,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _custom_commands_on(monkeypatch):
     """Most tests here send a command; the ones about the switch turn it off."""
     monkeypatch.setenv("K8S_ALLOW_CUSTOM_COMMANDS", "true")
@@ -1719,3 +1730,84 @@ async def test_dashboard_engines_deploy_without_the_switch(monkeypatch):
     b.core.read_namespaced_service.return_value = _service(port=8000)
     await b.provision_node(provider_resource_id="node-1", pool_id="p1", metadata=_vllm_metadata())
     assert _container_of(b).command is None
+
+
+# ---------------------------------------------------------------------------
+# vLLM settings from the New Deployment form (#431)
+# ---------------------------------------------------------------------------
+async def _vllm_args_for(monkeypatch, **settings):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service(port=8000)
+    await a.provision_node(provider_resource_id="node-1", pool_id="p1",
+                           metadata=_vllm_metadata(**settings))
+    return _container_of(a).args
+
+
+@pytest.mark.asyncio
+async def test_every_vllm_setting_reaches_the_pod(monkeypatch):
+    args = await _vllm_args_for(
+        monkeypatch, max_model_len=8192, gpu_memory_utilization=0.8, dtype="bfloat16",
+        quantization="fp8", enforce_eager=True, max_num_seqs=64, kv_cache_dtype="fp8",
+        trust_remote_code=True,
+    )
+    for flag, value in [("--max-model-len", "8192"), ("--gpu-memory-utilization", "0.8"),
+                        ("--dtype", "bfloat16"), ("--quantization", "fp8"),
+                        ("--max-num-seqs", "64"), ("--kv-cache-dtype", "fp8")]:
+        assert args[args.index(flag) + 1] == value
+    assert "--enforce-eager" in args and "--trust-remote-code" in args
+
+
+@pytest.mark.asyncio
+async def test_the_older_gpu_util_name_reaches_the_pod(monkeypatch):
+    args = await _vllm_args_for(monkeypatch, gpu_util=0.7)
+    assert args[args.index("--gpu-memory-utilization") + 1] == "0.7"
+
+
+@pytest.mark.asyncio
+async def test_unset_vllm_settings_add_no_flags(monkeypatch):
+    args = await _vllm_args_for(monkeypatch, dtype="auto", enforce_eager=False, quantization="")
+    assert args == ["Qwen/Qwen2.5-0.5B-Instruct", "--served-model-name",
+                    "Qwen/Qwen2.5-0.5B-Instruct", "--host", "0.0.0.0", "--port", "8000"]
+
+
+@pytest.mark.asyncio
+async def test_a_bad_vllm_setting_never_becomes_a_flag(monkeypatch):
+    args = await _vllm_args_for(monkeypatch, dtype="--trust-remote-code", gpu_memory_utilization=9)
+    assert "--trust-remote-code" not in args and "--gpu-memory-utilization" not in args
+
+
+@pytest.mark.asyncio
+async def test_max_model_len_is_held_to_the_models_context_on_kubernetes(monkeypatch):
+    async def _fetch(model_id, hf_token=None):
+        return 2048
+
+    monkeypatch.setattr(
+        "orchestration.models.model_deployment.preflight.fetch_native_max_len", _fetch,
+    )
+    args = await _vllm_args_for(monkeypatch, max_model_len=8192)
+    assert args[args.index("--max-model-len") + 1] == "2048"
+
+
+@pytest.mark.asyncio
+async def test_settings_vllm_has_no_flag_for_do_not_stop_it_starting(monkeypatch):
+    """The nested block can hold other engines' knobs; vLLM exits on an unknown flag."""
+    args = await _vllm_args_for(monkeypatch, config={
+        "max_batch_size": 8, "max_input_length": 1024, "max_total_tokens": 2048,
+        "tensor_parallel_size": 2,
+    })
+    assert not {"--max-batch-size", "--max-input-length", "--max-total-tokens"} & set(args)
+    assert args[args.index("--tensor-parallel-size") + 1] == "2"
+
+
+@pytest.mark.asyncio
+async def test_the_models_limit_is_not_a_flag_on_kubernetes(monkeypatch):
+    """A blank form leaves the length to vLLM, which derives it from the model."""
+    async def _fetch(model_id, hf_token=None):
+        return 2048
+
+    monkeypatch.setattr(
+        "orchestration.models.model_deployment.preflight.fetch_native_max_len", _fetch,
+    )
+    args = await _vllm_args_for(monkeypatch)
+    assert "--max-model-len" not in args and "--native-max-model-len" not in args

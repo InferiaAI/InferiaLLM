@@ -110,3 +110,19 @@ class TestClampMaxModelLen:
             eff = _clamp_max_model_len(requested, native)
             if eff is not None:
                 assert eff <= native
+
+
+class TestGpuUtilNames:
+    """The dashboard saves gpu_memory_utilization; older rows hold gpu_util."""
+
+    def test_the_forms_name_is_read(self):
+        from providers.nosana.nosana_adapter import _gpu_util
+        assert _gpu_util({"gpu_memory_utilization": 0.7}) == 0.7
+
+    def test_the_older_name_still_works(self):
+        from providers.nosana.nosana_adapter import _gpu_util
+        assert _gpu_util({"gpu_util": 0.6}) == 0.6
+
+    def test_the_default_is_unchanged(self):
+        from providers.nosana.nosana_adapter import _gpu_util
+        assert _gpu_util({}) == 0.80

@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useState } from "react"
+import { buildVllmSettings } from "@/pages/newDeploymentSpec";
 import { computeApi } from "@/lib/api"
 import { toast } from "sonner"
 import {
@@ -107,10 +108,10 @@ const initialState = (deployment: DeploymentData): State => ({
     hfToken: "",
     // Advanced VLLM defaults (matching backend defaults)
     dtype: "auto",
-    enforceEager: true,
-    maxNumSeqs: "128",
+    enforceEager: false,
+    maxNumSeqs: "",
     kvCacheDtype: "auto",
-    trustRemoteCode: true,
+    trustRemoteCode: false,
     cudaModuleLoading: "LAZY",
     nvidiaDisableCudaCompat: "1",
     quantization: "",
@@ -176,6 +177,11 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
             const updates: Partial<State> = { config: c };
             if (isVllmFamily) {
                 updates.vllmImage = c.image || (isSglang ? "docker.io/sglang/sglang:latest" : "docker.io/vllm/vllm-openai:v0.22.1");
+                // The nested block is the older form, and the one the backend prefers.
+                const saved = { ...c, ...(c.config || {}) };
+                const savedGpuUtil = saved.gpu_memory_utilization ?? saved.gpu_util ?? saved.mem_fraction_static;
+                if (saved.max_model_len != null) updates.maxModelLen = String(saved.max_model_len);
+                if (savedGpuUtil != null) updates.gpuUtil = String(savedGpuUtil);
                 if (c.cmd) {
                     const mLenIdx = c.cmd.indexOf("--max-model-len")
                     if (mLenIdx !== -1) updates.maxModelLen = c.cmd[mLenIdx + 1]
@@ -184,14 +190,14 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                 }
                 if (c.env?.HF_TOKEN) updates.hfToken = c.env.HF_TOKEN
                 // Parse advanced config from metadata
-                updates.dtype = c.dtype || "auto";
-                updates.enforceEager = c.enforce_eager ?? true;
-                updates.maxNumSeqs = String(c.max_num_seqs || 128);
-                updates.kvCacheDtype = c.kv_cache_dtype || "auto";
-                updates.trustRemoteCode = c.trust_remote_code ?? true;
+                updates.dtype = saved.dtype || "auto";
+                updates.enforceEager = saved.enforce_eager ?? false;
+                updates.maxNumSeqs = saved.max_num_seqs ? String(saved.max_num_seqs) : "";
+                updates.kvCacheDtype = saved.kv_cache_dtype || "auto";
+                updates.trustRemoteCode = saved.trust_remote_code ?? false;
                 updates.cudaModuleLoading = c.cuda_module_loading || "LAZY";
                 updates.nvidiaDisableCudaCompat = c.nvidia_disable_cuda_compat || "1";
-                updates.quantization = c.quantization || "";
+                updates.quantization = saved.quantization || "";
                 updates.cudaVersions = c.required_cuda || ["12.9", "13.0", "13.1", "13.2"];
             }
             if (isEmbedding) {
@@ -254,9 +260,9 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                         else if (!enabled && idx !== -1) updatedConfig.cmd.splice(idx, 1)
                     }
 
-                    updateFlag("--max-model-len", maxModelLen || "4192")
-                    updateFlag("--gpu-memory-utilization", gpuUtil || "0.80")
-                    updateFlag("--max-num-seqs", maxNumSeqs || "128")
+                    if (maxModelLen) updateFlag("--max-model-len", maxModelLen)
+                    if (gpuUtil) updateFlag("--gpu-memory-utilization", gpuUtil)
+                    if (maxNumSeqs) updateFlag("--max-num-seqs", maxNumSeqs)
                     updateFlag("--dtype", dtype || "auto")
                     updateFlag("--kv-cache-dtype", kvCacheDtype || "auto")
 
@@ -278,15 +284,22 @@ export default function DeploymentConfig({ deployment, onUpdate }: DeploymentCon
                     }
                 }
 
-                // Save advanced config as metadata
-                updatedConfig.dtype = dtype;
-                updatedConfig.enforce_eager = enforceEager;
-                updatedConfig.max_num_seqs = parseInt(maxNumSeqs) || 128;
-                updatedConfig.kv_cache_dtype = kvCacheDtype;
-                updatedConfig.trust_remote_code = trustRemoteCode;
+                // Replace the saved settings, in the nested block too: it wins on
+                // the backend, so a value left there would undo this edit.
+                const settingKeys = ["max_model_len", "gpu_memory_utilization", "gpu_util", "dtype", "quantization",
+                    "enforce_eager", "max_num_seqs", "kv_cache_dtype", "trust_remote_code"];
+                const nested = { ...(updatedConfig.config || {}) };
+                for (const key of settingKeys) {
+                    delete updatedConfig[key];
+                    delete nested[key];
+                }
+                if (updatedConfig.config) updatedConfig.config = nested;
+                Object.assign(updatedConfig, buildVllmSettings({ maxModelLen, gpuUtil, dtype, quantization, enforceEager }));
+                if (parseInt(maxNumSeqs) > 0) updatedConfig.max_num_seqs = parseInt(maxNumSeqs);
+                if (kvCacheDtype && kvCacheDtype !== "auto") updatedConfig.kv_cache_dtype = kvCacheDtype;
+                if (trustRemoteCode) updatedConfig.trust_remote_code = true;
                 updatedConfig.cuda_module_loading = cudaModuleLoading || null;
                 updatedConfig.nvidia_disable_cuda_compat = nvidiaDisableCudaCompat || null;
-                updatedConfig.quantization = quantization || null;
                 updatedConfig.required_cuda = cudaVersions.length > 0 ? cudaVersions : null;
             }
             if (isSglang) {
@@ -496,8 +509,8 @@ function VllmSettings({
                     </div>
                 </div>)}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
-                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">{isSglang ? "Mem Fraction Static" : "GPU Util"}</label><input id="gpu-util" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="max-model-len" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Model Length</label><input id="max-model-len" placeholder="Auto" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
+                    <div className="space-y-2"><label htmlFor="gpu-util" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">{isSglang ? "Mem Fraction Static" : "GPU Util"}</label><input id="gpu-util" placeholder="Auto" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono" /></div>
                 </div>
 
                 {/* Advanced Config Section */}
@@ -539,7 +552,7 @@ function VllmSettings({
 
                             <div className="space-y-2">
                                 <label htmlFor="max-num-seqs" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter ml-1">Max Num Sequences</label>
-                                <input id="max-num-seqs" type="number" min="1" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" />
+                                <input id="max-num-seqs" type="number" min="1" placeholder="Auto" value={maxNumSeqs} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxNumSeqs', value: e.target.value })} className="w-full bg-card border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ember-500/40 font-mono text-sm" />
                             </div>
 
                             <div className="space-y-2">
@@ -550,17 +563,11 @@ function VllmSettings({
                                     <option value="awq_marlin">AWQ Marlin</option>
                                     <option value="gptq">GPTQ</option>
                                     <option value="gptq_marlin">GPTQ Marlin</option>
-                                    <option value="gptq_marlin_24">GPTQ Marlin 24</option>
-                                    <option value="marlin">Marlin</option>
                                     <option value="fp8">FP8</option>
                                     <option value="bitsandbytes">BitsAndBytes</option>
                                     <option value="gguf">GGUF</option>
-                                    <option value="deepspeedfp">DeepSpeedFP</option>
-                                    <option value="eetq">EETQ</option>
-                                    <option value="hqq">HQQ</option>
                                     <option value="compressed-tensors">Compressed Tensors</option>
                                     <option value="experts_int8">Experts INT8</option>
-                                    <option value="squeezellm">SqueezeLLM</option>
                                 </select>
                             </div>
 

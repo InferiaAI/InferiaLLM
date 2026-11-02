@@ -205,8 +205,7 @@ export function CompatibilityPanel({
               type="button"
               onClick={() => {
                 const cfg = compatibility.recommendedVllmConfig!;
-                const optimalMaxLen = compatibility.contextLength || cfg.maxModelLen;
-                dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: optimalMaxLen.toString() });
+                dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: cfg.maxModelLen.toString() });
                 dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: cfg.gpuMemoryUtilization.toString() });
                 dispatch({ type: 'SET_FIELD', field: 'enforceEager', value: cfg.enforceEager });
                 dispatch({ type: 'SET_FIELD', field: 'dtype', value: cfg.dtype });
@@ -392,6 +391,7 @@ export function VllmConfig({
       <HfTokenSelect id="hfTokenName" value={selectedHfTokenName} dispatch={dispatch} hfTokenNames={hfTokenNames} />
 
       {/* Runtime configuration */}
+      <p className="text-xs text-muted-foreground">Leave a field blank to let the engine choose for your GPU.</p>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label htmlFor="dtype" className="block text-xs font-medium text-muted-foreground mb-1.5">Data Type</label>
@@ -413,11 +413,11 @@ export function VllmConfig({
         </div>
         <div>
           <label htmlFor="maxModelLen" className="block text-xs font-medium text-muted-foreground mb-1.5">Max Model Length</label>
-          <input id="maxModelLen" type="number" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="8192" />
+          <input id="maxModelLen" type="number" value={maxModelLen} onChange={e => dispatch({ type: 'SET_FIELD', field: 'maxModelLen', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="Auto" />
         </div>
         <div>
           <label htmlFor="gpuUtil" className="block text-xs font-medium text-muted-foreground mb-1.5">GPU Memory Util</label>
-          <input id="gpuUtil" type="number" min="0" max="1" step="0.01" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="0.90" />
+          <input id="gpuUtil" type="number" min="0" max="1" step="0.01" value={gpuUtil} onChange={e => dispatch({ type: 'SET_FIELD', field: 'gpuUtil', value: e.target.value })} className="w-full px-3 py-2 text-sm border dark:border-border rounded-md bg-card dark:text-white" placeholder="Auto" />
         </div>
         <div className="flex items-center gap-2 pt-6">
           <input
