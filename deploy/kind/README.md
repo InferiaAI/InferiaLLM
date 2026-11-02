@@ -75,6 +75,12 @@ token prefix-hit ratio; the baseline achieved 0.333 stickiness, 3.33
 pods/session and a 0.431 token prefix-hit ratio. The result artifact was
 written to `/tmp/inferia-kind-prefix-routing/results.json` on the test host.
 
+Pod-recovery smoke (2026-11-02): one of the four sim pods was deleted. Its
+Deployment immediately replaced it, and a request through the llm-d EPP
+returned HTTP 200 from a healthy remaining pod. This is **MEASURED
+(platform), engine timing simulated**; it is not a test of real-engine output
+replay or GPU fault tolerance.
+
 ## Versions and sources (pinned)
 
 | Component | Pin | Official source |

@@ -130,7 +130,7 @@ Cell counts for user populations remain blocked on GPU calibration.
 
 | Failure | Behaviour implemented or verified | Boundary |
 |---|---|---|
-| Replica/pod before first token | Simulator retries within configured attempt/budget limits | SIMULATED |
+| Replica/pod before first token | Simulator retries within configured attempt/budget limits; local kind Deployment replaced a deleted sim pod while EPP continued to return HTTP 200 | SIMULATED retry model + MEASURED platform recovery |
 | Replica/pod after first token | Fails rather than duplicating output | SIMULATED |
 | P/D transfer endpoint | Fails the transferred request as `kv_transfer_failed` | SIMULATED |
 | Client disconnect | Upstream stream is closed and cancellation is recorded | CPU tests |
