@@ -160,6 +160,17 @@ migration:
   # Extra time to wait for the database before failing the hook.
   waitSeconds: 120
 
+# Optional database backup. Set existingClaim to durable object/PV-backed
+# storage; the chart intentionally refuses an emptyDir backup target.
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  existingClaim: ""
+  retentionDays: 7
+  image:
+    repository: postgres
+    tag: "16"
+
 serviceAccount:
   create: true
   name: ""

@@ -42,3 +42,7 @@ InferiaLLM is installed.
 
 5. Secrets: {{ if .Values.secrets.existingSecret }}using existing secret {{ .Values.secrets.existingSecret }}{{ else }}managed by the chart as {{ include "inferiallm.secretName" . }} (generated values survive `helm upgrade`){{ end }}.
    Never put secrets in values.yaml for a real install.
+
+   {{- if .Values.backup.enabled }}
+6. Database backup is enabled. It writes pg_dump archives to PVC {{ .Values.backup.existingClaim }} and retains them for {{ .Values.backup.retentionDays }} days. Test a restore before relying on it.
+   {{- end }}

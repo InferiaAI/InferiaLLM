@@ -1,0 +1,51 @@
+{{- if .Values.backup.enabled }}
+{{- $claim := required "backup.existingClaim is required when backup.enabled=true" .Values.backup.existingClaim }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "inferiallm.fullname" . }}-postgres-backup
+  labels:
+    {{- include "inferiallm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pg-dump
+              image: {{ printf "%s:%s" .Values.backup.image.repository .Values.backup.image.tag }}
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: {{ include "inferiallm.databaseHost" . | quote }}
+                - name: PGPORT
+                  value: {{ .Values.database.port | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.database.name | quote }}
+                - name: PGUSER
+                  value: {{ .Values.database.user | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "inferiallm.secretName" . }}
+                      key: POSTGRES_PASSWORD
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                  pg_dump --format=custom --file="/backup/inferiallm-${stamp}.dump"
+                  find /backup -type f -name 'inferiallm-*.dump' -mtime +{{ .Values.backup.retentionDays }} -delete
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ $claim }}
+{{- end }}
