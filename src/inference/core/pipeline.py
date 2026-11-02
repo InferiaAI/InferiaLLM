@@ -12,10 +12,13 @@ from typing import Dict, List, Optional
 
 from fastapi import BackgroundTasks, HTTPException
 
+from common.workload import WorkloadClass
+
 from inference.client import api_gateway_client
 from inference.config import settings
 from .providers import ProviderAdapter, is_external_engine, resolve_upstream
 from .worker_routing import envoy_route_headers, provider_auth
+from .llmd_routing import trusted_llmd_headers
 from .rate_limiter import rate_limiter
 from .service import GatewayService
 
@@ -43,6 +46,7 @@ class RequestContext:
     org_id: Optional[str] = None
     rate_limit_config: Optional[Dict] = None
     log_payloads: bool = True
+    workload_class: WorkloadClass = WorkloadClass.INTERACTIVE_CHAT
 
     # --- Populated by Pipeline.resolve_provider ---
     adapter: Optional[ProviderAdapter] = None
@@ -121,6 +125,11 @@ class Pipeline:
         ctx.provider_key, extra_headers = provider_auth(deployment, engine)
         ctx.provider_headers = ctx.adapter.get_headers(ctx.provider_key)
         ctx.provider_headers.update(extra_headers)
+        ctx.provider_headers.update(
+            trusted_llmd_headers(
+                deployment, ctx.org_id, {}, workload_class=ctx.workload_class
+            )
+        )
 
         if deployment.get("inference_model"):
             ctx.body["model"] = deployment["inference_model"]

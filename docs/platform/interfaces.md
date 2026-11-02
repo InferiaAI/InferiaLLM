@@ -1,6 +1,6 @@
 # Shared Interfaces (contract between sessions)
 
-**Version:** v1.3.1 (2026-10-31). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
+**Version:** v1.4 (2026-11-02). v0 was written with the plan; v1 was checked against the code and official docs by Session 1 (see the change log).
 **Owner:** Session 1. Other sessions propose changes under "Requests" in their status file; Session 1 updates this doc and bumps the version; the user merges.
 **Rule:** build against this document. If your code can't follow it, raise a request; don't silently diverge.
 
@@ -107,7 +107,9 @@ One enum, used by the API edge, the scheduler/admission logic, the simulator and
 
 - **Assignment:** the request type plus an explicit request option; tenants can't self-assign a higher class than their policy allows.
 - **Thresholds and SLO numbers:** configuration, not constants. Defaults are proposed by Session 3 and recorded here in v1.
-- **Python:** `class WorkloadClass(str, Enum)` with the values above. Location TBD by Session 3 (proposed `src/common/workload.py`, a shared hot spot, so a small isolated commit).
+- **Python:** `class WorkloadClass(str, Enum)` lives in `src/common/workload.py`.
+  It supplies the fixed default priority table; policy may lower service but
+  cannot trust a client-provided priority.
 - **Don't confuse it with `workload_type`.** Orchestration already has a *deployment-level* `workload_type` (`"inference"` default, `"external"` for external endpoints; see `deployment_server.py` ~L694, ~L1718 and `controller.py::_extract_workload_type`). `WorkloadClass` is *per request*. Keep the names distinct and don't reuse or rename `workload_type`.
 
 ---
@@ -316,3 +318,7 @@ The target that both future providers must satisfy: Better Auth (self-hosted) an
 - **v1.3** (2026-10-31, Session 1, from Session 3's T2, checked in code): **§5** as-built llm-d mode (selection, sync `capabilities_for`, ids, status semantics, endpoint port, `K8S_LLMD_NAMESPACE`, `UPSTREAM_ALLOWED_INTERNAL_HOSTS`, RBAC bootstrap).
 
 - **v1.3.1:** `UPSTREAM_ALLOWED_INTERNAL_HOSTS` consumers verified.
+- **v1.4** (2026-11-02): `WorkloadClass` and its priority table landed in
+  `src/common/workload.py`. Pipeline-based embedding, audio and video requests
+  supply server-owned class metadata to the llm-d header builder; chat remains
+  `interactive_chat`. No client value determines `x-inferia-priority`.

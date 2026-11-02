@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 import httpx
 from fastapi import BackgroundTasks, HTTPException
 
+from common.workload import WorkloadClass
+
 from inference.config import settings
 from ..http_client import http_client
 from ..pipeline import Pipeline, RequestContext
@@ -113,6 +115,7 @@ class VideoHandler:
             ip_address=ip_address,
             background_tasks=background_tasks,
             start_time=time.time(),
+            workload_class=WorkloadClass.VIDEO_JOB,
         )
 
         await Pipeline.resolve_context(ctx, model_type="video_generation")

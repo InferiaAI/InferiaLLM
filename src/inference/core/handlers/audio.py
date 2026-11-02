@@ -5,6 +5,8 @@ import time
 from typing import Dict, Optional
 
 from fastapi import BackgroundTasks, HTTPException
+
+from common.workload import WorkloadClass
 from fastapi.responses import Response
 
 from ..pipeline import Pipeline, RequestContext
@@ -112,6 +114,7 @@ class AudioHandler:
             ip_address=ip_address,
             background_tasks=background_tasks,
             start_time=time.time(),
+            workload_class=WorkloadClass.REALTIME_AUDIO,
         )
         await Pipeline.resolve_context(ctx, model_type=MODEL_TYPE)
         await Pipeline.check_rate_limit(ctx)

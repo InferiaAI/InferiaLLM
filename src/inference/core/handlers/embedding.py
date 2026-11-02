@@ -6,6 +6,8 @@ from typing import Dict, Optional
 
 from fastapi import BackgroundTasks, HTTPException
 
+from common.workload import WorkloadClass
+
 from ..pipeline import Pipeline, RequestContext
 from ..worker_routing import echo_requested_model
 from ..request_logger import RequestLogger
@@ -31,6 +33,7 @@ class EmbeddingHandler:
             ip_address=ip_address,
             background_tasks=background_tasks,
             start_time=time.time(),
+            workload_class=WorkloadClass.EMBEDDING,
         )
 
         # Validation

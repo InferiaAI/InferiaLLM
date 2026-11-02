@@ -36,6 +36,22 @@ def test_non_llmd_deployment_gets_no_llmd_headers():
     assert trusted_llmd_headers({"engine": "vllm"}, "org", {}) == {}
 
 
+def test_llmd_headers_use_server_selected_workload_priority(monkeypatch):
+    from common.workload import WorkloadClass
+    from inference.core import llmd_routing
+
+    monkeypatch.setattr(llmd_routing.uuid, "uuid4", lambda: "edge-request-id")
+    headers = llmd_routing.trusted_llmd_headers(
+        {"engine": "llm-d-inference-sim"}, None, {}, WorkloadClass.EMBEDDING
+    )
+
+    assert headers == {
+        "x-inferia-request-id": "edge-request-id",
+        "x-inferia-workload-class": "embedding",
+        "x-inferia-priority": "50",
+    }
+
+
 @pytest.mark.asyncio
 async def test_unified_mount_passes_client_headers_only_to_the_trust_boundary(monkeypatch):
     """The mounted /inf app reaches the completion handler with raw headers.

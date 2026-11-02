@@ -13,6 +13,8 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, Dict, Optional
 
+from common.workload import WorkloadClass, priority_for
+
 
 LLMD_SIM_ENGINE = "llm-d-inference-sim"
 _RESERVED_PREFIXES = ("x-inferia-", "x-llm-d-", "x-gateway-")
@@ -27,6 +29,7 @@ def trusted_llmd_headers(
     deployment: Mapping[str, Any],
     org_id: Optional[str],
     client_headers: Mapping[str, str],
+    workload_class: WorkloadClass = WorkloadClass.INTERACTIVE_CHAT,
 ) -> Dict[str, str]:
     """Build llm-d headers from server-owned state only.
 
@@ -48,8 +51,8 @@ def trusted_llmd_headers(
 
     headers = {
         "x-inferia-request-id": str(uuid.uuid4()),
-        "x-inferia-workload-class": "interactive_chat",
-        "x-inferia-priority": "80",
+        "x-inferia-workload-class": workload_class.value,
+        "x-inferia-priority": str(priority_for(workload_class)),
     }
     if org_id:
         headers["x-llm-d-inference-fairness-id"] = str(org_id)
