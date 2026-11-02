@@ -1,0 +1,23 @@
+digraph multimodal_inference {
+  graph [rankdir=LR, bgcolor="white", pad="0.26", nodesep="0.42", ranksep="0.75", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  client [label="Client", fillcolor="#FFF3D7", color="#A76600"];
+  edge_api [label="Inference edge\nOpenAI + Anthropic surfaces\nauth / quotas / streaming", fillcolor="#DCEBFA", color="#2D5B8D"];
+  text [label="Text / embeddings\nchat, completions, embeddings\nexisting handlers", fillcolor="#DFF3E4", color="#286A45"];
+  media [label="Audio / image / video\nexisting handlers", fillcolor="#DFF3E4", color="#286A45"];
+  engines [label="Workload engines\nvLLM / SGLang / vLLM-Omni\nInferiaDiffusion", fillcolor="#F4E6FB", color="#75428A"];
+  jobs [label="Async video/batch jobs\nTARGET — WS6", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  realtime [label="Realtime audio WebSocket\nTARGET — WS6", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+
+  client -> edge_api [label="API request"];
+  edge_api -> text [label="text workload"];
+  edge_api -> media [label="media workload"];
+  text -> engines;
+  media -> engines;
+  edge_api -> jobs [label="planned async API", style=dashed];
+  edge_api -> realtime [label="planned realtime API", style=dashed];
+  jobs -> engines [label="worker execution", style=dashed];
+  realtime -> engines [label="streaming execution", style=dashed];
+}

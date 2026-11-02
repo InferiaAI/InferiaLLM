@@ -20,6 +20,9 @@ Current coverage:
 5. GPU/CPU resource allocation
 6. KV-cache lifecycle
 7. Distributed inference and inter-node communication
+8. Autoscaling and load balancing
+9. Failure recovery and high availability
+10. Multimodal inference
 
 ### Notes on the current batch
 
@@ -39,3 +42,9 @@ Current coverage:
 - The KV and distributed-inference diagrams are target architecture views for
   WS3/WS4. They distinguish engine-resident paged KV from proposed offload,
   cache-aware routing, P/D disaggregation, and cross-node KV transfer.
+- Autoscaling and failure recovery are target-state views. They define the
+  intended feedback and recovery boundaries without claiming capacity policy,
+  retry budgets, or failure-matrix coverage has landed.
+- The multimodal diagram reflects the existing handler families while reserving
+  async video/batch and realtime-audio APIs for WS6. GPU calibration is pending
+  and no diagram constitutes a throughput or latency claim.
