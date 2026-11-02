@@ -357,10 +357,14 @@ async def auth_middleware(request: Request, call_next):
                     e.detail if isinstance(e.detail, str) else str(e.detail),
                     headers=getattr(e, "headers", None),
                 )
-            except Exception as e:
+            except Exception:
+                # Verifier implementations are configurable extensions. Their
+                # exception text may contain issuer URLs, key identifiers, or
+                # provider diagnostics, none of which belongs in a 401 body.
+                logger.exception("Token verifier failed")
                 return _auth_error_response(
                     status.HTTP_401_UNAUTHORIZED,
-                    f"Authentication failed: {str(e)}",
+                    "Authentication failed",
                 )
 
     response = await call_next(request)

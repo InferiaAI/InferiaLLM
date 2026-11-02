@@ -94,6 +94,11 @@ class FakeVerifier:
         return _ctx(permissions=["fake:perm"])
 
 
+class RaisingVerifier:
+    async def verify(self, token, *, db=None):
+        raise RuntimeError("provider diagnostic: signing-key=do-not-disclose")
+
+
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     import os
@@ -102,7 +107,7 @@ def _clean(monkeypatch):
         if key.startswith("INFERIA_EXT_"):
             monkeypatch.delenv(key, raising=False)
     mod = types.ModuleType(PLUGIN_MOD)
-    for cls in (FakeAuditSink, RaisingAuditSink, FakeUsageSink, DenyQuota, FakeVerifier):
+    for cls in (FakeAuditSink, RaisingAuditSink, FakeUsageSink, DenyQuota, FakeVerifier, RaisingVerifier):
         setattr(mod, cls.__name__, cls)
     monkeypatch.setitem(sys.modules, PLUGIN_MOD, mod)
     FakeAuditSink.instances.clear()
@@ -483,6 +488,23 @@ async def test_default_verifier_under_mount_keeps_mode_dispatch(monkeypatch, mou
     else:
         assert r.status_code == 200
         assert r.json()["permissions"] == (["ext"] if mode == "inferiaauth" else ["oidc"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", "oidc", "inferiaauth"])
+async def test_verifier_exception_does_not_leak_provider_details(monkeypatch, mounted, mode):
+    """A plugin failure is a generic 401 in every supported auth mode."""
+    import api_gateway.rbac.middleware as mw
+
+    monkeypatch.setattr(mw.settings, "auth_provider", mode, raising=False)
+    monkeypatch.setenv("INFERIA_EXT_TOKEN_VERIFIER", f"{PLUGIN_MOD}:RaisingVerifier")
+    async with mounted() as client:
+        response = await client.get(
+            "/api/auth/permissions", headers={"Authorization": "Bearer token"}
+        )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Authentication failed"
+    assert "signing-key" not in response.text
 
 
 # =================================================================== fail fast
