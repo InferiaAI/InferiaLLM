@@ -6,7 +6,8 @@
 | Ten architecture diagrams | [diagrams/](diagrams/README.md) | DOT source + SVG render for all ten | Target-state portions remain explicitly labelled |
 | Simulator | `src/simulator/` on `s2/simulator` | T1–T3 committed simulator slices | GPU calibration pending |
 | llm-d data plane | `deploy/kind/`, `src/providers/k8s/llmd/` on `s3/dataplane` | kind demo, adapter and focused tests | CPU simulator backend; real vLLM validation pending |
-| Async usage path | inference/gateway commits on `s3/dataplane` | Redis stream producer/consumer and regression tests | At-least-once delivery; production monitoring/runbook drill remains operational work |
+| Async usage path | inference/gateway commits through `s3/dataplane@14b8eb2` | Redis producer/consumer, durable receipt migration and regression tests | At-least-once transport with idempotent durable persistence; production migration/monitoring drill remains operational work |
+| Scheduler shedding | inference edge on `s3/dataplane@919bf50` | Trusted llm-d drop translated to sanitized 429/503 plus metric tests | CPU correctness evidence; policy/SLO tuning and real load validation remain pending |
 | Self-hosted deployment | `deploy/helm/` on `s4/enterprise-ui` | Helm chart and optional backup CronJob committed | Cluster/PVC restore drill is environment-dependent |
 | Enterprise extension seams | `src/common/extensions/` on `s4/enterprise-ui` | Protocol registry/defaults and tests committed | Projects, model policy and cost controls remain follow-on work |
 | Capacity | [capacity/report.md](capacity/report.md) | CPU-only simulation and platform routing procedure | No GPU calibration; no capacity extrapolation |

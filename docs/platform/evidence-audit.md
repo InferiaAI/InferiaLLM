@@ -17,6 +17,8 @@ and `s4/enterprise-ui`.
 | Unmerged committed work is not called integrated | Pass: spec and traceability identify worktree evidence |
 | Uncommitted Helm and simulator changes are not evidence | Pass: no claim relies on dirty worktree state |
 | Bounded kind load smoke is not a throughput benchmark | Pass: recorded only as MEASURED (platform), engine timing simulated |
+| Scheduler shedding is not an engine-capacity result | Pass: documented as CPU-tested error translation and metric instrumentation only |
+| Durable usage replay is not exactly-once transport | Pass: at-least-once stream delivery is paired with transactionally deduplicated persistence, subject to migration rollout |
 
 ## Pending evidence
 

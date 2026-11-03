@@ -1,6 +1,6 @@
 # Integrated platform release-readiness checklist
 
-**Audit target:** `s3/dataplane` at `36f0e0a` (2026-11-03).
+**Audit target:** `s3/dataplane` at `14b8eb2` (2026-11-03).
 
 This is a release-review plan, not evidence that the branch has been merged to
 `main` or that GPU validation has run.
@@ -40,6 +40,34 @@ WS1-only review artifacts—`traceability.md`, `evidence-audit.md`,
 `cross-link-validation.md`, `demo-runbook.md`, `presentation.md`, and this
 file—have no S3 counterpart and should be retained after a link refresh.
 
+### Resolver sequence
+
+1. Start from the S3 version for `spec.md`, `ops.md`, `capacity/report.md` and
+   `implementation-status.md`: it includes later committed local-CPU evidence.
+2. Reapply WS1-only review links and the strict evidence/merge caveats; do not
+   copy stale statements that describe S3 work as unfinished.
+3. Choose either S3's compact diagrams or WS1's detailed diagrams as a set.
+   Delete the unselected duplicate files, update `diagrams/README.md`, then
+   re-render every retained `.dot` file.
+4. Retain S3 `interfaces.md` v1.4 and `kv-offload.md`; they document the
+   trusted workload-class boundary and direct-vLLM offload contract.
+5. Confirm the resolved documentation refers to the final integration SHA,
+   rather than a worktree tip, before publishing release notes.
+
+## 2.1 Evidence added after the first audit
+
+- `919bf50` converts trusted llm-d scheduler drops into sanitized retryable
+  admission outcomes (429, or 503 for no endpoints) and increments a shedding
+  metric. Provider error text remains hidden; focused inference tests cover
+  both normal and streaming paths.
+- `14b8eb2` carries a usage-event identifier from Redis through the gateway
+  sink and adds `usage_event_receipts` in a schema migration. Receipt insert
+  and daily-usage upsert share one transaction, so stream replay does not
+  increment durable usage twice.
+
+Both are CPU-verifiable correctness changes. They require the normal schema
+migration gate and add no GPU evidence.
+
 ## 3. Verification gates
 
 Run in an environment with project dependencies installed:
@@ -49,8 +77,11 @@ PYTHONPATH=src pytest -q \
   src/tests/simulator \
   src/tests/providers/k8s \
   src/tests/inference/test_llmd_routing_headers.py \
+  src/tests/inference/test_provider_error_sanitization.py \
+  src/tests/inference/test_streaming_failure_status.py \
   src/tests/api_gateway/test_usage_stream_worker.py \
   src/tests/common/test_extensions_registry.py \
+  src/tests/api_gateway/test_extension_defaults.py \
   src/tests/common/test_workload.py \
   src/tests/setup/test_port_preflight.py
 
@@ -63,6 +94,12 @@ for source in docs/platform/diagrams/*.dot; do
 done
 npm --prefix apps/dashboard run build
 ```
+
+Before accepting the durable-usage change, include
+`src/infra/schema/migrations/20261103_usage_event_receipts.sql` in the normal
+schema-migration review and verify that its migration path is exercised in the
+target environment. The focused unit suite does not replace that deployment
+gate.
 
 The kind routing demo is opt-in because it creates a local cluster:
 

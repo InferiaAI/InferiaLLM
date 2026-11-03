@@ -10,6 +10,8 @@ performance validation.
 | llm-d kind prefix-routing spike | Verified CPU | `deploy/kind/`; engine timing remains simulated |
 | llm-d routing metadata and stream cancellation | Verified CPU | inference routing/cancellation tests |
 | Async usage pipeline | Verified CPU | Redis Streams producer, batch gateway consumer, retry worker tests; runbook documents at-least-once semantics |
+| Durable usage replay | Verified CPU + migration review required | Stream event ids are deduplicated by `usage_event_receipts` in the same transaction as daily-usage persistence; target environment must apply the migration |
+| llm-d scheduler shedding | Verified CPU | Trusted scheduler drops become sanitized retryable 429/503 outcomes and increment a shedding metric; focused normal/streaming tests cover the boundary |
 | Simulator core, KV, routing, failure/retry | Verified CPU | simulator config/KV/perf/CLI suites and targeted engine tests |
 | Offload, P/D and autoscale model | Verified CPU | explicit tier, transfer, signal/cooldown tests; numbers uncalibrated |
 | Capacity baselines and KV sweep | Verified CPU | 8×/64× reports plus runnable sweep/chart; **SIMULATED** only |
