@@ -104,3 +104,11 @@ Python 3.14.7 while the project declares `>=3.10,<3.13`; isolated build also
 cannot resolve build requirements because DNS is unavailable. Re-run the
 wheel/install smoke check in a Python 3.12 environment with build dependencies
 available. This is an environment limitation, not a GPU calibration result.
+
+Supported-Python follow-up: `/home/pranav/.local/bin/python3.11` is present,
+but that environment has neither `pydantic` (so even a source smoke import
+cannot start) nor the `wheel` build command. Network-free wheel verification
+therefore remains blocked by missing local build/runtime dependencies, not by
+the project's Python constraint. The runnable environment did verify the
+`tiny`, seed-1 matrix artifact contract: summary, manifest, request CSV, and
+both SIMULATED SVG files were all written.
