@@ -95,3 +95,12 @@ summaries, manifests, request CSVs, and watermarked SVG latency artifacts.
 The matrix is explicitly SIMULATED/uncalibrated and does not initiate GPU
 calibration. A `tiny`, seed-1 matrix execution completed with invariant
 checks and produced all expected artifacts.
+
+## Final non-GPU verification (2026-11-03)
+
+`pytest -q src/tests/simulator/test_t3.py` passed all 21 acceptance tests.
+Wheel packaging was attempted but cannot be verified on this host: it runs
+Python 3.14.7 while the project declares `>=3.10,<3.13`; isolated build also
+cannot resolve build requirements because DNS is unavailable. Re-run the
+wheel/install smoke check in a Python 3.12 environment with build dependencies
+available. This is an environment limitation, not a GPU calibration result.
