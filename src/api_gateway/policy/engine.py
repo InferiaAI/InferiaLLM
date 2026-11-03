@@ -593,7 +593,47 @@ class PolicyEngine:
             await db.execute(stmt)
             await db.commit()
         except Exception as e:
+            await db.rollback()
             logger.error(f"DB Usage Persist Failed: {e}")
+            raise
+
+    async def persist_usage_event_db(
+        self, db: AsyncSession, event_id: str, user_id: str, model: str,
+        usage_data: Dict[str, int],
+    ) -> bool:
+        """Persist an event once, atomically with its daily-usage upsert."""
+        try:
+            receipt = await db.execute(text(
+                "INSERT INTO usage_event_receipts (event_id) VALUES (:event_id) "
+                "ON CONFLICT DO NOTHING RETURNING event_id"
+            ), {"event_id": event_id})
+            if receipt.scalar_one_or_none() is None:
+                return False
+
+            today = date.today()
+            prompt_incr = usage_data.get("prompt_tokens", 0)
+            compl_incr = usage_data.get("completion_tokens", 0)
+            total_incr = usage_data.get("total_tokens", 0)
+            stmt = insert(DBUsage).values(
+                user_id=user_id, date=today, model=model, request_count=1,
+                prompt_tokens=prompt_incr, completion_tokens=compl_incr,
+                total_tokens=total_incr,
+            ).on_conflict_do_update(
+                constraint="_user_daily_model_usage_uc",
+                set_={
+                    "request_count": DBUsage.request_count + 1,
+                    "prompt_tokens": DBUsage.prompt_tokens + prompt_incr,
+                    "completion_tokens": DBUsage.completion_tokens + compl_incr,
+                    "total_tokens": DBUsage.total_tokens + total_incr,
+                    "updated_at": func.now(),
+                },
+            )
+            await db.execute(stmt)
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            raise
 
     async def get_quotas(self, db: AsyncSession, user_id: str) -> dict:
         """

@@ -306,15 +306,28 @@ async def test_usage_default_records_missing_keys_as_zero():
     from api_gateway.policy.extensions import PolicyEngineUsageSink
 
     with patch("api_gateway.policy.engine.policy_engine") as pe:
-        pe.persist_usage_db = AsyncMock()
+        pe.persist_usage_event_db = AsyncMock(return_value=True)
         await PolicyEngineUsageSink().record(
             [UsageEvent(user_id="a", model="m"), UsageEvent(user_id="b", model="n", total_tokens=4)],
             db="DB",
         )
-    assert pe.persist_usage_db.await_args_list[0].args == (
-        "DB", "a", "m", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    assert pe.persist_usage_event_db.await_args_list[0].args[0:1] == ("DB",)
+    assert pe.persist_usage_event_db.await_args_list[0].args[2:] == (
+        "a", "m", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )
-    assert pe.persist_usage_db.await_args_list[1].args[3]["total_tokens"] == 4
+    assert pe.persist_usage_event_db.await_args_list[1].args[4]["total_tokens"] == 4
+
+
+@pytest.mark.asyncio
+async def test_usage_sink_preserves_the_stream_event_id_for_replay_deduplication():
+    from api_gateway.policy.extensions import PolicyEngineUsageSink
+
+    event = UsageEvent(user_id="a", model="m", event_id="b0d6e9d8-0eb3-4ce7-b5fe-3cd7bea77671")
+    with patch("api_gateway.policy.engine.policy_engine") as pe:
+        pe.persist_usage_event_db = AsyncMock(return_value=False)
+        await PolicyEngineUsageSink().record([event], db="DB")
+
+    assert pe.persist_usage_event_db.await_args.args[1] == event.event_id
 
 
 @pytest.mark.asyncio

@@ -44,8 +44,9 @@ class PolicyEngineUsageSink:
     async def record(self, events: Sequence[UsageEvent], *, db: Any = None) -> None:
         engine = _engine()
         for event in events:
-            await engine.persist_usage_db(
+            await engine.persist_usage_event_db(
                 db,
+                event.event_id,
                 event.user_id,
                 event.model,
                 {

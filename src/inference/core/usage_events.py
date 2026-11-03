@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 
 import redis.asyncio as redis
 
@@ -20,7 +21,10 @@ async def publish_usage_event(user_id: str, model: str, usage: dict) -> bool:
     """
     client = redis.Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True)
     try:
-        await client.xadd(STREAM, {"data": json.dumps({"user_id": user_id, "model": model, "usage": usage})})
+        await client.xadd(STREAM, {"data": json.dumps({
+            "event_id": str(uuid.uuid4()), "user_id": user_id,
+            "model": model, "usage": usage,
+        })})
         return True
     except Exception:
         logger.exception("Failed to publish usage event to Redis Stream")

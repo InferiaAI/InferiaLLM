@@ -77,6 +77,7 @@ class UsageTrackRequest(BaseModel):
     user_id: str
     model: str
     usage: Dict[str, int]  # prompt_tokens, completion_tokens, total_tokens
+    event_id: Optional[str] = None
 
 
 class UsageTrackBatchRequest(BaseModel):
@@ -129,6 +130,7 @@ async def track_user_usage(
     # 2. Background persistence through the configured usage sink
     #    (default: PolicyEngine.persist_usage_db on the same session).
     event = UsageEvent(
+        event_id=request.event_id or str(uuid.uuid4()),
         user_id=request.user_id,
         model=request.model,
         prompt_tokens=request.usage.get("prompt_tokens", 0),
@@ -155,6 +157,7 @@ async def track_usage_batch(
     """
     events = [
         UsageEvent(
+            event_id=item.event_id or str(uuid.uuid4()),
             user_id=item.user_id,
             model=item.model,
             prompt_tokens=item.usage.get("prompt_tokens", 0),
