@@ -87,3 +87,11 @@ resilience outcomes, not production reliability measurements.
 pytest -q src/tests/simulator/test_t3.py -k 'failure_retries or retry_budget'
 2 passed, 19 deselected
 ```
+
+## CPU-backed capacity matrix (2026-11-03)
+
+`scripts/run_simulator_capacity_matrix.py` produces repeatable per-scenario
+summaries, manifests, request CSVs, and watermarked SVG latency artifacts.
+The matrix is explicitly SIMULATED/uncalibrated and does not initiate GPU
+calibration. A `tiny`, seed-1 matrix execution completed with invariant
+checks and produced all expected artifacts.
