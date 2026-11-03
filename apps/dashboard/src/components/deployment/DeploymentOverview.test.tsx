@@ -200,3 +200,32 @@ describe("DeploymentOverview — clickable pool & node links", () => {
     expect(screen.queryByText("Pool")).toBeNull();
   });
 });
+
+describe("DeploymentOverview — data-plane health", () => {
+  it("explains llm-d router readiness and shows its published endpoint", async () => {
+    const { default: DeploymentOverview } = await import("./DeploymentOverview");
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <DeploymentOverview deployment={{
+          ...baseDeployment,
+          configuration: { dataplane: "llm-d" },
+          endpoint_url: "http://inferia-llmd-abc:8081",
+        }} />
+      </QueryClientProvider>
+    );
+    expect(screen.getByText("llm-d routing")).toBeInTheDocument();
+    expect(screen.getByText("Router served a readiness probe")).toBeInTheDocument();
+    expect(screen.getByText("http://inferia-llmd-abc:8081")).toBeInTheDocument();
+  });
+
+  it("uses an explicit unavailable state for direct deployments", async () => {
+    const { default: DeploymentOverview } = await import("./DeploymentOverview");
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <DeploymentOverview deployment={baseDeployment} />
+      </QueryClientProvider>
+    );
+    expect(screen.getByText("direct routing")).toBeInTheDocument();
+    expect(screen.getByText("Not applicable")).toBeInTheDocument();
+  });
+});

@@ -25,6 +25,7 @@ interface DeploymentData {
     pool_id?: string
     node_ids?: string[]
     target_node_id?: string | null
+    configuration?: Record<string, unknown>
 }
 
 interface DeploymentOverviewProps {
@@ -64,6 +65,8 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
     const isVideoGen = deployment?.model_type === "video_generation" || deployment?.workload_type === "video"
     const isImageGen = deployment?.model_type === "image_generation" || (deployment?.engine === "inferia-diffusion" && !isVideoGen)
     const state = deployment?.state || deployment?.status || "Unknown"
+    const dataplane = deployment?.configuration?.dataplane
+    const usesLlmd = dataplane === "llm-d"
 
     // Resolve the pool name for the (clickable) Pool row; pool_id is present for
     // every non-external deployment. Falls back to the id if the fetch fails.
@@ -174,6 +177,41 @@ export default function DeploymentOverview({ deployment }: DeploymentOverviewPro
                         <div className="text-xs text-muted-foreground font-mono mb-2 uppercase">Available Replicas</div>
                         <div className="text-lg font-medium">
                             {(state === "READY" || state === "RUNNING") ? "1" : "0"}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-card rounded-lg border shadow-sm p-6">
+                <div className="flex items-start justify-between gap-4 mb-5">
+                    <div>
+                        <h3 className="font-mono text-sm font-bold uppercase tracking-wider">Data-plane health</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                            {usesLlmd
+                                ? "Traffic is routed through the llm-d Envoy and endpoint-picker path."
+                                : "This deployment uses the provider’s direct service endpoint."}
+                        </p>
+                    </div>
+                    <span className={cn(
+                        "shrink-0 rounded-full border px-2.5 py-1 font-mono text-xs",
+                        usesLlmd ? "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-300" : "border-muted bg-muted/50 text-muted-foreground"
+                    )}>
+                        {usesLlmd ? "llm-d routing" : "direct routing"}
+                    </span>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="rounded-md border bg-muted/20 p-4">
+                        <div className="text-xs font-mono uppercase text-muted-foreground">Serving state</div>
+                        <div className="mt-1 text-sm font-medium">
+                            {usesLlmd
+                                ? (state === "RUNNING" || state === "READY" ? "Router served a readiness probe" : "Waiting for router readiness")
+                                : (deployment.endpoint_url ? "Endpoint published" : "Endpoint not published yet")}
+                        </div>
+                    </div>
+                    <div className="rounded-md border bg-muted/20 p-4">
+                        <div className="text-xs font-mono uppercase text-muted-foreground">Router endpoint</div>
+                        <div className="mt-1 break-all font-mono text-sm">
+                            {usesLlmd ? (deployment.endpoint_url ?? "Published after router readiness") : "Not applicable"}
                         </div>
                     </div>
                 </div>
