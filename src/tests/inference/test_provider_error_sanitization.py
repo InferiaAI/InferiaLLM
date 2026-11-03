@@ -10,6 +10,7 @@ Verifies that:
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 import httpx
+from prometheus_client import REGISTRY
 
 from inference.core.service import GatewayService
 
@@ -102,6 +103,54 @@ class TestCallUpstreamErrorSanitization:
             assert "vpc.local" not in str(exc_info.value.detail)
             assert exc_info.value.detail == "Upstream provider is unavailable"
             assert exc_info.value.status_code == 502
+
+    @pytest.mark.asyncio
+    async def test_llmd_scheduler_drop_is_retryable_and_sanitized(self):
+        mock_response = httpx.Response(
+            503,
+            text="scheduler has no endpoints for private-pool",
+            headers={
+                "x-llm-d-request-dropped-reason": "rejected-no-endpoints",
+                "retry-after": "3",
+            },
+        )
+        error = httpx.HTTPStatusError(
+            "scheduler drop", request=MagicMock(), response=mock_response
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=error)
+
+        limiter_cm = MagicMock()
+        limiter_cm.__aenter__ = AsyncMock(return_value=None)
+        limiter_cm.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "inference.core.service.http_client.get_client", return_value=mock_client,
+        ), patch(
+            "inference.core.service.upstream_concurrency_limiter.limit",
+            return_value=limiter_cm,
+        ):
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc_info:
+                await GatewayService.call_upstream(
+                    endpoint_url="http://provider:8000",
+                    payload={"model": "test", "messages": []},
+                    headers={"x-inferia-workload-class": "interactive_chat"},
+                    engine="vllm",
+                    concurrency_key="llmd-no-endpoint",
+                )
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers["Retry-After"] == "3"
+        assert exc_info.value.detail == "Request cannot be scheduled; retry shortly."
+        assert REGISTRY.get_sample_value(
+            "inferia_shed_total",
+            {
+                "deployment": "llmd-no-endpoint",
+                "reason": "rejected-no-endpoints",
+                "workload_class": "interactive_chat",
+            },
+        ) == 1.0
 
 
 class TestStreamUpstreamErrorSanitization:

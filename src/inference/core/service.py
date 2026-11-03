@@ -10,6 +10,7 @@ from .http_client import http_client
 from .providers import get_adapter
 from .concurrency_limiter import upstream_concurrency_limiter
 from .validators import validate_upstream_url, sanitize_headers, check_response_size
+from . import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,37 @@ def _upstream_error(
         sink["status_code"] = status_code
         sink["message"] = message
     return f"data: {json.dumps({'error': message})}\n\n".encode("utf-8")
+
+
+def _llmd_admission_error(
+    response: httpx.Response, request_headers: Dict[str, str], deployment_key: str,
+) -> Optional[HTTPException]:
+    """Translate a trusted llm-d scheduler drop into an edge admission error.
+
+    Only requests on which this edge installed a workload-class header can use
+    the translation. That keeps arbitrary provider responses on the existing
+    generic-error path, while preserving scheduler shedding as a separately
+    observable, retryable outcome for llm-d deployments.
+    """
+    workload_class = request_headers.get("x-inferia-workload-class")
+    reason = response.headers.get("x-llm-d-request-dropped-reason")
+    if not workload_class or not isinstance(reason, str) or not reason:
+        return None
+
+    # The no-endpoint case is availability, not an overloaded queue. Other
+    # EPP drops are admission outcomes and should be retried by the client.
+    status_code = 503 if reason == "rejected-no-endpoints" else 429
+    retry_after = response.headers.get("retry-after") or "1"
+    metrics.shed_total.labels(
+        deployment=deployment_key,
+        reason=reason,
+        workload_class=workload_class,
+    ).inc()
+    return HTTPException(
+        status_code=status_code,
+        detail="Request cannot be scheduled; retry shortly.",
+        headers={"Retry-After": retry_after},
+    )
 
 
 class GatewayService:
@@ -175,6 +207,14 @@ class GatewayService:
             finally:
                 await e.response.aclose()
             logger.error(f"Upstream Error {e.response.status_code}: {body}")
+            admission_error = _llmd_admission_error(
+                e.response, headers, concurrency_key,
+            )
+            if admission_error is not None:
+                yield _upstream_error(
+                    error_sink, admission_error.status_code, admission_error.detail,
+                )
+                return
             yield _upstream_error(
                 error_sink, 502, "Upstream provider returned an error"
             )
@@ -336,6 +376,11 @@ class GatewayService:
             if e.response.status_code >= 500:
                 await breaker._record_failure()
             logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
+            admission_error = _llmd_admission_error(
+                e.response, headers, concurrency_key,
+            )
+            if admission_error is not None:
+                raise admission_error
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail="Upstream provider returned an error",

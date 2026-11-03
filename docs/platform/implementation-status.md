@@ -8,7 +8,7 @@ performance validation.
 |---|---|---|
 | Architecture spec, ADRs, ten diagrams | Verified | `spec.md`, `adr/`, ten committed DOT/SVG pairs |
 | llm-d kind prefix-routing spike | Verified CPU | 2026-11-02 fresh-cluster: 144/144 routing smoke HTTP 200; 0.809 EPP vs 0.431 baseline token cache-hit ratio; deleted sim pod replaced while EPP kept serving; engine timing remains simulated |
-| llm-d routing metadata and stream cancellation | Verified CPU | inference routing/cancellation tests |
+| llm-d routing metadata, scheduler shedding and stream cancellation | Verified CPU | trusted server-owned routing headers; llm-d scheduler drops translate to sanitized retryable 429/503 and `inferia_shed_total`; inference routing/cancellation tests |
 | Async usage pipeline | Verified CPU | Redis producer → batch worker → local Postgres → ACK verified; retry and empty-pending-frame regression tests; runbook documents at-least-once semantics |
 | Simulator core, KV, routing, failure/retry | Verified CPU | simulator config/KV/perf/CLI suites and targeted engine tests |
 | Offload, P/D and autoscale model | Verified CPU | explicit tier, transfer, signal/cooldown tests plus runnable P/D policy sweep; numbers uncalibrated |

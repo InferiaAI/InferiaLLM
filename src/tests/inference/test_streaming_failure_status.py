@@ -103,6 +103,41 @@ class TestEachFailurePathReportsItself:
         assert sink["status_code"] == 502
         assert b"Upstream provider returned an error" in out
 
+    async def test_llmd_scheduler_drop_is_reported_as_admission_shedding(self):
+        import httpx
+
+        sink = {}
+        breaker = MagicMock()
+        breaker._can_execute = AsyncMock(return_value=True)
+        breaker._record_success = AsyncMock()
+        breaker._record_failure = AsyncMock()
+
+        response = MagicMock(
+            status_code=429,
+            text="scheduler detail must not reach the client",
+            headers={"x-llm-d-request-dropped-reason": "rejected-saturated"},
+        )
+        response.aread = AsyncMock()
+        response.aclose = AsyncMock()
+        client = MagicMock()
+        client.build_request.return_value = MagicMock()
+        client.send = AsyncMock(
+            side_effect=httpx.HTTPStatusError("x", request=MagicMock(), response=response)
+        )
+
+        with patch.object(svc.circuit_breaker_registry, "get_or_create", return_value=breaker), \
+             patch.object(svc.http_client, "get_client", return_value=client):
+            out = await _drain(GatewayService.stream_upstream(
+                "http://up.test", {}, {"x-inferia-workload-class": "interactive_chat"},
+                "vllm", concurrency_key="llmd-stream-drop", error_sink=sink,
+            ))
+
+        assert sink == {
+            "status_code": 429,
+            "message": "Request cannot be scheduled; retry shortly.",
+        }
+        assert b"scheduler detail" not in out
+
     async def test_connection_failed(self):
         sink = {}
         breaker = MagicMock()
