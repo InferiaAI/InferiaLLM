@@ -61,6 +61,12 @@ restart it drains its pending entries before new messages; the delivery model
 is at-least-once. If Redis is unavailable, inference falls back to the
 internal gateway HTTP usage endpoint.
 
+Each producer event has a UUID. Before updating `usage_stats`, the default
+sink inserts that UUID into `usage_event_receipts` in the same transaction.
+A redelivered stream entry whose receipt already exists does not increment the
+daily row a second time. Apply migration
+`20261103_usage_event_receipts.sql` before enabling this version.
+
 Check stream health:
 
 ```bash
