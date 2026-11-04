@@ -229,20 +229,26 @@ async def list_models(
     """
     List available models with pagination.
     """
-    # Check rate limit
-    await rate_limiter.check_rate_limit(request)
-
     # 1. Validate API Key
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    has_bearer = bool(auth_header and auth_header.startswith("Bearer "))
+    key_record = (
+        await policy_engine.verify_api_key(db, auth_header.split(" ")[1])
+        if has_bearer else None
+    )
+
+    # Every caller reaches this route through the inference service, so the
+    # peer address is shared; a valid key is what tells callers apart.
+    await rate_limiter.check_rate_limit(
+        request, key=f"apikey:{key_record.id}" if key_record else None
+    )
+
+    if not has_bearer:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid Authorization header",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    api_key = auth_header.split(" ")[1]
-    key_record = await policy_engine.verify_api_key(db, api_key)
 
     if not key_record:
         raise HTTPException(
