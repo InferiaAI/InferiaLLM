@@ -4,7 +4,7 @@ Supports both in-memory and Redis-based rate limiting.
 """
 
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 from fastapi import HTTPException, status, Request
 from datetime import datetime
 import asyncio
@@ -178,23 +178,27 @@ class RateLimiter:
                     workers,
                 )
 
-    async def check_rate_limit(self, request: Request) -> None:
+    async def check_rate_limit(self, request: Request, key: Optional[str] = None) -> None:
         """
         Check rate limit for request.
         Raises HTTPException if rate limit exceeded.
+
+        ``key`` names the caller when the route has already identified it
+        (an API key); otherwise the JWT user, then the peer address, is used.
         """
         if not settings.rate_limit_enabled:
             return
 
-        # Use user_id from authenticated JWT context, not from headers
-        user = getattr(request.state, "user", None)
-        user_id = user.user_id if user else None
-        if user_id:
-            key = f"user:{user_id}"
-        else:
-            # Handle test environment where request.client might be None
-            client_host = request.client.host if request.client else "test-client"
-            key = f"ip:{client_host}"
+        if not key:
+            # Use user_id from authenticated JWT context, not from headers
+            user = getattr(request.state, "user", None)
+            user_id = user.user_id if user else None
+            if user_id:
+                key = f"user:{user_id}"
+            else:
+                # Handle test environment where request.client might be None
+                client_host = request.client.host if request.client else "test-client"
+                key = f"ip:{client_host}"
 
         allowed, metadata = await self.limiter.is_allowed(key)
 
