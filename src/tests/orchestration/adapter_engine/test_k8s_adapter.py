@@ -498,6 +498,62 @@ async def test_a_pull_that_never_finishes_still_gives_up(monkeypatch):
         await a.wait_for_ready(provider_instance_id="dep-1", timeout=900)
 
 
+
+def _pod_crashing(exit_code, message):
+    """A pod whose container exited and is waiting to be restarted."""
+    pods = _pod_waiting("CrashLoopBackOff", "back-off 10s restarting failed container")
+    status = pods.items[0].status.container_statuses[0]
+    status.last_state.terminated.exit_code = exit_code
+    status.last_state.terminated.message = message
+    return pods
+
+
+@pytest.mark.asyncio
+async def test_a_container_that_keeps_exiting_fails_at_once(monkeypatch):
+    """A failed `ollama pull` exits in a second; it must not cost 15 minutes."""
+    a = _adapter()
+    sts = MagicMock()
+    sts.status.ready_replicas = 0
+    a.apps.read_namespaced_stateful_set.return_value = sts
+    a.core.list_namespaced_pod.return_value = _pod_crashing(
+        1, "pulling manifest\nError: pull model manifest: file does not exist\n",
+    )
+    ticks = _fast_clock(monkeypatch, seconds_per_poll=300)
+
+    with pytest.raises(RuntimeError, match="keeps exiting on start") as exc:
+        await a.wait_for_ready(provider_instance_id="dep-1", timeout=900)
+
+    assert ticks[0] == 0, "it must not wait before reporting a crash"
+    assert "exit code 1: Error: pull model manifest: file does not exist" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_a_crash_with_no_logs_still_reports_its_exit_code(monkeypatch):
+    a = _adapter()
+    sts = MagicMock()
+    sts.status.ready_replicas = 0
+    a.apps.read_namespaced_stateful_set.return_value = sts
+    a.core.list_namespaced_pod.return_value = _pod_crashing(137, None)
+    _fast_clock(monkeypatch, seconds_per_poll=300)
+
+    with pytest.raises(RuntimeError, match=r"keeps exiting on start: exit code 137$"):
+        await a.wait_for_ready(provider_instance_id="dep-1", timeout=900)
+
+
+@pytest.mark.asyncio
+async def test_a_running_container_is_not_mistaken_for_a_crash(monkeypatch):
+    """Loading a model shows no waiting reason; only the budget ends it."""
+    a = _adapter()
+    sts = MagicMock()
+    sts.status.ready_replicas = 0
+    a.apps.read_namespaced_stateful_set.return_value = sts
+    a.core.list_namespaced_pod.return_value = _pod_waiting(None)
+    _fast_clock(monkeypatch, seconds_per_poll=600)
+
+    with pytest.raises(RuntimeError, match="had no ready replica"):
+        await a.wait_for_ready(provider_instance_id="dep-1", timeout=900)
+
+
 # ---------------------------------------------------------------------------
 # deprovision_node
 # ---------------------------------------------------------------------------
@@ -606,6 +662,37 @@ async def test_ollama_pulls_the_model_on_start(monkeypatch):
     assert "qwen2:0.5b" in script
     assert container.command == ["/bin/sh", "-c"], \
         "a pull needs a shell; the entrypoint cannot run one"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_ollama_pull_stops_the_container(monkeypatch):
+    """Without the exit, the server idles with no model until the startup
+    probe gives up 15 minutes later."""
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    script = " ".join(_container_of(a).args or [])
+    assert "ollama pull qwen2:0.5b || exit 1;" in script
+
+
+@pytest.mark.asyncio
+async def test_a_crash_keeps_its_logs_as_the_exit_message(monkeypatch):
+    monkeypatch.delenv("K8S_SERVICE_TYPE", raising=False)
+    a = _adapter()
+    a.core.read_namespaced_service.return_value = _service()
+
+    await a.provision_node(
+        provider_resource_id="node-1", pool_id="p1",
+        metadata=_metadata(model_id="qwen2:0.5b"),
+    )
+
+    assert _container_of(a).termination_message_policy == "FallbackToLogsOnError"
 
 
 @pytest.mark.asyncio
