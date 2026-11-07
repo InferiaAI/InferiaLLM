@@ -1,0 +1,21 @@
+digraph failure_recovery_ha {
+  graph [rankdir=TB, bgcolor="white", pad="0.28", nodesep="0.4", ranksep="0.58", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  failure [label="Failure signal\npod · node · zone · control plane\nRedis / Postgres / upstream", fillcolor="#FCE8E6", color="#9A3E31"];
+  classify [label="Classify and bound retry\nTARGET — WS7\ntransient / terminal / cancellation", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  isolate [label="Isolate failing endpoint\nstop routing new work", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  preserve [label="Preserve control-plane state\nmetadata + events", fillcolor="#DCEBFA", color="#2D5B8D"];
+  recover [label="Recover capacity\nretry with budget · replace\nreschedule / fail over", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  healthy [label="Healthy serving endpoints\ncontinue independent of\ncontrol-plane availability", fillcolor="#DFF3E4", color="#286A45"];
+  postmortem [label="Audit / metrics / operator action\nTARGET recovery matrix", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+
+  failure -> classify;
+  classify -> isolate [label="serving failure"];
+  classify -> preserve [label="stateful event"];
+  isolate -> recover;
+  preserve -> recover;
+  recover -> healthy [label="replacement ready"];
+  healthy -> postmortem [label="evidence"];
+}

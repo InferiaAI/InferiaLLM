@@ -1,0 +1,26 @@
+digraph kv_cache_lifecycle {
+  graph [rankdir=LR, bgcolor="white", pad="0.25", nodesep="0.38", ranksep="0.65", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  request [label="Request prefix\ninput tokens", fillcolor="#FFF3D7", color="#A76600"];
+  lookup [label="Prefix/KV lookup\nengine APC; router index\nTARGET routing integration", fillcolor="#DCEBFA", color="#2D5B8D"];
+  hit [label="Prefix hit\nreuse attention state", fillcolor="#DFF3E4", color="#286A45"];
+  prefill [label="Prefill missing tokens\nallocate paged KV blocks", fillcolor="#F4E6FB", color="#75428A"];
+  decode [label="Decode / stream output\nappend KV state", fillcolor="#F4E6FB", color="#75428A"];
+  hbm [label="GPU HBM KV tier\nactive + reusable blocks", fillcolor="#FCE8E6", color="#9A3E31"];
+  evict [label="Eviction / preemption\nTARGET — WS3/WS4\nrecompute vs swap", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  offload [label="CPU/NVMe offload tier\nTARGET — WS3/WS4", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+
+  request -> lookup;
+  lookup -> hit [label="overlap"];
+  lookup -> prefill [label="miss / uncovered suffix"];
+  hit -> decode [label="reused prefix"];
+  prefill -> decode;
+  prefill -> hbm [label="write blocks"];
+  decode -> hbm [label="append/update"];
+  hbm -> lookup [label="future prefix match", constraint=false];
+  hbm -> evict [label="pressure"];
+  evict -> offload [label="swap/offload"];
+  offload -> prefill [label="reload or recompute", style=dashed, constraint=false];
+}

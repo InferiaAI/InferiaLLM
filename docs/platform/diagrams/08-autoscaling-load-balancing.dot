@@ -1,0 +1,22 @@
+digraph autoscaling_load_balancing {
+  graph [rankdir=LR, bgcolor="white", pad="0.25", nodesep="0.4", ranksep="0.65", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  demand [label="Incoming demand\nclasses · SLOs · fairness", fillcolor="#FFF3D7", color="#A76600"];
+  admission [label="Admission / queue policy\nTARGET — WS2", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  router [label="Router / load balancer\ncurrent: endpoint routing\nTARGET: cache/load-aware scoring", fillcolor="#DCEBFA", color="#2D5B8D"];
+  replicas [label="Serving replicas\nper pool / workload class", fillcolor="#F4E6FB", color="#75428A"];
+  signals [label="Signals\nqueue depth · KV utilisation\nTTFT p95 · capacity", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  autoscaler [label="Autoscaler\nTARGET — WS2/WS3\nmin/max + cooldown + warm capacity", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  provision [label="Provision / remove replica\nprovider lifecycle", fillcolor="#DFF3E4", color="#286A45"];
+
+  demand -> admission;
+  admission -> router [label="admitted / queued / shed"];
+  router -> replicas [label="chosen endpoint"];
+  replicas -> signals [label="observations"];
+  signals -> autoscaler [label="policy input"];
+  autoscaler -> provision [label="scale decision"];
+  provision -> replicas [label="ready capacity"];
+  signals -> router [label="load feedback", style=dashed, constraint=false];
+}

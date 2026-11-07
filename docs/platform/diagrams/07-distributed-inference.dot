@@ -1,0 +1,26 @@
+digraph distributed_inference {
+  graph [rankdir=LR, bgcolor="white", pad="0.27", nodesep="0.48", ranksep="0.75", fontname="Arial"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.13,0.08", color="#294861", fillcolor="#EDF5FA"];
+  edge [fontname="Arial", fontsize=9, color="#516B7A", arrowsize=0.7];
+
+  client [label="Inference edge / router\nrequest placement", fillcolor="#DCEBFA", color="#2D5B8D"];
+  subgraph cluster_node_a {
+    label="Node A"; color="#75428A"; style="rounded,dashed"; fontname="Arial"; fontsize=11;
+    prefill [label="Prefill replica\nTARGET P/D serving", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+    tp_a [label="Tensor-parallel ranks\nwithin-node GPU fabric", fillcolor="#F4E6FB", color="#75428A"];
+    prefill -> tp_a [label="local execution"];
+  }
+  subgraph cluster_node_b {
+    label="Node B"; color="#75428A"; style="rounded,dashed"; fontname="Arial"; fontsize=11;
+    decode [label="Decode replica\nTARGET P/D serving", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+    tp_b [label="Tensor-parallel ranks\nwithin-node GPU fabric", fillcolor="#F4E6FB", color="#75428A"];
+    decode -> tp_b [label="local execution"];
+  }
+  transfer [label="KV transfer fabric\nTARGET — bandwidth/latency\nmeasured before adoption", style="rounded,dashed,filled", fillcolor="#FFF9E7", color="#A76600"];
+  output [label="SSE response", fillcolor="#DFF3E4", color="#286A45"];
+
+  client -> prefill [label="prefill route"];
+  prefill -> transfer [label="produced KV"];
+  transfer -> decode [label="transferred KV"];
+  decode -> output [label="decoded tokens"];
+}
