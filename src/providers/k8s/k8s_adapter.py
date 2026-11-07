@@ -85,7 +85,8 @@ def _ollama_startup(model_id: str, keep_alive: str):
     script = (
         "ollama serve & "
         "until ollama list >/dev/null 2>&1; do sleep 1; done; "
-        f"ollama pull {safe}; "
+        # Without the exit, a failed pull leaves a server with no model.
+        f"ollama pull {safe} || exit 1; "
         "wait"
     )
     env = [client.V1EnvVar(name="OLLAMA_KEEP_ALIVE", value=keep_alive)]
@@ -332,6 +333,20 @@ _PULL_FAILED_REASONS = {
     "RegistryUnavailable",
 }
 
+# A crash on startup repeats on every restart, so waiting only delays the report.
+_CRASHED_REASONS = {"CrashLoopBackOff"}
+
+
+def _last_exit(status) -> str:
+    """Exit code and last log line of the container's previous run."""
+    try:
+        term = status.last_state.terminated
+        lines = [l for l in (term.message or "").splitlines() if l.strip()]
+        last = lines[-1].strip()[:300] if lines else ""
+        return f"exit code {term.exit_code}" + (f": {last}" if last else "")
+    except Exception:
+        return "CrashLoopBackOff"
+
 
 class KubernetesAdapter(ProviderAdapter):
     """
@@ -556,6 +571,8 @@ class KubernetesAdapter(ProviderAdapter):
             startup_probe=startup,
             readiness_probe=readiness,
             liveness_probe=liveness,
+            # A crash keeps the tail of its logs, so wait_for_ready can say why.
+            termination_message_policy="FallbackToLogsOnError",
         )
 
         # A template, not one shared claim: ReadWriteOnce binds to a single
@@ -813,13 +830,18 @@ class KubernetesAdapter(ProviderAdapter):
                 logger.warning("k8s: error checking statefulset status: %s", e)
 
             now = time.time()
-            state, detail = await self._image_pull_state(
+            state, detail = await self._start_state(
                 provider_instance_id, namespace,
             )
             if state == "failed":
                 raise RuntimeError(
                     f"StatefulSet {provider_instance_id} cannot pull its "
                     f"image: {detail}"
+                )
+            if state == "crashed":
+                raise RuntimeError(
+                    f"StatefulSet {provider_instance_id} keeps exiting on "
+                    f"start: {detail}"
                 )
             if state == "pulling":
                 pulling_seconds += now - last_poll
@@ -839,8 +861,9 @@ class KubernetesAdapter(ProviderAdapter):
 
             await asyncio.sleep(poll_interval)
 
-    async def _image_pull_state(self, name: str, namespace: str):
-        """("pulling" | "failed" | "running", detail) for the first replica.
+    async def _start_state(self, name: str, namespace: str):
+        """("pulling" | "failed" | "crashed" | "running", detail) for the
+        first replica.
 
         An unreadable pod returns "running", which is the old behaviour.
         """
@@ -851,13 +874,16 @@ class KubernetesAdapter(ProviderAdapter):
                 label_selector=f"inferia-instance={name}",
             )
             statuses = pods.items[0].status.container_statuses or []
-            waiting = statuses[0].state.waiting
+            status = statuses[0]
+            waiting = status.state.waiting
             reason = waiting.reason
         except Exception:
             return "running", ""
 
         if reason in _PULL_FAILED_REASONS:
             return "failed", f"{reason}: {waiting.message or ''}".strip(": ")
+        if reason in _CRASHED_REASONS:
+            return "crashed", _last_exit(status)
         if reason in _PULL_WAITING_REASONS:
             return "pulling", ""
         return "running", ""
